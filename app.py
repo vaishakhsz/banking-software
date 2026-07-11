@@ -185,7 +185,7 @@ def init_database():
     
     if count == 0:
         current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        # Insert default accounts - ADD CASH AND BANK ACCOUNTS
+        # Insert default accounts
         default_accounts = [
             ('1000', 'CASH', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
             ('1100', 'BANK_SAVINGS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
@@ -295,14 +295,15 @@ def record_cash_transaction(txn_type, amount, description="", username="", custo
         
         # Get current cash balance
         cursor.execute('SELECT balance FROM accounts WHERE account_code = "1000"')
-        current_balance = cursor.fetchone()[0]
+        result = cursor.fetchone()
+        current_balance = result[0] if result else 0
         
         if txn_type == 'RECEIPT':
             new_balance = current_balance + amount
         elif txn_type == 'PAYMENT':
             if current_balance < amount:
                 conn.close()
-                return False, "Insufficient cash balance"
+                return False, f"Insufficient cash balance. Available: ₹{current_balance:,.2f}"
             new_balance = current_balance - amount
         else:
             conn.close()
@@ -383,7 +384,7 @@ def record_bank_transaction(account_code, txn_type, amount, description="", user
         elif txn_type == 'WITHDRAWAL':
             if current_balance < amount:
                 conn.close()
-                return False, f"Insufficient balance in {account_name}"
+                return False, f"Insufficient balance in {account_name}. Available: ₹{current_balance:,.2f}"
             new_balance = current_balance - amount
         else:
             conn.close()
@@ -474,6 +475,10 @@ def create_account(account_name, account_type, initial_balance=0, daily_limit=No
         account_code = generate_account_code(account_type)
         date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
+        # Ensure daily_limit is None if 0 or negative
+        if daily_limit is not None and daily_limit <= 0:
+            daily_limit = None
+        
         cursor.execute('''
             INSERT INTO accounts 
             (account_code, account_name, account_type, balance, daily_limit, interest_rate, created_date, created_by, is_active)
@@ -512,6 +517,9 @@ def update_account(account_code, new_name, new_daily_limit=None, new_interest_ra
             params.append(new_name.upper())
         
         if new_daily_limit is not None:
+            # Ensure daily_limit is None if 0 or negative
+            if new_daily_limit <= 0:
+                new_daily_limit = None
             updates.append("daily_limit = ?")
             params.append(new_daily_limit)
         
@@ -581,7 +589,7 @@ def get_accounts_by_type(account_type):
                 'account_name': row[1],
                 'account_type': row[2],
                 'balance': row[3],
-                'daily_limit': row[4],
+                'daily_limit': row[4] if row[4] is not None else None,
                 'interest_rate': row[5],
                 'is_active': row[6],
                 'created_date': row[7],
@@ -625,7 +633,7 @@ def get_all_accounts():
                 'account_name': row[1],
                 'account_type': row[2],
                 'balance': row[3],
-                'daily_limit': row[4],
+                'daily_limit': row[4] if row[4] is not None else None,
                 'maturity_date': row[5] if len(row) > 5 else None,
                 'interest_rate': row[6] if len(row) > 6 else None,
                 'is_active': row[7] if len(row) > 7 else 1
@@ -1455,10 +1463,26 @@ def main():
                     df = pd.DataFrame(results, columns=['Date', 'Account Code', 'Account Name', 'Type', 'Amount', 'Description', 'User'])
                     st.dataframe(df, use_container_width=True, hide_index=True)
                     st.caption(f"Total Entries Displayed: {len(results)}")
+                    
+                    # Show summary statistics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        total_debits = sum(row[4] for row in results if row[3] == 'DEBIT')
+                        st.metric("Total Debits", f"₹{total_debits:,.2f}")
+                    with col2:
+                        total_credits = sum(row[4] for row in results if row[3] == 'CREDIT')
+                        st.metric("Total Credits", f"₹{total_credits:,.2f}")
+                    with col3:
+                        if abs(total_debits - total_credits) < 0.01:
+                            st.success("✅ Balanced")
+                        else:
+                            st.error(f"❌ Difference: ₹{total_debits - total_credits:,.2f}")
                 else:
-                    st.info("No journal entries yet.")
+                    st.info("No journal entries yet. Start by recording cash, bank, or customer transactions.")
             except Exception as e:
                 st.error(f"Error loading journal entries: {str(e)}")
+                print(f"Error in journal entries: {e}")
+                print(traceback.format_exc())
         
         # ---------- TAB 5: TRIAL BALANCE ----------
         with tab5:
@@ -1506,17 +1530,19 @@ def main():
                             if head_type == 'EXPENSE':
                                 daily_limit = st.number_input("Daily Limit (Optional)", min_value=0.0, step=1000.0, value=0.0)
                             else:
-                                daily_limit = None
+                                daily_limit = 0
                             
                             submitted = st.form_submit_button("Create Head")
                             
                             if submitted:
                                 if head_name:
+                                    # Pass None if daily_limit is 0
+                                    limit_value = daily_limit if daily_limit > 0 else None
                                     success, msg = create_account(
                                         head_name, 
                                         head_type, 
                                         initial_balance,
-                                        daily_limit if daily_limit > 0 else None,
+                                        limit_value,
                                         None,
                                         user['username']
                                     )
@@ -1573,23 +1599,34 @@ def main():
                                         new_name = st.text_input("New Name", value=head_data['account_name'])
                                         
                                         if head_data['account_type'] == 'EXPENSE':
+                                            current_limit = head_data.get('daily_limit')
+                                            default_limit = current_limit if current_limit is not None else 0.0
                                             new_limit = st.number_input("Daily Limit", 
-                                                                       value=head_data['daily_limit'] or 0.0,
+                                                                       value=float(default_limit),
                                                                        step=1000.0)
                                         else:
-                                            new_limit = None
+                                            new_limit = 0
                                             st.info("Income heads don't have daily limits")
                                         
                                         edit_submitted = st.form_submit_button("Update Head")
                                         
                                         if edit_submitted:
                                             if new_name:
-                                                success, msg = update_account(
-                                                    acc_code, 
-                                                    new_name,
-                                                    new_limit if head_data['account_type'] == 'EXPENSE' else None,
-                                                    None
-                                                )
+                                                limit_value = new_limit if new_limit > 0 else None
+                                                if head_data['account_type'] == 'EXPENSE':
+                                                    success, msg = update_account(
+                                                        acc_code, 
+                                                        new_name,
+                                                        limit_value,
+                                                        None
+                                                    )
+                                                else:
+                                                    success, msg = update_account(
+                                                        acc_code, 
+                                                        new_name,
+                                                        None,
+                                                        None
+                                                    )
                                                 if success:
                                                     st.success(msg)
                                                     st.rerun()
@@ -1608,7 +1645,8 @@ def main():
                                         cursor.execute('SELECT COUNT(*) FROM transactions WHERE account_code = ?', (acc_code,))
                                         txn_count = cursor.fetchone()[0]
                                         conn.close()
-                                    except:
+                                    except Exception as e:
+                                        print(f"Error checking transactions: {e}")
                                         txn_count = 0
                                     
                                     if txn_count > 0:
@@ -1658,11 +1696,12 @@ def main():
                             expense_data = []
                             total_expense = 0
                             for acc in expense_heads:
+                                daily_limit = acc.get('daily_limit')
                                 expense_data.append({
                                     'Code': acc['account_code'],
                                     'Name': acc['account_name'],
                                     'Balance': f"₹{acc['balance']:,.2f}",
-                                    'Daily Limit': f"₹{acc['daily_limit']:,.2f}" if acc['daily_limit'] else 'N/A',
+                                    'Daily Limit': f"₹{daily_limit:,.2f}" if daily_limit is not None else 'N/A',
                                     'Created': acc['created_date'][:10] if acc['created_date'] else '',
                                     'By': acc['created_by']
                                 })

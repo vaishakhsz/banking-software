@@ -35,7 +35,6 @@ def migrate_database():
         try:
             cursor.execute("ALTER TABLE accounts ADD COLUMN created_by TEXT")
             cursor.execute("UPDATE accounts SET created_by = 'system' WHERE created_by IS NULL")
-            print("Added created_by column to accounts")
         except sqlite3.OperationalError as e:
             print(f"Could not add created_by: {e}")
     
@@ -43,7 +42,6 @@ def migrate_database():
         try:
             cursor.execute("ALTER TABLE accounts ADD COLUMN is_active INTEGER DEFAULT 1")
             cursor.execute("UPDATE accounts SET is_active = 1 WHERE is_active IS NULL")
-            print("Added is_active column to accounts")
         except sqlite3.OperationalError as e:
             print(f"Could not add is_active: {e}")
     
@@ -68,7 +66,7 @@ def init_database():
         )
     ''')
     
-    # Accounts table (Chart of Accounts) - FIXED COLUMN DEFINITION
+    # Accounts table (Chart of Accounts)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,6 +161,22 @@ def init_database():
         )
     ''')
     
+    # Cash transactions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS cash_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transaction_id TEXT UNIQUE NOT NULL,
+            date TEXT NOT NULL,
+            transaction_type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            description TEXT,
+            balance_after REAL,
+            username TEXT,
+            customer_id TEXT,
+            FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+        )
+    ''')
+    
     conn.commit()
     
     # Check if default accounts already exist
@@ -171,10 +185,11 @@ def init_database():
     
     if count == 0:
         current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        # Insert default accounts
+        # Insert default accounts - ADD CASH AND BANK ACCOUNTS
         default_accounts = [
-            ('1100', 'SAVINGS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-            ('1200', 'CURRENT', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+            ('1000', 'CASH', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+            ('1100', 'BANK_SAVINGS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+            ('1200', 'BANK_CURRENT', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
             ('1300', 'FD', 'ASSET', 0, None, None, 7.0, current_date, 1, 'system'),
             ('1400', 'DAILY_COLLECTION', 'ASSET', 0, 50000, None, None, current_date, 1, 'system'),
             ('2100', 'CUSTOMER_DEPOSITS', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
@@ -264,6 +279,142 @@ def verify_user(username, password):
         return None
     return None
 
+# ============== CASH TRANSACTION FUNCTIONS ==============
+def generate_cash_transaction_id():
+    """Generate unique cash transaction ID"""
+    return f"CASHTXN{datetime.now().strftime('%Y%m%d%H%M%S')}{str(time.time_ns())[-6:]}"
+
+def record_cash_transaction(txn_type, amount, description="", username="", customer_id=None):
+    """Record a single cash transaction (single entry)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        txn_id = generate_cash_transaction_id()
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get current cash balance
+        cursor.execute('SELECT balance FROM accounts WHERE account_code = "1000"')
+        current_balance = cursor.fetchone()[0]
+        
+        if txn_type == 'RECEIPT':
+            new_balance = current_balance + amount
+        elif txn_type == 'PAYMENT':
+            if current_balance < amount:
+                conn.close()
+                return False, "Insufficient cash balance"
+            new_balance = current_balance - amount
+        else:
+            conn.close()
+            return False, "Invalid transaction type"
+        
+        # Update cash account balance
+        cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = "1000"', (new_balance,))
+        
+        # Record cash transaction
+        cursor.execute('''
+            INSERT INTO cash_transactions 
+            (transaction_id, date, transaction_type, amount, description, balance_after, username, customer_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (txn_id, date, txn_type, amount, description, new_balance, username, customer_id))
+        
+        # Also record in main transactions for journal
+        cursor.execute('''
+            INSERT INTO transactions 
+            (transaction_id, date, account_code, transaction_type, amount, description, balance_after, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (txn_id, date, '1000', txn_type, amount, description, new_balance, username))
+        
+        # Record in journal entries
+        entry_type = 'DEBIT' if txn_type == 'RECEIPT' else 'CREDIT'
+        cursor.execute('''
+            INSERT INTO journal_entries 
+            (date, account_code, account_name, entry_type, amount, description, ref_no, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (date, '1000', 'CASH', entry_type, amount, description, txn_id, username))
+        
+        conn.commit()
+        conn.close()
+        
+        return True, f"Cash {txn_type} of ₹{amount:,.2f} recorded successfully"
+    except Exception as e:
+        print(f"Error in record_cash_transaction: {e}")
+        return False, f"Error: {str(e)}"
+
+def get_cash_transactions(limit=100):
+    """Get cash transactions"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT date, transaction_type, amount, description, balance_after, username, customer_id
+            FROM cash_transactions
+            ORDER BY date DESC
+            LIMIT ?
+        ''', (limit,))
+        result = cursor.fetchall()
+        conn.close()
+        return result
+    except Exception as e:
+        print(f"Error in get_cash_transactions: {e}")
+        return []
+
+# ============== BANK TRANSACTION FUNCTIONS ==============
+def record_bank_transaction(account_code, txn_type, amount, description="", username="", customer_id=None):
+    """Record a single bank transaction (single entry)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        txn_id = generate_transaction_id()
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get current bank balance
+        cursor.execute('SELECT balance, account_name FROM accounts WHERE account_code = ?', (account_code,))
+        result = cursor.fetchone()
+        if not result:
+            conn.close()
+            return False, "Account not found"
+        
+        current_balance, account_name = result
+        
+        if txn_type == 'DEPOSIT':
+            new_balance = current_balance + amount
+        elif txn_type == 'WITHDRAWAL':
+            if current_balance < amount:
+                conn.close()
+                return False, f"Insufficient balance in {account_name}"
+            new_balance = current_balance - amount
+        else:
+            conn.close()
+            return False, "Invalid transaction type"
+        
+        # Update account balance
+        cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
+        
+        # Record transaction
+        cursor.execute('''
+            INSERT INTO transactions 
+            (transaction_id, date, account_code, transaction_type, amount, description, balance_after, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (txn_id, date, account_code, txn_type, amount, description, new_balance, username))
+        
+        # Record in journal entries
+        entry_type = 'DEBIT' if txn_type == 'DEPOSIT' else 'CREDIT'
+        cursor.execute('''
+            INSERT INTO journal_entries 
+            (date, account_code, account_name, entry_type, amount, description, ref_no, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (date, account_code, account_name, entry_type, amount, description, txn_id, username))
+        
+        conn.commit()
+        conn.close()
+        
+        return True, f"Bank {txn_type} of ₹{amount:,.2f} recorded in {account_name}"
+    except Exception as e:
+        print(f"Error in record_bank_transaction: {e}")
+        return False, f"Error: {str(e)}"
+
 # ============== ACCOUNT MANAGEMENT FUNCTIONS ==============
 def generate_account_code(account_type):
     """Generate a new account code based on type"""
@@ -273,7 +424,8 @@ def generate_account_code(account_type):
         
         prefix_map = {
             'INCOME': '4',
-            'EXPENSE': '5'
+            'EXPENSE': '5',
+            'ASSET': '1'
         }
         
         prefix = prefix_map.get(account_type, '9')
@@ -294,8 +446,12 @@ def generate_account_code(account_type):
         else:
             if account_type == 'INCOME':
                 new_code = '4100'
-            else:  # EXPENSE
+            elif account_type == 'EXPENSE':
                 new_code = '5100'
+            elif account_type == 'ASSET':
+                new_code = '1500'
+            else:
+                new_code = '9100'
         
         return new_code
     except Exception as e:
@@ -303,7 +459,7 @@ def generate_account_code(account_type):
         return '5100'
 
 def create_account(account_name, account_type, initial_balance=0, daily_limit=None, interest_rate=None, username=""):
-    """Create a new account (income or expense head)"""
+    """Create a new account"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -337,13 +493,11 @@ def update_account(account_code, new_name, new_daily_limit=None, new_interest_ra
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Check if account exists
         cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
         if not cursor.fetchone():
             conn.close()
             return False, "Account not found"
         
-        # Check for duplicate name
         cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_code != ? AND is_active = 1', 
                        (new_name.upper(), account_code))
         if cursor.fetchone():
@@ -383,7 +537,6 @@ def delete_account(account_code):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Check if account exists
         cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
         if not cursor.fetchone():
             conn.close()
@@ -394,13 +547,11 @@ def delete_account(account_code):
         count = cursor.fetchone()[0]
         
         if count > 0:
-            # Soft delete - mark inactive
             cursor.execute('UPDATE accounts SET is_active = 0 WHERE account_code = ?', (account_code,))
             conn.commit()
             conn.close()
             return True, "Account has transactions. Marked as inactive."
         else:
-            # Hard delete - remove completely
             cursor.execute('DELETE FROM accounts WHERE account_code = ?', (account_code,))
             conn.commit()
             conn.close()
@@ -447,10 +598,8 @@ def get_all_accounts():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Check if columns exist
         columns = get_table_columns('accounts')
         
-        # Build query based on available columns
         if 'maturity_date' in columns and 'interest_rate' in columns:
             cursor.execute('''
                 SELECT account_code, account_name, account_type, balance, daily_limit, maturity_date, interest_rate, is_active
@@ -484,7 +633,6 @@ def get_all_accounts():
         return accounts
     except Exception as e:
         print(f"Error in get_all_accounts: {e}")
-        # Return empty dict on error
         return {}
 
 def get_account_name(account_code):
@@ -532,8 +680,6 @@ def update_account_balance(account_code, amount, is_debit=True):
         
         acc_type, current_balance = result
         
-        # Asset/Expense: Debit increases, Credit decreases
-        # Liability/Equity/Income: Credit increases, Debit decreases
         if acc_type in ['ASSET', 'EXPENSE']:
             new_balance = current_balance + amount if is_debit else current_balance - amount
         else:
@@ -563,11 +709,10 @@ def record_transaction(account_code, txn_type, amount, description="", username=
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (txn_id, date, account_code, txn_type, amount, description, ref_no, balance_after, username))
         
-        # Also record in journal entries
         cursor.execute('SELECT account_name FROM accounts WHERE account_code = ?', (account_code,))
         acc_name = cursor.fetchone()[0]
         
-        entry_type = 'DEBIT' if txn_type in ['DEPOSIT', 'INCOME'] else 'CREDIT'
+        entry_type = 'DEBIT' if txn_type in ['DEPOSIT', 'RECEIPT'] else 'CREDIT'
         cursor.execute('''
             INSERT INTO journal_entries 
             (date, account_code, account_name, entry_type, amount, description, ref_no, username)
@@ -582,23 +727,19 @@ def record_transaction(account_code, txn_type, amount, description="", username=
         return False, str(e)
 
 def double_entry(debit_account, credit_account, amount, description="", username=""):
-    """Perform double-entry bookkeeping"""
+    """Perform double-entry bookkeeping for transfers between accounts"""
     if amount <= 0:
         return False, "Amount must be greater than zero"
     
-    # Debit the debit account
     success, msg = update_account_balance(debit_account, amount, is_debit=True)
     if not success:
         return False, msg
     
-    # Credit the credit account
     success, msg = update_account_balance(credit_account, amount, is_debit=False)
     if not success:
-        # Rollback
         update_account_balance(debit_account, amount, is_debit=False)
         return False, msg
     
-    # Record transactions
     ref_no = f"JE{datetime.now().strftime('%Y%m%d%H%M%S')}"
     record_transaction(debit_account, 'DEBIT', amount, f"{description} (Dr)", username, ref_no)
     record_transaction(credit_account, 'CREDIT', amount, f"{description} (Cr)", username, ref_no)
@@ -625,7 +766,6 @@ def create_customer(full_name, address, phone, email, id_type, id_number, userna
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (customer_id, full_name, address, phone, email, id_type, id_number, 1, date, username))
         
-        # Create customer account mappings
         for acc_code in ['1100', '1200', '1300']:
             cursor.execute('''
                 INSERT INTO customer_accounts (customer_id, account_code, balance)
@@ -837,45 +977,19 @@ def display_account_card(acc_code, icon, color):
         """, unsafe_allow_html=True)
     except Exception as e:
         print(f"Error in display_account_card for {acc_code}: {e}")
-        st.error(f"Error displaying account {acc_code}")
 
-def show_transactions_table(account_code=None):
-    """Display transactions"""
+def get_cash_balance():
+    """Get current cash balance"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        if account_code:
-            cursor.execute('''
-                SELECT date, transaction_type, amount, description, balance_after, username
-                FROM transactions 
-                WHERE account_code = ?
-                ORDER BY date DESC
-                LIMIT 100
-            ''', (account_code,))
-        else:
-            cursor.execute('''
-                SELECT date, account_code, transaction_type, amount, description, balance_after, username
-                FROM transactions 
-                ORDER BY date DESC
-                LIMIT 100
-            ''')
-        
-        result = cursor.fetchall()
+        cursor.execute('SELECT balance FROM accounts WHERE account_code = "1000"')
+        result = cursor.fetchone()
         conn.close()
-        
-        if result:
-            if account_code:
-                columns = ['Date', 'Type', 'Amount', 'Description', 'Balance', 'User']
-            else:
-                columns = ['Date', 'Account', 'Type', 'Amount', 'Description', 'Balance', 'User']
-            df = pd.DataFrame(result, columns=columns)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No transactions yet.")
+        return result[0] if result else 0
     except Exception as e:
-        print(f"Error in show_transactions_table: {e}")
-        st.error(f"Error displaying transactions: {str(e)}")
+        print(f"Error in get_cash_balance: {e}")
+        return 0
 
 # ============== LOGIN PAGE ==============
 def login_page():
@@ -883,7 +997,6 @@ def login_page():
     st.title("🏦 Complete Banking System")
     st.subheader("🔐 Login")
     
-    # Initialize database if not exists
     if not os.path.exists(DB_FILE):
         try:
             init_database()
@@ -920,11 +1033,9 @@ def logout():
 # ============== MAIN APP ==============
 def main():
     try:
-        # Initialize database if not exists
         if not os.path.exists(DB_FILE):
             init_database()
         else:
-            # Run migration to ensure all columns exist
             try:
                 migrate_database()
             except Exception as e:
@@ -937,7 +1048,7 @@ def main():
         user = st.session_state.user
         
         # Header
-        col1, col2, col3 = st.columns([3, 1, 1])
+        col1, col2, col3 = st.columns([2.5, 1.5, 1])
         with col1:
             st.title("🏦 Complete Banking System")
         with col2:
@@ -954,8 +1065,16 @@ def main():
             st.header("📊 Account Overview")
             
             try:
-                with st.expander("💰 ASSETS", expanded=True):
-                    for code in ['1100', '1200', '1300', '1400']:
+                # Cash and Bank Accounts - Show prominently
+                st.subheader("💰 Cash & Bank")
+                display_account_card('1000', '💵', '#00A86B')
+                display_account_card('1100', '🏦', '#2E86AB')
+                display_account_card('1200', '🏦', '#1B4F72')
+                
+                st.divider()
+                
+                with st.expander("🏦 Other ASSETS", expanded=True):
+                    for code in ['1300', '1400']:
                         display_account_card(code, '💰', '#2E86AB')
                 
                 with st.expander("🏛️ LIABILITIES", expanded=True):
@@ -991,13 +1110,178 @@ def main():
                 st.error(f"Error loading sidebar: {str(e)}")
         
         # Main Tabs
-        tabs = ["👥 Customers & KYC", "💰 Customer Operations", "📊 Financial Reports", 
+        tabs = ["💰 Cash & Bank", "👥 Customers & KYC", "📊 Financial Reports", 
                 "📝 Journal Entries", "📋 Trial Balance", "⚙️ Head Management"]
         
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tabs)
         
-        # ---------- TAB 1: CUSTOMERS & KYC ----------
+        # ---------- TAB 1: CASH & BANK ----------
         with tab1:
+            st.header("💰 Cash & Bank Transactions")
+            
+            # Cash and Bank Summary
+            col1, col2, col3 = st.columns(3)
+            cash_balance = get_cash_balance()
+            bank_savings = get_account_balance('1100')
+            bank_current = get_account_balance('1200')
+            
+            with col1:
+                st.metric("💵 Cash Balance", f"₹{cash_balance:,.2f}")
+            with col2:
+                st.metric("🏦 Bank Savings", f"₹{bank_savings:,.2f}")
+            with col3:
+                st.metric("🏦 Bank Current", f"₹{bank_current:,.2f}")
+            
+            st.divider()
+            
+            # Cash Transactions
+            st.subheader("💵 Cash Transactions (Single Entry)")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Cash Receipt**")
+                cash_receipt_amt = st.number_input("Amount", min_value=0.0, step=100.0, key="cash_rec")
+                cash_receipt_desc = st.text_input("Description", key="cash_rec_desc", placeholder="e.g., Customer payment")
+                customer_option = st.selectbox("Link to Customer (Optional)", ["None"] + [f"{c['full_name']} ({cid})" for cid, c in get_all_customers().items()], key="cash_rec_cust")
+                
+                if st.button("💰 Record Cash Receipt", key="cash_rec_btn"):
+                    if cash_receipt_amt > 0:
+                        customer_id = None
+                        if customer_option != "None":
+                            customer_id = customer_option.split('(')[-1].replace(')', '')
+                        success, msg = record_cash_transaction('RECEIPT', cash_receipt_amt, cash_receipt_desc, user['username'], customer_id)
+                        if success:
+                            st.success(msg)
+                            st.balloons()
+                        else:
+                            st.error(msg)
+                    else:
+                        st.warning("Enter an amount greater than zero")
+            
+            with col2:
+                st.markdown("**Cash Payment**")
+                cash_payment_amt = st.number_input("Amount", min_value=0.0, step=100.0, key="cash_pay")
+                cash_payment_desc = st.text_input("Description", key="cash_pay_desc", placeholder="e.g., Office supplies")
+                customer_option2 = st.selectbox("Link to Customer (Optional)", ["None"] + [f"{c['full_name']} ({cid})" for cid, c in get_all_customers().items()], key="cash_pay_cust")
+                
+                if st.button("💸 Record Cash Payment", key="cash_pay_btn"):
+                    if cash_payment_amt > 0:
+                        if cash_payment_amt > cash_balance:
+                            st.error(f"Insufficient cash balance. Available: ₹{cash_balance:,.2f}")
+                        else:
+                            customer_id = None
+                            if customer_option2 != "None":
+                                customer_id = customer_option2.split('(')[-1].replace(')', '')
+                            success, msg = record_cash_transaction('PAYMENT', cash_payment_amt, cash_payment_desc, user['username'], customer_id)
+                            if success:
+                                st.success(msg)
+                            else:
+                                st.error(msg)
+                    else:
+                        st.warning("Enter an amount greater than zero")
+            
+            st.divider()
+            
+            # Bank Transactions
+            st.subheader("🏦 Bank Transactions (Single Entry)")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Bank Deposit**")
+                bank_account = st.selectbox("Bank Account", ['1100 - Bank Savings', '1200 - Bank Current'], key="bank_dep_acc")
+                bank_acc_code = bank_account.split(' - ')[0]
+                bank_dep_amt = st.number_input("Amount", min_value=0.0, step=100.0, key="bank_dep")
+                bank_dep_desc = st.text_input("Description", key="bank_dep_desc", placeholder="e.g., Cash deposit")
+                
+                if st.button("🏦 Record Bank Deposit", key="bank_dep_btn"):
+                    if bank_dep_amt > 0:
+                        success, msg = record_bank_transaction(bank_acc_code, 'DEPOSIT', bank_dep_amt, bank_dep_desc, user['username'])
+                        if success:
+                            st.success(msg)
+                            st.balloons()
+                        else:
+                            st.error(msg)
+                    else:
+                        st.warning("Enter an amount greater than zero")
+            
+            with col2:
+                st.markdown("**Bank Withdrawal**")
+                bank_account2 = st.selectbox("Bank Account", ['1100 - Bank Savings', '1200 - Bank Current'], key="bank_wd_acc")
+                bank_acc_code2 = bank_account2.split(' - ')[0]
+                bank_wd_amt = st.number_input("Amount", min_value=0.0, step=100.0, key="bank_wd")
+                bank_wd_desc = st.text_input("Description", key="bank_wd_desc", placeholder="e.g., ATM withdrawal")
+                current_bank_balance = get_account_balance(bank_acc_code2)
+                st.caption(f"Available balance: ₹{current_bank_balance:,.2f}")
+                
+                if st.button("💸 Record Bank Withdrawal", key="bank_wd_btn"):
+                    if bank_wd_amt > 0:
+                        if bank_wd_amt > current_bank_balance:
+                            st.error(f"Insufficient balance. Available: ₹{current_bank_balance:,.2f}")
+                        else:
+                            success, msg = record_bank_transaction(bank_acc_code2, 'WITHDRAWAL', bank_wd_amt, bank_wd_desc, user['username'])
+                            if success:
+                                st.success(msg)
+                            else:
+                                st.error(msg)
+                    else:
+                        st.warning("Enter an amount greater than zero")
+            
+            st.divider()
+            
+            # Transfer between Cash and Bank
+            st.subheader("🔄 Transfer Between Cash & Bank (Double Entry)")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                transfer_from = st.selectbox("Transfer From", ['CASH (1000)', 'BANK_SAVINGS (1100)', 'BANK_CURRENT (1200)'], key="transfer_from")
+                from_code = transfer_from.split('(')[-1].replace(')', '')
+            with col2:
+                transfer_to = st.selectbox("Transfer To", ['CASH (1000)', 'BANK_SAVINGS (1100)', 'BANK_CURRENT (1200)'], key="transfer_to")
+                to_code = transfer_to.split('(')[-1].replace(')', '')
+            with col3:
+                transfer_amt = st.number_input("Amount", min_value=0.0, step=100.0, key="transfer_amt")
+            
+            if from_code == to_code:
+                st.warning("⚠️ From and To accounts must be different")
+            
+            if st.button("🔄 Execute Transfer", key="transfer_btn"):
+                if from_code == to_code:
+                    st.error("Cannot transfer to the same account")
+                elif transfer_amt <= 0:
+                    st.warning("Enter an amount greater than zero")
+                else:
+                    # Check if source has sufficient balance
+                    source_balance = get_account_balance(from_code)
+                    if source_balance < transfer_amt:
+                        st.error(f"Insufficient balance in source account. Available: ₹{source_balance:,.2f}")
+                    else:
+                        # Use double entry for transfer
+                        success, msg = double_entry(from_code, to_code, transfer_amt, 
+                                                   f"Transfer from {from_code} to {to_code}", user['username'])
+                        if success:
+                            st.success(msg)
+                            st.balloons()
+                        else:
+                            st.error(msg)
+            
+            st.divider()
+            
+            # Transaction History
+            st.subheader("📜 Recent Cash & Bank Transactions")
+            
+            # Show cash transactions
+            cash_txns = get_cash_transactions(50)
+            if cash_txns:
+                df_cash = pd.DataFrame(cash_txns, columns=['Date', 'Type', 'Amount', 'Description', 'Balance', 'User', 'Customer'])
+                st.markdown("**Cash Transactions**")
+                st.dataframe(df_cash, use_container_width=True, hide_index=True)
+            else:
+                st.info("No cash transactions yet")
+        
+        # ---------- TAB 2: CUSTOMERS & KYC ----------
+        with tab2:
             st.header("👥 Customer Management with KYC")
             
             col1, col2 = st.columns([1, 1])
@@ -1077,72 +1361,6 @@ def main():
                         st.metric("Current", f"₹{balances.get('1200', 0):,.2f}")
                     with col3:
                         st.metric("FD", f"₹{balances.get('1300', 0):,.2f}")
-        
-        # ---------- TAB 2: CUSTOMER OPERATIONS ----------
-        with tab2:
-            st.header("💰 Customer Account Operations")
-            
-            customers = get_all_customers()
-            if not customers:
-                st.warning("⚠️ Please register customers first using the Customers & KYC tab.")
-            else:
-                col1, col2 = st.columns([1, 1])
-                
-                with col1:
-                    st.subheader("🏦 Deposit")
-                    selected = st.selectbox("Select Customer", 
-                                           [f"{c['full_name']} ({cid})" for cid, c in customers.items()],
-                                           key="dep_cust")
-                    if selected:
-                        cust_id = selected.split('(')[-1].replace(')', '')
-                        acc_type = st.selectbox("Account Type", ['Savings (1100)', 'Current (1200)'], key="dep_acc")
-                        account_code = '1100' if 'Savings' in acc_type else '1200'
-                        amount = st.number_input("Amount", min_value=0.0, step=100.0, key="dep_amt")
-                        
-                        if st.button("💰 Deposit", key="dep_btn"):
-                            if amount > 0:
-                                success, msg = double_entry(account_code, '2100', amount, 
-                                                            f"Deposit by {selected.split('(')[0].strip()}", user['username'])
-                                if success:
-                                    record_customer_transaction(cust_id, account_code, amount, 'DEPOSIT', 
-                                                              f"Deposit of ₹{amount:,.2f}", user['username'])
-                                    st.success(msg)
-                                    st.balloons()
-                                else:
-                                    st.error(msg)
-                            else:
-                                st.warning("Enter an amount greater than zero")
-                
-                with col2:
-                    st.subheader("💸 Withdraw")
-                    selected2 = st.selectbox("Select Customer", 
-                                            [f"{c['full_name']} ({cid})" for cid, c in customers.items()],
-                                            key="wd_cust")
-                    if selected2:
-                        cust_id = selected2.split('(')[-1].replace(')', '')
-                        acc_type2 = st.selectbox("Account Type", ['Savings (1100)', 'Current (1200)'], key="wd_acc")
-                        account_code2 = '1100' if 'Savings' in acc_type2 else '1200'
-                        amount2 = st.number_input("Amount", min_value=0.0, step=100.0, key="wd_amt")
-                        
-                        balances = get_customer_balances(cust_id)
-                        if balances.get(account_code2, 0) < amount2:
-                            st.warning(f"Insufficient balance. Available: ₹{balances.get(account_code2, 0):,.2f}")
-                        
-                        if st.button("💸 Withdraw", key="wd_btn"):
-                            if amount2 > 0:
-                                if balances.get(account_code2, 0) >= amount2:
-                                    success, msg = double_entry('2100', account_code2, amount2,
-                                                               f"Withdrawal by {selected2.split('(')[0].strip()}", user['username'])
-                                    if success:
-                                        record_customer_transaction(cust_id, account_code2, amount2, 'WITHDRAWAL',
-                                                                  f"Withdrawal of ₹{amount2:,.2f}", user['username'])
-                                        st.success(msg)
-                                    else:
-                                        st.error(msg)
-                                else:
-                                    st.error("Insufficient balance")
-                            else:
-                                st.warning("Enter an amount greater than zero")
         
         # ---------- TAB 3: FINANCIAL REPORTS ----------
         with tab3:
@@ -1281,7 +1499,7 @@ def main():
                     
                     with col1:
                         with st.form("create_head_form"):
-                            head_type = st.selectbox("Head Type", ['EXPENSE', 'INCOME'])
+                            head_type = st.selectbox("Head Type", ['INCOME', 'EXPENSE'])
                             head_name = st.text_input("Head Name*", placeholder="e.g., Office Supplies, Commission Income")
                             initial_balance = st.number_input("Initial Balance", min_value=0.0, step=100.0, value=0.0)
                             

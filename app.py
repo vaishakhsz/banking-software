@@ -27,7 +27,7 @@ def init_database():
         )
     ''')
     
-    # Accounts table (Chart of Accounts)
+    # Accounts table (Chart of Accounts) - FIXED COLUMN DEFINITION
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,7 +124,7 @@ def init_database():
     
     conn.commit()
     
-    # Insert default accounts
+    # Insert default accounts - FIXED to include created_by
     default_accounts = [
         ('1100', 'SAVINGS', 'ASSET', 0, None, None, None, 'system'),
         ('1200', 'CURRENT', 'ASSET', 0, None, None, None, 'system'),
@@ -134,16 +134,21 @@ def init_database():
         ('2200', 'FD_LIABILITY', 'LIABILITY', 0, None, None, None, 'system'),
         ('3100', 'CAPITAL', 'EQUITY', 1000000, None, None, None, 'system'),
         ('3200', 'RETAINED_EARNINGS', 'EQUITY', 0, None, None, None, 'system'),
-        # Income accounts will be dynamically added
-        # Expense accounts will be dynamically added
+        ('4100', 'INTEREST_INCOME', 'INCOME', 0, None, None, None, 'system'),
+        ('4200', 'SERVICE_CHARGE', 'INCOME', 0, None, None, None, 'system'),
+        ('5100', 'GENERAL_EXPENSE', 'EXPENSE', 0, None, None, None, 'system'),
+        ('5200', 'SALARY_EXPENSE', 'EXPENSE', 0, None, None, None, 'system'),
+        ('5300', 'RENT_EXPENSE', 'EXPENSE', 0, None, None, None, 'system'),
+        ('5400', 'UTILITY_EXPENSE', 'EXPENSE', 0, None, None, None, 'system'),
     ]
     
+    current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     for acc in default_accounts:
         cursor.execute('''
             INSERT OR IGNORE INTO accounts 
             (account_code, account_name, account_type, balance, daily_limit, maturity_date, interest_rate, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', acc)
+        ''', (acc[0], acc[1], acc[2], acc[3], acc[4], acc[5], acc[6], acc[7]))
     
     # Insert default admin user
     admin_password = hash_password("admin123")
@@ -151,7 +156,7 @@ def init_database():
         INSERT OR IGNORE INTO users 
         (username, password_hash, full_name, role, created_date)
         VALUES (?, ?, ?, ?, ?)
-    ''', ("admin", admin_password, "System Administrator", "admin", datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    ''', ("admin", admin_password, "System Administrator", "admin", current_date))
     
     # Insert demo users
     demo_password = hash_password("demo123")
@@ -165,7 +170,7 @@ def init_database():
             INSERT OR IGNORE INTO users 
             (username, password_hash, full_name, role, created_date)
             VALUES (?, ?, ?, ?, ?)
-        ''', (user[0], user[1], user[2], user[3], datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        ''', (user[0], user[1], user[2], user[3], current_date))
     
     conn.commit()
     conn.close()
@@ -221,6 +226,7 @@ def generate_account_code(account_type):
         SELECT account_code FROM accounts 
         WHERE account_code LIKE '{prefix}%' 
         AND account_type = ?
+        AND is_active = 1
         ORDER BY account_code DESC LIMIT 1
     ''', (account_type,))
     
@@ -244,7 +250,8 @@ def create_account(account_name, account_type, initial_balance=0, daily_limit=No
     cursor = conn.cursor()
     
     # Check if account already exists
-    cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_type = ?', (account_name, account_type))
+    cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_type = ? AND is_active = 1', 
+                   (account_name, account_type))
     if cursor.fetchone():
         conn.close()
         return False, f"Account '{account_name}' already exists in {account_type} category"
@@ -268,13 +275,14 @@ def update_account(account_code, new_name, new_daily_limit=None, new_interest_ra
     cursor = conn.cursor()
     
     # Check if account exists
-    cursor.execute('SELECT * FROM accounts WHERE account_code = ?', (account_code,))
+    cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
     if not cursor.fetchone():
         conn.close()
         return False, "Account not found"
     
     # Check for duplicate name
-    cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_code != ?', (new_name.upper(), account_code))
+    cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_code != ? AND is_active = 1', 
+                   (new_name.upper(), account_code))
     if cursor.fetchone():
         conn.close()
         return False, f"Account '{new_name}' already exists"
@@ -309,7 +317,7 @@ def delete_account(account_code):
     cursor = conn.cursor()
     
     # Check if account exists
-    cursor.execute('SELECT * FROM accounts WHERE account_code = ?', (account_code,))
+    cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
     if not cursor.fetchone():
         conn.close()
         return False, "Account not found"
@@ -727,8 +735,9 @@ def show_transactions_table(account_code=None):
     conn.close()
     
     if result:
-        columns = ['Date', 'Type', 'Amount', 'Description', 'Balance', 'User']
-        if not account_code:
+        if account_code:
+            columns = ['Date', 'Type', 'Amount', 'Description', 'Balance', 'User']
+        else:
             columns = ['Date', 'Account', 'Type', 'Amount', 'Description', 'Balance', 'User']
         df = pd.DataFrame(result, columns=columns)
         st.dataframe(df, use_container_width=True, hide_index=True)
@@ -1143,7 +1152,6 @@ def main():
                                 if success:
                                     st.success(msg)
                                     st.balloons()
-                                    # Refresh accounts
                                     st.rerun()
                                 else:
                                     st.error(msg)
@@ -1173,7 +1181,6 @@ def main():
             with head_tab2:
                 st.subheader("✏️ Edit or Delete Head")
                 
-                # Get all income and expense accounts
                 all_heads = get_accounts_by_type('INCOME') + get_accounts_by_type('EXPENSE')
                 
                 if not all_heads:
@@ -1184,7 +1191,6 @@ def main():
                     selected_head = st.selectbox("Select Head to Manage", head_options)
                     
                     if selected_head:
-                        # Find the selected head data
                         acc_code = selected_head.split('(')[1].split(')')[0]
                         head_data = next((acc for acc in all_heads if acc['account_code'] == acc_code), None)
                         
@@ -1226,7 +1232,6 @@ def main():
                                 st.subheader("🗑️ Delete Head")
                                 st.warning(f"⚠️ You are about to delete '{head_data['account_name']}'")
                                 
-                                # Show if account has transactions
                                 conn = get_db_connection()
                                 cursor = conn.cursor()
                                 cursor.execute('SELECT COUNT(*) FROM transactions WHERE account_code = ?', (acc_code,))
@@ -1234,7 +1239,7 @@ def main():
                                 conn.close()
                                 
                                 if txn_count > 0:
-                                    st.info(f"This account has {txn_count} transactions. It will be marked as inactive (soft delete).")
+                                    st.info(f"This account has {txn_count} transactions. It will be marked as inactive.")
                                 else:
                                     st.info("This account has no transactions. It will be permanently deleted.")
                                 

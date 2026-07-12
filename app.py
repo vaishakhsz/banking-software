@@ -45,6 +45,24 @@ def migrate_database():
         except sqlite3.OperationalError as e:
             print(f"Could not add is_active: {e}")
     
+    # Add voucher_number column to journal_entries if not exists
+    columns = get_table_columns('journal_entries')
+    if 'voucher_number' not in columns:
+        try:
+            cursor.execute("ALTER TABLE journal_entries ADD COLUMN voucher_number TEXT")
+            print("Added voucher_number column to journal_entries")
+        except sqlite3.OperationalError as e:
+            print(f"Could not add voucher_number to journal_entries: {e}")
+    
+    # Add voucher_number column to transactions if not exists
+    columns = get_table_columns('transactions')
+    if 'voucher_number' not in columns:
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN voucher_number TEXT")
+            print("Added voucher_number column to transactions")
+        except sqlite3.OperationalError as e:
+            print(f"Could not add voucher_number to transactions: {e}")
+    
     # Create vouchers table if not exists
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS vouchers (
@@ -158,8 +176,7 @@ def init_database():
             balance_after REAL,
             username TEXT,
             voucher_number TEXT,
-            FOREIGN KEY (account_code) REFERENCES accounts(account_code),
-            FOREIGN KEY (voucher_number) REFERENCES vouchers(voucher_number)
+            FOREIGN KEY (account_code) REFERENCES accounts(account_code)
         )
     ''')
     
@@ -176,8 +193,7 @@ def init_database():
             ref_no TEXT,
             username TEXT,
             voucher_number TEXT,
-            FOREIGN KEY (account_code) REFERENCES accounts(account_code),
-            FOREIGN KEY (voucher_number) REFERENCES vouchers(voucher_number)
+            FOREIGN KEY (account_code) REFERENCES accounts(account_code)
         )
     ''')
     
@@ -194,8 +210,7 @@ def init_database():
             username TEXT,
             voucher_number TEXT,
             FOREIGN KEY (customer_id) REFERENCES customers(customer_id),
-            FOREIGN KEY (account_code) REFERENCES accounts(account_code),
-            FOREIGN KEY (voucher_number) REFERENCES vouchers(voucher_number)
+            FOREIGN KEY (account_code) REFERENCES accounts(account_code)
         )
     ''')
     
@@ -212,8 +227,7 @@ def init_database():
             username TEXT,
             customer_id TEXT,
             voucher_number TEXT,
-            FOREIGN KEY (customer_id) REFERENCES customers(customer_id),
-            FOREIGN KEY (voucher_number) REFERENCES vouchers(voucher_number)
+            FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
         )
     ''')
     
@@ -277,6 +291,38 @@ def init_database():
                 (username, password_hash, full_name, role, created_date)
                 VALUES (?, ?, ?, ?, ?)
             ''', (user[0], user[1], user[2], user[3], current_date))
+    
+    # Create vouchers table if not exists
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vouchers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            voucher_number TEXT UNIQUE NOT NULL,
+            voucher_type TEXT NOT NULL,
+            voucher_date TEXT NOT NULL,
+            description TEXT,
+            total_amount REAL DEFAULT 0,
+            status TEXT DEFAULT 'DRAFT',
+            created_date TEXT NOT NULL,
+            created_by TEXT,
+            updated_date TEXT,
+            updated_by TEXT
+        )
+    ''')
+    
+    # Create voucher entries table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS voucher_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            voucher_number TEXT NOT NULL,
+            entry_type TEXT NOT NULL,
+            account_code TEXT NOT NULL,
+            account_name TEXT NOT NULL,
+            amount REAL NOT NULL,
+            narration TEXT,
+            FOREIGN KEY (voucher_number) REFERENCES vouchers(voucher_number),
+            FOREIGN KEY (account_code) REFERENCES accounts(account_code)
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -403,95 +449,23 @@ def get_customer_balances(customer_id):
         print(f"Error in get_customer_balances: {e}")
         return {}
 
-def record_customer_transaction(customer_id, account_code, amount, txn_type, description="", username=""):
-    """Record a customer transaction"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        cursor.execute('''
-            UPDATE customer_accounts 
-            SET balance = balance + ? 
-            WHERE customer_id = ? AND account_code = ?
-        ''', (amount if txn_type == 'DEPOSIT' else -amount, customer_id, account_code))
-        
-        cursor.execute('''
-            INSERT INTO customer_transactions 
-            (customer_id, date, transaction_type, amount, account_code, description, username)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (customer_id, date, txn_type, amount, account_code, description, username))
-        
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"Error in record_customer_transaction: {e}")
-        return False
-
 # ============== CASH TRANSACTION FUNCTIONS ==============
 def generate_cash_transaction_id():
     """Generate unique cash transaction ID"""
     return f"CASHTXN{datetime.now().strftime('%Y%m%d%H%M%S')}{str(time.time_ns())[-6:]}"
 
-def record_cash_transaction(txn_type, amount, description="", username="", customer_id=None):
-    """Record a single cash transaction (single entry)"""
+def get_cash_balance():
+    """Get current cash balance"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        txn_id = generate_cash_transaction_id()
-        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Get current cash balance
         cursor.execute('SELECT balance FROM accounts WHERE account_code = "1000"')
         result = cursor.fetchone()
-        current_balance = result[0] if result else 0
-        
-        if txn_type == 'RECEIPT':
-            new_balance = current_balance + amount
-        elif txn_type == 'PAYMENT':
-            if current_balance < amount:
-                conn.close()
-                return False, f"Insufficient cash balance. Available: ₹{current_balance:,.2f}"
-            new_balance = current_balance - amount
-        else:
-            conn.close()
-            return False, "Invalid transaction type"
-        
-        # Update cash account balance
-        cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = "1000"', (new_balance,))
-        
-        # Record cash transaction
-        cursor.execute('''
-            INSERT INTO cash_transactions 
-            (transaction_id, date, transaction_type, amount, description, balance_after, username, customer_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (txn_id, date, txn_type, amount, description, new_balance, username, customer_id))
-        
-        # Also record in main transactions for journal
-        cursor.execute('''
-            INSERT INTO transactions 
-            (transaction_id, date, account_code, transaction_type, amount, description, balance_after, username)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (txn_id, date, '1000', txn_type, amount, description, new_balance, username))
-        
-        # Record in journal entries
-        entry_type = 'DEBIT' if txn_type == 'RECEIPT' else 'CREDIT'
-        cursor.execute('''
-            INSERT INTO journal_entries 
-            (date, account_code, account_name, entry_type, amount, description, ref_no, username)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (date, '1000', 'CASH', entry_type, amount, description, txn_id, username))
-        
-        conn.commit()
         conn.close()
-        
-        return True, f"Cash {txn_type} of ₹{amount:,.2f} recorded successfully"
+        return result[0] if result else 0
     except Exception as e:
-        print(f"Error in record_cash_transaction: {e}")
-        return False, f"Error: {str(e)}"
+        print(f"Error in get_cash_balance: {e}")
+        return 0
 
 def get_cash_transactions(limit=100):
     """Get cash transactions"""
@@ -511,61 +485,286 @@ def get_cash_transactions(limit=100):
         print(f"Error in get_cash_transactions: {e}")
         return []
 
-# ============== BANK TRANSACTION FUNCTIONS ==============
-def record_bank_transaction(account_code, txn_type, amount, description="", username="", customer_id=None):
-    """Record a single bank transaction (single entry)"""
+# ============== ACCOUNT FUNCTIONS ==============
+def generate_account_code(account_type):
+    """Generate a new account code based on type"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        txn_id = generate_transaction_id()
+        prefix_map = {
+            'INCOME': '4',
+            'EXPENSE': '5',
+            'ASSET': '1'
+        }
+        
+        prefix = prefix_map.get(account_type, '9')
+        cursor.execute(f'''
+            SELECT account_code FROM accounts 
+            WHERE account_code LIKE '{prefix}%' 
+            AND account_type = ?
+            AND is_active = 1
+            ORDER BY account_code DESC LIMIT 1
+        ''', (account_type,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            last_code = int(result[0])
+            new_code = str(last_code + 1)
+        else:
+            if account_type == 'INCOME':
+                new_code = '4100'
+            elif account_type == 'EXPENSE':
+                new_code = '5100'
+            elif account_type == 'ASSET':
+                new_code = '1500'
+            else:
+                new_code = '9100'
+        
+        return new_code
+    except Exception as e:
+        print(f"Error in generate_account_code: {e}")
+        return '5100'
+
+def create_account(account_name, account_type, initial_balance=0, daily_limit=None, interest_rate=None, username=""):
+    """Create a new account"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_type = ? AND is_active = 1', 
+                       (account_name, account_type))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Account '{account_name}' already exists in {account_type} category"
+        
+        account_code = generate_account_code(account_type)
         date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # Get current bank balance
-        cursor.execute('SELECT balance, account_name FROM accounts WHERE account_code = ?', (account_code,))
+        if daily_limit is not None and daily_limit <= 0:
+            daily_limit = None
+        
+        cursor.execute('''
+            INSERT INTO accounts 
+            (account_code, account_name, account_type, balance, daily_limit, interest_rate, created_date, created_by, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (account_code, account_name.upper(), account_type, initial_balance, daily_limit, interest_rate, date, username, 1))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Account '{account_name}' created with code {account_code}"
+    except Exception as e:
+        print(f"Error in create_account: {e}")
+        return False, f"Error creating account: {str(e)}"
+
+def update_account(account_code, new_name, new_daily_limit=None, new_interest_rate=None):
+    """Update an existing account"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Account not found"
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_code != ? AND is_active = 1', 
+                       (new_name.upper(), account_code))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Account '{new_name}' already exists"
+        
+        updates = []
+        params = []
+        
+        if new_name:
+            updates.append("account_name = ?")
+            params.append(new_name.upper())
+        
+        if new_daily_limit is not None:
+            if new_daily_limit <= 0:
+                new_daily_limit = None
+            updates.append("daily_limit = ?")
+            params.append(new_daily_limit)
+        
+        if new_interest_rate is not None:
+            updates.append("interest_rate = ?")
+            params.append(new_interest_rate)
+        
+        if updates:
+            query = f"UPDATE accounts SET {', '.join(updates)} WHERE account_code = ?"
+            params.append(account_code)
+            cursor.execute(query, params)
+            conn.commit()
+        
+        conn.close()
+        return True, "Account updated successfully"
+    except Exception as e:
+        print(f"Error in update_account: {e}")
+        return False, f"Error updating account: {str(e)}"
+
+def delete_account(account_code):
+    """Delete an account (soft delete - mark inactive)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Account not found"
+        
+        cursor.execute('SELECT COUNT(*) FROM transactions WHERE account_code = ?', (account_code,))
+        count = cursor.fetchone()[0]
+        
+        if count > 0:
+            cursor.execute('UPDATE accounts SET is_active = 0 WHERE account_code = ?', (account_code,))
+            conn.commit()
+            conn.close()
+            return True, "Account has transactions. Marked as inactive."
+        else:
+            cursor.execute('DELETE FROM accounts WHERE account_code = ?', (account_code,))
+            conn.commit()
+            conn.close()
+            return True, "Account deleted successfully"
+    except Exception as e:
+        print(f"Error in delete_account: {e}")
+        return False, f"Error deleting account: {str(e)}"
+
+def get_accounts_by_type(account_type):
+    """Get all accounts of a specific type"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT account_code, account_name, account_type, balance, daily_limit, interest_rate, is_active, created_date, created_by
+            FROM accounts 
+            WHERE account_type = ? AND is_active = 1
+            ORDER BY account_code
+        ''', (account_type,))
+        result = cursor.fetchall()
+        conn.close()
+        
+        accounts = []
+        for row in result:
+            accounts.append({
+                'account_code': row[0],
+                'account_name': row[1],
+                'account_type': row[2],
+                'balance': row[3],
+                'daily_limit': row[4] if row[4] is not None else None,
+                'interest_rate': row[5],
+                'is_active': row[6],
+                'created_date': row[7],
+                'created_by': row[8] if len(row) > 8 else 'system'
+            })
+        return accounts
+    except Exception as e:
+        print(f"Error in get_accounts_by_type: {e}")
+        return []
+
+def get_all_accounts():
+    """Get all active accounts"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        columns = get_table_columns('accounts')
+        
+        if 'maturity_date' in columns and 'interest_rate' in columns:
+            cursor.execute('''
+                SELECT account_code, account_name, account_type, balance, daily_limit, maturity_date, interest_rate, is_active
+                FROM accounts 
+                WHERE is_active = 1
+                ORDER BY account_code
+            ''')
+        else:
+            cursor.execute('''
+                SELECT account_code, account_name, account_type, balance, daily_limit, NULL as maturity_date, NULL as interest_rate, is_active
+                FROM accounts 
+                WHERE is_active = 1
+                ORDER BY account_code
+            ''')
+        
+        result = cursor.fetchall()
+        conn.close()
+        
+        accounts = {}
+        for row in result:
+            accounts[row[0]] = {
+                'account_code': row[0],
+                'account_name': row[1],
+                'account_type': row[2],
+                'balance': row[3],
+                'daily_limit': row[4] if row[4] is not None else None,
+                'maturity_date': row[5] if len(row) > 5 else None,
+                'interest_rate': row[6] if len(row) > 6 else None,
+                'is_active': row[7] if len(row) > 7 else 1
+            }
+        return accounts
+    except Exception as e:
+        print(f"Error in get_all_accounts: {e}")
+        return {}
+
+def get_account_name(account_code):
+    """Get account name from code"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT account_name FROM accounts WHERE account_code = ?', (account_code,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception as e:
+        print(f"Error in get_account_name: {e}")
+        return None
+
+# ============== ACCOUNTING FUNCTIONS ==============
+def generate_transaction_id():
+    """Generate unique transaction ID"""
+    return f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{str(time.time_ns())[-6:]}"
+
+def get_account_balance(account_code):
+    """Get current balance of an account"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT balance FROM accounts WHERE account_code = ?', (account_code,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else 0
+    except Exception as e:
+        print(f"Error in get_account_balance: {e}")
+        return 0
+
+def update_account_balance(account_code, amount, is_debit=True):
+    """Update account balance with debit/credit logic"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT account_type, balance FROM accounts WHERE account_code = ?', (account_code,))
         result = cursor.fetchone()
         if not result:
             conn.close()
             return False, "Account not found"
         
-        current_balance, account_name = result
+        acc_type, current_balance = result
         
-        if txn_type == 'DEPOSIT':
-            new_balance = current_balance + amount
-        elif txn_type == 'WITHDRAWAL':
-            if current_balance < amount:
-                conn.close()
-                return False, f"Insufficient balance in {account_name}. Available: ₹{current_balance:,.2f}"
-            new_balance = current_balance - amount
+        if acc_type in ['ASSET', 'EXPENSE']:
+            new_balance = current_balance + amount if is_debit else current_balance - amount
         else:
-            conn.close()
-            return False, "Invalid transaction type"
+            new_balance = current_balance - amount if is_debit else current_balance + amount
         
-        # Update account balance
         cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
-        
-        # Record transaction
-        cursor.execute('''
-            INSERT INTO transactions 
-            (transaction_id, date, account_code, transaction_type, amount, description, balance_after, username)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (txn_id, date, account_code, txn_type, amount, description, new_balance, username))
-        
-        # Record in journal entries
-        entry_type = 'DEBIT' if txn_type == 'DEPOSIT' else 'CREDIT'
-        cursor.execute('''
-            INSERT INTO journal_entries 
-            (date, account_code, account_name, entry_type, amount, description, ref_no, username)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (date, account_code, account_name, entry_type, amount, description, txn_id, username))
-        
         conn.commit()
         conn.close()
-        
-        return True, f"Bank {txn_type} of ₹{amount:,.2f} recorded in {account_name}"
+        return True, new_balance
     except Exception as e:
-        print(f"Error in record_bank_transaction: {e}")
-        return False, f"Error: {str(e)}"
+        print(f"Error in update_account_balance: {e}")
+        return False, str(e)
 
 # ============== VOUCHER FUNCTIONS ==============
 def generate_voucher_number(voucher_type):
@@ -642,7 +841,7 @@ def save_voucher(voucher_type, voucher_date, description, entries, username, sta
                 else:
                     update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
                 
-                # Record in journal entries
+                # Record in journal entries with voucher_number
                 cursor.execute('''
                     INSERT INTO journal_entries 
                     (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
@@ -655,6 +854,7 @@ def save_voucher(voucher_type, voucher_date, description, entries, username, sta
         return True, f"Voucher {voucher_number} saved successfully"
     except Exception as e:
         print(f"Error in save_voucher: {e}")
+        print(traceback.format_exc())
         return False, f"Error saving voucher: {str(e)}"
 
 def update_voucher(voucher_number, voucher_date, description, entries, username):
@@ -710,7 +910,7 @@ def update_voucher(voucher_number, voucher_date, description, entries, username)
             else:
                 update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
             
-            # Record in journal entries
+            # Record in journal entries with voucher_number
             cursor.execute('''
                 INSERT INTO journal_entries 
                 (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
@@ -877,289 +1077,6 @@ def get_vouchers_by_type(voucher_type):
         print(f"Error in get_vouchers_by_type: {e}")
         return []
 
-# ============== ACCOUNT FUNCTIONS ==============
-def generate_account_code(account_type):
-    """Generate a new account code based on type"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        prefix_map = {
-            'INCOME': '4',
-            'EXPENSE': '5',
-            'ASSET': '1'
-        }
-        
-        prefix = prefix_map.get(account_type, '9')
-        cursor.execute(f'''
-            SELECT account_code FROM accounts 
-            WHERE account_code LIKE '{prefix}%' 
-            AND account_type = ?
-            AND is_active = 1
-            ORDER BY account_code DESC LIMIT 1
-        ''', (account_type,))
-        
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
-            last_code = int(result[0])
-            new_code = str(last_code + 1)
-        else:
-            if account_type == 'INCOME':
-                new_code = '4100'
-            elif account_type == 'EXPENSE':
-                new_code = '5100'
-            elif account_type == 'ASSET':
-                new_code = '1500'
-            else:
-                new_code = '9100'
-        
-        return new_code
-    except Exception as e:
-        print(f"Error in generate_account_code: {e}")
-        return '5100'
-
-def create_account(account_name, account_type, initial_balance=0, daily_limit=None, interest_rate=None, username=""):
-    """Create a new account"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Check if account already exists
-        cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_type = ? AND is_active = 1', 
-                       (account_name, account_type))
-        if cursor.fetchone():
-            conn.close()
-            return False, f"Account '{account_name}' already exists in {account_type} category"
-        
-        account_code = generate_account_code(account_type)
-        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        if daily_limit is not None and daily_limit <= 0:
-            daily_limit = None
-        
-        cursor.execute('''
-            INSERT INTO accounts 
-            (account_code, account_name, account_type, balance, daily_limit, interest_rate, created_date, created_by, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (account_code, account_name.upper(), account_type, initial_balance, daily_limit, interest_rate, date, username, 1))
-        
-        conn.commit()
-        conn.close()
-        return True, f"Account '{account_name}' created with code {account_code}"
-    except Exception as e:
-        print(f"Error in create_account: {e}")
-        return False, f"Error creating account: {str(e)}"
-
-def update_account(account_code, new_name, new_daily_limit=None, new_interest_rate=None):
-    """Update an existing account"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
-        if not cursor.fetchone():
-            conn.close()
-            return False, "Account not found"
-        
-        cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_code != ? AND is_active = 1', 
-                       (new_name.upper(), account_code))
-        if cursor.fetchone():
-            conn.close()
-            return False, f"Account '{new_name}' already exists"
-        
-        updates = []
-        params = []
-        
-        if new_name:
-            updates.append("account_name = ?")
-            params.append(new_name.upper())
-        
-        if new_daily_limit is not None:
-            if new_daily_limit <= 0:
-                new_daily_limit = None
-            updates.append("daily_limit = ?")
-            params.append(new_daily_limit)
-        
-        if new_interest_rate is not None:
-            updates.append("interest_rate = ?")
-            params.append(new_interest_rate)
-        
-        if updates:
-            query = f"UPDATE accounts SET {', '.join(updates)} WHERE account_code = ?"
-            params.append(account_code)
-            cursor.execute(query, params)
-            conn.commit()
-        
-        conn.close()
-        return True, "Account updated successfully"
-    except Exception as e:
-        print(f"Error in update_account: {e}")
-        return False, f"Error updating account: {str(e)}"
-
-def delete_account(account_code):
-    """Delete an account (soft delete - mark inactive)"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
-        if not cursor.fetchone():
-            conn.close()
-            return False, "Account not found"
-        
-        # Check if account has transactions
-        cursor.execute('SELECT COUNT(*) FROM transactions WHERE account_code = ?', (account_code,))
-        count = cursor.fetchone()[0]
-        
-        if count > 0:
-            cursor.execute('UPDATE accounts SET is_active = 0 WHERE account_code = ?', (account_code,))
-            conn.commit()
-            conn.close()
-            return True, "Account has transactions. Marked as inactive."
-        else:
-            cursor.execute('DELETE FROM accounts WHERE account_code = ?', (account_code,))
-            conn.commit()
-            conn.close()
-            return True, "Account deleted successfully"
-    except Exception as e:
-        print(f"Error in delete_account: {e}")
-        return False, f"Error deleting account: {str(e)}"
-
-def get_accounts_by_type(account_type):
-    """Get all accounts of a specific type"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT account_code, account_name, account_type, balance, daily_limit, interest_rate, is_active, created_date, created_by
-            FROM accounts 
-            WHERE account_type = ? AND is_active = 1
-            ORDER BY account_code
-        ''', (account_type,))
-        result = cursor.fetchall()
-        conn.close()
-        
-        accounts = []
-        for row in result:
-            accounts.append({
-                'account_code': row[0],
-                'account_name': row[1],
-                'account_type': row[2],
-                'balance': row[3],
-                'daily_limit': row[4] if row[4] is not None else None,
-                'interest_rate': row[5],
-                'is_active': row[6],
-                'created_date': row[7],
-                'created_by': row[8] if len(row) > 8 else 'system'
-            })
-        return accounts
-    except Exception as e:
-        print(f"Error in get_accounts_by_type: {e}")
-        return []
-
-def get_all_accounts():
-    """Get all active accounts"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        columns = get_table_columns('accounts')
-        
-        if 'maturity_date' in columns and 'interest_rate' in columns:
-            cursor.execute('''
-                SELECT account_code, account_name, account_type, balance, daily_limit, maturity_date, interest_rate, is_active
-                FROM accounts 
-                WHERE is_active = 1
-                ORDER BY account_code
-            ''')
-        else:
-            cursor.execute('''
-                SELECT account_code, account_name, account_type, balance, daily_limit, NULL as maturity_date, NULL as interest_rate, is_active
-                FROM accounts 
-                WHERE is_active = 1
-                ORDER BY account_code
-            ''')
-        
-        result = cursor.fetchall()
-        conn.close()
-        
-        accounts = {}
-        for row in result:
-            accounts[row[0]] = {
-                'account_code': row[0],
-                'account_name': row[1],
-                'account_type': row[2],
-                'balance': row[3],
-                'daily_limit': row[4] if row[4] is not None else None,
-                'maturity_date': row[5] if len(row) > 5 else None,
-                'interest_rate': row[6] if len(row) > 6 else None,
-                'is_active': row[7] if len(row) > 7 else 1
-            }
-        return accounts
-    except Exception as e:
-        print(f"Error in get_all_accounts: {e}")
-        return {}
-
-def get_account_name(account_code):
-    """Get account name from code"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT account_name FROM accounts WHERE account_code = ?', (account_code,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else None
-    except Exception as e:
-        print(f"Error in get_account_name: {e}")
-        return None
-
-# ============== ACCOUNTING FUNCTIONS ==============
-def generate_transaction_id():
-    """Generate unique transaction ID"""
-    return f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{str(time.time_ns())[-6:]}"
-
-def get_account_balance(account_code):
-    """Get current balance of an account"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT balance FROM accounts WHERE account_code = ?', (account_code,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else 0
-    except Exception as e:
-        print(f"Error in get_account_balance: {e}")
-        return 0
-
-def update_account_balance(account_code, amount, is_debit=True):
-    """Update account balance with debit/credit logic"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT account_type, balance FROM accounts WHERE account_code = ?', (account_code,))
-        result = cursor.fetchone()
-        if not result:
-            conn.close()
-            return False, "Account not found"
-        
-        acc_type, current_balance = result
-        
-        if acc_type in ['ASSET', 'EXPENSE']:
-            new_balance = current_balance + amount if is_debit else current_balance - amount
-        else:
-            new_balance = current_balance - amount if is_debit else current_balance + amount
-        
-        cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
-        conn.commit()
-        conn.close()
-        return True, new_balance
-    except Exception as e:
-        print(f"Error in update_account_balance: {e}")
-        return False, str(e)
-
 # ============== FINANCIAL REPORTS ==============
 def get_balance_sheet():
     """Generate balance sheet"""
@@ -1281,19 +1198,6 @@ def display_account_card(acc_code, icon, color):
     except Exception as e:
         print(f"Error in display_account_card for {acc_code}: {e}")
 
-def get_cash_balance():
-    """Get current cash balance"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT balance FROM accounts WHERE account_code = "1000"')
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else 0
-    except Exception as e:
-        print(f"Error in get_cash_balance: {e}")
-        return 0
-
 # ============== LOGIN PAGE ==============
 def login_page():
     """Display login page"""
@@ -1362,7 +1266,7 @@ def render_journal_voucher_form(voucher_data=None, edit_mode=False):
                 st.text_input("Voucher Number", value="Auto-generated", disabled=True)
         
         with col3:
-            voucher_type = st.selectbox("Voucher Type", ['JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'], disabled=edit_mode)
+            voucher_type = st.selectbox("Voucher Type", ['JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'], key="voucher_type", disabled=edit_mode)
             if edit_mode and voucher_data:
                 voucher_type = voucher_data['voucher_type']
         

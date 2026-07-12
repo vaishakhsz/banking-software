@@ -319,6 +319,254 @@ def verify_user(username, password):
         return None
     return None
 
+# ============== CUSTOMER FUNCTIONS ==============
+def create_customer(full_name, address, phone, email, id_type, id_number, username):
+    """Create a new customer"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT MAX(CAST(SUBSTR(customer_id, 5) AS INTEGER)) FROM customers')
+        max_id = cursor.fetchone()[0]
+        new_id = (max_id or 1000) + 1
+        customer_id = f"CUST{new_id}"
+        
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        cursor.execute('''
+            INSERT INTO customers 
+            (customer_id, full_name, address, phone, email, id_type, id_number, kyc_completed, created_date, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (customer_id, full_name, address, phone, email, id_type, id_number, 1, date, username))
+        
+        for acc_code in ['1100', '1200', '1300']:
+            cursor.execute('''
+                INSERT INTO customer_accounts (customer_id, account_code, balance)
+                VALUES (?, ?, ?)
+            ''', (customer_id, acc_code, 0))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Customer {full_name} created with ID: {customer_id}"
+    except Exception as e:
+        print(f"Error in create_customer: {e}")
+        return False, f"Error creating customer: {str(e)}"
+
+def get_all_customers():
+    """Get all customers"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT customer_id, full_name, address, phone, email, id_type, id_number, created_date
+            FROM customers
+            ORDER BY created_date DESC
+        ''')
+        result = cursor.fetchall()
+        conn.close()
+        
+        customers = {}
+        for row in result:
+            customers[row[0]] = {
+                'customer_id': row[0],
+                'full_name': row[1],
+                'address': row[2],
+                'phone': row[3],
+                'email': row[4],
+                'id_type': row[5],
+                'id_number': row[6],
+                'created_date': row[7]
+            }
+        return customers
+    except Exception as e:
+        print(f"Error in get_all_customers: {e}")
+        return {}
+
+def get_customer_balances(customer_id):
+    """Get customer's account balances"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT account_code, balance 
+            FROM customer_accounts 
+            WHERE customer_id = ?
+        ''', (customer_id,))
+        result = cursor.fetchall()
+        conn.close()
+        
+        balances = {}
+        for row in result:
+            balances[row[0]] = row[1]
+        return balances
+    except Exception as e:
+        print(f"Error in get_customer_balances: {e}")
+        return {}
+
+def record_customer_transaction(customer_id, account_code, amount, txn_type, description="", username=""):
+    """Record a customer transaction"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        cursor.execute('''
+            UPDATE customer_accounts 
+            SET balance = balance + ? 
+            WHERE customer_id = ? AND account_code = ?
+        ''', (amount if txn_type == 'DEPOSIT' else -amount, customer_id, account_code))
+        
+        cursor.execute('''
+            INSERT INTO customer_transactions 
+            (customer_id, date, transaction_type, amount, account_code, description, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (customer_id, date, txn_type, amount, account_code, description, username))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error in record_customer_transaction: {e}")
+        return False
+
+# ============== CASH TRANSACTION FUNCTIONS ==============
+def generate_cash_transaction_id():
+    """Generate unique cash transaction ID"""
+    return f"CASHTXN{datetime.now().strftime('%Y%m%d%H%M%S')}{str(time.time_ns())[-6:]}"
+
+def record_cash_transaction(txn_type, amount, description="", username="", customer_id=None):
+    """Record a single cash transaction (single entry)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        txn_id = generate_cash_transaction_id()
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get current cash balance
+        cursor.execute('SELECT balance FROM accounts WHERE account_code = "1000"')
+        result = cursor.fetchone()
+        current_balance = result[0] if result else 0
+        
+        if txn_type == 'RECEIPT':
+            new_balance = current_balance + amount
+        elif txn_type == 'PAYMENT':
+            if current_balance < amount:
+                conn.close()
+                return False, f"Insufficient cash balance. Available: ₹{current_balance:,.2f}"
+            new_balance = current_balance - amount
+        else:
+            conn.close()
+            return False, "Invalid transaction type"
+        
+        # Update cash account balance
+        cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = "1000"', (new_balance,))
+        
+        # Record cash transaction
+        cursor.execute('''
+            INSERT INTO cash_transactions 
+            (transaction_id, date, transaction_type, amount, description, balance_after, username, customer_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (txn_id, date, txn_type, amount, description, new_balance, username, customer_id))
+        
+        # Also record in main transactions for journal
+        cursor.execute('''
+            INSERT INTO transactions 
+            (transaction_id, date, account_code, transaction_type, amount, description, balance_after, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (txn_id, date, '1000', txn_type, amount, description, new_balance, username))
+        
+        # Record in journal entries
+        entry_type = 'DEBIT' if txn_type == 'RECEIPT' else 'CREDIT'
+        cursor.execute('''
+            INSERT INTO journal_entries 
+            (date, account_code, account_name, entry_type, amount, description, ref_no, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (date, '1000', 'CASH', entry_type, amount, description, txn_id, username))
+        
+        conn.commit()
+        conn.close()
+        
+        return True, f"Cash {txn_type} of ₹{amount:,.2f} recorded successfully"
+    except Exception as e:
+        print(f"Error in record_cash_transaction: {e}")
+        return False, f"Error: {str(e)}"
+
+def get_cash_transactions(limit=100):
+    """Get cash transactions"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT date, transaction_type, amount, description, balance_after, username, customer_id
+            FROM cash_transactions
+            ORDER BY date DESC
+            LIMIT ?
+        ''', (limit,))
+        result = cursor.fetchall()
+        conn.close()
+        return result
+    except Exception as e:
+        print(f"Error in get_cash_transactions: {e}")
+        return []
+
+# ============== BANK TRANSACTION FUNCTIONS ==============
+def record_bank_transaction(account_code, txn_type, amount, description="", username="", customer_id=None):
+    """Record a single bank transaction (single entry)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        txn_id = generate_transaction_id()
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get current bank balance
+        cursor.execute('SELECT balance, account_name FROM accounts WHERE account_code = ?', (account_code,))
+        result = cursor.fetchone()
+        if not result:
+            conn.close()
+            return False, "Account not found"
+        
+        current_balance, account_name = result
+        
+        if txn_type == 'DEPOSIT':
+            new_balance = current_balance + amount
+        elif txn_type == 'WITHDRAWAL':
+            if current_balance < amount:
+                conn.close()
+                return False, f"Insufficient balance in {account_name}. Available: ₹{current_balance:,.2f}"
+            new_balance = current_balance - amount
+        else:
+            conn.close()
+            return False, "Invalid transaction type"
+        
+        # Update account balance
+        cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
+        
+        # Record transaction
+        cursor.execute('''
+            INSERT INTO transactions 
+            (transaction_id, date, account_code, transaction_type, amount, description, balance_after, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (txn_id, date, account_code, txn_type, amount, description, new_balance, username))
+        
+        # Record in journal entries
+        entry_type = 'DEBIT' if txn_type == 'DEPOSIT' else 'CREDIT'
+        cursor.execute('''
+            INSERT INTO journal_entries 
+            (date, account_code, account_name, entry_type, amount, description, ref_no, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (date, account_code, account_name, entry_type, amount, description, txn_id, username))
+        
+        conn.commit()
+        conn.close()
+        
+        return True, f"Bank {txn_type} of ₹{amount:,.2f} recorded in {account_name}"
+    except Exception as e:
+        print(f"Error in record_bank_transaction: {e}")
+        return False, f"Error: {str(e)}"
+
 # ============== VOUCHER FUNCTIONS ==============
 def generate_voucher_number(voucher_type):
     """Generate unique voucher number"""
@@ -868,6 +1116,10 @@ def get_account_name(account_code):
         return None
 
 # ============== ACCOUNTING FUNCTIONS ==============
+def generate_transaction_id():
+    """Generate unique transaction ID"""
+    return f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{str(time.time_ns())[-6:]}"
+
 def get_account_balance(account_code):
     """Get current balance of an account"""
     try:
@@ -1176,7 +1428,7 @@ def render_journal_voucher_form(voucher_data=None, edit_mode=False):
                 submit = st.form_submit_button("💾 Save Voucher", type="primary")
         
         with col2:
-            if st.form_submit_button("🗑️ Delete Voucher", type="secondary"):
+            if edit_mode and st.form_submit_button("🗑️ Delete Voucher", type="secondary"):
                 return {'action': 'delete'}
         
         if submit:
@@ -1397,7 +1649,6 @@ def main():
                         
                         # Edit button
                         if st.button("✏️ Edit This Voucher", type="primary"):
-                            # Re-render form with existing data
                             result = render_journal_voucher_form(voucher_data, edit_mode=True)
                             if result:
                                 if result['action'] == 'update':

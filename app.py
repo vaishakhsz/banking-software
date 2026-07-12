@@ -639,22 +639,12 @@ def get_all_accounts():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        columns = get_table_columns('accounts')
-        
-        if 'maturity_date' in columns and 'interest_rate' in columns:
-            cursor.execute('''
-                SELECT account_code, account_name, account_type, balance, daily_limit, maturity_date, interest_rate, is_active
-                FROM accounts 
-                WHERE is_active = 1
-                ORDER BY account_code
-            ''')
-        else:
-            cursor.execute('''
-                SELECT account_code, account_name, account_type, balance, daily_limit, NULL as maturity_date, NULL as interest_rate, is_active
-                FROM accounts 
-                WHERE is_active = 1
-                ORDER BY account_code
-            ''')
+        cursor.execute('''
+            SELECT account_code, account_name, account_type, balance, daily_limit, is_active
+            FROM accounts 
+            WHERE is_active = 1
+            ORDER BY account_code
+        ''')
         
         result = cursor.fetchall()
         conn.close()
@@ -667,9 +657,7 @@ def get_all_accounts():
                 'account_type': row[2],
                 'balance': row[3],
                 'daily_limit': row[4] if row[4] is not None else None,
-                'maturity_date': row[5] if len(row) > 5 else None,
-                'interest_rate': row[6] if len(row) > 6 else None,
-                'is_active': row[7] if len(row) > 7 else 1
+                'is_active': row[5]
             }
         return accounts
     except Exception as e:
@@ -688,6 +676,19 @@ def get_account_name(account_code):
     except Exception as e:
         print(f"Error in get_account_name: {e}")
         return None
+
+def verify_account_exists(account_code):
+    """Verify if an account exists"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT account_code FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        result = cursor.fetchone()
+        conn.close()
+        return result is not None
+    except Exception as e:
+        print(f"Error in verify_account_exists: {e}")
+        return False
 
 # ============== ACCOUNTING FUNCTIONS ==============
 def generate_transaction_id():
@@ -718,7 +719,7 @@ def update_account_balance(account_code, amount, is_debit=True):
         result = cursor.fetchone()
         if not result:
             conn.close()
-            return False, "Account not found"
+            return False, f"Account {account_code} not found"
         
         acc_type, current_balance = result
         
@@ -740,7 +741,6 @@ def update_account_balance(account_code, amount, is_debit=True):
         conn.commit()
         conn.close()
         
-        print(f"Updated {account_code} balance from {current_balance} to {new_balance} (Debit: {is_debit}, Amount: {amount})")
         return True, new_balance
     except Exception as e:
         print(f"Error in update_account_balance: {e}")
@@ -797,6 +797,12 @@ def save_voucher(voucher_type, voucher_date, description, entries, username, sta
         # Calculate total amount
         total_amount = sum(entry['amount'] for entry in entries)
         
+        # Verify all accounts exist
+        for entry in entries:
+            if not verify_account_exists(entry['account_code']):
+                conn.close()
+                return False, f"Account {entry['account_code']} ({entry['account_name']}) not found. Please check the account code."
+        
         # Insert voucher
         cursor.execute('''
             INSERT INTO vouchers 
@@ -804,9 +810,8 @@ def save_voucher(voucher_type, voucher_date, description, entries, username, sta
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (voucher_number, voucher_type, voucher_date, description, total_amount, status, current_date, username))
         
-        # Insert voucher entries and update account balances
+        # Insert voucher entries
         for entry in entries:
-            # Insert voucher entry
             cursor.execute('''
                 INSERT INTO voucher_entries 
                 (voucher_number, entry_type, account_code, account_name, amount, narration)
@@ -814,7 +819,7 @@ def save_voucher(voucher_type, voucher_date, description, entries, username, sta
             ''', (voucher_number, entry['entry_type'], entry['account_code'], 
                   entry['account_name'], entry['amount'], entry.get('narration', '')))
         
-        # Update account balances after all entries are inserted
+        # Update account balances
         for entry in entries:
             if entry['entry_type'] == 'DEBIT':
                 success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
@@ -1088,6 +1093,8 @@ def get_balance_sheet():
     assets = {}
     liabilities = {}
     equity = {}
+    income = {}
+    expenses = {}
     
     for code, data in accounts.items():
         acc_type = data['account_type']
@@ -1099,11 +1106,17 @@ def get_balance_sheet():
             liabilities[data['account_name']] = balance
         elif acc_type == 'EQUITY':
             equity[data['account_name']] = balance
+        elif acc_type == 'INCOME':
+            income[data['account_name']] = balance
+        elif acc_type == 'EXPENSE':
+            expenses[data['account_name']] = balance
     
     return {
         'assets': assets,
         'liabilities': liabilities,
         'equity': equity,
+        'income': income,
+        'expenses': expenses,
         'total_assets': sum(assets.values()),
         'total_liabilities': sum(liabilities.values()),
         'total_equity': sum(equity.values())
@@ -1250,11 +1263,15 @@ def render_journal_voucher_form(voucher_data=None, edit_mode=False):
     """Render journal voucher entry form"""
     st.subheader("📝 Journal Voucher")
     
-    # Get accounts for selection
+    # Get accounts for selection - FIXED: Properly extract account code
     all_accounts = get_all_accounts()
     account_options = []
+    account_code_map = {}
+    
     for code, data in all_accounts.items():
-        account_options.append(f"{data['account_name']} ({code}) - {data['account_type']}")
+        display_text = f"{data['account_name']} ({code}) - {data['account_type']}"
+        account_options.append(display_text)
+        account_code_map[display_text] = code
     
     if not account_options:
         st.warning("No accounts found. Please create accounts first.")
@@ -1274,9 +1291,11 @@ def render_journal_voucher_form(voucher_data=None, edit_mode=False):
                 st.text_input("Voucher Number", value="Auto-generated", disabled=True)
         
         with col3:
-            voucher_type = st.selectbox("Voucher Type", ['JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'], key="voucher_type", disabled=edit_mode)
-            if edit_mode and voucher_data:
+            if edit_mode:
                 voucher_type = voucher_data['voucher_type']
+                st.text_input("Voucher Type", value=voucher_type, disabled=True)
+            else:
+                voucher_type = st.selectbox("Voucher Type", ['JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'], key="voucher_type")
         
         description = st.text_area("Description", value=voucher_data.get('description', '') if edit_mode else '')
         
@@ -1296,7 +1315,10 @@ def render_journal_voucher_form(voucher_data=None, edit_mode=False):
                 entry_type = st.selectbox(f"Type", ['DEBIT', 'CREDIT'], key=f"type_{i}")
             
             with col2:
-                account = st.selectbox(f"Account", account_options, key=f"acc_{i}")
+                account_display = st.selectbox(f"Account", account_options, key=f"acc_{i}")
+                # Get the account code from the display text
+                acc_code = account_code_map.get(account_display, '')
+                acc_name = account_display.split('(')[0].strip() if account_display else ''
             
             with col3:
                 amount = st.number_input(f"Amount", min_value=0.0, step=100.0, key=f"amt_{i}")
@@ -1304,9 +1326,7 @@ def render_journal_voucher_form(voucher_data=None, edit_mode=False):
             with col4:
                 narration = st.text_input(f"Narration", key=f"nar_{i}", placeholder="Optional")
             
-            if account and amount > 0:
-                acc_code = account.split('(')[-1].replace(')', '')
-                acc_name = account.split('(')[0].strip()
+            if account_display and amount > 0 and acc_code:
                 entries.append({
                     'entry_type': entry_type,
                     'account_code': acc_code,
@@ -1344,13 +1364,24 @@ def render_journal_voucher_form(voucher_data=None, edit_mode=False):
                 return {'action': 'delete'}
         
         if submit:
+            if len(entries) == 0:
+                st.error("Please enter at least one valid entry")
+                return None
+            
             if total_debits == 0 and total_credits == 0:
-                st.error("Please enter at least one entry")
+                st.error("Please enter amounts greater than zero")
                 return None
             
             if abs(diff) > 0.01:
                 st.error("Total Debits must equal Total Credits")
                 return None
+            
+            # Use the voucher type from the form
+            if edit_mode:
+                voucher_type = voucher_data['voucher_type']
+            else:
+                # Get the voucher type from the selectbox
+                voucher_type = st.session_state.get('voucher_type', 'JOURNAL')
             
             return {
                 'action': 'save' if not edit_mode else 'update',

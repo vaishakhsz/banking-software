@@ -292,38 +292,6 @@ def init_database():
                 VALUES (?, ?, ?, ?, ?)
             ''', (user[0], user[1], user[2], user[3], current_date))
     
-    # Create vouchers table if not exists
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS vouchers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            voucher_number TEXT UNIQUE NOT NULL,
-            voucher_type TEXT NOT NULL,
-            voucher_date TEXT NOT NULL,
-            description TEXT,
-            total_amount REAL DEFAULT 0,
-            status TEXT DEFAULT 'DRAFT',
-            created_date TEXT NOT NULL,
-            created_by TEXT,
-            updated_date TEXT,
-            updated_by TEXT
-        )
-    ''')
-    
-    # Create voucher entries table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS voucher_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            voucher_number TEXT NOT NULL,
-            entry_type TEXT NOT NULL,
-            account_code TEXT NOT NULL,
-            account_name TEXT NOT NULL,
-            amount REAL NOT NULL,
-            narration TEXT,
-            FOREIGN KEY (voucher_number) REFERENCES vouchers(voucher_number),
-            FOREIGN KEY (account_code) REFERENCES accounts(account_code)
-        )
-    ''')
-    
     conn.commit()
     conn.close()
     
@@ -753,6 +721,8 @@ def update_account_balance(account_code, amount, is_debit=True):
         
         acc_type, current_balance = result
         
+        # For ASSET and EXPENSE accounts: Debit increases, Credit decreases
+        # For LIABILITY, EQUITY, INCOME accounts: Credit increases, Debit decreases
         if acc_type in ['ASSET', 'EXPENSE']:
             new_balance = current_balance + amount if is_debit else current_balance - amount
         else:
@@ -805,7 +775,7 @@ def generate_voucher_number(voucher_type):
         return f"V-{datetime.now().strftime('%Y%m%d')}-{str(int(time.time()))[-6:]}"
 
 def save_voucher(voucher_type, voucher_date, description, entries, username, status='POSTED'):
-    """Save a new voucher"""
+    """Save a new voucher and update account balances"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -824,34 +794,39 @@ def save_voucher(voucher_type, voucher_date, description, entries, username, sta
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (voucher_number, voucher_type, voucher_date, description, total_amount, status, current_date, username))
         
-        # Insert voucher entries
+        # Insert voucher entries and update account balances
         for entry in entries:
+            # Insert voucher entry
             cursor.execute('''
                 INSERT INTO voucher_entries 
                 (voucher_number, entry_type, account_code, account_name, amount, narration)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (voucher_number, entry['entry_type'], entry['account_code'], 
                   entry['account_name'], entry['amount'], entry.get('narration', '')))
-        
-        # Post to ledger (update account balances)
-        if status == 'POSTED':
-            for entry in entries:
-                if entry['entry_type'] == 'DEBIT':
-                    update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
-                else:
-                    update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
-                
-                # Record in journal entries with voucher_number
-                cursor.execute('''
-                    INSERT INTO journal_entries 
-                    (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (voucher_date, entry['account_code'], entry['account_name'], 
-                      entry['entry_type'], entry['amount'], description, voucher_number, username, voucher_number))
+            
+            # Update account balance in accounts table
+            if entry['entry_type'] == 'DEBIT':
+                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
+                if not success:
+                    conn.close()
+                    return False, f"Error updating balance for {entry['account_name']}: {msg}"
+            else:  # CREDIT
+                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
+                if not success:
+                    conn.close()
+                    return False, f"Error updating balance for {entry['account_name']}: {msg}"
+            
+            # Record in journal entries
+            cursor.execute('''
+                INSERT INTO journal_entries 
+                (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (voucher_date, entry['account_code'], entry['account_name'], 
+                  entry['entry_type'], entry['amount'], description, voucher_number, username, voucher_number))
         
         conn.commit()
         conn.close()
-        return True, f"Voucher {voucher_number} saved successfully"
+        return True, f"Voucher {voucher_number} saved successfully. Account balances updated."
     except Exception as e:
         print(f"Error in save_voucher: {e}")
         print(traceback.format_exc())
@@ -876,9 +851,14 @@ def update_voucher(voucher_number, voucher_date, description, entries, username)
         
         for entry in old_entries:
             if entry[0] == 'DEBIT':
-                update_account_balance(entry[1], entry[2], is_debit=False)
+                # Reverse debit - do credit
+                success, msg = update_account_balance(entry[1], entry[2], is_debit=False)
             else:
-                update_account_balance(entry[1], entry[2], is_debit=True)
+                # Reverse credit - do debit
+                success, msg = update_account_balance(entry[1], entry[2], is_debit=True)
+            if not success:
+                conn.close()
+                return False, f"Error reversing old entries: {msg}"
         
         # Delete old entries
         cursor.execute('DELETE FROM voucher_entries WHERE voucher_number = ?', (voucher_number,))
@@ -895,8 +875,9 @@ def update_voucher(voucher_number, voucher_date, description, entries, username)
             WHERE voucher_number = ?
         ''', (voucher_date, description, total_amount, current_date, username, voucher_number))
         
-        # Insert new entries
+        # Insert new entries and update balances
         for entry in entries:
+            # Insert new voucher entry
             cursor.execute('''
                 INSERT INTO voucher_entries 
                 (voucher_number, entry_type, account_code, account_name, amount, narration)
@@ -904,13 +885,16 @@ def update_voucher(voucher_number, voucher_date, description, entries, username)
             ''', (voucher_number, entry['entry_type'], entry['account_code'], 
                   entry['account_name'], entry['amount'], entry.get('narration', '')))
             
-            # Update ledger balances
+            # Update account balance
             if entry['entry_type'] == 'DEBIT':
-                update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
+                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
             else:
-                update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
+                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
+            if not success:
+                conn.close()
+                return False, f"Error updating balance for {entry['account_name']}: {msg}"
             
-            # Record in journal entries with voucher_number
+            # Record in journal entries
             cursor.execute('''
                 INSERT INTO journal_entries 
                 (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
@@ -926,7 +910,7 @@ def update_voucher(voucher_number, voucher_date, description, entries, username)
         return False, f"Error updating voucher: {str(e)}"
 
 def delete_voucher(voucher_number):
-    """Delete a voucher"""
+    """Delete a voucher and reverse balances"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -944,9 +928,14 @@ def delete_voucher(voucher_number):
         
         for entry in entries:
             if entry[0] == 'DEBIT':
-                update_account_balance(entry[1], entry[2], is_debit=False)
+                # Reverse debit - do credit
+                success, msg = update_account_balance(entry[1], entry[2], is_debit=False)
             else:
-                update_account_balance(entry[1], entry[2], is_debit=True)
+                # Reverse credit - do debit
+                success, msg = update_account_balance(entry[1], entry[2], is_debit=True)
+            if not success:
+                conn.close()
+                return False, f"Error reversing entries: {msg}"
         
         # Delete voucher entries
         cursor.execute('DELETE FROM voucher_entries WHERE voucher_number = ?', (voucher_number,))
@@ -959,7 +948,7 @@ def delete_voucher(voucher_number):
         
         conn.commit()
         conn.close()
-        return True, f"Voucher {voucher_number} deleted successfully"
+        return True, f"Voucher {voucher_number} deleted successfully. Account balances reversed."
     except Exception as e:
         print(f"Error in delete_voucher: {e}")
         return False, f"Error deleting voucher: {str(e)}"

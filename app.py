@@ -713,6 +713,7 @@ def update_account_balance(account_code, amount, is_debit=True):
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # Get current balance and account type
         cursor.execute('SELECT account_type, balance FROM accounts WHERE account_code = ?', (account_code,))
         result = cursor.fetchone()
         if not result:
@@ -724,13 +725,22 @@ def update_account_balance(account_code, amount, is_debit=True):
         # For ASSET and EXPENSE accounts: Debit increases, Credit decreases
         # For LIABILITY, EQUITY, INCOME accounts: Credit increases, Debit decreases
         if acc_type in ['ASSET', 'EXPENSE']:
-            new_balance = current_balance + amount if is_debit else current_balance - amount
-        else:
-            new_balance = current_balance - amount if is_debit else current_balance + amount
+            if is_debit:
+                new_balance = current_balance + amount
+            else:
+                new_balance = current_balance - amount
+        else:  # LIABILITY, EQUITY, INCOME
+            if is_debit:
+                new_balance = current_balance - amount
+            else:
+                new_balance = current_balance + amount
         
+        # Update the balance
         cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
         conn.commit()
         conn.close()
+        
+        print(f"Updated {account_code} balance from {current_balance} to {new_balance} (Debit: {is_debit}, Amount: {amount})")
         return True, new_balance
     except Exception as e:
         print(f"Error in update_account_balance: {e}")
@@ -803,8 +813,9 @@ def save_voucher(voucher_type, voucher_date, description, entries, username, sta
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (voucher_number, entry['entry_type'], entry['account_code'], 
                   entry['account_name'], entry['amount'], entry.get('narration', '')))
-            
-            # Update account balance in accounts table
+        
+        # Update account balances after all entries are inserted
+        for entry in entries:
             if entry['entry_type'] == 'DEBIT':
                 success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
                 if not success:
@@ -815,8 +826,9 @@ def save_voucher(voucher_type, voucher_date, description, entries, username, sta
                 if not success:
                     conn.close()
                     return False, f"Error updating balance for {entry['account_name']}: {msg}"
-            
-            # Record in journal entries
+        
+        # Record in journal entries
+        for entry in entries:
             cursor.execute('''
                 INSERT INTO journal_entries 
                 (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
@@ -884,8 +896,9 @@ def update_voucher(voucher_number, voucher_date, description, entries, username)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (voucher_number, entry['entry_type'], entry['account_code'], 
                   entry['account_name'], entry['amount'], entry.get('narration', '')))
-            
-            # Update account balance
+        
+        # Update account balances
+        for entry in entries:
             if entry['entry_type'] == 'DEBIT':
                 success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
             else:
@@ -893,8 +906,9 @@ def update_voucher(voucher_number, voucher_date, description, entries, username)
             if not success:
                 conn.close()
                 return False, f"Error updating balance for {entry['account_name']}: {msg}"
-            
-            # Record in journal entries
+        
+        # Record in journal entries
+        for entry in entries:
             cursor.execute('''
                 INSERT INTO journal_entries 
                 (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
@@ -1154,6 +1168,11 @@ def get_trial_balance():
             total_credits += balance
     
     return pd.DataFrame(trial_balance), total_debits, total_credits
+
+def verify_trial_balance():
+    """Verify if trial balance is balanced"""
+    tb_df, total_debits, total_credits = get_trial_balance()
+    return tb_df, total_debits, total_credits, abs(total_debits - total_credits) < 0.01
 
 # ============== UI COMPONENTS ==============
 def display_account_card(acc_code, icon, color):

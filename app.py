@@ -305,12 +305,15 @@ def verify_user(username, password):
     return None
 
 # ============== HELPER FUNCTIONS ==============
-def calculate_age(dob_str):
-    """Calculate age from date of birth string"""
-    if not dob_str:
+def calculate_age(dob):
+    """Calculate age from date of birth (accepts date object or string)"""
+    if not dob:
         return None
     try:
-        birth_date = datetime.strptime(dob_str, '%Y-%m-%d').date()
+        if isinstance(dob, str):
+            birth_date = datetime.strptime(dob, '%Y-%m-%d').date()
+        else:
+            birth_date = dob
         today = datetime.now().date()
         age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
         return age
@@ -579,6 +582,153 @@ def get_accounts_by_type(account_type):
     except Exception as e:
         print(f"Error in get_accounts_by_type: {e}")
         return []
+
+def create_account(account_name, account_type, initial_balance=0, daily_limit=None, interest_rate=None, username=""):
+    """Create a new account"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_type = ? AND is_active = 1', 
+                       (account_name, account_type))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Account '{account_name}' already exists in {account_type} category"
+        
+        account_code = generate_account_code(account_type)
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        if daily_limit is not None and daily_limit <= 0:
+            daily_limit = None
+        
+        cursor.execute('''
+            INSERT INTO accounts 
+            (account_code, account_name, account_type, balance, daily_limit, interest_rate, created_date, created_by, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (account_code, account_name.upper(), account_type, initial_balance, daily_limit, interest_rate, date, username, 1))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Account '{account_name}' created with code {account_code}"
+    except Exception as e:
+        print(f"Error in create_account: {e}")
+        return False, f"Error creating account: {str(e)}"
+
+def update_account(account_code, new_name, new_daily_limit=None, new_interest_rate=None):
+    """Update an existing account"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Account not found"
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_code != ? AND is_active = 1', 
+                       (new_name.upper(), account_code))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Account '{new_name}' already exists"
+        
+        updates = []
+        params = []
+        
+        if new_name:
+            updates.append("account_name = ?")
+            params.append(new_name.upper())
+        
+        if new_daily_limit is not None:
+            if new_daily_limit <= 0:
+                new_daily_limit = None
+            updates.append("daily_limit = ?")
+            params.append(new_daily_limit)
+        
+        if new_interest_rate is not None:
+            updates.append("interest_rate = ?")
+            params.append(new_interest_rate)
+        
+        if updates:
+            query = f"UPDATE accounts SET {', '.join(updates)} WHERE account_code = ?"
+            params.append(account_code)
+            cursor.execute(query, params)
+            conn.commit()
+        
+        conn.close()
+        return True, "Account updated successfully"
+    except Exception as e:
+        print(f"Error in update_account: {e}")
+        return False, f"Error updating account: {str(e)}"
+
+def delete_account(account_code):
+    """Delete an account (soft delete - mark inactive)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Account not found"
+        
+        cursor.execute('SELECT COUNT(*) FROM transactions WHERE account_code = ?', (account_code,))
+        count = cursor.fetchone()[0]
+        
+        if count > 0:
+            cursor.execute('UPDATE accounts SET is_active = 0 WHERE account_code = ?', (account_code,))
+            conn.commit()
+            conn.close()
+            return True, "Account has transactions. Marked as inactive."
+        else:
+            cursor.execute('DELETE FROM accounts WHERE account_code = ?', (account_code,))
+            conn.commit()
+            conn.close()
+            return True, "Account deleted successfully"
+    except Exception as e:
+        print(f"Error in delete_account: {e}")
+        return False, f"Error deleting account: {str(e)}"
+
+def generate_account_code(account_type):
+    """Generate a new account code based on type"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        prefix_map = {
+            'INCOME': '4',
+            'EXPENSE': '5',
+            'ASSET': '1'
+        }
+        
+        prefix = prefix_map.get(account_type, '9')
+        cursor.execute(f'''
+            SELECT account_code FROM accounts 
+            WHERE account_code LIKE '{prefix}%' 
+            AND account_type = ?
+            AND is_active = 1
+            ORDER BY account_code DESC LIMIT 1
+        ''', (account_type,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            last_code = int(result[0])
+            new_code = str(last_code + 1)
+        else:
+            if account_type == 'INCOME':
+                new_code = '4100'
+            elif account_type == 'EXPENSE':
+                new_code = '5100'
+            elif account_type == 'ASSET':
+                new_code = '1500'
+            else:
+                new_code = '9100'
+        
+        return new_code
+    except Exception as e:
+        print(f"Error in generate_account_code: {e}")
+        return '5100'
 
 # ============== VOUCHER FUNCTIONS ==============
 def generate_voucher_number(voucher_type):
@@ -1242,7 +1392,7 @@ def render_voucher_list():
     df = pd.DataFrame(voucher_data)
     st.dataframe(df, use_container_width=True, hide_index=True)
     
-    selected_voucher = st.selectbox("Select Voucher to View/Edit", 
+    selected_voucher = st.selectbox("Select Voucher to View/Edit/Delete", 
                                    [""] + [v['voucher_number'] for v in vouchers])
     
     if selected_voucher:
@@ -1333,7 +1483,7 @@ def main():
         with tab1:
             st.header("📝 Voucher Management")
             
-            voucher_tab1, voucher_tab2, voucher_tab3 = st.tabs(["➕ Create Voucher", "📋 View/Edit Vouchers", "🧾 Voucher Register"])
+            voucher_tab1, voucher_tab2, voucher_tab3 = st.tabs(["➕ Create Voucher", "📋 View/Edit/Delete Vouchers", "🧾 Voucher Register"])
             
             with voucher_tab1:
                 result = render_journal_voucher_form()
@@ -1360,8 +1510,9 @@ def main():
                     voucher_data = get_voucher(selected_voucher)
                     if voucher_data:
                         st.divider()
-                        st.subheader(f"✏️ Editing Voucher: {selected_voucher}")
+                        st.subheader(f"✏️ Managing Voucher: {selected_voucher}")
                         
+                        # Show voucher details
                         with st.expander("📄 Voucher Details", expanded=True):
                             col1, col2, col3 = st.columns(3)
                             with col1:
@@ -1374,6 +1525,7 @@ def main():
                             st.caption(f"Date: {voucher_data['voucher_date']}")
                             st.caption(f"Description: {voucher_data['description']}")
                         
+                        # Show entries
                         st.markdown("**Voucher Entries**")
                         entries_data = []
                         for entry in voucher_data['entries']:
@@ -1387,23 +1539,31 @@ def main():
                         df_entries = pd.DataFrame(entries_data)
                         st.dataframe(df_entries, use_container_width=True, hide_index=True)
                         
-                        if st.button("✏️ Edit This Voucher", type="primary"):
-                            result = render_journal_voucher_form(voucher_data, edit_mode=True)
-                            if result:
-                                if result['action'] == 'update':
-                                    success, msg = update_voucher(
-                                        selected_voucher,
-                                        result['voucher_date'],
-                                        result['description'],
-                                        result['entries'],
-                                        user['username']
-                                    )
-                                    if success:
-                                        st.success(msg)
-                                        st.rerun()
-                                    else:
-                                        st.error(msg)
-                                elif result['action'] == 'delete':
+                        # Action buttons
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("✏️ Edit This Voucher", type="primary"):
+                                result = render_journal_voucher_form(voucher_data, edit_mode=True)
+                                if result:
+                                    if result['action'] == 'update':
+                                        success, msg = update_voucher(
+                                            selected_voucher,
+                                            result['voucher_date'],
+                                            result['description'],
+                                            result['entries'],
+                                            user['username']
+                                        )
+                                        if success:
+                                            st.success(msg)
+                                            st.rerun()
+                                        else:
+                                            st.error(msg)
+                        
+                        with col2:
+                            if st.button("🗑️ Delete This Voucher", type="secondary"):
+                                # Confirm deletion
+                                st.warning(f"⚠️ Are you sure you want to delete voucher {selected_voucher}?")
+                                if st.button("✅ Yes, Delete Voucher", type="primary"):
                                     success, msg = delete_voucher(selected_voucher)
                                     if success:
                                         st.success(msg)
@@ -1490,7 +1650,7 @@ def main():
                     
                     full_name = st.text_input("Full Name*")
                     
-                    # FIXED: Date of Birth with range from 1900 to today
+                    # Date of Birth with age calculation
                     min_date = datetime(1900, 1, 1).date()
                     max_date = datetime.now().date()
                     date_of_birth = st.date_input(
@@ -1501,14 +1661,17 @@ def main():
                         help="Select date of birth (1900 to present)"
                     )
                     
-                    # Auto-calculate age
+                    # Auto-calculate age - FIXED
                     age = None
                     if date_of_birth:
-                        age = calculate_age(date_of_birth.strftime('%Y-%m-%d'))
-                        if age is not None:
-                            st.info(f"🎂 Age: **{age} years**")
-                        else:
-                            st.warning("⚠️ Invalid date of birth")
+                        try:
+                            today = datetime.now().date()
+                            age = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+                            st.success(f"🎂 **Age: {age} years**")
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not calculate age: {str(e)}")
+                    else:
+                        st.info("📅 Please select date of birth to calculate age")
                     
                     address = st.text_area("Address*")
                     
@@ -1543,7 +1706,6 @@ def main():
                     with col_g:
                         nominee_name = st.text_input("Nominee Full Name")
                         
-                        # FIXED: Nominee DOB with range from 1900 to today
                         nominee_dob = st.date_input(
                             "Nominee Date of Birth", 
                             value=None,
@@ -1552,9 +1714,12 @@ def main():
                             help="Select nominee's date of birth (1900 to present)"
                         )
                         if nominee_dob:
-                            nominee_age = calculate_age(nominee_dob.strftime('%Y-%m-%d'))
-                            if nominee_age is not None:
+                            try:
+                                today = datetime.now().date()
+                                nominee_age = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
                                 st.caption(f"🎂 Nominee Age: **{nominee_age} years**")
+                            except:
+                                st.caption("⚠️ Could not calculate age")
                         nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)")
                     with col_h:
                         nominee_address = st.text_area("Nominee Address")
@@ -1643,7 +1808,7 @@ def main():
                                 'nominee_address': nominee_address,
                                 'nominee_relation': nominee_relation,
                                 'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
-                                'nominee_age': calculate_age(nominee_dob.strftime('%Y-%m-%d')) if nominee_dob else None,
+                                'nominee_age': calculate_age(nominee_dob) if nominee_dob else None,
                                 'nominee_aadhar': nominee_aadhar,
                                 'nominee_aadhar_image': nominee_aadhar_image_b64,
                                 'nominee_pan': nominee_pan,

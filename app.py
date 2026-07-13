@@ -1660,24 +1660,24 @@ def main():
                         help="Select date of birth (1900 to present)"
                     )
                     
-                    # Age calculation - using a button to calculate
-                    col_age1, col_age2 = st.columns([2, 1])
-                    with col_age1:
-                        age = st.text_input(
-                            "Age (Auto-calculated)*",
-                            value=st.session_state.customer_age,
-                            disabled=True,
-                            help="Click 'Calculate Age' button to auto-calculate from DOB"
-                        )
-                    with col_age2:
-                        if st.form_submit_button("📅 Calculate Age"):
-                            if date_of_birth:
-                                today = datetime.now().date()
-                                age_value = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
-                                st.session_state.customer_age = str(age_value)
-                                st.success(f"Age calculated: {age_value} years")
-                            else:
-                                st.warning("Please select a Date of Birth first")
+                    # Age display - disabled text box
+                    st.text_input(
+                        "Age (Auto-calculated)*",
+                        value=st.session_state.customer_age,
+                        disabled=True,
+                        help="Age will be auto-calculated when you click the Calculate button"
+                    )
+                    
+                    # Calculate Age button - using st.button inside form
+                    calc_age = st.form_submit_button("📅 Calculate Age")
+                    if calc_age:
+                        if date_of_birth:
+                            today = datetime.now().date()
+                            age_value = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+                            st.session_state.customer_age = str(age_value)
+                            st.success(f"✅ Age calculated: {age_value} years")
+                        else:
+                            st.warning("⚠️ Please select a Date of Birth first")
                     
                     address = st.text_area("Address*")
                     
@@ -1720,24 +1720,24 @@ def main():
                             help="Select nominee's date of birth (1900 to present)"
                         )
                         
-                        # Nominee Age with button
-                        col_nom1, col_nom2 = st.columns([2, 1])
-                        with col_nom1:
-                            nominee_age = st.text_input(
-                                "Nominee Age (Auto-calculated)",
-                                value=st.session_state.nominee_age,
-                                disabled=True,
-                                help="Click 'Calculate Age' button to auto-calculate from DOB"
-                            )
-                        with col_nom2:
-                            if st.form_submit_button("📅 Calculate Nominee Age"):
-                                if nominee_dob:
-                                    today = datetime.now().date()
-                                    age_value = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
-                                    st.session_state.nominee_age = str(age_value)
-                                    st.success(f"Nominee Age calculated: {age_value} years")
-                                else:
-                                    st.warning("Please select a Nominee Date of Birth first")
+                        # Nominee Age - disabled text box
+                        st.text_input(
+                            "Nominee Age (Auto-calculated)",
+                            value=st.session_state.nominee_age,
+                            disabled=True,
+                            help="Age will be auto-calculated when you click the Calculate button"
+                        )
+                        
+                        # Calculate Nominee Age button
+                        calc_nom_age = st.form_submit_button("📅 Calculate Nominee Age")
+                        if calc_nom_age:
+                            if nominee_dob:
+                                today = datetime.now().date()
+                                age_value = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
+                                st.session_state.nominee_age = str(age_value)
+                                st.success(f"✅ Nominee Age calculated: {age_value} years")
+                            else:
+                                st.warning("⚠️ Please select a Nominee Date of Birth first")
                         
                         nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)")
                     with col_h:

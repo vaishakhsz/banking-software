@@ -468,6 +468,12 @@ def delete_customer(customer_id):
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # First check if customer exists
+        cursor.execute('SELECT customer_id FROM customers WHERE customer_id = ? AND kyc_completed = 1', (customer_id,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Customer not found"
+        
         # Check if customer has any transactions
         cursor.execute('SELECT COUNT(*) FROM customer_transactions WHERE customer_id = ?', (customer_id,))
         count = cursor.fetchone()[0]
@@ -479,8 +485,11 @@ def delete_customer(customer_id):
             conn.close()
             return True, "Customer has transactions. Marked as inactive."
         else:
-            # Hard delete
+            # Delete from customer_accounts first (foreign key constraint)
             cursor.execute('DELETE FROM customer_accounts WHERE customer_id = ?', (customer_id,))
+            # Delete customer transactions
+            cursor.execute('DELETE FROM customer_transactions WHERE customer_id = ?', (customer_id,))
+            # Delete customer
             cursor.execute('DELETE FROM customers WHERE customer_id = ?', (customer_id,))
             conn.commit()
             conn.close()
@@ -1633,15 +1642,32 @@ def render_customer_management():
         
         with col2:
             if st.button("🗑️ Delete Customer", type="secondary"):
-                # Confirm deletion
-                st.warning(f"⚠️ Are you sure you want to delete customer {cust['full_name']}?")
+                # Show confirmation dialog
+                st.session_state.delete_customer_id = cust_id
+                st.session_state.show_delete_confirmation = True
+                st.rerun()
+        
+        # Delete confirmation dialog
+        if st.session_state.get('show_delete_confirmation', False) and st.session_state.get('delete_customer_id') == cust_id:
+            st.warning(f"⚠️ Are you sure you want to delete customer **{cust['full_name']}**?")
+            st.caption("This action cannot be undone.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
                 if st.button("✅ Yes, Delete Customer", type="primary"):
                     success, msg = delete_customer(cust_id)
                     if success:
                         st.success(msg)
+                        st.session_state.show_delete_confirmation = False
+                        st.session_state.delete_customer_id = None
                         st.rerun()
                     else:
                         st.error(msg)
+            with col2:
+                if st.button("❌ Cancel"):
+                    st.session_state.show_delete_confirmation = False
+                    st.session_state.delete_customer_id = None
+                    st.rerun()
     
     # Edit Customer Form
     if st.session_state.get('edit_mode', False) and st.session_state.get('edit_customer_id'):
@@ -1656,27 +1682,35 @@ def render_customer_management():
                 st.markdown("### 📋 Personal Details")
                 
                 full_name = st.text_input("Full Name*", value=edit_cust['full_name'])
+                
+                # Handle date parsing with error handling
+                dob_value = None
+                if edit_cust.get('date_of_birth'):
+                    try:
+                        dob_value = datetime.strptime(edit_cust['date_of_birth'], '%Y-%m-%d').date()
+                    except:
+                        dob_value = None
+                
                 date_of_birth = st.date_input(
                     "Date of Birth*",
-                    value=datetime.strptime(edit_cust['date_of_birth'], '%Y-%m-%d').date() if edit_cust['date_of_birth'] else None,
+                    value=dob_value,
                     min_value=datetime(1900, 1, 1).date(),
                     max_value=datetime.now().date()
                 )
                 
                 # Calculate age
+                age = None
                 if date_of_birth:
                     today = datetime.now().date()
                     age = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
                     st.info(f"🎂 Age: {age} years")
-                else:
-                    age = None
                 
-                address = st.text_area("Address*", value=edit_cust['address'])
+                address = st.text_area("Address*", value=edit_cust.get('address', ''))
                 
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    phone = st.text_input("Phone Number*", value=edit_cust['phone'])
-                    email = st.text_input("Email*", value=edit_cust['email'])
+                    phone = st.text_input("Phone Number*", value=edit_cust.get('phone', ''))
+                    email = st.text_input("Email*", value=edit_cust.get('email', ''))
                 with col_b:
                     whatsapp_number = st.text_input("WhatsApp Number", value=edit_cust.get('whatsapp_number', ''))
                 
@@ -1695,9 +1729,17 @@ def render_customer_management():
                 col_g, col_h = st.columns(2)
                 with col_g:
                     nominee_name = st.text_input("Nominee Full Name", value=edit_cust.get('nominee_name', ''))
+                    
+                    nominee_dob_value = None
+                    if edit_cust.get('nominee_dob'):
+                        try:
+                            nominee_dob_value = datetime.strptime(edit_cust['nominee_dob'], '%Y-%m-%d').date()
+                        except:
+                            nominee_dob_value = None
+                    
                     nominee_dob = st.date_input(
                         "Nominee Date of Birth",
-                        value=datetime.strptime(edit_cust['nominee_dob'], '%Y-%m-%d').date() if edit_cust.get('nominee_dob') else None,
+                        value=nominee_dob_value,
                         min_value=datetime(1900, 1, 1).date(),
                         max_value=datetime.now().date()
                     )
@@ -1719,9 +1761,13 @@ def render_customer_management():
                     nominee_pan = st.text_input("Nominee PAN Number", value=edit_cust.get('nominee_pan', ''))
                 
                 st.markdown("### 📝 Additional Information")
-                id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"], 
-                                      index=["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"].index(edit_cust['id_type']) if edit_cust['id_type'] in ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"] else 0)
-                id_number = st.text_input("ID Number*", value=edit_cust['id_number'])
+                id_type_options = ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"]
+                id_type_index = 0
+                if edit_cust.get('id_type') in id_type_options:
+                    id_type_index = id_type_options.index(edit_cust['id_type'])
+                
+                id_type = st.selectbox("ID Type*", id_type_options, index=id_type_index)
+                id_number = st.text_input("ID Number*", value=edit_cust.get('id_number', ''))
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -1875,6 +1921,16 @@ def main():
             return
         
         user = st.session_state.user
+        
+        # Initialize session state variables
+        if 'edit_mode' not in st.session_state:
+            st.session_state.edit_mode = False
+        if 'edit_customer_id' not in st.session_state:
+            st.session_state.edit_customer_id = None
+        if 'show_delete_confirmation' not in st.session_state:
+            st.session_state.show_delete_confirmation = False
+        if 'delete_customer_id' not in st.session_state:
+            st.session_state.delete_customer_id = None
         
         # Header
         col1, col2, col3 = st.columns([2.5, 1.5, 1])

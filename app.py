@@ -305,17 +305,13 @@ def verify_user(username, password):
     return None
 
 # ============== HELPER FUNCTIONS ==============
-def calculate_age(dob):
-    """Calculate age from date of birth (accepts date object or string)"""
+def calculate_age_from_date(dob):
+    """Calculate age from date object"""
     if not dob:
         return None
     try:
-        if isinstance(dob, str):
-            birth_date = datetime.strptime(dob, '%Y-%m-%d').date()
-        else:
-            birth_date = dob
         today = datetime.now().date()
-        age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
         return age
     except Exception as e:
         print(f"Error calculating age: {e}")
@@ -1512,7 +1508,6 @@ def main():
                         st.divider()
                         st.subheader(f"✏️ Managing Voucher: {selected_voucher}")
                         
-                        # Show voucher details
                         with st.expander("📄 Voucher Details", expanded=True):
                             col1, col2, col3 = st.columns(3)
                             with col1:
@@ -1525,7 +1520,6 @@ def main():
                             st.caption(f"Date: {voucher_data['voucher_date']}")
                             st.caption(f"Description: {voucher_data['description']}")
                         
-                        # Show entries
                         st.markdown("**Voucher Entries**")
                         entries_data = []
                         for entry in voucher_data['entries']:
@@ -1539,7 +1533,6 @@ def main():
                         df_entries = pd.DataFrame(entries_data)
                         st.dataframe(df_entries, use_container_width=True, hide_index=True)
                         
-                        # Action buttons
                         col1, col2 = st.columns(2)
                         with col1:
                             if st.button("✏️ Edit This Voucher", type="primary"):
@@ -1561,7 +1554,6 @@ def main():
                         
                         with col2:
                             if st.button("🗑️ Delete This Voucher", type="secondary"):
-                                # Confirm deletion
                                 st.warning(f"⚠️ Are you sure you want to delete voucher {selected_voucher}?")
                                 if st.button("✅ Yes, Delete Voucher", type="primary"):
                                     success, msg = delete_voucher(selected_voucher)
@@ -1650,16 +1642,27 @@ def main():
                     
                     full_name = st.text_input("Full Name*")
                     
-                    # Date of Birth with age calculation
+                    # Date of Birth with age calculation - FIXED with session state
                     min_date = datetime(1900, 1, 1).date()
                     max_date = datetime.now().date()
+                    
+                    # Use session state to store the selected date
+                    if 'dob_selected' not in st.session_state:
+                        st.session_state.dob_selected = None
+                    
                     date_of_birth = st.date_input(
                         "Date of Birth*", 
-                        value=None,
+                        value=st.session_state.dob_selected,
                         min_value=min_date,
                         max_value=max_date,
-                        help="Select date of birth (1900 to present)"
+                        help="Select date of birth (1900 to present)",
+                        key="dob_input"
                     )
+                    
+                    # Update session state when date changes
+                    if date_of_birth != st.session_state.dob_selected:
+                        st.session_state.dob_selected = date_of_birth
+                        st.rerun()
                     
                     # Auto-calculate age - FIXED
                     age = None
@@ -1706,13 +1709,23 @@ def main():
                     with col_g:
                         nominee_name = st.text_input("Nominee Full Name")
                         
+                        # Nominee DOB with session state
+                        if 'nominee_dob_selected' not in st.session_state:
+                            st.session_state.nominee_dob_selected = None
+                        
                         nominee_dob = st.date_input(
                             "Nominee Date of Birth", 
-                            value=None,
+                            value=st.session_state.nominee_dob_selected,
                             min_value=min_date,
                             max_value=max_date,
-                            help="Select nominee's date of birth (1900 to present)"
+                            help="Select nominee's date of birth (1900 to present)",
+                            key="nominee_dob_input"
                         )
+                        
+                        if nominee_dob != st.session_state.nominee_dob_selected:
+                            st.session_state.nominee_dob_selected = nominee_dob
+                            st.rerun()
+                        
                         if nominee_dob:
                             try:
                                 today = datetime.now().date()
@@ -1808,7 +1821,7 @@ def main():
                                 'nominee_address': nominee_address,
                                 'nominee_relation': nominee_relation,
                                 'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
-                                'nominee_age': calculate_age(nominee_dob) if nominee_dob else None,
+                                'nominee_age': calculate_age_from_date(nominee_dob) if nominee_dob else None,
                                 'nominee_aadhar': nominee_aadhar,
                                 'nominee_aadhar_image': nominee_aadhar_image_b64,
                                 'nominee_pan': nominee_pan,

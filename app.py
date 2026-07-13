@@ -1628,7 +1628,7 @@ def main():
             
             st.info("💡 Use Journal Vouchers tab to create Cash/Bank entries with proper voucher numbers")
         
-        # ---------- TAB 3: CUSTOMERS & KYC ----------
+        # ---------- TAB 3: CUSTOMERS & KYC (FIXED AGE DISPLAY) ----------
         with tab3:
             st.header("👥 Customer Management with KYC")
             
@@ -1642,37 +1642,52 @@ def main():
                     
                     full_name = st.text_input("Full Name*")
                     
-                    # Date of Birth with age calculation - FIXED with session state
+                    # Date of Birth with age calculation - FIXED with on_change
                     min_date = datetime(1900, 1, 1).date()
                     max_date = datetime.now().date()
                     
-                    # Use session state to store the selected date
-                    if 'dob_selected' not in st.session_state:
-                        st.session_state.dob_selected = None
+                    # Store DOB in session state
+                    if 'dob_value' not in st.session_state:
+                        st.session_state.dob_value = None
+                    
+                    # Callback function to update age when date changes
+                    def update_age():
+                        if st.session_state.dob_input:
+                            today = datetime.now().date()
+                            age = today.year - st.session_state.dob_input.year - ((today.month, today.day) < (st.session_state.dob_input.month, st.session_state.dob_input.day))
+                            st.session_state.calculated_age = age
+                        else:
+                            st.session_state.calculated_age = None
+                    
+                    # Initialize age in session state
+                    if 'calculated_age' not in st.session_state:
+                        st.session_state.calculated_age = None
                     
                     date_of_birth = st.date_input(
                         "Date of Birth*", 
-                        value=st.session_state.dob_selected,
+                        value=st.session_state.dob_value,
                         min_value=min_date,
                         max_value=max_date,
                         help="Select date of birth (1900 to present)",
-                        key="dob_input"
+                        key="dob_input",
+                        on_change=update_age
                     )
                     
-                    # Update session state when date changes
-                    if date_of_birth != st.session_state.dob_selected:
-                        st.session_state.dob_selected = date_of_birth
-                        st.rerun()
+                    # Update session state with selected date
+                    st.session_state.dob_value = date_of_birth
                     
-                    # Auto-calculate age - FIXED
-                    age = None
-                    if date_of_birth:
+                    # Display age if calculated
+                    if st.session_state.calculated_age is not None:
+                        st.success(f"🎂 **Age: {st.session_state.calculated_age} years**")
+                    elif date_of_birth:
+                        # Calculate age immediately if date is selected but callback didn't fire
                         try:
                             today = datetime.now().date()
                             age = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+                            st.session_state.calculated_age = age
                             st.success(f"🎂 **Age: {age} years**")
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not calculate age: {str(e)}")
+                        except:
+                            pass
                     else:
                         st.info("📅 Please select date of birth to calculate age")
                     
@@ -1709,30 +1724,44 @@ def main():
                     with col_g:
                         nominee_name = st.text_input("Nominee Full Name")
                         
-                        # Nominee DOB with session state
-                        if 'nominee_dob_selected' not in st.session_state:
-                            st.session_state.nominee_dob_selected = None
+                        # Nominee DOB with age calculation
+                        if 'nominee_dob_value' not in st.session_state:
+                            st.session_state.nominee_dob_value = None
+                        
+                        if 'nominee_age_calculated' not in st.session_state:
+                            st.session_state.nominee_age_calculated = None
+                        
+                        def update_nominee_age():
+                            if st.session_state.nominee_dob_input:
+                                today = datetime.now().date()
+                                age = today.year - st.session_state.nominee_dob_input.year - ((today.month, today.day) < (st.session_state.nominee_dob_input.month, st.session_state.nominee_dob_input.day))
+                                st.session_state.nominee_age_calculated = age
+                            else:
+                                st.session_state.nominee_age_calculated = None
                         
                         nominee_dob = st.date_input(
                             "Nominee Date of Birth", 
-                            value=st.session_state.nominee_dob_selected,
+                            value=st.session_state.nominee_dob_value,
                             min_value=min_date,
                             max_value=max_date,
                             help="Select nominee's date of birth (1900 to present)",
-                            key="nominee_dob_input"
+                            key="nominee_dob_input",
+                            on_change=update_nominee_age
                         )
                         
-                        if nominee_dob != st.session_state.nominee_dob_selected:
-                            st.session_state.nominee_dob_selected = nominee_dob
-                            st.rerun()
+                        st.session_state.nominee_dob_value = nominee_dob
                         
-                        if nominee_dob:
+                        if st.session_state.nominee_age_calculated is not None:
+                            st.caption(f"🎂 Nominee Age: **{st.session_state.nominee_age_calculated} years**")
+                        elif nominee_dob:
                             try:
                                 today = datetime.now().date()
-                                nominee_age = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
-                                st.caption(f"🎂 Nominee Age: **{nominee_age} years**")
+                                age = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
+                                st.session_state.nominee_age_calculated = age
+                                st.caption(f"🎂 Nominee Age: **{age} years**")
                             except:
-                                st.caption("⚠️ Could not calculate age")
+                                pass
+                        
                         nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)")
                     with col_h:
                         nominee_address = st.text_area("Nominee Address")
@@ -1768,7 +1797,7 @@ def main():
                             errors.append("Full Name is required")
                         if not date_of_birth:
                             errors.append("Date of Birth is required")
-                        elif age is None:
+                        elif st.session_state.calculated_age is None:
                             errors.append("Invalid Date of Birth")
                         if not address:
                             errors.append("Address is required")
@@ -1816,12 +1845,12 @@ def main():
                                 'pan_number': pan_number,
                                 'pan_image': pan_image_b64,
                                 'date_of_birth': date_of_birth.strftime('%Y-%m-%d') if date_of_birth else None,
-                                'age': age,
+                                'age': st.session_state.calculated_age,
                                 'nominee_name': nominee_name,
                                 'nominee_address': nominee_address,
                                 'nominee_relation': nominee_relation,
                                 'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
-                                'nominee_age': calculate_age_from_date(nominee_dob) if nominee_dob else None,
+                                'nominee_age': st.session_state.nominee_age_calculated,
                                 'nominee_aadhar': nominee_aadhar,
                                 'nominee_aadhar_image': nominee_aadhar_image_b64,
                                 'nominee_pan': nominee_pan,

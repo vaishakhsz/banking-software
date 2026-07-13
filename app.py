@@ -1637,6 +1637,12 @@ def main():
             with col1:
                 st.subheader("➕ Register New Customer")
                 
+                # Initialize session state for age if not exists
+                if 'customer_age' not in st.session_state:
+                    st.session_state.customer_age = ""
+                if 'nominee_age' not in st.session_state:
+                    st.session_state.nominee_age = ""
+                
                 with st.form("customer_form", clear_on_submit=True):
                     st.markdown("### 📋 Personal Details")
                     
@@ -1646,43 +1652,32 @@ def main():
                     min_date = datetime(1900, 1, 1).date()
                     max_date = datetime.now().date()
                     
-                    # Initialize session state for age
-                    if 'customer_age' not in st.session_state:
-                        st.session_state.customer_age = ""
-                    
-                    # Callback function to update age when date changes
-                    def update_customer_age():
-                        if st.session_state.dob_input:
-                            today = datetime.now().date()
-                            age = today.year - st.session_state.dob_input.year - ((today.month, today.day) < (st.session_state.dob_input.month, st.session_state.dob_input.day))
-                            st.session_state.customer_age = str(age)
-                        else:
-                            st.session_state.customer_age = ""
-                    
                     date_of_birth = st.date_input(
                         "Date of Birth*", 
                         value=None,
                         min_value=min_date,
                         max_value=max_date,
-                        help="Select date of birth (1900 to present)",
-                        key="dob_input",
-                        on_change=update_customer_age
+                        help="Select date of birth (1900 to present)"
                     )
                     
-                    # Age text box - separate field
-                    age = st.text_input(
-                        "Age (Auto-calculated)*",
-                        value=st.session_state.customer_age,
-                        disabled=True,
-                        help="Age will be automatically calculated from Date of Birth"
-                    )
-                    
-                    # If age is still empty but date is selected, calculate manually
-                    if date_of_birth and not st.session_state.customer_age:
-                        today = datetime.now().date()
-                        age_value = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
-                        st.session_state.customer_age = str(age_value)
-                        st.rerun()
+                    # Age calculation - using a button to calculate
+                    col_age1, col_age2 = st.columns([2, 1])
+                    with col_age1:
+                        age = st.text_input(
+                            "Age (Auto-calculated)*",
+                            value=st.session_state.customer_age,
+                            disabled=True,
+                            help="Click 'Calculate Age' button to auto-calculate from DOB"
+                        )
+                    with col_age2:
+                        if st.form_submit_button("📅 Calculate Age"):
+                            if date_of_birth:
+                                today = datetime.now().date()
+                                age_value = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+                                st.session_state.customer_age = str(age_value)
+                                st.success(f"Age calculated: {age_value} years")
+                            else:
+                                st.warning("Please select a Date of Birth first")
                     
                     address = st.text_area("Address*")
                     
@@ -1717,42 +1712,32 @@ def main():
                     with col_g:
                         nominee_name = st.text_input("Nominee Full Name")
                         
-                        # Nominee DOB with age in separate text box
-                        if 'nominee_age' not in st.session_state:
-                            st.session_state.nominee_age = ""
-                        
-                        def update_nominee_age():
-                            if st.session_state.nominee_dob_input:
-                                today = datetime.now().date()
-                                age = today.year - st.session_state.nominee_dob_input.year - ((today.month, today.day) < (st.session_state.nominee_dob_input.month, st.session_state.nominee_dob_input.day))
-                                st.session_state.nominee_age = str(age)
-                            else:
-                                st.session_state.nominee_age = ""
-                        
                         nominee_dob = st.date_input(
                             "Nominee Date of Birth", 
                             value=None,
                             min_value=min_date,
                             max_value=max_date,
-                            help="Select nominee's date of birth (1900 to present)",
-                            key="nominee_dob_input",
-                            on_change=update_nominee_age
+                            help="Select nominee's date of birth (1900 to present)"
                         )
                         
-                        # Nominee Age text box - separate field
-                        nominee_age = st.text_input(
-                            "Nominee Age (Auto-calculated)",
-                            value=st.session_state.nominee_age,
-                            disabled=True,
-                            help="Age will be automatically calculated from Date of Birth"
-                        )
-                        
-                        # If age is still empty but date is selected, calculate manually
-                        if nominee_dob and not st.session_state.nominee_age:
-                            today = datetime.now().date()
-                            age_value = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
-                            st.session_state.nominee_age = str(age_value)
-                            st.rerun()
+                        # Nominee Age with button
+                        col_nom1, col_nom2 = st.columns([2, 1])
+                        with col_nom1:
+                            nominee_age = st.text_input(
+                                "Nominee Age (Auto-calculated)",
+                                value=st.session_state.nominee_age,
+                                disabled=True,
+                                help="Click 'Calculate Age' button to auto-calculate from DOB"
+                            )
+                        with col_nom2:
+                            if st.form_submit_button("📅 Calculate Nominee Age"):
+                                if nominee_dob:
+                                    today = datetime.now().date()
+                                    age_value = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
+                                    st.session_state.nominee_age = str(age_value)
+                                    st.success(f"Nominee Age calculated: {age_value} years")
+                                else:
+                                    st.warning("Please select a Nominee Date of Birth first")
                         
                         nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)")
                     with col_h:
@@ -1780,6 +1765,7 @@ def main():
                     id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"])
                     id_number = st.text_input("ID Number*")
                     
+                    # Submit button
                     submitted = st.form_submit_button("✅ Register Customer")
                     
                     if submitted:
@@ -1789,8 +1775,8 @@ def main():
                             errors.append("Full Name is required")
                         if not date_of_birth:
                             errors.append("Date of Birth is required")
-                        if not age or age == "":
-                            errors.append("Age could not be calculated. Please select a valid Date of Birth.")
+                        if not st.session_state.customer_age or st.session_state.customer_age == "":
+                            errors.append("Please calculate Age using the 'Calculate Age' button")
                         if not address:
                             errors.append("Address is required")
                         if not phone:
@@ -1824,7 +1810,7 @@ def main():
                             nominee_aadhar_image_b64 = image_to_base64(nominee_aadhar_image) if nominee_aadhar_image else None
                             nominee_pan_image_b64 = image_to_base64(nominee_pan_image) if nominee_pan_image else None
                             
-                            # Get age value from session state
+                            # Get age values from session state
                             customer_age = int(st.session_state.customer_age) if st.session_state.customer_age else None
                             nominee_age_value = int(st.session_state.nominee_age) if st.session_state.nominee_age else None
                             

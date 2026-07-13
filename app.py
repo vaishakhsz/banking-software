@@ -1062,6 +1062,59 @@ def delete_voucher(voucher_number):
         print(f"Error in delete_voucher: {e}")
         return False, f"Error deleting voucher: {str(e)}"
 
+def delete_journal_entry(journal_id):
+    """Delete a specific journal entry"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get the journal entry details first
+        cursor.execute('SELECT account_code, amount, entry_type FROM journal_entries WHERE id = ?', (journal_id,))
+        entry = cursor.fetchone()
+        
+        if not entry:
+            conn.close()
+            return False, "Journal entry not found"
+        
+        account_code, amount, entry_type = entry
+        
+        # Reverse the balance change
+        if entry_type == 'DEBIT':
+            success, msg = update_account_balance(account_code, amount, is_debit=False)
+        else:
+            success, msg = update_account_balance(account_code, amount, is_debit=True)
+        
+        if not success:
+            conn.close()
+            return False, f"Error reversing journal entry: {msg}"
+        
+        # Delete the journal entry
+        cursor.execute('DELETE FROM journal_entries WHERE id = ?', (journal_id,))
+        conn.commit()
+        conn.close()
+        return True, "Journal entry deleted successfully"
+    except Exception as e:
+        print(f"Error in delete_journal_entry: {e}")
+        return False, f"Error deleting journal entry: {str(e)}"
+
+def get_all_journal_entries(limit=200):
+    """Get all journal entries"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number
+            FROM journal_entries
+            ORDER BY date DESC
+            LIMIT ?
+        ''', (limit,))
+        result = cursor.fetchall()
+        conn.close()
+        return result
+    except Exception as e:
+        print(f"Error in get_all_journal_entries: {e}")
+        return []
+
 # ============== FINANCIAL REPORTS ==============
 def get_balance_sheet():
     """Generate balance sheet"""
@@ -1396,6 +1449,76 @@ def render_voucher_list():
     
     return None
 
+# ============== JOURNAL ENTRIES MANAGEMENT ==============
+def render_journal_entries_management():
+    """Render journal entries management tab"""
+    st.header("📋 Journal Entries Management")
+    
+    # Get all journal entries
+    entries = get_all_journal_entries(limit=200)
+    
+    if not entries:
+        st.info("No journal entries found")
+        return
+    
+    # Display entries in a table
+    entries_data = []
+    for entry in entries:
+        entries_data.append({
+            'ID': entry[0],
+            'Date': entry[1],
+            'Account Code': entry[2],
+            'Account Name': entry[3],
+            'Type': entry[4],
+            'Amount': f"₹{entry[5]:,.2f}",
+            'Description': entry[6],
+            'Ref No': entry[7],
+            'User': entry[8],
+            'Voucher No': entry[9] if entry[9] else 'N/A'
+        })
+    
+    df = pd.DataFrame(entries_data)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    st.divider()
+    st.subheader("🗑️ Delete Journal Entry")
+    
+    # Select entry to delete
+    entry_options = [f"ID: {e[0]} - {e[3]} - ₹{e[5]:,.2f} - {e[1]}" for e in entries]
+    selected_entry = st.selectbox("Select Journal Entry to Delete", entry_options)
+    
+    if selected_entry:
+        # Extract ID from selection
+        entry_id = int(selected_entry.split(' - ')[0].replace('ID: ', ''))
+        
+        # Show entry details
+        entry_details = next((e for e in entries if e[0] == entry_id), None)
+        if entry_details:
+            st.warning(f"""
+            ⚠️ You are about to delete journal entry:
+            - **Account:** {entry_details[3]} ({entry_details[2]})
+            - **Type:** {entry_details[4]}
+            - **Amount:** ₹{entry_details[5]:,.2f}
+            - **Date:** {entry_details[1]}
+            - **Description:** {entry_details[6]}
+            """)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🗑️ Delete Entry", type="primary"):
+                    success, msg = delete_journal_entry(entry_id)
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with col2:
+                if st.button("❌ Cancel"):
+                    st.rerun()
+    
+    st.divider()
+    st.caption(f"Total Journal Entries: {len(entries)}")
+
 # ============== MAIN APP ==============
 def main():
     try:
@@ -1469,11 +1592,11 @@ def main():
             except Exception as e:
                 st.error(f"Error loading sidebar: {str(e)}")
         
-        # Main Tabs
+        # Main Tabs - Added Journal Entries Management Tab
         tabs = ["📝 Journal Vouchers", "💰 Cash & Bank", "👥 Customers & KYC", 
-                "📊 Financial Reports", "📋 Trial Balance", "⚙️ Head Management"]
+                "📊 Financial Reports", "📋 Trial Balance", "📋 Journal Entries", "⚙️ Head Management"]
         
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tabs)
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(tabs)
         
         # ---------- TAB 1: JOURNAL VOUCHERS ----------
         with tab1:
@@ -1668,7 +1791,7 @@ def main():
                         help="Age will be auto-calculated when you click the Calculate button"
                     )
                     
-                    # Calculate Age button - using st.button inside form
+                    # Calculate Age button
                     calc_age = st.form_submit_button("📅 Calculate Age")
                     if calc_age:
                         if date_of_birth:
@@ -2077,8 +2200,12 @@ def main():
             else:
                 st.info("No accounts to display.")
         
-        # ---------- TAB 6: HEAD MANAGEMENT ----------
+        # ---------- TAB 6: JOURNAL ENTRIES MANAGEMENT ----------
         with tab6:
+            render_journal_entries_management()
+        
+        # ---------- TAB 7: HEAD MANAGEMENT ----------
+        with tab7:
             st.header("⚙️ Expense & Income Head Management")
             
             if user['role'] not in ['admin', 'manager']:

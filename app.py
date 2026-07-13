@@ -1643,10 +1643,10 @@ def main():
                 if 'nominee_age' not in st.session_state:
                     st.session_state.nominee_age = ""
                 
-                with st.form("customer_form", clear_on_submit=True):
+                with st.form("customer_form", clear_on_submit=False):
                     st.markdown("### 📋 Personal Details")
                     
-                    full_name = st.text_input("Full Name*")
+                    full_name = st.text_input("Full Name*", value=st.session_state.get('full_name', ''))
                     
                     # Date of Birth with age in separate text box
                     min_date = datetime(1900, 1, 1).date()
@@ -1654,7 +1654,7 @@ def main():
                     
                     date_of_birth = st.date_input(
                         "Date of Birth*", 
-                        value=None,
+                        value=st.session_state.get('dob_value', None),
                         min_value=min_date,
                         max_value=max_date,
                         help="Select date of birth (1900 to present)"
@@ -1675,24 +1675,26 @@ def main():
                             today = datetime.now().date()
                             age_value = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
                             st.session_state.customer_age = str(age_value)
+                            st.session_state.dob_value = date_of_birth
+                            st.session_state.full_name = full_name
                             st.success(f"✅ Age calculated: {age_value} years")
                         else:
                             st.warning("⚠️ Please select a Date of Birth first")
                     
-                    address = st.text_area("Address*")
+                    address = st.text_area("Address*", value=st.session_state.get('address', ''))
                     
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        phone = st.text_input("Phone Number*")
-                        email = st.text_input("Email*")
+                        phone = st.text_input("Phone Number*", value=st.session_state.get('phone', ''))
+                        email = st.text_input("Email*", value=st.session_state.get('email', ''))
                     with col_b:
-                        whatsapp_number = st.text_input("WhatsApp Number")
+                        whatsapp_number = st.text_input("WhatsApp Number", value=st.session_state.get('whatsapp', ''))
                     
                     st.markdown("### 🪪 KYC Documents")
                     st.markdown("**Aadhaar Details (Compulsory)**")
                     col_c, col_d = st.columns(2)
                     with col_c:
-                        aadhar_number = st.text_input("Aadhaar Number (12 digits)*", help="Enter 12-digit Aadhaar number")
+                        aadhar_number = st.text_input("Aadhaar Number (12 digits)*", value=st.session_state.get('aadhar', ''))
                         if aadhar_number and not validate_aadhar(aadhar_number):
                             st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
                     with col_d:
@@ -1701,7 +1703,7 @@ def main():
                     st.markdown("**PAN Card Details (Compulsory)**")
                     col_e, col_f = st.columns(2)
                     with col_e:
-                        pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*", help="Enter valid PAN card number")
+                        pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*", value=st.session_state.get('pan', ''))
                         if pan_number and not validate_pan(pan_number):
                             st.error("❌ Invalid PAN number. Format: ABCDE1234F")
                     with col_f:
@@ -1710,11 +1712,11 @@ def main():
                     st.markdown("### 👤 Nominee Details")
                     col_g, col_h = st.columns(2)
                     with col_g:
-                        nominee_name = st.text_input("Nominee Full Name")
+                        nominee_name = st.text_input("Nominee Full Name", value=st.session_state.get('nominee_name', ''))
                         
                         nominee_dob = st.date_input(
                             "Nominee Date of Birth", 
-                            value=None,
+                            value=st.session_state.get('nominee_dob_value', None),
                             min_value=min_date,
                             max_value=max_date,
                             help="Select nominee's date of birth (1900 to present)"
@@ -1735,18 +1737,19 @@ def main():
                                 today = datetime.now().date()
                                 age_value = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
                                 st.session_state.nominee_age = str(age_value)
+                                st.session_state.nominee_dob_value = nominee_dob
                                 st.success(f"✅ Nominee Age calculated: {age_value} years")
                             else:
                                 st.warning("⚠️ Please select a Nominee Date of Birth first")
                         
-                        nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)")
+                        nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)", value=st.session_state.get('nominee_relation', ''))
                     with col_h:
-                        nominee_address = st.text_area("Nominee Address")
+                        nominee_address = st.text_area("Nominee Address", value=st.session_state.get('nominee_address', ''))
                     
                     st.markdown("**Nominee Aadhaar Details (Optional)**")
                     col_i, col_j = st.columns(2)
                     with col_i:
-                        nominee_aadhar = st.text_input("Nominee Aadhaar Number", help="Enter 12-digit Aadhaar number")
+                        nominee_aadhar = st.text_input("Nominee Aadhaar Number", value=st.session_state.get('nominee_aadhar', ''))
                         if nominee_aadhar and not validate_aadhar(nominee_aadhar):
                             st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
                     with col_j:
@@ -1755,20 +1758,38 @@ def main():
                     st.markdown("**Nominee PAN Details (Optional)**")
                     col_k, col_l = st.columns(2)
                     with col_k:
-                        nominee_pan = st.text_input("Nominee PAN Number", help="Format: ABCDE1234F")
+                        nominee_pan = st.text_input("Nominee PAN Number", value=st.session_state.get('nominee_pan', ''))
                         if nominee_pan and not validate_pan(nominee_pan):
                             st.error("❌ Invalid PAN number. Format: ABCDE1234F")
                     with col_l:
                         nominee_pan_image = st.file_uploader("Upload Nominee PAN Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_pan_upload")
                     
                     st.markdown("### 📝 Additional Information")
-                    id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"])
-                    id_number = st.text_input("ID Number*")
+                    id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"], index=st.session_state.get('id_type_index', 0))
+                    id_number = st.text_input("ID Number*", value=st.session_state.get('id_number', ''))
                     
                     # Submit button
                     submitted = st.form_submit_button("✅ Register Customer")
                     
                     if submitted:
+                        # Save all values to session state
+                        st.session_state.full_name = full_name
+                        st.session_state.dob_value = date_of_birth
+                        st.session_state.address = address
+                        st.session_state.phone = phone
+                        st.session_state.email = email
+                        st.session_state.whatsapp = whatsapp_number
+                        st.session_state.aadhar = aadhar_number
+                        st.session_state.pan = pan_number
+                        st.session_state.nominee_name = nominee_name
+                        st.session_state.nominee_dob_value = nominee_dob
+                        st.session_state.nominee_relation = nominee_relation
+                        st.session_state.nominee_address = nominee_address
+                        st.session_state.nominee_aadhar = nominee_aadhar
+                        st.session_state.nominee_pan = nominee_pan
+                        st.session_state.id_type_index = ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"].index(id_type)
+                        st.session_state.id_number = id_number
+                        
                         # Validate required fields
                         errors = []
                         if not full_name:
@@ -1843,6 +1864,10 @@ def main():
                             if success:
                                 st.success(msg)
                                 st.balloons()
+                                # Clear session state after successful registration
+                                for key in list(st.session_state.keys()):
+                                    if key not in ['logged_in', 'user']:
+                                        del st.session_state[key]
                                 st.rerun()
                             else:
                                 st.error(msg)

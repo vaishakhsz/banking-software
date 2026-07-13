@@ -418,6 +418,77 @@ def create_customer(data, username):
         print(f"Error in create_customer: {e}")
         return False, f"Error creating customer: {str(e)}"
 
+def update_customer(customer_id, data, username):
+    """Update customer details"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE customers 
+            SET full_name = ?, address = ?, phone = ?, whatsapp_number = ?, email = ?,
+                id_type = ?, id_number = ?, aadhar_number = ?, pan_number = ?,
+                date_of_birth = ?, age = ?,
+                nominee_name = ?, nominee_address = ?, nominee_relation = ?,
+                nominee_dob = ?, nominee_age = ?,
+                nominee_aadhar = ?, nominee_pan = ?
+            WHERE customer_id = ?
+        ''', (
+            data['full_name'],
+            data['address'],
+            data['phone'],
+            data['whatsapp_number'],
+            data['email'],
+            data['id_type'],
+            data['id_number'],
+            data['aadhar_number'],
+            data['pan_number'],
+            data['date_of_birth'],
+            data['age'],
+            data['nominee_name'],
+            data['nominee_address'],
+            data['nominee_relation'],
+            data['nominee_dob'],
+            data['nominee_age'],
+            data['nominee_aadhar'],
+            data['nominee_pan'],
+            customer_id
+        ))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Customer {data['full_name']} updated successfully"
+    except Exception as e:
+        print(f"Error in update_customer: {e}")
+        return False, f"Error updating customer: {str(e)}"
+
+def delete_customer(customer_id):
+    """Delete a customer"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if customer has any transactions
+        cursor.execute('SELECT COUNT(*) FROM customer_transactions WHERE customer_id = ?', (customer_id,))
+        count = cursor.fetchone()[0]
+        
+        if count > 0:
+            # Soft delete - mark as inactive
+            cursor.execute('UPDATE customers SET kyc_completed = 0 WHERE customer_id = ?', (customer_id,))
+            conn.commit()
+            conn.close()
+            return True, "Customer has transactions. Marked as inactive."
+        else:
+            # Hard delete
+            cursor.execute('DELETE FROM customer_accounts WHERE customer_id = ?', (customer_id,))
+            cursor.execute('DELETE FROM customers WHERE customer_id = ?', (customer_id,))
+            conn.commit()
+            conn.close()
+            return True, "Customer deleted successfully"
+    except Exception as e:
+        print(f"Error in delete_customer: {e}")
+        return False, f"Error deleting customer: {str(e)}"
+
 def get_all_customers():
     """Get all customers"""
     try:
@@ -429,6 +500,7 @@ def get_all_customers():
                    nominee_name, nominee_address, nominee_relation, nominee_dob, nominee_age,
                    created_date
             FROM customers
+            WHERE kyc_completed = 1
             ORDER BY created_date DESC
         ''')
         result = cursor.fetchall()
@@ -1078,6 +1150,15 @@ def delete_journal_entry(journal_id):
         
         account_code, amount, entry_type = entry
         
+        # Verify account exists before reversing
+        cursor.execute('SELECT account_code FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        if not cursor.fetchone():
+            # Account might have been deleted, just delete the journal entry
+            cursor.execute('DELETE FROM journal_entries WHERE id = ?', (journal_id,))
+            conn.commit()
+            conn.close()
+            return True, "Journal entry deleted (account no longer exists)"
+        
         # Reverse the balance change
         if entry_type == 'DEBIT':
             success, msg = update_account_balance(account_code, amount, is_debit=False)
@@ -1085,8 +1166,11 @@ def delete_journal_entry(journal_id):
             success, msg = update_account_balance(account_code, amount, is_debit=True)
         
         if not success:
+            # If balance update fails, still delete the journal entry
+            cursor.execute('DELETE FROM journal_entries WHERE id = ?', (journal_id,))
+            conn.commit()
             conn.close()
-            return False, f"Error reversing journal entry: {msg}"
+            return True, "Journal entry deleted (balance could not be reversed)"
         
         # Delete the journal entry
         cursor.execute('DELETE FROM journal_entries WHERE id = ?', (journal_id,))
@@ -1449,6 +1533,267 @@ def render_voucher_list():
     
     return None
 
+# ============== CUSTOMER MANAGEMENT UI ==============
+def render_customer_management():
+    """Render customer management section with edit/delete"""
+    st.header("👥 Customer Management")
+    
+    customers = get_all_customers()
+    
+    if not customers:
+        st.info("No customers registered yet.")
+        return
+    
+    # Display customer list
+    cust_data = []
+    for cid, cust in customers.items():
+        balances = get_customer_balances(cid)
+        cust_data.append({
+            'ID': cid,
+            'Name': cust['full_name'],
+            'Phone': cust['phone'],
+            'WhatsApp': cust.get('whatsapp_number', ''),
+            'Email': cust['email'],
+            'Aadhaar': cust.get('aadhar_number', ''),
+            'PAN': cust.get('pan_number', ''),
+            'Age': cust.get('age', ''),
+            'Savings': f"₹{balances.get('1100', 0):,.2f}",
+            'Current': f"₹{balances.get('1200', 0):,.2f}",
+            'FD': f"₹{balances.get('1300', 0):,.2f}"
+        })
+    
+    df = pd.DataFrame(cust_data)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    st.divider()
+    
+    # Select customer for edit/delete
+    selected_customer = st.selectbox(
+        "Select Customer to Edit or Delete",
+        [""] + [f"{cust['full_name']} ({cid})" for cid, cust in customers.items()]
+    )
+    
+    if selected_customer:
+        cust_id = selected_customer.split('(')[-1].replace(')', '')
+        cust = customers[cust_id]
+        full_details = get_customer_details(cust_id)
+        balances = get_customer_balances(cust_id)
+        
+        # Display customer details
+        with st.expander("📄 Customer Details", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(f"**Name:** {cust['full_name']}")
+                st.markdown(f"**ID:** {cust_id}")
+                st.markdown(f"**DOB:** {cust.get('date_of_birth', 'N/A')}")
+                st.markdown(f"**Age:** {cust.get('age', 'N/A')} years")
+            with col2:
+                st.markdown(f"**Phone:** {cust['phone']}")
+                st.markdown(f"**WhatsApp:** {cust.get('whatsapp_number', 'N/A')}")
+                st.markdown(f"**Email:** {cust['email']}")
+            with col3:
+                st.markdown(f"**Aadhaar:** {cust.get('aadhar_number', 'N/A')}")
+                st.markdown(f"**PAN:** {cust.get('pan_number', 'N/A')}")
+                st.markdown(f"**Address:** {cust.get('address', 'N/A')}")
+            
+            # Display nominee details if exists
+            if cust.get('nominee_name'):
+                st.markdown("---")
+                st.markdown("**Nominee Details**")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.markdown(f"**Name:** {cust.get('nominee_name', 'N/A')}")
+                    st.markdown(f"**Relation:** {cust.get('nominee_relation', 'N/A')}")
+                with col2:
+                    st.markdown(f"**DOB:** {cust.get('nominee_dob', 'N/A')}")
+                    st.markdown(f"**Age:** {cust.get('nominee_age', 'N/A')} years")
+                with col3:
+                    st.markdown(f"**Aadhaar:** {cust.get('nominee_aadhar', 'N/A')}")
+                    st.markdown(f"**PAN:** {cust.get('nominee_pan', 'N/A')}")
+                st.markdown(f"**Address:** {cust.get('nominee_address', 'N/A')}")
+            
+            st.markdown("---")
+            st.markdown("**Account Balances**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Savings", f"₹{balances.get('1100', 0):,.2f}")
+            with col2:
+                st.metric("Current", f"₹{balances.get('1200', 0):,.2f}")
+            with col3:
+                st.metric("FD", f"₹{balances.get('1300', 0):,.2f}")
+        
+        # Edit and Delete buttons
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("✏️ Edit Customer", type="primary"):
+                st.session_state.edit_customer_id = cust_id
+                st.session_state.edit_mode = True
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Delete Customer", type="secondary"):
+                # Confirm deletion
+                st.warning(f"⚠️ Are you sure you want to delete customer {cust['full_name']}?")
+                if st.button("✅ Yes, Delete Customer", type="primary"):
+                    success, msg = delete_customer(cust_id)
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+    
+    # Edit Customer Form
+    if st.session_state.get('edit_mode', False) and st.session_state.get('edit_customer_id'):
+        edit_cust_id = st.session_state.edit_customer_id
+        edit_cust = get_customer_details(edit_cust_id)
+        
+        if edit_cust:
+            st.divider()
+            st.subheader(f"✏️ Editing Customer: {edit_cust['full_name']}")
+            
+            with st.form("edit_customer_form"):
+                st.markdown("### 📋 Personal Details")
+                
+                full_name = st.text_input("Full Name*", value=edit_cust['full_name'])
+                date_of_birth = st.date_input(
+                    "Date of Birth*",
+                    value=datetime.strptime(edit_cust['date_of_birth'], '%Y-%m-%d').date() if edit_cust['date_of_birth'] else None,
+                    min_value=datetime(1900, 1, 1).date(),
+                    max_value=datetime.now().date()
+                )
+                
+                # Calculate age
+                if date_of_birth:
+                    today = datetime.now().date()
+                    age = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+                    st.info(f"🎂 Age: {age} years")
+                else:
+                    age = None
+                
+                address = st.text_area("Address*", value=edit_cust['address'])
+                
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    phone = st.text_input("Phone Number*", value=edit_cust['phone'])
+                    email = st.text_input("Email*", value=edit_cust['email'])
+                with col_b:
+                    whatsapp_number = st.text_input("WhatsApp Number", value=edit_cust.get('whatsapp_number', ''))
+                
+                st.markdown("### 🪪 KYC Documents")
+                col_c, col_d = st.columns(2)
+                with col_c:
+                    aadhar_number = st.text_input("Aadhaar Number (12 digits)*", value=edit_cust.get('aadhar_number', ''))
+                    if aadhar_number and not validate_aadhar(aadhar_number):
+                        st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
+                with col_d:
+                    pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*", value=edit_cust.get('pan_number', ''))
+                    if pan_number and not validate_pan(pan_number):
+                        st.error("❌ Invalid PAN number. Format: ABCDE1234F")
+                
+                st.markdown("### 👤 Nominee Details")
+                col_g, col_h = st.columns(2)
+                with col_g:
+                    nominee_name = st.text_input("Nominee Full Name", value=edit_cust.get('nominee_name', ''))
+                    nominee_dob = st.date_input(
+                        "Nominee Date of Birth",
+                        value=datetime.strptime(edit_cust['nominee_dob'], '%Y-%m-%d').date() if edit_cust.get('nominee_dob') else None,
+                        min_value=datetime(1900, 1, 1).date(),
+                        max_value=datetime.now().date()
+                    )
+                    if nominee_dob:
+                        today = datetime.now().date()
+                        nominee_age = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
+                        st.caption(f"🎂 Nominee Age: {nominee_age} years")
+                    else:
+                        nominee_age = None
+                    nominee_relation = st.text_input("Nominee Relation", value=edit_cust.get('nominee_relation', ''))
+                with col_h:
+                    nominee_address = st.text_area("Nominee Address", value=edit_cust.get('nominee_address', ''))
+                
+                st.markdown("**Nominee Aadhaar & PAN (Optional)**")
+                col_i, col_j = st.columns(2)
+                with col_i:
+                    nominee_aadhar = st.text_input("Nominee Aadhaar Number", value=edit_cust.get('nominee_aadhar', ''))
+                with col_j:
+                    nominee_pan = st.text_input("Nominee PAN Number", value=edit_cust.get('nominee_pan', ''))
+                
+                st.markdown("### 📝 Additional Information")
+                id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"], 
+                                      index=["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"].index(edit_cust['id_type']) if edit_cust['id_type'] in ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"] else 0)
+                id_number = st.text_input("ID Number*", value=edit_cust['id_number'])
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    update_submit = st.form_submit_button("💾 Update Customer", type="primary")
+                with col2:
+                    cancel_submit = st.form_submit_button("❌ Cancel")
+                
+                if update_submit:
+                    # Validate
+                    errors = []
+                    if not full_name:
+                        errors.append("Full Name is required")
+                    if not date_of_birth:
+                        errors.append("Date of Birth is required")
+                    if not address:
+                        errors.append("Address is required")
+                    if not phone:
+                        errors.append("Phone Number is required")
+                    if not email:
+                        errors.append("Email is required")
+                    if not aadhar_number:
+                        errors.append("Aadhar Number is required")
+                    elif not validate_aadhar(aadhar_number):
+                        errors.append("Invalid Aadhaar number (must be 12 digits)")
+                    if not pan_number:
+                        errors.append("PAN Number is required")
+                    elif not validate_pan(pan_number):
+                        errors.append("Invalid PAN number (format: ABCDE1234F)")
+                    if not id_type:
+                        errors.append("ID Type is required")
+                    if not id_number:
+                        errors.append("ID Number is required")
+                    
+                    if errors:
+                        for error in errors:
+                            st.error(error)
+                    else:
+                        update_data = {
+                            'full_name': full_name,
+                            'address': address,
+                            'phone': phone,
+                            'whatsapp_number': whatsapp_number,
+                            'email': email,
+                            'id_type': id_type,
+                            'id_number': id_number,
+                            'aadhar_number': aadhar_number,
+                            'pan_number': pan_number,
+                            'date_of_birth': date_of_birth.strftime('%Y-%m-%d') if date_of_birth else None,
+                            'age': age,
+                            'nominee_name': nominee_name,
+                            'nominee_address': nominee_address,
+                            'nominee_relation': nominee_relation,
+                            'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
+                            'nominee_age': nominee_age,
+                            'nominee_aadhar': nominee_aadhar,
+                            'nominee_pan': nominee_pan
+                        }
+                        
+                        success, msg = update_customer(edit_cust_id, update_data, user['username'])
+                        if success:
+                            st.success(msg)
+                            st.session_state.edit_mode = False
+                            st.session_state.edit_customer_id = None
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                
+                if cancel_submit:
+                    st.session_state.edit_mode = False
+                    st.session_state.edit_customer_id = None
+                    st.rerun()
+
 # ============== JOURNAL ENTRIES MANAGEMENT ==============
 def render_journal_entries_management():
     """Render journal entries management tab"""
@@ -1592,7 +1937,7 @@ def main():
             except Exception as e:
                 st.error(f"Error loading sidebar: {str(e)}")
         
-        # Main Tabs - Added Journal Entries Management Tab
+        # Main Tabs
         tabs = ["📝 Journal Vouchers", "💰 Cash & Bank", "👥 Customers & KYC", 
                 "📊 Financial Reports", "📋 Trial Balance", "📋 Journal Entries", "⚙️ Head Management"]
         
@@ -1753,356 +2098,246 @@ def main():
         
         # ---------- TAB 3: CUSTOMERS & KYC ----------
         with tab3:
-            st.header("👥 Customer Management with KYC")
-            
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.subheader("➕ Register New Customer")
+            # If edit mode is active, show edit form, otherwise show customer list
+            if st.session_state.get('edit_mode', False) and st.session_state.get('edit_customer_id'):
+                render_customer_management()
+            else:
+                st.header("👥 Customer Management with KYC")
                 
-                # Initialize session state for age if not exists
-                if 'customer_age' not in st.session_state:
-                    st.session_state.customer_age = ""
-                if 'nominee_age' not in st.session_state:
-                    st.session_state.nominee_age = ""
+                col1, col2 = st.columns([1, 1])
                 
-                with st.form("customer_form", clear_on_submit=False):
-                    st.markdown("### 📋 Personal Details")
+                with col1:
+                    st.subheader("➕ Register New Customer")
                     
-                    full_name = st.text_input("Full Name*", value=st.session_state.get('full_name', ''))
+                    # Initialize session state for age if not exists
+                    if 'customer_age' not in st.session_state:
+                        st.session_state.customer_age = ""
+                    if 'nominee_age' not in st.session_state:
+                        st.session_state.nominee_age = ""
                     
-                    # Date of Birth with age in separate text box
-                    min_date = datetime(1900, 1, 1).date()
-                    max_date = datetime.now().date()
-                    
-                    date_of_birth = st.date_input(
-                        "Date of Birth*", 
-                        value=st.session_state.get('dob_value', None),
-                        min_value=min_date,
-                        max_value=max_date,
-                        help="Select date of birth (1900 to present)"
-                    )
-                    
-                    # Age display - disabled text box
-                    st.text_input(
-                        "Age (Auto-calculated)*",
-                        value=st.session_state.customer_age,
-                        disabled=True,
-                        help="Age will be auto-calculated when you click the Calculate button"
-                    )
-                    
-                    # Calculate Age button
-                    calc_age = st.form_submit_button("📅 Calculate Age")
-                    if calc_age:
-                        if date_of_birth:
-                            today = datetime.now().date()
-                            age_value = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
-                            st.session_state.customer_age = str(age_value)
-                            st.session_state.dob_value = date_of_birth
-                            st.session_state.full_name = full_name
-                            st.success(f"✅ Age calculated: {age_value} years")
-                        else:
-                            st.warning("⚠️ Please select a Date of Birth first")
-                    
-                    address = st.text_area("Address*", value=st.session_state.get('address', ''))
-                    
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        phone = st.text_input("Phone Number*", value=st.session_state.get('phone', ''))
-                        email = st.text_input("Email*", value=st.session_state.get('email', ''))
-                    with col_b:
-                        whatsapp_number = st.text_input("WhatsApp Number", value=st.session_state.get('whatsapp', ''))
-                    
-                    st.markdown("### 🪪 KYC Documents")
-                    st.markdown("**Aadhaar Details (Compulsory)**")
-                    col_c, col_d = st.columns(2)
-                    with col_c:
-                        aadhar_number = st.text_input("Aadhaar Number (12 digits)*", value=st.session_state.get('aadhar', ''))
-                        if aadhar_number and not validate_aadhar(aadhar_number):
-                            st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
-                    with col_d:
-                        aadhar_image = st.file_uploader("Upload Aadhaar Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="aadhar_upload")
-                    
-                    st.markdown("**PAN Card Details (Compulsory)**")
-                    col_e, col_f = st.columns(2)
-                    with col_e:
-                        pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*", value=st.session_state.get('pan', ''))
-                        if pan_number and not validate_pan(pan_number):
-                            st.error("❌ Invalid PAN number. Format: ABCDE1234F")
-                    with col_f:
-                        pan_image = st.file_uploader("Upload PAN Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="pan_upload")
-                    
-                    st.markdown("### 👤 Nominee Details")
-                    col_g, col_h = st.columns(2)
-                    with col_g:
-                        nominee_name = st.text_input("Nominee Full Name", value=st.session_state.get('nominee_name', ''))
+                    with st.form("customer_form", clear_on_submit=False):
+                        st.markdown("### 📋 Personal Details")
                         
-                        nominee_dob = st.date_input(
-                            "Nominee Date of Birth", 
-                            value=st.session_state.get('nominee_dob_value', None),
+                        full_name = st.text_input("Full Name*", value=st.session_state.get('full_name', ''))
+                        
+                        min_date = datetime(1900, 1, 1).date()
+                        max_date = datetime.now().date()
+                        
+                        date_of_birth = st.date_input(
+                            "Date of Birth*", 
+                            value=st.session_state.get('dob_value', None),
                             min_value=min_date,
                             max_value=max_date,
-                            help="Select nominee's date of birth (1900 to present)"
+                            help="Select date of birth (1900 to present)"
                         )
                         
-                        # Nominee Age - disabled text box
                         st.text_input(
-                            "Nominee Age (Auto-calculated)",
-                            value=st.session_state.nominee_age,
+                            "Age (Auto-calculated)*",
+                            value=st.session_state.customer_age,
                             disabled=True,
                             help="Age will be auto-calculated when you click the Calculate button"
                         )
                         
-                        # Calculate Nominee Age button
-                        calc_nom_age = st.form_submit_button("📅 Calculate Nominee Age")
-                        if calc_nom_age:
-                            if nominee_dob:
+                        calc_age = st.form_submit_button("📅 Calculate Age")
+                        if calc_age:
+                            if date_of_birth:
                                 today = datetime.now().date()
-                                age_value = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
-                                st.session_state.nominee_age = str(age_value)
-                                st.session_state.nominee_dob_value = nominee_dob
-                                st.success(f"✅ Nominee Age calculated: {age_value} years")
+                                age_value = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+                                st.session_state.customer_age = str(age_value)
+                                st.session_state.dob_value = date_of_birth
+                                st.session_state.full_name = full_name
+                                st.success(f"✅ Age calculated: {age_value} years")
                             else:
-                                st.warning("⚠️ Please select a Nominee Date of Birth first")
+                                st.warning("⚠️ Please select a Date of Birth first")
                         
-                        nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)", value=st.session_state.get('nominee_relation', ''))
-                    with col_h:
-                        nominee_address = st.text_area("Nominee Address", value=st.session_state.get('nominee_address', ''))
-                    
-                    st.markdown("**Nominee Aadhaar Details (Optional)**")
-                    col_i, col_j = st.columns(2)
-                    with col_i:
-                        nominee_aadhar = st.text_input("Nominee Aadhaar Number", value=st.session_state.get('nominee_aadhar', ''))
-                        if nominee_aadhar and not validate_aadhar(nominee_aadhar):
-                            st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
-                    with col_j:
-                        nominee_aadhar_image = st.file_uploader("Upload Nominee Aadhaar Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_aadhar_upload")
-                    
-                    st.markdown("**Nominee PAN Details (Optional)**")
-                    col_k, col_l = st.columns(2)
-                    with col_k:
-                        nominee_pan = st.text_input("Nominee PAN Number", value=st.session_state.get('nominee_pan', ''))
-                        if nominee_pan and not validate_pan(nominee_pan):
-                            st.error("❌ Invalid PAN number. Format: ABCDE1234F")
-                    with col_l:
-                        nominee_pan_image = st.file_uploader("Upload Nominee PAN Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_pan_upload")
-                    
-                    st.markdown("### 📝 Additional Information")
-                    id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"], index=st.session_state.get('id_type_index', 0))
-                    id_number = st.text_input("ID Number*", value=st.session_state.get('id_number', ''))
-                    
-                    # Submit button
-                    submitted = st.form_submit_button("✅ Register Customer")
-                    
-                    if submitted:
-                        # Save all values to session state
-                        st.session_state.full_name = full_name
-                        st.session_state.dob_value = date_of_birth
-                        st.session_state.address = address
-                        st.session_state.phone = phone
-                        st.session_state.email = email
-                        st.session_state.whatsapp = whatsapp_number
-                        st.session_state.aadhar = aadhar_number
-                        st.session_state.pan = pan_number
-                        st.session_state.nominee_name = nominee_name
-                        st.session_state.nominee_dob_value = nominee_dob
-                        st.session_state.nominee_relation = nominee_relation
-                        st.session_state.nominee_address = nominee_address
-                        st.session_state.nominee_aadhar = nominee_aadhar
-                        st.session_state.nominee_pan = nominee_pan
-                        st.session_state.id_type_index = ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"].index(id_type)
-                        st.session_state.id_number = id_number
+                        address = st.text_area("Address*", value=st.session_state.get('address', ''))
                         
-                        # Validate required fields
-                        errors = []
-                        if not full_name:
-                            errors.append("Full Name is required")
-                        if not date_of_birth:
-                            errors.append("Date of Birth is required")
-                        if not st.session_state.customer_age or st.session_state.customer_age == "":
-                            errors.append("Please calculate Age using the 'Calculate Age' button")
-                        if not address:
-                            errors.append("Address is required")
-                        if not phone:
-                            errors.append("Phone Number is required")
-                        if not email:
-                            errors.append("Email is required")
-                        if not aadhar_number:
-                            errors.append("Aadhar Number is required")
-                        elif not validate_aadhar(aadhar_number):
-                            errors.append("Invalid Aadhaar number (must be 12 digits)")
-                        if not pan_number:
-                            errors.append("PAN Number is required")
-                        elif not validate_pan(pan_number):
-                            errors.append("Invalid PAN number (format: ABCDE1234F)")
-                        if not aadhar_image:
-                            errors.append("Aadhaar Card image is required")
-                        if not pan_image:
-                            errors.append("PAN Card image is required")
-                        if not id_type:
-                            errors.append("ID Type is required")
-                        if not id_number:
-                            errors.append("ID Number is required")
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            phone = st.text_input("Phone Number*", value=st.session_state.get('phone', ''))
+                            email = st.text_input("Email*", value=st.session_state.get('email', ''))
+                        with col_b:
+                            whatsapp_number = st.text_input("WhatsApp Number", value=st.session_state.get('whatsapp', ''))
                         
-                        if errors:
-                            for error in errors:
-                                st.error(error)
-                        else:
-                            # Convert images to base64
-                            aadhar_image_b64 = image_to_base64(aadhar_image)
-                            pan_image_b64 = image_to_base64(pan_image)
-                            nominee_aadhar_image_b64 = image_to_base64(nominee_aadhar_image) if nominee_aadhar_image else None
-                            nominee_pan_image_b64 = image_to_base64(nominee_pan_image) if nominee_pan_image else None
-                            
-                            # Get age values from session state
-                            customer_age = int(st.session_state.customer_age) if st.session_state.customer_age else None
-                            nominee_age_value = int(st.session_state.nominee_age) if st.session_state.nominee_age else None
-                            
-                            customer_data = {
-                                'full_name': full_name,
-                                'address': address,
-                                'phone': phone,
-                                'whatsapp_number': whatsapp_number,
-                                'email': email,
-                                'id_type': id_type,
-                                'id_number': id_number,
-                                'aadhar_number': aadhar_number,
-                                'aadhar_image': aadhar_image_b64,
-                                'pan_number': pan_number,
-                                'pan_image': pan_image_b64,
-                                'date_of_birth': date_of_birth.strftime('%Y-%m-%d') if date_of_birth else None,
-                                'age': customer_age,
-                                'nominee_name': nominee_name,
-                                'nominee_address': nominee_address,
-                                'nominee_relation': nominee_relation,
-                                'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
-                                'nominee_age': nominee_age_value,
-                                'nominee_aadhar': nominee_aadhar,
-                                'nominee_aadhar_image': nominee_aadhar_image_b64,
-                                'nominee_pan': nominee_pan,
-                                'nominee_pan_image': nominee_pan_image_b64
-                            }
-                            
-                            success, msg = create_customer(customer_data, user['username'])
-                            if success:
-                                st.success(msg)
-                                st.balloons()
-                                # Clear session state after successful registration
-                                for key in list(st.session_state.keys()):
-                                    if key not in ['logged_in', 'user']:
-                                        del st.session_state[key]
-                                st.rerun()
-                            else:
-                                st.error(msg)
-            
-            with col2:
-                st.subheader("📋 Customer List")
-                customers = get_all_customers()
-                if customers:
-                    cust_data = []
-                    for cid, cust in customers.items():
-                        balances = get_customer_balances(cid)
-                        cust_data.append({
-                            'ID': cid,
-                            'Name': cust['full_name'],
-                            'Phone': cust['phone'],
-                            'WhatsApp': cust.get('whatsapp_number', ''),
-                            'Email': cust['email'],
-                            'Aadhaar': cust.get('aadhar_number', ''),
-                            'PAN': cust.get('pan_number', ''),
-                            'Age': cust.get('age', ''),
-                            'KYC': '✅',
-                            'Savings': f"₹{balances.get('1100', 0):,.2f}",
-                            'Current': f"₹{balances.get('1200', 0):,.2f}",
-                            'FD': f"₹{balances.get('1300', 0):,.2f}"
-                        })
-                    df = pd.DataFrame(cust_data)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No customers registered yet.")
-            
-            if customers:
-                st.divider()
-                st.subheader("🔍 Customer Details")
-                selected = st.selectbox("Select Customer", [f"{c['full_name']} ({cid})" for cid, c in customers.items()])
-                if selected:
-                    cust_id = selected.split('(')[-1].replace(')', '')
-                    cust = customers[cust_id]
-                    balances = get_customer_balances(cust_id)
-                    
-                    full_details = get_customer_details(cust_id)
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.markdown(f"**Name:** {cust['full_name']}")
-                        st.markdown(f"**ID:** {cust_id}")
-                        st.markdown(f"**DOB:** {cust.get('date_of_birth', 'N/A')}")
-                        st.markdown(f"**Age:** {cust.get('age', 'N/A')} years")
-                    with col2:
-                        st.markdown(f"**Phone:** {cust['phone']}")
-                        st.markdown(f"**WhatsApp:** {cust.get('whatsapp_number', 'N/A')}")
-                        st.markdown(f"**Email:** {cust['email']}")
-                    with col3:
-                        st.markdown(f"**Aadhaar:** {cust.get('aadhar_number', 'N/A')}")
-                        st.markdown(f"**PAN:** {cust.get('pan_number', 'N/A')}")
-                        st.markdown(f"**Address:** {cust.get('address', 'N/A')}")
-                    
-                    # Display uploaded documents
-                    st.markdown("---")
-                    st.markdown("### 📎 Uploaded Documents")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown("**Aadhaar Card**")
-                        if full_details and full_details.get('aadhar_image'):
-                            st.image(display_image_from_base64(full_details['aadhar_image']), use_container_width=True)
-                        else:
-                            st.caption("No Aadhaar image uploaded")
+                        st.markdown("### 🪪 KYC Documents")
+                        st.markdown("**Aadhaar Details (Compulsory)**")
+                        col_c, col_d = st.columns(2)
+                        with col_c:
+                            aadhar_number = st.text_input("Aadhaar Number (12 digits)*", value=st.session_state.get('aadhar', ''))
+                            if aadhar_number and not validate_aadhar(aadhar_number):
+                                st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
+                        with col_d:
+                            aadhar_image = st.file_uploader("Upload Aadhaar Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="aadhar_upload")
                         
-                        st.markdown("**PAN Card**")
-                        if full_details and full_details.get('pan_image'):
-                            st.image(display_image_from_base64(full_details['pan_image']), use_container_width=True)
-                        else:
-                            st.caption("No PAN image uploaded")
-                    
-                    with col2:
-                        st.markdown("**Nominee Aadhaar Card**")
-                        if full_details and full_details.get('nominee_aadhar_image'):
-                            st.image(display_image_from_base64(full_details['nominee_aadhar_image']), use_container_width=True)
-                        else:
-                            st.caption("No Nominee Aadhaar image uploaded")
+                        st.markdown("**PAN Card Details (Compulsory)**")
+                        col_e, col_f = st.columns(2)
+                        with col_e:
+                            pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*", value=st.session_state.get('pan', ''))
+                            if pan_number and not validate_pan(pan_number):
+                                st.error("❌ Invalid PAN number. Format: ABCDE1234F")
+                        with col_f:
+                            pan_image = st.file_uploader("Upload PAN Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="pan_upload")
                         
-                        st.markdown("**Nominee PAN Card**")
-                        if full_details and full_details.get('nominee_pan_image'):
-                            st.image(display_image_from_base64(full_details['nominee_pan_image']), use_container_width=True)
-                        else:
-                            st.caption("No Nominee PAN image uploaded")
-                    
-                    # Nominee Details
-                    if cust.get('nominee_name'):
-                        st.markdown("---")
                         st.markdown("### 👤 Nominee Details")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.markdown(f"**Name:** {cust.get('nominee_name', 'N/A')}")
-                            st.markdown(f"**Relation:** {cust.get('nominee_relation', 'N/A')}")
-                        with col2:
-                            st.markdown(f"**DOB:** {cust.get('nominee_dob', 'N/A')}")
-                            st.markdown(f"**Age:** {cust.get('nominee_age', 'N/A')} years")
-                        with col3:
-                            st.markdown(f"**Aadhaar:** {cust.get('nominee_aadhar', 'N/A')}")
-                            st.markdown(f"**PAN:** {cust.get('nominee_pan', 'N/A')}")
-                        st.markdown(f"**Address:** {cust.get('nominee_address', 'N/A')}")
-                    
-                    st.markdown("---")
-                    st.markdown("**Account Balances**")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Savings", f"₹{balances.get('1100', 0):,.2f}")
-                    with col2:
-                        st.metric("Current", f"₹{balances.get('1200', 0):,.2f}")
-                    with col3:
-                        st.metric("FD", f"₹{balances.get('1300', 0):,.2f}")
+                        col_g, col_h = st.columns(2)
+                        with col_g:
+                            nominee_name = st.text_input("Nominee Full Name", value=st.session_state.get('nominee_name', ''))
+                            
+                            nominee_dob = st.date_input(
+                                "Nominee Date of Birth", 
+                                value=st.session_state.get('nominee_dob_value', None),
+                                min_value=min_date,
+                                max_value=max_date,
+                                help="Select nominee's date of birth (1900 to present)"
+                            )
+                            
+                            st.text_input(
+                                "Nominee Age (Auto-calculated)",
+                                value=st.session_state.nominee_age,
+                                disabled=True,
+                                help="Age will be auto-calculated when you click the Calculate button"
+                            )
+                            
+                            calc_nom_age = st.form_submit_button("📅 Calculate Nominee Age")
+                            if calc_nom_age:
+                                if nominee_dob:
+                                    today = datetime.now().date()
+                                    age_value = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
+                                    st.session_state.nominee_age = str(age_value)
+                                    st.session_state.nominee_dob_value = nominee_dob
+                                    st.success(f"✅ Nominee Age calculated: {age_value} years")
+                                else:
+                                    st.warning("⚠️ Please select a Nominee Date of Birth first")
+                            
+                            nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)", value=st.session_state.get('nominee_relation', ''))
+                        with col_h:
+                            nominee_address = st.text_area("Nominee Address", value=st.session_state.get('nominee_address', ''))
+                        
+                        st.markdown("**Nominee Aadhaar Details (Optional)**")
+                        col_i, col_j = st.columns(2)
+                        with col_i:
+                            nominee_aadhar = st.text_input("Nominee Aadhaar Number", value=st.session_state.get('nominee_aadhar', ''))
+                            if nominee_aadhar and not validate_aadhar(nominee_aadhar):
+                                st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
+                        with col_j:
+                            nominee_aadhar_image = st.file_uploader("Upload Nominee Aadhaar Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_aadhar_upload")
+                        
+                        st.markdown("**Nominee PAN Details (Optional)**")
+                        col_k, col_l = st.columns(2)
+                        with col_k:
+                            nominee_pan = st.text_input("Nominee PAN Number", value=st.session_state.get('nominee_pan', ''))
+                            if nominee_pan and not validate_pan(nominee_pan):
+                                st.error("❌ Invalid PAN number. Format: ABCDE1234F")
+                        with col_l:
+                            nominee_pan_image = st.file_uploader("Upload Nominee PAN Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_pan_upload")
+                        
+                        st.markdown("### 📝 Additional Information")
+                        id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"], index=st.session_state.get('id_type_index', 0))
+                        id_number = st.text_input("ID Number*", value=st.session_state.get('id_number', ''))
+                        
+                        submitted = st.form_submit_button("✅ Register Customer")
+                        
+                        if submitted:
+                            # Save all values to session state
+                            st.session_state.full_name = full_name
+                            st.session_state.dob_value = date_of_birth
+                            st.session_state.address = address
+                            st.session_state.phone = phone
+                            st.session_state.email = email
+                            st.session_state.whatsapp = whatsapp_number
+                            st.session_state.aadhar = aadhar_number
+                            st.session_state.pan = pan_number
+                            st.session_state.nominee_name = nominee_name
+                            st.session_state.nominee_dob_value = nominee_dob
+                            st.session_state.nominee_relation = nominee_relation
+                            st.session_state.nominee_address = nominee_address
+                            st.session_state.nominee_aadhar = nominee_aadhar
+                            st.session_state.nominee_pan = nominee_pan
+                            st.session_state.id_type_index = ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"].index(id_type)
+                            st.session_state.id_number = id_number
+                            
+                            # Validate required fields
+                            errors = []
+                            if not full_name:
+                                errors.append("Full Name is required")
+                            if not date_of_birth:
+                                errors.append("Date of Birth is required")
+                            if not st.session_state.customer_age or st.session_state.customer_age == "":
+                                errors.append("Please calculate Age using the 'Calculate Age' button")
+                            if not address:
+                                errors.append("Address is required")
+                            if not phone:
+                                errors.append("Phone Number is required")
+                            if not email:
+                                errors.append("Email is required")
+                            if not aadhar_number:
+                                errors.append("Aadhar Number is required")
+                            elif not validate_aadhar(aadhar_number):
+                                errors.append("Invalid Aadhaar number (must be 12 digits)")
+                            if not pan_number:
+                                errors.append("PAN Number is required")
+                            elif not validate_pan(pan_number):
+                                errors.append("Invalid PAN number (format: ABCDE1234F)")
+                            if not aadhar_image:
+                                errors.append("Aadhaar Card image is required")
+                            if not pan_image:
+                                errors.append("PAN Card image is required")
+                            if not id_type:
+                                errors.append("ID Type is required")
+                            if not id_number:
+                                errors.append("ID Number is required")
+                            
+                            if errors:
+                                for error in errors:
+                                    st.error(error)
+                            else:
+                                aadhar_image_b64 = image_to_base64(aadhar_image)
+                                pan_image_b64 = image_to_base64(pan_image)
+                                nominee_aadhar_image_b64 = image_to_base64(nominee_aadhar_image) if nominee_aadhar_image else None
+                                nominee_pan_image_b64 = image_to_base64(nominee_pan_image) if nominee_pan_image else None
+                                
+                                customer_age = int(st.session_state.customer_age) if st.session_state.customer_age else None
+                                nominee_age_value = int(st.session_state.nominee_age) if st.session_state.nominee_age else None
+                                
+                                customer_data = {
+                                    'full_name': full_name,
+                                    'address': address,
+                                    'phone': phone,
+                                    'whatsapp_number': whatsapp_number,
+                                    'email': email,
+                                    'id_type': id_type,
+                                    'id_number': id_number,
+                                    'aadhar_number': aadhar_number,
+                                    'aadhar_image': aadhar_image_b64,
+                                    'pan_number': pan_number,
+                                    'pan_image': pan_image_b64,
+                                    'date_of_birth': date_of_birth.strftime('%Y-%m-%d') if date_of_birth else None,
+                                    'age': customer_age,
+                                    'nominee_name': nominee_name,
+                                    'nominee_address': nominee_address,
+                                    'nominee_relation': nominee_relation,
+                                    'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
+                                    'nominee_age': nominee_age_value,
+                                    'nominee_aadhar': nominee_aadhar,
+                                    'nominee_aadhar_image': nominee_aadhar_image_b64,
+                                    'nominee_pan': nominee_pan,
+                                    'nominee_pan_image': nominee_pan_image_b64
+                                }
+                                
+                                success, msg = create_customer(customer_data, user['username'])
+                                if success:
+                                    st.success(msg)
+                                    st.balloons()
+                                    for key in list(st.session_state.keys()):
+                                        if key not in ['logged_in', 'user']:
+                                            del st.session_state[key]
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                
+                with col2:
+                    # Show customer list with edit/delete options
+                    render_customer_management()
         
         # ---------- TAB 4: FINANCIAL REPORTS ----------
         with tab4:

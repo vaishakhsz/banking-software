@@ -31,6 +31,51 @@ def get_db_connection():
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+def migrate_database():
+    """Add missing columns to existing tables"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return
+        cursor = conn.cursor()
+        
+        # Check if interest_payable column exists in sb_interest_history
+        cursor.execute("PRAGMA table_info(sb_interest_history)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'interest_payable' not in columns:
+            print("Adding interest_payable column to sb_interest_history...")
+            cursor.execute("ALTER TABLE sb_interest_history ADD COLUMN interest_payable REAL DEFAULT 0")
+            conn.commit()
+            print("interest_payable column added successfully")
+        
+        if 'voucher_number' not in columns:
+            print("Adding voucher_number column to sb_interest_history...")
+            cursor.execute("ALTER TABLE sb_interest_history ADD COLUMN voucher_number TEXT")
+            conn.commit()
+            print("voucher_number column added successfully")
+        
+        # Check if sb_accounts table has interest_payable
+        cursor.execute("PRAGMA table_info(sb_accounts)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'interest_payable' not in columns:
+            print("Adding interest_payable column to sb_accounts...")
+            cursor.execute("ALTER TABLE sb_accounts ADD COLUMN interest_payable REAL DEFAULT 0")
+            conn.commit()
+            print("interest_payable column added to sb_accounts successfully")
+        
+        if 'last_interest_credited' not in columns:
+            print("Adding last_interest_credited column to sb_accounts...")
+            cursor.execute("ALTER TABLE sb_accounts ADD COLUMN last_interest_credited TEXT")
+            conn.commit()
+            print("last_interest_credited column added successfully")
+        
+        conn.close()
+        print("Database migration completed successfully")
+    except Exception as e:
+        print(f"Error in migrate_database: {e}")
+
 def init_database():
     try:
         conn = get_db_connection()
@@ -204,7 +249,7 @@ def init_database():
             )
         ''')
         
-        # SB Interest History
+        # SB Interest History - Fixed schema
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_interest_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -297,6 +342,8 @@ def init_database():
                 ''', acc)
         
         conn.close()
+        print("Database initialized successfully")
+        migrate_database()
     except Exception as e:
         print(f"Error in init_database: {e}")
 
@@ -807,6 +854,29 @@ def get_all_sb_accounts():
         print(f"Error in get_all_sb_accounts: {e}")
         return []
 
+def get_sb_transactions(account_number, limit=100):
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return []
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT transaction_id, transaction_date, value_date, particulars, debit, credit, balance, transaction_type
+            FROM sb_transactions WHERE account_number = ? ORDER BY transaction_date DESC LIMIT ?
+        ''', (account_number, limit))
+        result = cursor.fetchall()
+        conn.close()
+        transactions = []
+        for row in result:
+            transactions.append({
+                'transaction_id': row[0], 'transaction_date': row[1], 'value_date': row[2],
+                'particulars': row[3], 'debit': row[4], 'credit': row[5],
+                'balance': row[6], 'transaction_type': row[7]
+            })
+        return transactions
+    except:
+        return []
+
 def deposit_sb_account(account_number, amount, particulars, value_date, username):
     try:
         conn = get_db_connection()
@@ -902,6 +972,8 @@ def calculate_and_credit_interest(account_number, username):
                       (value_date, '2500', 'SB_INTEREST_PAYABLE', 'CREDIT', interest, f'Interest on SB Account {account_number}', voucher_number, username, voucher_number))
         cursor.execute('UPDATE accounts SET balance = balance + ? WHERE account_code = "5999"', (interest,))
         cursor.execute('UPDATE accounts SET balance = balance + ? WHERE account_code = "2500"', (interest,))
+        
+        # Insert interest history
         cursor.execute('''
             INSERT INTO sb_interest_history (account_number, quarter_start, quarter_end, interest_rate,
                 average_balance, interest_amount, interest_payable, credited_date, voucher_number)
@@ -1252,25 +1324,26 @@ def render_sb_report():
     selected = st.selectbox("Select Account", [f"{a['account_number']} - {a['customer_name']}" for a in accounts])
     if selected:
         acc_no = selected.split(' - ')[0]
-        col1, col2 = st.columns(2)
-        with col1:
-            from_date = st.date_input("From Date", value=datetime.now().date() - timedelta(days=30))
-        with col2:
-            to_date = st.date_input("To Date", value=datetime.now().date())
-        if st.button("📄 Generate Report"):
-            account = get_sb_account(acc_no)
-            if account:
-                st.markdown("### 📋 Account Summary")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Account", account['account_number'])
-                    st.metric("Customer", account['customer_name'])
-                with col2:
-                    st.metric("Opening Balance", f"₹{account['opening_balance']:,.2f}")
-                    st.metric("Current Balance", f"₹{account['current_balance']:,.2f}")
-                with col3:
-                    st.metric("Interest Rate", f"{account['interest_rate']}%")
-                    st.metric("Interest Payable", f"₹{account['interest_payable']:,.2f}")
+        account = get_sb_account(acc_no)
+        if account:
+            st.markdown("### 📋 Account Summary")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Account", account['account_number'])
+                st.metric("Customer", account['customer_name'])
+            with col2:
+                st.metric("Opening Balance", f"₹{account['opening_balance']:,.2f}")
+                st.metric("Current Balance", f"₹{account['current_balance']:,.2f}")
+            with col3:
+                st.metric("Interest Rate", f"{account['interest_rate']}%")
+                st.metric("Interest Payable", f"₹{account['interest_payable']:,.2f}")
+            
+            # Show transactions
+            transactions = get_sb_transactions(acc_no, 50)
+            if transactions:
+                st.markdown("### 📝 Recent Transactions")
+                df = pd.DataFrame(transactions)
+                st.dataframe(df, use_container_width=True, hide_index=True)
 
 def render_sb_account_creation():
     st.subheader("🏦 Create Savings Bank Account")
@@ -1336,6 +1409,9 @@ def main():
     try:
         if not os.path.exists(DB_FILE):
             init_database()
+        # Always run migration to ensure columns exist
+        migrate_database()
+        
         if 'logged_in' not in st.session_state or not st.session_state.logged_in:
             login_page()
             return

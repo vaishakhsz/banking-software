@@ -1130,7 +1130,7 @@ def get_all_sb_accounts():
                 'opening_balance': row[4],
                 'current_balance': row[5],
                 'interest_rate': row[6],
-                'interest_payable': row[7] if len(row) > 7 else 0,
+                'interest_payable': float(row[7]) if row[7] is not None else 0,
                 'account_status': row[8] if len(row) > 8 else 'ACTIVE',
                 'opening_date': row[9] if len(row) > 9 else ''
             })
@@ -1303,7 +1303,11 @@ def calculate_and_credit_interest(account_number, username):
             conn.close()
             return False, "Account not found"
         
-        current_balance, interest_rate, interest_payable, acc_number, customer_name = result
+        current_balance = result[0]
+        interest_rate = result[1]
+        interest_payable = result[2] if result[2] is not None else 0
+        acc_number = result[3]
+        customer_name = result[4]
         
         # Calculate quarterly interest (3 months = 90 days)
         interest = current_balance * (interest_rate / 100) * (90 / 365)
@@ -1447,7 +1451,7 @@ def get_interest_history(account_number):
                 'interest_rate': row[2],
                 'average_balance': row[3],
                 'interest_amount': row[4],
-                'interest_payable': row[5] if len(row) > 5 else row[4],
+                'interest_payable': float(row[5]) if row[5] is not None else 0,
                 'credited_date': row[6] if len(row) > 6 else '',
                 'voucher_number': row[7] if len(row) > 7 else ''
             })
@@ -1476,7 +1480,7 @@ def generate_sb_account_report(account_number, from_date, to_date):
                 'total_credits': total_credits,
                 'opening_balance': account['opening_balance'],
                 'closing_balance': account['current_balance'],
-                'interest_payable': account.get('interest_payable', 0),
+                'interest_payable': float(account.get('interest_payable', 0)),
                 'net_change': account['current_balance'] - account['opening_balance']
             }
         }
@@ -2167,7 +2171,7 @@ def render_sb_account_operations():
                 st.metric("📊 Interest Rate", f"{account['interest_rate']}%")
             
             with col3:
-                st.metric("📋 Interest Payable", f"₹{account.get('interest_payable', 0):,.2f}")
+                st.metric("📋 Interest Payable", f"₹{float(account.get('interest_payable', 0)):,.2f}")
             
             col1, col2, col3 = st.columns(3)
             
@@ -2220,12 +2224,15 @@ def render_sb_account_operations():
             with col3:
                 st.markdown("### 📊 Interest")
                 st.caption(f"Current Rate: {account['interest_rate']}%")
-                st.info(f"💰 Interest Payable: ₹{account.get('interest_payable', 0):,.2f}")
+                st.info(f"💰 Interest Payable: ₹{float(account.get('interest_payable', 0)):,.2f}")
+                
+                # Calculate estimated interest
+                estimated_interest = account['current_balance'] * (account['interest_rate'] / 100) * (90 / 365)
+                st.caption(f"Estimated Quarterly Interest: ₹{estimated_interest:,.2f}")
                 
                 if st.button("🧮 Calculate & Credit Interest", key="interest_btn"):
                     # Show confirmation
-                    interest_amount = account['current_balance'] * (account['interest_rate'] / 100) * (90 / 365)
-                    st.warning(f"⚠️ This will credit interest of approximately ₹{interest_amount:,.2f} at {account['interest_rate']}%")
+                    st.warning(f"⚠️ This will credit interest of approximately ₹{estimated_interest:,.2f} at {account['interest_rate']}%")
                     st.caption("📝 Journal Entry: Dr SB Interest Expense / Cr SB Interest Payable")
                     
                     col1, col2 = st.columns(2)
@@ -2285,7 +2292,7 @@ def render_sb_account_report():
                 with col3:
                     st.metric("Total Debits", f"₹{summary['total_debits']:,.2f}")
                     st.metric("Total Credits", f"₹{summary['total_credits']:,.2f}")
-                    st.metric("Interest Payable", f"₹{summary.get('interest_payable', 0):,.2f}")
+                    st.metric("Interest Payable", f"₹{float(summary.get('interest_payable', 0)):,.2f}")
                 
                 st.markdown("### 📝 Transaction Details")
                 if transactions:
@@ -2324,7 +2331,7 @@ def render_sb_account_report():
                             'Rate': f"{ih['interest_rate']}%",
                             'Avg Balance': f"₹{ih['average_balance']:,.2f}",
                             'Interest': f"₹{ih['interest_amount']:,.2f}",
-                            'Payable': f"₹{ih.get('interest_payable', 0):,.2f}",
+                            'Payable': f"₹{float(ih.get('interest_payable', 0)):,.2f}",
                             'Voucher No': ih.get('voucher_number', 'N/A'),
                             'Credited Date': ih['credited_date']
                         })
@@ -2351,7 +2358,7 @@ def render_sb_account_list():
             'Opening Balance': f"₹{acc['opening_balance']:,.2f}",
             'Current Balance': f"₹{acc['current_balance']:,.2f}",
             'Interest Rate': f"{acc['interest_rate']}%",
-            'Interest Payable': f"₹{acc.get('interest_payable', 0):,.2f}",
+            'Interest Payable': f"₹{float(acc.get('interest_payable', 0)):,.2f}",
             'Status': acc['account_status'],
             'Opening Date': acc['opening_date']
         })
@@ -2618,296 +2625,6 @@ def render_head_management():
                             st.rerun()
                         else:
                             st.error(msg)
-
-def render_customer_management_full():
-    """Render full customer management with edit/delete"""
-    st.header("👥 Customer Management")
-    
-    customers = get_all_customers()
-    
-    if not customers:
-        st.info("No customers registered yet.")
-        return
-    
-    # Display customer list
-    cust_data = []
-    for cid, cust in customers.items():
-        balances = get_customer_balances(cid)
-        cust_data.append({
-            'ID': cid,
-            'Name': cust['full_name'],
-            'Phone': cust['phone'],
-            'WhatsApp': cust.get('whatsapp_number', ''),
-            'Email': cust['email'],
-            'Aadhaar': cust.get('aadhar_number', ''),
-            'PAN': cust.get('pan_number', ''),
-            'Age': cust.get('age', ''),
-            'Savings': f"₹{balances.get('1100', 0):,.2f}",
-            'Current': f"₹{balances.get('1200', 0):,.2f}",
-            'FD': f"₹{balances.get('1300', 0):,.2f}"
-        })
-    
-    df = pd.DataFrame(cust_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    st.divider()
-    
-    # Select customer for edit/delete
-    selected_customer = st.selectbox(
-        "Select Customer to Edit or Delete",
-        [""] + [f"{cust['full_name']} ({cid})" for cid, cust in customers.items()]
-    )
-    
-    if selected_customer:
-        cust_id = selected_customer.split('(')[-1].replace(')', '')
-        cust = customers[cust_id]
-        full_details = get_customer_details(cust_id)
-        balances = get_customer_balances(cust_id)
-        
-        with st.expander("📄 Customer Details", expanded=True):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown(f"**Name:** {cust['full_name']}")
-                st.markdown(f"**ID:** {cust_id}")
-                st.markdown(f"**DOB:** {cust.get('date_of_birth', 'N/A')}")
-                st.markdown(f"**Age:** {cust.get('age', 'N/A')} years")
-            with col2:
-                st.markdown(f"**Phone:** {cust['phone']}")
-                st.markdown(f"**WhatsApp:** {cust.get('whatsapp_number', 'N/A')}")
-                st.markdown(f"**Email:** {cust['email']}")
-            with col3:
-                st.markdown(f"**Aadhaar:** {cust.get('aadhar_number', 'N/A')}")
-                st.markdown(f"**PAN:** {cust.get('pan_number', 'N/A')}")
-                st.markdown(f"**Address:** {cust.get('address', 'N/A')}")
-            
-            if cust.get('nominee_name'):
-                st.markdown("---")
-                st.markdown("**Nominee Details**")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.markdown(f"**Name:** {cust.get('nominee_name', 'N/A')}")
-                    st.markdown(f"**Relation:** {cust.get('nominee_relation', 'N/A')}")
-                with col2:
-                    st.markdown(f"**DOB:** {cust.get('nominee_dob', 'N/A')}")
-                    st.markdown(f"**Age:** {cust.get('nominee_age', 'N/A')} years")
-                with col3:
-                    st.markdown(f"**Aadhaar:** {cust.get('nominee_aadhar', 'N/A')}")
-                    st.markdown(f"**PAN:** {cust.get('nominee_pan', 'N/A')}")
-                st.markdown(f"**Address:** {cust.get('nominee_address', 'N/A')}")
-            
-            st.markdown("---")
-            st.markdown("**Account Balances**")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Savings", f"₹{balances.get('1100', 0):,.2f}")
-            with col2:
-                st.metric("Current", f"₹{balances.get('1200', 0):,.2f}")
-            with col3:
-                st.metric("FD", f"₹{balances.get('1300', 0):,.2f}")
-        
-        # Edit and Delete buttons
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("✏️ Edit Customer", type="primary"):
-                st.session_state.edit_customer_id = cust_id
-                st.session_state.edit_mode = True
-                st.rerun()
-        
-        with col2:
-            if st.button("🗑️ Delete Customer", type="secondary"):
-                st.session_state.delete_customer_id = cust_id
-                st.session_state.show_delete_confirmation = True
-                st.rerun()
-        
-        if st.session_state.get('show_delete_confirmation', False) and st.session_state.get('delete_customer_id') == cust_id:
-            st.warning(f"⚠️ Are you sure you want to delete customer **{cust['full_name']}**?")
-            st.caption("This action cannot be undone.")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("✅ Yes, Delete Customer", type="primary"):
-                    success, msg = delete_customer(cust_id)
-                    if success:
-                        st.success(msg)
-                        st.session_state.show_delete_confirmation = False
-                        st.session_state.delete_customer_id = None
-                        st.rerun()
-                    else:
-                        st.error(msg)
-            with col2:
-                if st.button("❌ Cancel"):
-                    st.session_state.show_delete_confirmation = False
-                    st.session_state.delete_customer_id = None
-                    st.rerun()
-    
-    # Edit Customer Form
-    if st.session_state.get('edit_mode', False) and st.session_state.get('edit_customer_id'):
-        edit_cust_id = st.session_state.edit_customer_id
-        edit_cust = get_customer_details(edit_cust_id)
-        
-        if edit_cust:
-            st.divider()
-            st.subheader(f"✏️ Editing Customer: {edit_cust['full_name']}")
-            
-            with st.form("edit_customer_form"):
-                st.markdown("### 📋 Personal Details")
-                
-                full_name = st.text_input("Full Name*", value=edit_cust.get('full_name', ''))
-                
-                dob_value = None
-                if edit_cust.get('date_of_birth'):
-                    try:
-                        dob_value = datetime.strptime(edit_cust['date_of_birth'], '%Y-%m-%d').date()
-                    except:
-                        dob_value = None
-                
-                date_of_birth = st.date_input(
-                    "Date of Birth*",
-                    value=dob_value,
-                    min_value=datetime(1900, 1, 1).date(),
-                    max_value=datetime.now().date()
-                )
-                
-                age = None
-                if date_of_birth:
-                    today = datetime.now().date()
-                    age = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
-                    st.info(f"🎂 Age: {age} years")
-                
-                address = st.text_area("Address*", value=edit_cust.get('address', ''))
-                
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    phone = st.text_input("Phone Number*", value=edit_cust.get('phone', ''))
-                    email = st.text_input("Email*", value=edit_cust.get('email', ''))
-                with col_b:
-                    whatsapp_number = st.text_input("WhatsApp Number", value=edit_cust.get('whatsapp_number', ''))
-                
-                st.markdown("### 🪪 KYC Documents")
-                col_c, col_d = st.columns(2)
-                with col_c:
-                    aadhar_number = st.text_input("Aadhaar Number (12 digits)*", value=edit_cust.get('aadhar_number', ''))
-                    if aadhar_number and not validate_aadhar(aadhar_number):
-                        st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
-                with col_d:
-                    pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*", value=edit_cust.get('pan_number', ''))
-                    if pan_number and not validate_pan(pan_number):
-                        st.error("❌ Invalid PAN number. Format: ABCDE1234F")
-                
-                st.markdown("### 👤 Nominee Details")
-                col_g, col_h = st.columns(2)
-                with col_g:
-                    nominee_name = st.text_input("Nominee Full Name", value=edit_cust.get('nominee_name', ''))
-                    
-                    nominee_dob_value = None
-                    if edit_cust.get('nominee_dob'):
-                        try:
-                            nominee_dob_value = datetime.strptime(edit_cust['nominee_dob'], '%Y-%m-%d').date()
-                        except:
-                            nominee_dob_value = None
-                    
-                    nominee_dob = st.date_input(
-                        "Nominee Date of Birth",
-                        value=nominee_dob_value,
-                        min_value=datetime(1900, 1, 1).date(),
-                        max_value=datetime.now().date()
-                    )
-                    if nominee_dob:
-                        today = datetime.now().date()
-                        nominee_age = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
-                        st.caption(f"🎂 Nominee Age: {nominee_age} years")
-                    else:
-                        nominee_age = None
-                    nominee_relation = st.text_input("Nominee Relation", value=edit_cust.get('nominee_relation', ''))
-                with col_h:
-                    nominee_address = st.text_area("Nominee Address", value=edit_cust.get('nominee_address', ''))
-                
-                st.markdown("**Nominee Aadhaar & PAN (Optional)**")
-                col_i, col_j = st.columns(2)
-                with col_i:
-                    nominee_aadhar = st.text_input("Nominee Aadhaar Number", value=edit_cust.get('nominee_aadhar', ''))
-                with col_j:
-                    nominee_pan = st.text_input("Nominee PAN Number", value=edit_cust.get('nominee_pan', ''))
-                
-                st.markdown("### 📝 Additional Information")
-                id_type_options = ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"]
-                id_type_index = 0
-                if edit_cust.get('id_type') in id_type_options:
-                    id_type_index = id_type_options.index(edit_cust['id_type'])
-                
-                id_type = st.selectbox("ID Type*", id_type_options, index=id_type_index)
-                id_number = st.text_input("ID Number*", value=edit_cust.get('id_number', ''))
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    update_submit = st.form_submit_button("💾 Update Customer", type="primary")
-                with col2:
-                    cancel_submit = st.form_submit_button("❌ Cancel")
-                
-                if update_submit:
-                    errors = []
-                    if not full_name:
-                        errors.append("Full Name is required")
-                    if not date_of_birth:
-                        errors.append("Date of Birth is required")
-                    if not address:
-                        errors.append("Address is required")
-                    if not phone:
-                        errors.append("Phone Number is required")
-                    if not email:
-                        errors.append("Email is required")
-                    if not aadhar_number:
-                        errors.append("Aadhar Number is required")
-                    elif not validate_aadhar(aadhar_number):
-                        errors.append("Invalid Aadhaar number (must be 12 digits)")
-                    if not pan_number:
-                        errors.append("PAN Number is required")
-                    elif not validate_pan(pan_number):
-                        errors.append("Invalid PAN number (format: ABCDE1234F)")
-                    if not id_type:
-                        errors.append("ID Type is required")
-                    if not id_number:
-                        errors.append("ID Number is required")
-                    
-                    if errors:
-                        for error in errors:
-                            st.error(error)
-                    else:
-                        update_data = {
-                            'full_name': full_name,
-                            'address': address,
-                            'phone': phone,
-                            'whatsapp_number': whatsapp_number,
-                            'email': email,
-                            'id_type': id_type,
-                            'id_number': id_number,
-                            'aadhar_number': aadhar_number,
-                            'pan_number': pan_number,
-                            'date_of_birth': date_of_birth.strftime('%Y-%m-%d') if date_of_birth else None,
-                            'age': age,
-                            'nominee_name': nominee_name,
-                            'nominee_address': nominee_address,
-                            'nominee_relation': nominee_relation,
-                            'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
-                            'nominee_age': nominee_age,
-                            'nominee_aadhar': nominee_aadhar,
-                            'nominee_pan': nominee_pan
-                        }
-                        
-                        success, msg = update_customer(edit_cust_id, update_data, user['username'])
-                        if success:
-                            st.success(msg)
-                            st.session_state.edit_mode = False
-                            st.session_state.edit_customer_id = None
-                            st.rerun()
-                        else:
-                            st.error(msg)
-                
-                if cancel_submit:
-                    st.session_state.edit_mode = False
-                    st.session_state.edit_customer_id = None
-                    st.rerun()
 
 # ============== LOGIN PAGE ==============
 def login_page():
@@ -3309,7 +3026,29 @@ def main():
                                 st.error(msg)
             
             with col2:
-                render_customer_management_full()
+                st.subheader("📋 Customer List")
+                customers = get_all_customers()
+                if customers:
+                    cust_data = []
+                    for cid, cust in customers.items():
+                        balances = get_customer_balances(cid)
+                        cust_data.append({
+                            'ID': cid,
+                            'Name': cust['full_name'],
+                            'Phone': cust['phone'],
+                            'WhatsApp': cust.get('whatsapp_number', ''),
+                            'Email': cust['email'],
+                            'Aadhaar': cust.get('aadhar_number', ''),
+                            'PAN': cust.get('pan_number', ''),
+                            'Age': cust.get('age', ''),
+                            'Savings': f"₹{balances.get('1100', 0):,.2f}",
+                            'Current': f"₹{balances.get('1200', 0):,.2f}",
+                            'FD': f"₹{balances.get('1300', 0):,.2f}"
+                        })
+                    df = pd.DataFrame(cust_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No customers registered yet.")
         
         # ---------- TAB 4: SB ACCOUNTS ----------
         with tab4:

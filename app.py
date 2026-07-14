@@ -10,7 +10,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 import re
-import threading  # <-- THIS WAS MISSING
+import threading
 
 # ============== DATABASE SETUP ==============
 DB_FILE = "savings_bank.db"
@@ -30,11 +30,16 @@ def get_db_connection():
             print(f"Database connection error: {e}")
             return None
 
+def hash_password(password):
+    """Hash password using SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
 def init_database():
     """Initialize all tables for Savings Bank Account"""
     try:
         conn = get_db_connection()
         if conn is None:
+            print("Failed to get database connection")
             return
         cursor = conn.cursor()
         
@@ -131,13 +136,16 @@ def init_database():
         
         conn.commit()
         
-        # Check if default admin user exists
-        cursor.execute("SELECT COUNT(*) FROM users")
+        # Check if default admin user exists - FIXED
+        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
         count = cursor.fetchone()[0]
         
         if count == 0:
+            print("Creating default users...")
             current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             admin_password = hash_password("admin123")
+            
+            # Insert admin user
             cursor.execute('''
                 INSERT INTO users 
                 (username, password_hash, full_name, role, created_date)
@@ -157,16 +165,15 @@ def init_database():
                     (username, password_hash, full_name, role, created_date)
                     VALUES (?, ?, ?, ?, ?)
                 ''', (user[0], user[1], user[2], user[3], current_date))
+            
+            conn.commit()
+            print("Default users created successfully")
         
-        conn.commit()
         conn.close()
+        print("Database initialized successfully")
     except Exception as e:
         print(f"Error in init_database: {e}")
-
-# ============== HELPER FUNCTIONS ==============
-def hash_password(password):
-    """Hash password using SHA-256"""
-    return hashlib.sha256(password.encode()).hexdigest()
+        print(traceback.format_exc())
 
 def verify_user(username, password):
     """Verify user credentials"""
@@ -175,15 +182,16 @@ def verify_user(username, password):
         if conn is None:
             return None
         cursor = conn.cursor()
+        
+        # Hash the password
+        hashed = hash_password(password)
+        
         cursor.execute('SELECT * FROM users WHERE username = ? AND password_hash = ?', 
-                       (username, hash_password(password)))
+                       (username, hashed))
         user = cursor.fetchone()
-        conn.close()
         
         if user:
             # Update last login
-            conn = get_db_connection()
-            cursor = conn.cursor()
             cursor.execute('UPDATE users SET last_login = ? WHERE username = ?',
                            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), username))
             conn.commit()
@@ -196,11 +204,13 @@ def verify_user(username, password):
                 'created_date': user[5],
                 'last_login': user[6] if len(user) > 6 else None
             }
+        conn.close()
     except Exception as e:
         print(f"Error in verify_user: {e}")
         return None
     return None
 
+# ============== HELPER FUNCTIONS ==============
 def generate_account_number():
     """Generate unique SB account number"""
     try:
@@ -222,31 +232,6 @@ def generate_transaction_id():
     """Generate unique transaction ID"""
     return f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{str(int(time.time()))[-6:]}"
 
-def calculate_average_balance(transactions, start_date, end_date):
-    """Calculate average balance for interest calculation"""
-    try:
-        if not transactions:
-            return 0
-        
-        # Filter transactions between dates
-        filtered = [t for t in transactions if start_date <= t['transaction_date'] <= end_date]
-        if not filtered:
-            return 0
-        
-        # Calculate average balance
-        total_days = (datetime.strptime(end_date, '%Y-%m-%d') - datetime.strptime(start_date, '%Y-%m-%d')).days + 1
-        if total_days <= 0:
-            return 0
-        
-        total_balance = 0
-        for t in filtered:
-            total_balance += t['balance']
-        
-        return total_balance / len(filtered)
-    except Exception as e:
-        print(f"Error calculating average balance: {e}")
-        return 0
-
 def calculate_interest(principal, rate, days):
     """Calculate simple interest"""
     return (principal * rate * days) / (100 * 365)
@@ -262,16 +247,6 @@ def image_to_base64(image_file):
         return base64.b64encode(buffered.getvalue()).decode()
     except Exception as e:
         print(f"Error converting image: {e}")
-        return None
-
-def display_image_from_base64(base64_string):
-    """Display image from base64 string"""
-    if not base64_string:
-        return None
-    try:
-        return f"data:image/jpeg;base64,{base64_string}"
-    except Exception as e:
-        print(f"Error displaying image: {e}")
         return None
 
 # ============== SB ACCOUNT FUNCTIONS ==============
@@ -552,56 +527,17 @@ def calculate_and_credit_interest(account_number):
         cursor = conn.cursor()
         
         # Get account details
-        cursor.execute('SELECT current_balance, interest_rate, last_interest_date FROM sb_accounts WHERE account_number = ?', 
+        cursor.execute('SELECT current_balance, interest_rate FROM sb_accounts WHERE account_number = ?', 
                       (account_number,))
         result = cursor.fetchone()
         if not result:
             conn.close()
             return False, "Account not found"
         
-        current_balance, interest_rate, last_interest_date = result
+        current_balance, interest_rate = result
         
-        # Calculate quarter
-        today = datetime.now().date()
-        quarter_start = datetime(today.year, ((today.month - 1) // 3) * 3 + 1, 1).date()
-        
-        # Get transactions for the quarter
-        cursor.execute('''
-            SELECT transaction_date, balance FROM sb_transactions 
-            WHERE account_number = ? AND transaction_date >= ?
-            ORDER BY transaction_date
-        ''', (account_number, quarter_start.strftime('%Y-%m-%d')))
-        transactions = cursor.fetchall()
-        
-        if not transactions:
-            # If no transactions, use current balance for the entire quarter
-            days_in_quarter = (today - quarter_start).days + 1
-            interest = calculate_interest(current_balance, interest_rate, days_in_quarter)
-        else:
-            # Calculate interest based on daily balance
-            daily_balances = []
-            previous_date = quarter_start
-            previous_balance = current_balance  # Start with current balance
-            
-            for txn in transactions:
-                txn_date = datetime.strptime(txn[0], '%Y-%m-%d %H:%M:%S').date()
-                # Days between previous date and transaction date
-                days = (txn_date - previous_date).days
-                if days > 0:
-                    daily_balances.append((previous_balance, days))
-                previous_balance = txn[1]  # Update to balance after transaction
-                previous_date = txn_date
-            
-            # Remaining days until today
-            days = (today - previous_date).days + 1
-            if days > 0:
-                daily_balances.append((previous_balance, days))
-            
-            # Calculate weighted average balance
-            total_days = sum(days for _, days in daily_balances)
-            weighted_balance = sum(balance * days for balance, days in daily_balances) / total_days if total_days > 0 else current_balance
-            
-            interest = calculate_interest(weighted_balance, interest_rate, total_days)
+        # Calculate quarterly interest (simplified - 3 months)
+        interest = current_balance * (interest_rate / 100) * (90 / 365)
         
         if interest <= 0:
             conn.close()
@@ -609,8 +545,8 @@ def calculate_and_credit_interest(account_number):
         
         # Credit interest to account
         new_balance = current_balance + interest
-        cursor.execute('UPDATE sb_accounts SET current_balance = ?, last_interest_date = ? WHERE account_number = ?',
-                      (new_balance, today.strftime('%Y-%m-%d'), account_number))
+        cursor.execute('UPDATE sb_accounts SET current_balance = ? WHERE account_number = ?',
+                      (new_balance, account_number))
         
         # Record interest transaction
         transaction_id = generate_transaction_id()
@@ -629,22 +565,6 @@ def calculate_and_credit_interest(account_number):
             new_balance,
             'INTEREST',
             'SYSTEM'
-        ))
-        
-        # Record in interest history
-        cursor.execute('''
-            INSERT INTO sb_interest_history (
-                account_number, quarter_start, quarter_end, interest_rate,
-                average_balance, interest_amount, credited_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            account_number,
-            quarter_start.strftime('%Y-%m-%d'),
-            today.strftime('%Y-%m-%d'),
-            interest_rate,
-            current_balance,
-            interest,
-            transaction_date
         ))
         
         conn.commit()
@@ -684,22 +604,6 @@ def get_interest_history(account_number):
     except Exception as e:
         print(f"Error in get_interest_history: {e}")
         return []
-
-def close_sb_account(account_number):
-    """Close an SB account"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        cursor.execute('UPDATE sb_accounts SET account_status = "CLOSED" WHERE account_number = ?', 
-                      (account_number,))
-        conn.commit()
-        conn.close()
-        return True, f"Account {account_number} closed successfully"
-    except Exception as e:
-        print(f"Error in close_sb_account: {e}")
-        return False, f"Error closing account: {str(e)}"
 
 def generate_sb_account_report(account_number, from_date, to_date):
     """Generate detailed report for SB account"""
@@ -1209,6 +1113,11 @@ def logout():
 def main():
     try:
         if not os.path.exists(DB_FILE):
+            print("Database not found. Initializing...")
+            init_database()
+        else:
+            print("Database found. Checking tables...")
+            # Ensure tables exist even if database exists
             init_database()
         
         if 'logged_in' not in st.session_state or not st.session_state.logged_in:

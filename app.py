@@ -11,6 +11,7 @@ from io import BytesIO
 from PIL import Image
 import re
 import json
+import threading
 
 # ============== DATABASE SETUP ==============
 DB_FILE = "savings_bank.db"

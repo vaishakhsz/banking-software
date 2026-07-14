@@ -775,6 +775,71 @@ def get_all_sb_accounts():
     except:
         return []
 
+def get_sb_transactions(account_number, limit=100):
+    """Get recent transactions for an SB account"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return []
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT transaction_id, transaction_date, value_date, particulars, debit, credit, balance, transaction_type
+            FROM sb_transactions 
+            WHERE account_number = ? 
+            ORDER BY value_date DESC, transaction_date DESC
+            LIMIT ?
+        ''', (account_number, limit))
+        result = cursor.fetchall()
+        conn.close()
+        transactions = []
+        for row in result:
+            transactions.append({
+                'transaction_id': row[0],
+                'transaction_date': row[1],
+                'value_date': row[2],
+                'particulars': row[3],
+                'debit': row[4] if row[4] is not None else 0,
+                'credit': row[5] if row[5] is not None else 0,
+                'balance': row[6] if row[6] is not None else 0,
+                'transaction_type': row[7]
+            })
+        return transactions
+    except Exception as e:
+        print(f"Error in get_sb_transactions: {e}")
+        return []
+
+def get_sb_transactions_by_date(account_number, from_date, to_date):
+    """Get transactions for a date range"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return []
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT transaction_id, transaction_date, value_date, particulars, debit, credit, balance, transaction_type
+            FROM sb_transactions 
+            WHERE account_number = ? AND value_date >= ? AND value_date <= ?
+            ORDER BY value_date DESC, transaction_date DESC
+        ''', (account_number, from_date, to_date))
+        result = cursor.fetchall()
+        conn.close()
+        transactions = []
+        for row in result:
+            transactions.append({
+                'transaction_id': row[0],
+                'transaction_date': row[1],
+                'value_date': row[2],
+                'particulars': row[3],
+                'debit': row[4] if row[4] is not None else 0,
+                'credit': row[5] if row[5] is not None else 0,
+                'balance': row[6] if row[6] is not None else 0,
+                'transaction_type': row[7]
+            })
+        return transactions
+    except Exception as e:
+        print(f"Error in get_sb_transactions_by_date: {e}")
+        return []
+
 def deposit_sb_account(account_number, amount, particulars, value_date, username):
     try:
         conn = get_db_connection()
@@ -942,16 +1007,6 @@ def display_account_card(acc_code, icon, color):
 # ============== UI RENDER FUNCTIONS ==============
 def render_customer_registration():
     st.subheader("📝 Register New Customer with KYC")
-    
-    # Initialize session state for images
-    if 'aadhar_preview' not in st.session_state:
-        st.session_state.aadhar_preview = None
-    if 'pan_preview' not in st.session_state:
-        st.session_state.pan_preview = None
-    if 'nominee_aadhar_preview' not in st.session_state:
-        st.session_state.nominee_aadhar_preview = None
-    if 'nominee_pan_preview' not in st.session_state:
-        st.session_state.nominee_pan_preview = None
     
     with st.form("customer_form"):
         st.markdown("### 📋 Personal Details")
@@ -1283,6 +1338,40 @@ def render_voucher_list():
                 st.rerun()
     return None
 
+def render_sb_account_creation():
+    st.subheader("🏦 Create Savings Bank Account")
+    customers = get_all_customers()
+    if not customers:
+        st.warning("Please register a customer first.")
+        return
+    customer_options = [f"{c['full_name']} ({cid})" for cid, c in customers.items()]
+    selected = st.selectbox("Select Customer", customer_options)
+    if selected:
+        cust_id = selected.split('(')[-1].replace(')', '')
+        cust = customers[cust_id]
+        with st.form("sb_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                customer_name = st.text_input("Customer Name", value=cust['full_name'], disabled=True)
+                opening_balance = st.number_input("Opening Balance", min_value=0.0, step=100.0, value=0.0)
+            with col2:
+                interest_rate = st.number_input("Interest Rate (%)", min_value=0.0, max_value=20.0, step=0.1, value=3.5)
+                nominee_name = st.text_input("Nominee Name")
+            if st.form_submit_button("✅ Create SB Account"):
+                data = {
+                    'customer_id': cust_id, 'customer_name': cust['full_name'],
+                    'kyc_id': 'KYC001', 'kyc_type': 'Aadhaar',
+                    'address': cust['address'], 'phone': cust['phone'],
+                    'email': cust['email'], 'opening_balance': opening_balance,
+                    'interest_rate': interest_rate, 'nominee_name': nominee_name,
+                    'nominee_relation': '', 'aadhar_number': cust.get('aadhar_number', ''),
+                    'pan_number': cust.get('pan_number', '')
+                }
+                success, msg = create_sb_account(data, st.session_state.user['username'])
+                st.success(msg) if success else st.error(msg)
+                if success:
+                    st.rerun()
+
 def render_sb_operations():
     st.subheader("💰 Savings Bank Account Operations")
     accounts = get_all_sb_accounts()
@@ -1344,56 +1433,102 @@ def render_sb_report():
     if not accounts:
         st.warning("No SB accounts found.")
         return
-    selected = st.selectbox("Select Account", [f"{a['account_number']} - {a['customer_name']}" for a in accounts])
+    
+    # Account selection
+    account_options = [f"{a['account_number']} - {a['customer_name']}" for a in accounts]
+    selected = st.selectbox("Select Account", account_options)
+    
     if selected:
         acc_no = selected.split(' - ')[0]
         account = get_sb_account(acc_no)
+        
         if account:
+            # Account Summary Cards
             st.markdown("### 📋 Account Summary")
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Account", account['account_number'])
-                st.metric("Customer", account['customer_name'])
+                st.metric("Account Number", account['account_number'])
             with col2:
-                st.metric("Opening Balance", f"₹{account['opening_balance']:,.2f}")
-                st.metric("Current Balance", f"₹{account['current_balance']:,.2f}")
+                st.metric("Customer", account['customer_name'])
             with col3:
                 st.metric("Interest Rate", f"{account['interest_rate']}%")
+            with col4:
                 st.metric("Interest Payable", f"₹{account['interest_payable']:,.2f}")
-
-def render_sb_account_creation():
-    st.subheader("🏦 Create Savings Bank Account")
-    customers = get_all_customers()
-    if not customers:
-        st.warning("Please register a customer first.")
-        return
-    customer_options = [f"{c['full_name']} ({cid})" for cid, c in customers.items()]
-    selected = st.selectbox("Select Customer", customer_options)
-    if selected:
-        cust_id = selected.split('(')[-1].replace(')', '')
-        cust = customers[cust_id]
-        with st.form("sb_form"):
+            
             col1, col2 = st.columns(2)
             with col1:
-                customer_name = st.text_input("Customer Name", value=cust['full_name'], disabled=True)
-                opening_balance = st.number_input("Opening Balance", min_value=0.0, step=100.0, value=0.0)
+                st.metric("Opening Balance", f"₹{account['opening_balance']:,.2f}")
             with col2:
-                interest_rate = st.number_input("Interest Rate (%)", min_value=0.0, max_value=20.0, step=0.1, value=3.5)
-                nominee_name = st.text_input("Nominee Name")
-            if st.form_submit_button("✅ Create SB Account"):
-                data = {
-                    'customer_id': cust_id, 'customer_name': cust['full_name'],
-                    'kyc_id': 'KYC001', 'kyc_type': 'Aadhaar',
-                    'address': cust['address'], 'phone': cust['phone'],
-                    'email': cust['email'], 'opening_balance': opening_balance,
-                    'interest_rate': interest_rate, 'nominee_name': nominee_name,
-                    'nominee_relation': '', 'aadhar_number': cust.get('aadhar_number', ''),
-                    'pan_number': cust.get('pan_number', '')
-                }
-                success, msg = create_sb_account(data, st.session_state.user['username'])
-                st.success(msg) if success else st.error(msg)
-                if success:
-                    st.rerun()
+                st.metric("Current Balance", f"₹{account['current_balance']:,.2f}")
+            
+            st.divider()
+            
+            # Date Range Selection
+            col1, col2 = st.columns(2)
+            with col1:
+                from_date = st.date_input("From Date", value=datetime.now().date() - timedelta(days=30), key="report_from")
+            with col2:
+                to_date = st.date_input("To Date", value=datetime.now().date(), key="report_to")
+            
+            if st.button("📄 Generate Report", key="generate_report_btn"):
+                # Get transactions for the date range
+                transactions = get_sb_transactions_by_date(acc_no, from_date.strftime('%Y-%m-%d'), to_date.strftime('%Y-%m-%d'))
+                
+                if transactions:
+                    st.markdown("### 📝 Transaction Details")
+                    
+                    # Create DataFrame
+                    df = pd.DataFrame(transactions)
+                    
+                    # Format for display
+                    display_df = df.copy()
+                    display_df['Debit'] = display_df['debit'].apply(lambda x: f"₹{x:,.2f}" if x > 0 else '-')
+                    display_df['Credit'] = display_df['credit'].apply(lambda x: f"₹{x:,.2f}" if x > 0 else '-')
+                    display_df['Balance'] = display_df['balance'].apply(lambda x: f"₹{x:,.2f}")
+                    
+                    # Select columns to display
+                    display_columns = ['value_date', 'particulars', 'Debit', 'Credit', 'Balance', 'transaction_type']
+                    st.dataframe(display_df[display_columns], use_container_width=True, hide_index=True)
+                    
+                    # Summary Statistics
+                    st.markdown("### 📊 Transaction Summary")
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        total_debits = sum(t['debit'] for t in transactions)
+                        st.metric("Total Debits", f"₹{total_debits:,.2f}")
+                    with col2:
+                        total_credits = sum(t['credit'] for t in transactions)
+                        st.metric("Total Credits", f"₹{total_credits:,.2f}")
+                    with col3:
+                        net_change = total_credits - total_debits
+                        st.metric("Net Change", f"₹{net_change:,.2f}", delta=net_change)
+                    with col4:
+                        st.metric("Closing Balance", f"₹{account['current_balance']:,.2f}")
+                    
+                    # Download as CSV
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=csv,
+                        file_name=f"SB_Account_{acc_no}_{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.info("No transactions found for the selected period")
+            
+            # Show recent transactions without date filter
+            st.markdown("---")
+            st.markdown("### 📝 Recent Transactions (Last 10)")
+            recent_transactions = get_sb_transactions(acc_no, 10)
+            if recent_transactions:
+                df_recent = pd.DataFrame(recent_transactions)
+                df_recent['Debit'] = df_recent['debit'].apply(lambda x: f"₹{x:,.2f}" if x > 0 else '-')
+                df_recent['Credit'] = df_recent['credit'].apply(lambda x: f"₹{x:,.2f}" if x > 0 else '-')
+                df_recent['Balance'] = df_recent['balance'].apply(lambda x: f"₹{x:,.2f}")
+                st.dataframe(df_recent[['value_date', 'particulars', 'Debit', 'Credit', 'Balance', 'transaction_type']], 
+                           use_container_width=True, hide_index=True)
+            else:
+                st.info("No recent transactions found")
 
 # ============== LOGIN PAGE ==============
 def login_page():

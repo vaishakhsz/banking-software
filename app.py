@@ -38,6 +38,7 @@ def migrate_database():
             return
         cursor = conn.cursor()
         
+        # Check if interest_payable column exists in sb_interest_history
         cursor.execute("PRAGMA table_info(sb_interest_history)")
         columns = [col[1] for col in cursor.fetchall()]
         
@@ -49,6 +50,7 @@ def migrate_database():
             cursor.execute("ALTER TABLE sb_interest_history ADD COLUMN voucher_number TEXT")
             conn.commit()
         
+        # Check if sb_accounts table has interest_payable
         cursor.execute("PRAGMA table_info(sb_accounts)")
         columns = [col[1] for col in cursor.fetchall()]
         
@@ -71,6 +73,7 @@ def init_database():
             return
         cursor = conn.cursor()
         
+        # Users table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,6 +86,7 @@ def init_database():
             )
         ''')
         
+        # Accounts table with ALL accounts
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,6 +103,7 @@ def init_database():
             )
         ''')
         
+        # Customers table with KYC
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS customers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,6 +136,7 @@ def init_database():
             )
         ''')
         
+        # Customer Accounts
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS customer_accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,6 +146,7 @@ def init_database():
             )
         ''')
         
+        # Journal entries
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS journal_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,6 +162,7 @@ def init_database():
             )
         ''')
         
+        # Vouchers table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS vouchers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -171,6 +179,7 @@ def init_database():
             )
         ''')
         
+        # Voucher entries
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS voucher_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -183,6 +192,7 @@ def init_database():
             )
         ''')
         
+        # SB Accounts
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -210,6 +220,7 @@ def init_database():
             )
         ''')
         
+        # SB Transactions
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -228,6 +239,7 @@ def init_database():
             )
         ''')
         
+        # SB Interest History
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_interest_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,6 +255,7 @@ def init_database():
             )
         ''')
         
+        # KYC Documents
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS kyc_documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -263,6 +276,7 @@ def init_database():
         
         conn.commit()
         
+        # Check if default admin user exists
         cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
         if cursor.fetchone()[0] == 0:
             current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -276,10 +290,12 @@ def init_database():
                               (user[0], demo_password, user[1], "user", current_date))
             conn.commit()
         
+        # Check if default accounts exist - COMPLETE LIST
         cursor.execute("SELECT COUNT(*) FROM accounts")
         if cursor.fetchone()[0] == 0:
             current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             default_accounts = [
+                # ===== ASSETS (1xxx) =====
                 ('1000', 'CASH', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
                 ('1001', 'PETTY_CASH', 'ASSET', 0, 10000, None, None, current_date, 1, 'system'),
                 ('1100', 'BANK_SAVINGS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
@@ -288,17 +304,25 @@ def init_database():
                 ('1400', 'DAILY_COLLECTION', 'ASSET', 0, 50000, None, None, current_date, 1, 'system'),
                 ('1500', 'SUNDRY_DEBTORS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
                 ('1600', 'LOANS_ADVANCED', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+                
+                # ===== LIABILITIES (2xxx) =====
                 ('2100', 'CUSTOMER_DEPOSITS', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
                 ('2200', 'FD_LIABILITY', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
                 ('2300', 'SUNDRY_CREDITORS', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
                 ('2400', 'LOANS_TAKEN', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
                 ('2500', 'SB_INTEREST_PAYABLE', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
+                
+                # ===== EQUITY (3xxx) =====
                 ('3100', 'CAPITAL', 'EQUITY', 1000000, None, None, None, current_date, 1, 'system'),
                 ('3200', 'RETAINED_EARNINGS', 'EQUITY', 0, None, None, None, current_date, 1, 'system'),
+                
+                # ===== INCOME (4xxx) =====
                 ('4100', 'INTEREST_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
                 ('4200', 'SERVICE_CHARGE', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
                 ('4300', 'COMMISSION_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
                 ('4400', 'RENT_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
+                
+                # ===== EXPENSES (5xxx) =====
                 ('5100', 'GENERAL_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
                 ('5200', 'SALARY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
                 ('5300', 'RENT_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
@@ -413,7 +437,7 @@ def get_account_balance(account_code):
         return 0
 
 def update_account_balance(account_code, amount, is_debit=True):
-    """Update account balance with debit/credit logic - FIXED"""
+    """Update account balance with debit/credit logic"""
     try:
         conn = get_db_connection()
         if conn is None:
@@ -428,7 +452,6 @@ def update_account_balance(account_code, amount, is_debit=True):
             return False, f"Account {account_code} not found"
         
         acc_type, current_balance = result
-        print(f"Updating {account_code} - Type: {acc_type}, Current: {current_balance}, Amount: {amount}, Debit: {is_debit}")
         
         # Calculate new balance based on account type and debit/credit
         if acc_type in ['ASSET', 'EXPENSE']:
@@ -443,8 +466,6 @@ def update_account_balance(account_code, amount, is_debit=True):
                 new_balance = current_balance - amount
             else:
                 new_balance = current_balance + amount
-        
-        print(f"New balance: {new_balance}")
         
         cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
         conn.commit()
@@ -647,13 +668,11 @@ def save_voucher(voucher_type, voucher_date, description, entries, username):
             cursor.execute('INSERT INTO voucher_entries (voucher_number, entry_type, account_code, account_name, amount, narration) VALUES (?, ?, ?, ?, ?, ?)',
                           (voucher_number, entry['entry_type'], entry['account_code'], entry['account_name'], entry['amount'], entry.get('narration', '')))
             
-            # UPDATE ACCOUNT BALANCE - This is critical!
+            # UPDATE ACCOUNT BALANCE
             if entry['entry_type'] == 'DEBIT':
                 success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
-                print(f"DEBIT {entry['account_code']}: {msg}")
             else:
                 success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
-                print(f"CREDIT {entry['account_code']}: {msg}")
             
             if not success:
                 conn.close()
@@ -916,7 +935,7 @@ def withdraw_sb_account(account_number, amount, particulars, value_date, usernam
         return False, f"Error: {str(e)}"
 
 def calculate_and_credit_interest(account_number, username):
-    """Calculate and credit quarterly interest for SB account with DOUBLE ENTRY - FIXED"""
+    """Calculate and credit quarterly interest for SB account with DOUBLE ENTRY"""
     try:
         conn = get_db_connection()
         if conn is None:
@@ -1598,12 +1617,10 @@ def render_sb_report():
 
 # ============== VERIFICATION FUNCTION ==============
 def verify_account_balances():
-    """Verify account balances are correct"""
     st.subheader("🔍 Account Balance Verification")
     
     accounts = get_all_accounts()
     
-    # Show all accounts with their balances
     data = []
     for code, acc in accounts.items():
         data.append({
@@ -1616,7 +1633,6 @@ def verify_account_balances():
     df = pd.DataFrame(data)
     st.dataframe(df, use_container_width=True, hide_index=True)
     
-    # Check trial balance
     tb_df, total_debits, total_credits = get_trial_balance()
     st.metric("Total Debits", f"₹{total_debits:,.2f}")
     st.metric("Total Credits", f"₹{total_credits:,.2f}")

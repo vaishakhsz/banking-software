@@ -34,6 +34,40 @@ def hash_password(password):
     """Hash password using SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
 
+def migrate_database():
+    """Add missing columns to existing tables"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return
+        cursor = conn.cursor()
+        
+        # Check if value_date column exists in sb_transactions
+        cursor.execute("PRAGMA table_info(sb_transactions)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'value_date' not in columns:
+            print("Adding value_date column to sb_transactions...")
+            cursor.execute("ALTER TABLE sb_transactions ADD COLUMN value_date TEXT")
+            # Set default value_date to transaction_date for existing records
+            cursor.execute("UPDATE sb_transactions SET value_date = transaction_date WHERE value_date IS NULL")
+            conn.commit()
+            print("value_date column added successfully")
+        
+        if 'created_date' not in columns:
+            print("Adding created_date column to sb_transactions...")
+            cursor.execute("ALTER TABLE sb_transactions ADD COLUMN created_date TEXT")
+            # Set default created_date to transaction_date for existing records
+            cursor.execute("UPDATE sb_transactions SET created_date = transaction_date WHERE created_date IS NULL")
+            conn.commit()
+            print("created_date column added successfully")
+        
+        conn.close()
+        print("Database migration completed successfully")
+    except Exception as e:
+        print(f"Error in migrate_database: {e}")
+        print(traceback.format_exc())
+
 def init_database():
     """Initialize all tables for Savings Bank Account"""
     try:
@@ -82,7 +116,7 @@ def init_database():
             )
         ''')
         
-        # SB Account Transactions table - Updated with date field
+        # SB Account Transactions table - Updated with value_date
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -171,6 +205,9 @@ def init_database():
         
         conn.close()
         print("Database initialized successfully")
+        
+        # Run migration to add missing columns
+        migrate_database()
     except Exception as e:
         print(f"Error in init_database: {e}")
         print(traceback.format_exc())
@@ -405,15 +442,15 @@ def get_sb_transactions(account_number, from_date=None, to_date=None, limit=1000
             transactions.append({
                 'transaction_id': row[0],
                 'transaction_date': row[1],
-                'value_date': row[2],
+                'value_date': row[2] if len(row) > 2 else row[1],
                 'particulars': row[3],
                 'debit': row[4],
                 'credit': row[5],
                 'balance': row[6],
                 'transaction_type': row[7],
                 'ref_no': row[8],
-                'created_by': row[9],
-                'created_date': row[10]
+                'created_by': row[9] if len(row) > 9 else '',
+                'created_date': row[10] if len(row) > 10 else row[1]
             })
         return transactions
     except Exception as e:
@@ -1141,6 +1178,8 @@ def main():
         else:
             print("Database found. Checking tables...")
             init_database()
+            # Always run migration to ensure columns exist
+            migrate_database()
         
         if 'logged_in' not in st.session_state or not st.session_state.logged_in:
             login_page()

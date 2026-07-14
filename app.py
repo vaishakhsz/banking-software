@@ -10,107 +10,16 @@ import base64
 from io import BytesIO
 from PIL import Image
 import re
-import threading
 
-# ============== DATABASE SETUP WITH SINGLE CONNECTION ==============
+# ============== DATABASE SETUP ==============
 DB_FILE = "banking_system.db"
-_db_lock = threading.Lock()
-_connection = None
 
 def get_db_connection():
-    """Get a database connection with proper locking"""
-    global _connection
-    
-    with _db_lock:
-        try:
-            if _connection is None:
-                _connection = sqlite3.connect(DB_FILE, timeout=60.0, check_same_thread=False)
-                _connection.execute("PRAGMA journal_mode=WAL")
-                _connection.execute("PRAGMA busy_timeout=60000")
-                _connection.execute("PRAGMA synchronous=NORMAL")
-                _connection.execute("PRAGMA cache_size=10000")
-            return _connection
-        except sqlite3.OperationalError as e:
-            print(f"Database connection error: {e}")
-            time.sleep(1)
-            # Try to reconnect
-            _connection = None
-            return get_db_connection()
-
-def execute_query(query, params=None, fetch=False, commit=False):
-    """Execute a query with retry logic"""
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            
-            if fetch:
-                result = cursor.fetchall()
-                cursor.close()
-                return result
-            elif commit:
-                conn.commit()
-                cursor.close()
-                return True
-            else:
-                cursor.close()
-                return True
-        except sqlite3.OperationalError as e:
-            error_msg = str(e)
-            if "database is locked" in error_msg or "DatabaseError" in error_msg:
-                wait_time = (attempt + 1) * 1.0
-                time.sleep(wait_time)
-                # Force reconnect
-                global _connection
-                _connection = None
-                continue
-            else:
-                print(f"Query error: {e}")
-                if fetch:
-                    return []
-                return False
-        except Exception as e:
-            print(f"Query error: {e}")
-            if fetch:
-                return []
-            return False
-    
-    if fetch:
-        return []
-    return False
-
-def execute_many(query, params_list, commit=False):
-    """Execute multiple queries"""
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.executemany(query, params_list)
-            if commit:
-                conn.commit()
-            cursor.close()
-            return True
-        except sqlite3.OperationalError as e:
-            error_msg = str(e)
-            if "database is locked" in error_msg or "DatabaseError" in error_msg:
-                wait_time = (attempt + 1) * 1.0
-                time.sleep(wait_time)
-                global _connection
-                _connection = None
-                continue
-            else:
-                return False
-        except Exception as e:
-            print(f"Query error: {e}")
-            return False
-    return False
+    """Get database connection"""
+    conn = sqlite3.connect(DB_FILE, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
 
 def init_database():
     """Initialize SQLite database with all required tables"""
@@ -355,6 +264,7 @@ def init_database():
                 ''', acc)
         
         conn.commit()
+        conn.close()
     except Exception as e:
         print(f"Error in init_database: {e}")
         raise e
@@ -371,12 +281,16 @@ def verify_user(username, password):
         cursor.execute('SELECT * FROM users WHERE username = ? AND password_hash = ?', 
                        (username, hash_password(password)))
         user = cursor.fetchone()
+        conn.close()
         
         if user:
             # Update last login
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute('UPDATE users SET last_login = ? WHERE username = ?',
                            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), username))
             conn.commit()
+            conn.close()
             return {
                 'id': user[0],
                 'username': user[1],
@@ -438,112 +352,21 @@ def display_image_from_base64(base64_string):
         print(f"Error displaying image: {e}")
         return None
 
-# ============== ACCOUNT FUNCTIONS ==============
-def get_account_balance(account_code):
-    """Get current balance of an account"""
-    try:
-        result = execute_query('SELECT balance FROM accounts WHERE account_code = ?', (account_code,), fetch=True)
-        if result:
-            return result[0][0]
-        return 0
-    except Exception as e:
-        print(f"Error in get_account_balance: {e}")
-        return 0
-
-def get_all_accounts():
-    """Get all active accounts"""
-    try:
-        result = execute_query('''
-            SELECT account_code, account_name, account_type, balance, daily_limit, is_active
-            FROM accounts 
-            WHERE is_active = 1
-            ORDER BY account_code
-        ''', fetch=True)
-        
-        accounts = {}
-        for row in result:
-            accounts[row[0]] = {
-                'account_code': row[0],
-                'account_name': row[1],
-                'account_type': row[2],
-                'balance': row[3],
-                'daily_limit': row[4] if row[4] is not None else None,
-                'is_active': row[5]
-            }
-        return accounts
-    except Exception as e:
-        print(f"Error in get_all_accounts: {e}")
-        return {}
-
-def get_accounts_by_type(account_type):
-    """Get all accounts of a specific type"""
-    try:
-        result = execute_query('''
-            SELECT account_code, account_name, account_type, balance, daily_limit, interest_rate, is_active, created_date, created_by
-            FROM accounts 
-            WHERE account_type = ? AND is_active = 1
-            ORDER BY account_code
-        ''', (account_type,), fetch=True)
-        
-        accounts = []
-        for row in result:
-            accounts.append({
-                'account_code': row[0],
-                'account_name': row[1],
-                'account_type': row[2],
-                'balance': row[3],
-                'daily_limit': row[4] if row[4] is not None else None,
-                'interest_rate': row[5],
-                'is_active': row[6],
-                'created_date': row[7],
-                'created_by': row[8] if len(row) > 8 else 'system'
-            })
-        return accounts
-    except Exception as e:
-        print(f"Error in get_accounts_by_type: {e}")
-        return []
-
-def update_account_balance(account_code, amount, is_debit=True):
-    """Update account balance with debit/credit logic"""
-    try:
-        # First check if account exists
-        result = execute_query('SELECT account_type, balance FROM accounts WHERE account_code = ? AND is_active = 1', 
-                              (account_code,), fetch=True)
-        if not result:
-            return False, f"Account {account_code} not found"
-        
-        acc_type, current_balance = result[0]
-        
-        if acc_type in ['ASSET', 'EXPENSE']:
-            if is_debit:
-                new_balance = current_balance + amount
-            else:
-                new_balance = current_balance - amount
-        else:
-            if is_debit:
-                new_balance = current_balance - amount
-            else:
-                new_balance = current_balance + amount
-        
-        execute_query('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code), commit=True)
-        return True, new_balance
-    except Exception as e:
-        print(f"Error in update_account_balance: {e}")
-        return False, str(e)
-
 # ============== CUSTOMER FUNCTIONS ==============
 def create_customer(data, username):
     """Create a new customer with KYC"""
     try:
-        # Get max customer ID
-        result = execute_query('SELECT MAX(CAST(SUBSTR(customer_id, 5) AS INTEGER)) FROM customers', fetch=True)
-        max_id = result[0][0] if result else 0
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT MAX(CAST(SUBSTR(customer_id, 5) AS INTEGER)) FROM customers')
+        max_id = cursor.fetchone()[0]
         new_id = (max_id or 1000) + 1
         customer_id = f"CUST{new_id}"
         
         date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        execute_query('''
+        cursor.execute('''
             INSERT INTO customers 
             (customer_id, full_name, address, phone, whatsapp_number, email, id_type, id_number,
              aadhar_number, aadhar_image, pan_number, pan_image,
@@ -579,24 +402,108 @@ def create_customer(data, username):
             1,
             date,
             username
-        ), commit=True)
+        ))
         
         # Create customer account mappings
         for acc_code in ['1100', '1200', '1300']:
-            execute_query('''
+            cursor.execute('''
                 INSERT INTO customer_accounts (customer_id, account_code, balance)
                 VALUES (?, ?, ?)
-            ''', (customer_id, acc_code, 0), commit=True)
+            ''', (customer_id, acc_code, 0))
         
+        conn.commit()
+        conn.close()
         return True, f"Customer {data['full_name']} created with ID: {customer_id}"
     except Exception as e:
         print(f"Error in create_customer: {e}")
         return False, f"Error creating customer: {str(e)}"
 
+def update_customer(customer_id, data, username):
+    """Update customer details"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE customers 
+            SET full_name = ?, address = ?, phone = ?, whatsapp_number = ?, email = ?,
+                id_type = ?, id_number = ?, aadhar_number = ?, pan_number = ?,
+                date_of_birth = ?, age = ?,
+                nominee_name = ?, nominee_address = ?, nominee_relation = ?,
+                nominee_dob = ?, nominee_age = ?,
+                nominee_aadhar = ?, nominee_pan = ?
+            WHERE customer_id = ?
+        ''', (
+            data['full_name'],
+            data['address'],
+            data['phone'],
+            data['whatsapp_number'],
+            data['email'],
+            data['id_type'],
+            data['id_number'],
+            data['aadhar_number'],
+            data['pan_number'],
+            data['date_of_birth'],
+            data['age'],
+            data['nominee_name'],
+            data['nominee_address'],
+            data['nominee_relation'],
+            data['nominee_dob'],
+            data['nominee_age'],
+            data['nominee_aadhar'],
+            data['nominee_pan'],
+            customer_id
+        ))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Customer {data['full_name']} updated successfully"
+    except Exception as e:
+        print(f"Error in update_customer: {e}")
+        return False, f"Error updating customer: {str(e)}"
+
+def delete_customer(customer_id):
+    """Delete a customer"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # First check if customer exists
+        cursor.execute('SELECT customer_id FROM customers WHERE customer_id = ? AND kyc_completed = 1', (customer_id,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Customer not found"
+        
+        # Check if customer has any transactions
+        cursor.execute('SELECT COUNT(*) FROM customer_transactions WHERE customer_id = ?', (customer_id,))
+        count = cursor.fetchone()[0]
+        
+        if count > 0:
+            # Soft delete - mark as inactive
+            cursor.execute('UPDATE customers SET kyc_completed = 0 WHERE customer_id = ?', (customer_id,))
+            conn.commit()
+            conn.close()
+            return True, "Customer has transactions. Marked as inactive."
+        else:
+            # Delete from customer_accounts first (foreign key constraint)
+            cursor.execute('DELETE FROM customer_accounts WHERE customer_id = ?', (customer_id,))
+            # Delete customer transactions
+            cursor.execute('DELETE FROM customer_transactions WHERE customer_id = ?', (customer_id,))
+            # Delete customer
+            cursor.execute('DELETE FROM customers WHERE customer_id = ?', (customer_id,))
+            conn.commit()
+            conn.close()
+            return True, "Customer deleted successfully"
+    except Exception as e:
+        print(f"Error in delete_customer: {e}")
+        return False, f"Error deleting customer: {str(e)}"
+
 def get_all_customers():
     """Get all customers"""
     try:
-        result = execute_query('''
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
             SELECT customer_id, full_name, address, phone, whatsapp_number, email, 
                    id_type, id_number, aadhar_number, pan_number, date_of_birth, age,
                    nominee_name, nominee_address, nominee_relation, nominee_dob, nominee_age,
@@ -604,7 +511,9 @@ def get_all_customers():
             FROM customers
             WHERE kyc_completed = 1
             ORDER BY created_date DESC
-        ''', fetch=True)
+        ''')
+        result = cursor.fetchall()
+        conn.close()
         
         customers = {}
         for row in result:
@@ -636,7 +545,12 @@ def get_all_customers():
 def get_customer_details(customer_id):
     """Get customer details including images"""
     try:
-        result = execute_query('SELECT * FROM customers WHERE customer_id = ?', (customer_id,), fetch=True)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM customers WHERE customer_id = ?', (customer_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
         if result:
             columns = ['id', 'customer_id', 'full_name', 'address', 'phone', 'whatsapp_number', 
                       'email', 'id_type', 'id_number', 'aadhar_number', 'aadhar_image', 
@@ -644,7 +558,7 @@ def get_customer_details(customer_id):
                       'nominee_address', 'nominee_relation', 'nominee_dob', 'nominee_age', 
                       'nominee_aadhar', 'nominee_aadhar_image', 'nominee_pan', 'nominee_pan_image',
                       'kyc_completed', 'created_date', 'created_by']
-            return dict(zip(columns, result[0]))
+            return dict(zip(columns, result))
         return None
     except Exception as e:
         print(f"Error in get_customer_details: {e}")
@@ -653,11 +567,15 @@ def get_customer_details(customer_id):
 def get_customer_balances(customer_id):
     """Get customer's account balances"""
     try:
-        result = execute_query('''
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
             SELECT account_code, balance 
             FROM customer_accounts 
             WHERE customer_id = ?
-        ''', (customer_id,), fetch=True)
+        ''', (customer_id,))
+        result = cursor.fetchall()
+        conn.close()
         
         balances = {}
         for row in result:
@@ -667,76 +585,235 @@ def get_customer_balances(customer_id):
         print(f"Error in get_customer_balances: {e}")
         return {}
 
-def update_customer(customer_id, data, username):
-    """Update customer details"""
+# ============== ACCOUNT FUNCTIONS ==============
+def get_account_balance(account_code):
+    """Get current balance of an account"""
     try:
-        execute_query('''
-            UPDATE customers 
-            SET full_name = ?, address = ?, phone = ?, whatsapp_number = ?, email = ?,
-                id_type = ?, id_number = ?, aadhar_number = ?, pan_number = ?,
-                date_of_birth = ?, age = ?,
-                nominee_name = ?, nominee_address = ?, nominee_relation = ?,
-                nominee_dob = ?, nominee_age = ?,
-                nominee_aadhar = ?, nominee_pan = ?
-            WHERE customer_id = ?
-        ''', (
-            data['full_name'],
-            data['address'],
-            data['phone'],
-            data['whatsapp_number'],
-            data['email'],
-            data['id_type'],
-            data['id_number'],
-            data['aadhar_number'],
-            data['pan_number'],
-            data['date_of_birth'],
-            data['age'],
-            data['nominee_name'],
-            data['nominee_address'],
-            data['nominee_relation'],
-            data['nominee_dob'],
-            data['nominee_age'],
-            data['nominee_aadhar'],
-            data['nominee_pan'],
-            customer_id
-        ), commit=True)
-        return True, f"Customer {data['full_name']} updated successfully"
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT balance FROM accounts WHERE account_code = ?', (account_code,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else 0
     except Exception as e:
-        print(f"Error in update_customer: {e}")
-        return False, f"Error updating customer: {str(e)}"
+        print(f"Error in get_account_balance: {e}")
+        return 0
 
-def delete_customer(customer_id):
-    """Delete a customer"""
+def get_all_accounts():
+    """Get all active accounts"""
     try:
-        # Check if customer exists
-        result = execute_query('SELECT customer_id FROM customers WHERE customer_id = ? AND kyc_completed = 1', 
-                              (customer_id,), fetch=True)
-        if not result:
-            return False, "Customer not found"
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT account_code, account_name, account_type, balance, daily_limit, is_active
+            FROM accounts 
+            WHERE is_active = 1
+            ORDER BY account_code
+        ''')
+        result = cursor.fetchall()
+        conn.close()
         
-        # Check if customer has any transactions
-        result = execute_query('SELECT COUNT(*) FROM customer_transactions WHERE customer_id = ?', 
-                              (customer_id,), fetch=True)
-        count = result[0][0] if result else 0
+        accounts = {}
+        for row in result:
+            accounts[row[0]] = {
+                'account_code': row[0],
+                'account_name': row[1],
+                'account_type': row[2],
+                'balance': row[3],
+                'daily_limit': row[4] if row[4] is not None else None,
+                'is_active': row[5]
+            }
+        return accounts
+    except Exception as e:
+        print(f"Error in get_all_accounts: {e}")
+        return {}
+
+def get_accounts_by_type(account_type):
+    """Get all accounts of a specific type"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT account_code, account_name, account_type, balance, daily_limit, interest_rate, is_active, created_date, created_by
+            FROM accounts 
+            WHERE account_type = ? AND is_active = 1
+            ORDER BY account_code
+        ''', (account_type,))
+        result = cursor.fetchall()
+        conn.close()
+        
+        accounts = []
+        for row in result:
+            accounts.append({
+                'account_code': row[0],
+                'account_name': row[1],
+                'account_type': row[2],
+                'balance': row[3],
+                'daily_limit': row[4] if row[4] is not None else None,
+                'interest_rate': row[5],
+                'is_active': row[6],
+                'created_date': row[7],
+                'created_by': row[8] if len(row) > 8 else 'system'
+            })
+        return accounts
+    except Exception as e:
+        print(f"Error in get_accounts_by_type: {e}")
+        return []
+
+def create_account(account_name, account_type, initial_balance=0, daily_limit=None, interest_rate=None, username=""):
+    """Create a new account"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_type = ? AND is_active = 1', 
+                       (account_name, account_type))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Account '{account_name}' already exists in {account_type} category"
+        
+        account_code = generate_account_code(account_type)
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        if daily_limit is not None and daily_limit <= 0:
+            daily_limit = None
+        
+        cursor.execute('''
+            INSERT INTO accounts 
+            (account_code, account_name, account_type, balance, daily_limit, interest_rate, created_date, created_by, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (account_code, account_name.upper(), account_type, initial_balance, daily_limit, interest_rate, date, username, 1))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Account '{account_name}' created with code {account_code}"
+    except Exception as e:
+        print(f"Error in create_account: {e}")
+        return False, f"Error creating account: {str(e)}"
+
+def update_account(account_code, new_name, new_daily_limit=None, new_interest_rate=None):
+    """Update an existing account"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Account not found"
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_name = ? AND account_code != ? AND is_active = 1', 
+                       (new_name.upper(), account_code))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Account '{new_name}' already exists"
+        
+        updates = []
+        params = []
+        
+        if new_name:
+            updates.append("account_name = ?")
+            params.append(new_name.upper())
+        
+        if new_daily_limit is not None:
+            if new_daily_limit <= 0:
+                new_daily_limit = None
+            updates.append("daily_limit = ?")
+            params.append(new_daily_limit)
+        
+        if new_interest_rate is not None:
+            updates.append("interest_rate = ?")
+            params.append(new_interest_rate)
+        
+        if updates:
+            query = f"UPDATE accounts SET {', '.join(updates)} WHERE account_code = ?"
+            params.append(account_code)
+            cursor.execute(query, params)
+            conn.commit()
+        
+        conn.close()
+        return True, "Account updated successfully"
+    except Exception as e:
+        print(f"Error in update_account: {e}")
+        return False, f"Error updating account: {str(e)}"
+
+def delete_account(account_code):
+    """Delete an account (soft delete - mark inactive)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Account not found"
+        
+        cursor.execute('SELECT COUNT(*) FROM transactions WHERE account_code = ?', (account_code,))
+        count = cursor.fetchone()[0]
         
         if count > 0:
-            # Soft delete - mark as inactive
-            execute_query('UPDATE customers SET kyc_completed = 0 WHERE customer_id = ?', (customer_id,), commit=True)
-            return True, "Customer has transactions. Marked as inactive."
+            cursor.execute('UPDATE accounts SET is_active = 0 WHERE account_code = ?', (account_code,))
+            conn.commit()
+            conn.close()
+            return True, "Account has transactions. Marked as inactive."
         else:
-            # Hard delete
-            execute_query('DELETE FROM customer_accounts WHERE customer_id = ?', (customer_id,), commit=True)
-            execute_query('DELETE FROM customer_transactions WHERE customer_id = ?', (customer_id,), commit=True)
-            execute_query('DELETE FROM customers WHERE customer_id = ?', (customer_id,), commit=True)
-            return True, "Customer deleted successfully"
+            cursor.execute('DELETE FROM accounts WHERE account_code = ?', (account_code,))
+            conn.commit()
+            conn.close()
+            return True, "Account deleted successfully"
     except Exception as e:
-        print(f"Error in delete_customer: {e}")
-        return False, f"Error deleting customer: {str(e)}"
+        print(f"Error in delete_account: {e}")
+        return False, f"Error deleting account: {str(e)}"
+
+def generate_account_code(account_type):
+    """Generate a new account code based on type"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        prefix_map = {
+            'INCOME': '4',
+            'EXPENSE': '5',
+            'ASSET': '1'
+        }
+        
+        prefix = prefix_map.get(account_type, '9')
+        cursor.execute(f'''
+            SELECT account_code FROM accounts 
+            WHERE account_code LIKE '{prefix}%' 
+            AND account_type = ?
+            AND is_active = 1
+            ORDER BY account_code DESC LIMIT 1
+        ''', (account_type,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            last_code = int(result[0])
+            new_code = str(last_code + 1)
+        else:
+            if account_type == 'INCOME':
+                new_code = '4100'
+            elif account_type == 'EXPENSE':
+                new_code = '5100'
+            elif account_type == 'ASSET':
+                new_code = '1500'
+            else:
+                new_code = '9100'
+        
+        return new_code
+    except Exception as e:
+        print(f"Error in generate_account_code: {e}")
+        return '5100'
 
 # ============== VOUCHER FUNCTIONS ==============
 def generate_voucher_number(voucher_type):
     """Generate unique voucher number"""
     try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
         prefix_map = {
             'JOURNAL': 'JV',
             'RECEIPT': 'RV',
@@ -747,14 +824,17 @@ def generate_voucher_number(voucher_type):
         prefix = prefix_map.get(voucher_type, 'V')
         year = datetime.now().strftime('%Y')
         
-        result = execute_query(f'''
+        cursor.execute(f'''
             SELECT voucher_number FROM vouchers 
             WHERE voucher_number LIKE '{prefix}-{year}-%'
             ORDER BY voucher_number DESC LIMIT 1
-        ''', fetch=True)
+        ''')
+        
+        result = cursor.fetchone()
+        conn.close()
         
         if result:
-            last_number = int(result[0][0].split('-')[-1])
+            last_number = int(result[0].split('-')[-1])
             new_number = last_number + 1
         else:
             new_number = 1
@@ -764,133 +844,105 @@ def generate_voucher_number(voucher_type):
         print(f"Error in generate_voucher_number: {e}")
         return f"V-{datetime.now().strftime('%Y%m%d')}-{str(int(time.time()))[-6:]}"
 
+def update_account_balance(account_code, amount, is_debit=True):
+    """Update account balance with debit/credit logic"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT account_type, balance FROM accounts WHERE account_code = ?', (account_code,))
+        result = cursor.fetchone()
+        if not result:
+            conn.close()
+            return False, f"Account {account_code} not found"
+        
+        acc_type, current_balance = result
+        
+        if acc_type in ['ASSET', 'EXPENSE']:
+            if is_debit:
+                new_balance = current_balance + amount
+            else:
+                new_balance = current_balance - amount
+        else:
+            if is_debit:
+                new_balance = current_balance - amount
+            else:
+                new_balance = current_balance + amount
+        
+        cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
+        conn.commit()
+        conn.close()
+        
+        return True, new_balance
+    except Exception as e:
+        print(f"Error in update_account_balance: {e}")
+        return False, str(e)
+
 def save_voucher(voucher_type, voucher_date, description, entries, username, status='POSTED'):
     """Save a new voucher and update account balances"""
     try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
         voucher_number = generate_voucher_number(voucher_type)
         current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         total_amount = sum(entry['amount'] for entry in entries)
         
-        # Insert voucher
-        execute_query('''
+        cursor.execute('''
             INSERT INTO vouchers 
             (voucher_number, voucher_type, voucher_date, description, total_amount, status, created_date, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (voucher_number, voucher_type, voucher_date, description, total_amount, status, current_date, username), commit=True)
+        ''', (voucher_number, voucher_type, voucher_date, description, total_amount, status, current_date, username))
         
-        # Insert voucher entries
         for entry in entries:
-            execute_query('''
+            cursor.execute('''
                 INSERT INTO voucher_entries 
                 (voucher_number, entry_type, account_code, account_name, amount, narration)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (voucher_number, entry['entry_type'], entry['account_code'], 
-                  entry['account_name'], entry['amount'], entry.get('narration', '')), commit=True)
+                  entry['account_name'], entry['amount'], entry.get('narration', '')))
         
-        # Update account balances
         for entry in entries:
             if entry['entry_type'] == 'DEBIT':
                 success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
+                if not success:
+                    conn.close()
+                    return False, f"Error updating balance for {entry['account_name']}: {msg}"
             else:
                 success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
-            if not success:
-                return False, f"Error updating balance for {entry['account_name']}: {msg}"
+                if not success:
+                    conn.close()
+                    return False, f"Error updating balance for {entry['account_name']}: {msg}"
         
-        # Record in journal entries
         for entry in entries:
-            execute_query('''
+            cursor.execute('''
                 INSERT INTO journal_entries 
                 (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (voucher_date, entry['account_code'], entry['account_name'], 
-                  entry['entry_type'], entry['amount'], description, voucher_number, username, voucher_number), commit=True)
+                  entry['entry_type'], entry['amount'], description, voucher_number, username, voucher_number))
         
+        conn.commit()
+        conn.close()
         return True, f"Voucher {voucher_number} saved successfully"
     except Exception as e:
         print(f"Error in save_voucher: {e}")
         return False, f"Error saving voucher: {str(e)}"
 
-def delete_voucher(voucher_number):
-    """Delete a voucher and reverse balances"""
-    try:
-        # Check if voucher exists
-        result = execute_query('SELECT * FROM vouchers WHERE voucher_number = ?', (voucher_number,), fetch=True)
-        if not result:
-            return False, "Voucher not found"
-        
-        # Get voucher entries
-        entries = execute_query('SELECT entry_type, account_code, amount FROM voucher_entries WHERE voucher_number = ?', 
-                              (voucher_number,), fetch=True)
-        
-        # Reverse balances
-        for entry in entries:
-            if entry[0] == 'DEBIT':
-                success, msg = update_account_balance(entry[1], entry[2], is_debit=False)
-            else:
-                success, msg = update_account_balance(entry[1], entry[2], is_debit=True)
-            if not success:
-                return False, f"Error reversing entries: {msg}"
-        
-        # Delete voucher entries
-        execute_query('DELETE FROM voucher_entries WHERE voucher_number = ?', (voucher_number,), commit=True)
-        # Delete journal entries
-        execute_query('DELETE FROM journal_entries WHERE voucher_number = ?', (voucher_number,), commit=True)
-        # Delete voucher
-        execute_query('DELETE FROM vouchers WHERE voucher_number = ?', (voucher_number,), commit=True)
-        
-        return True, f"Voucher {voucher_number} deleted successfully"
-    except Exception as e:
-        print(f"Error in delete_voucher: {e}")
-        return False, f"Error deleting voucher: {str(e)}"
-
-def delete_journal_entry(journal_id):
-    """Delete a specific journal entry"""
-    try:
-        # Get the journal entry details first
-        entry = execute_query('SELECT account_code, amount, entry_type FROM journal_entries WHERE id = ?', 
-                            (journal_id,), fetch=True)
-        
-        if not entry:
-            return False, "Journal entry not found"
-        
-        account_code, amount, entry_type = entry[0]
-        
-        # Verify account exists before reversing
-        account_exists = execute_query('SELECT account_code FROM accounts WHERE account_code = ? AND is_active = 1', 
-                                      (account_code,), fetch=True)
-        if not account_exists:
-            # Account might have been deleted, just delete the journal entry
-            execute_query('DELETE FROM journal_entries WHERE id = ?', (journal_id,), commit=True)
-            return True, "Journal entry deleted (account no longer exists)"
-        
-        # Reverse the balance change
-        if entry_type == 'DEBIT':
-            success, msg = update_account_balance(account_code, amount, is_debit=False)
-        else:
-            success, msg = update_account_balance(account_code, amount, is_debit=True)
-        
-        if not success:
-            # If balance update fails, still delete the journal entry
-            execute_query('DELETE FROM journal_entries WHERE id = ?', (journal_id,), commit=True)
-            return True, "Journal entry deleted (balance could not be reversed)"
-        
-        # Delete the journal entry
-        execute_query('DELETE FROM journal_entries WHERE id = ?', (journal_id,), commit=True)
-        return True, "Journal entry deleted successfully"
-    except Exception as e:
-        print(f"Error in delete_journal_entry: {e}")
-        return False, f"Error deleting journal entry: {str(e)}"
-
 def get_all_vouchers(limit=100):
     """Get all vouchers"""
     try:
-        result = execute_query('''
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
             SELECT voucher_number, voucher_type, voucher_date, description, total_amount, status, created_date, created_by
             FROM vouchers
             ORDER BY created_date DESC
             LIMIT ?
-        ''', (limit,), fetch=True)
+        ''', (limit,))
+        result = cursor.fetchall()
+        conn.close()
         
         vouchers = []
         for row in result:
@@ -909,32 +961,70 @@ def get_all_vouchers(limit=100):
         print(f"Error in get_all_vouchers: {e}")
         return []
 
+def get_vouchers_by_type(voucher_type):
+    """Get vouchers by type"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT voucher_number, voucher_type, voucher_date, description, total_amount, status, created_date, created_by
+            FROM vouchers
+            WHERE voucher_type = ?
+            ORDER BY created_date DESC
+        ''', (voucher_type,))
+        result = cursor.fetchall()
+        conn.close()
+        
+        vouchers = []
+        for row in result:
+            vouchers.append({
+                'voucher_number': row[0],
+                'voucher_type': row[1],
+                'voucher_date': row[2],
+                'description': row[3],
+                'total_amount': row[4],
+                'status': row[5],
+                'created_date': row[6],
+                'created_by': row[7]
+            })
+        return vouchers
+    except Exception as e:
+        print(f"Error in get_vouchers_by_type: {e}")
+        return []
+
 def get_voucher(voucher_number):
     """Get voucher details"""
     try:
-        voucher = execute_query('''
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
             SELECT voucher_number, voucher_type, voucher_date, description, total_amount, status
             FROM vouchers 
             WHERE voucher_number = ?
-        ''', (voucher_number,), fetch=True)
+        ''', (voucher_number,))
+        voucher = cursor.fetchone()
         
         if not voucher:
+            conn.close()
             return None
         
-        entries = execute_query('''
+        cursor.execute('''
             SELECT entry_type, account_code, account_name, amount, narration
             FROM voucher_entries 
             WHERE voucher_number = ?
             ORDER BY id
-        ''', (voucher_number,), fetch=True)
+        ''', (voucher_number,))
+        entries = cursor.fetchall()
+        
+        conn.close()
         
         return {
-            'voucher_number': voucher[0][0],
-            'voucher_type': voucher[0][1],
-            'voucher_date': voucher[0][2],
-            'description': voucher[0][3],
-            'total_amount': voucher[0][4],
-            'status': voucher[0][5],
+            'voucher_number': voucher[0],
+            'voucher_type': voucher[1],
+            'voucher_date': voucher[2],
+            'description': voucher[3],
+            'total_amount': voucher[4],
+            'status': voucher[5],
             'entries': [
                 {
                     'entry_type': e[0],
@@ -950,15 +1040,169 @@ def get_voucher(voucher_number):
         print(f"Error in get_voucher: {e}")
         return None
 
+def update_voucher(voucher_number, voucher_date, description, entries, username):
+    """Update an existing voucher"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM vouchers WHERE voucher_number = ?', (voucher_number,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Voucher not found"
+        
+        cursor.execute('SELECT entry_type, account_code, amount FROM voucher_entries WHERE voucher_number = ?', 
+                      (voucher_number,))
+        old_entries = cursor.fetchall()
+        
+        for entry in old_entries:
+            if entry[0] == 'DEBIT':
+                success, msg = update_account_balance(entry[1], entry[2], is_debit=False)
+            else:
+                success, msg = update_account_balance(entry[1], entry[2], is_debit=True)
+            if not success:
+                conn.close()
+                return False, f"Error reversing old entries: {msg}"
+        
+        cursor.execute('DELETE FROM voucher_entries WHERE voucher_number = ?', (voucher_number,))
+        cursor.execute('DELETE FROM journal_entries WHERE voucher_number = ?', (voucher_number,))
+        
+        total_amount = sum(entry['amount'] for entry in entries)
+        
+        current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute('''
+            UPDATE vouchers 
+            SET voucher_date = ?, description = ?, total_amount = ?, updated_date = ?, updated_by = ?
+            WHERE voucher_number = ?
+        ''', (voucher_date, description, total_amount, current_date, username, voucher_number))
+        
+        for entry in entries:
+            cursor.execute('''
+                INSERT INTO voucher_entries 
+                (voucher_number, entry_type, account_code, account_name, amount, narration)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (voucher_number, entry['entry_type'], entry['account_code'], 
+                  entry['account_name'], entry['amount'], entry.get('narration', '')))
+        
+        for entry in entries:
+            if entry['entry_type'] == 'DEBIT':
+                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
+            else:
+                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
+            if not success:
+                conn.close()
+                return False, f"Error updating balance for {entry['account_name']}: {msg}"
+        
+        for entry in entries:
+            cursor.execute('''
+                INSERT INTO journal_entries 
+                (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (voucher_date, entry['account_code'], entry['account_name'], 
+                  entry['entry_type'], entry['amount'], description, voucher_number, username, voucher_number))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Voucher {voucher_number} updated successfully"
+    except Exception as e:
+        print(f"Error in update_voucher: {e}")
+        return False, f"Error updating voucher: {str(e)}"
+
+def delete_voucher(voucher_number):
+    """Delete a voucher and reverse balances"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM vouchers WHERE voucher_number = ?', (voucher_number,))
+        if not cursor.fetchone():
+            conn.close()
+            return False, "Voucher not found"
+        
+        cursor.execute('SELECT entry_type, account_code, amount FROM voucher_entries WHERE voucher_number = ?', 
+                      (voucher_number,))
+        entries = cursor.fetchall()
+        
+        for entry in entries:
+            if entry[0] == 'DEBIT':
+                success, msg = update_account_balance(entry[1], entry[2], is_debit=False)
+            else:
+                success, msg = update_account_balance(entry[1], entry[2], is_debit=True)
+            if not success:
+                conn.close()
+                return False, f"Error reversing entries: {msg}"
+        
+        cursor.execute('DELETE FROM voucher_entries WHERE voucher_number = ?', (voucher_number,))
+        cursor.execute('DELETE FROM journal_entries WHERE voucher_number = ?', (voucher_number,))
+        cursor.execute('DELETE FROM vouchers WHERE voucher_number = ?', (voucher_number,))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Voucher {voucher_number} deleted successfully"
+    except Exception as e:
+        print(f"Error in delete_voucher: {e}")
+        return False, f"Error deleting voucher: {str(e)}"
+
+def delete_journal_entry(journal_id):
+    """Delete a specific journal entry"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get the journal entry details first
+        cursor.execute('SELECT account_code, amount, entry_type FROM journal_entries WHERE id = ?', (journal_id,))
+        entry = cursor.fetchone()
+        
+        if not entry:
+            conn.close()
+            return False, "Journal entry not found"
+        
+        account_code, amount, entry_type = entry
+        
+        # Verify account exists before reversing
+        cursor.execute('SELECT account_code FROM accounts WHERE account_code = ? AND is_active = 1', (account_code,))
+        if not cursor.fetchone():
+            # Account might have been deleted, just delete the journal entry
+            cursor.execute('DELETE FROM journal_entries WHERE id = ?', (journal_id,))
+            conn.commit()
+            conn.close()
+            return True, "Journal entry deleted (account no longer exists)"
+        
+        # Reverse the balance change
+        if entry_type == 'DEBIT':
+            success, msg = update_account_balance(account_code, amount, is_debit=False)
+        else:
+            success, msg = update_account_balance(account_code, amount, is_debit=True)
+        
+        if not success:
+            # If balance update fails, still delete the journal entry
+            cursor.execute('DELETE FROM journal_entries WHERE id = ?', (journal_id,))
+            conn.commit()
+            conn.close()
+            return True, "Journal entry deleted (balance could not be reversed)"
+        
+        # Delete the journal entry
+        cursor.execute('DELETE FROM journal_entries WHERE id = ?', (journal_id,))
+        conn.commit()
+        conn.close()
+        return True, "Journal entry deleted successfully"
+    except Exception as e:
+        print(f"Error in delete_journal_entry: {e}")
+        return False, f"Error deleting journal entry: {str(e)}"
+
 def get_all_journal_entries(limit=200):
     """Get all journal entries"""
     try:
-        result = execute_query('''
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
             SELECT id, date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number
             FROM journal_entries
             ORDER BY date DESC
             LIMIT ?
-        ''', (limit,), fetch=True)
+        ''', (limit,))
+        result = cursor.fetchall()
+        conn.close()
         return result
     except Exception as e:
         print(f"Error in get_all_journal_entries: {e}")
@@ -1124,6 +1368,180 @@ def logout():
     st.session_state.user = None
     st.rerun()
 
+# ============== VOUCHER UI FUNCTIONS ==============
+def render_journal_voucher_form(voucher_data=None, edit_mode=False):
+    """Render journal voucher entry form"""
+    st.subheader("📝 Journal Voucher")
+    
+    all_accounts = get_all_accounts()
+    account_options = []
+    account_code_map = {}
+    
+    for code, data in all_accounts.items():
+        display_text = f"{data['account_name']} ({code}) - {data['account_type']}"
+        account_options.append(display_text)
+        account_code_map[display_text] = code
+    
+    if not account_options:
+        st.warning("No accounts found. Please create accounts first.")
+        return None
+    
+    with st.form("journal_voucher_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            voucher_date = st.date_input("Voucher Date", value=datetime.now().date())
+            if edit_mode and voucher_data:
+                voucher_date = datetime.strptime(voucher_data['voucher_date'], '%Y-%m-%d').date()
+        
+        with col2:
+            if edit_mode:
+                st.text_input("Voucher Number", value=voucher_data['voucher_number'], disabled=True)
+            else:
+                st.text_input("Voucher Number", value="Auto-generated", disabled=True)
+        
+        with col3:
+            if edit_mode:
+                voucher_type = voucher_data['voucher_type']
+                st.text_input("Voucher Type", value=voucher_type, disabled=True)
+            else:
+                voucher_type = st.selectbox("Voucher Type", ['JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'], key="voucher_type")
+        
+        description = st.text_area("Description", value=voucher_data.get('description', '') if edit_mode else '')
+        
+        st.markdown("---")
+        st.markdown("### Voucher Entries")
+        st.info("💡 For each entry: Select DEBIT or CREDIT, choose an account, and enter amount")
+        
+        entries = []
+        num_entries = st.number_input("Number of entries", min_value=2, max_value=10, value=2, step=1)
+        
+        for i in range(num_entries):
+            st.markdown(f"**Entry {i+1}**")
+            col1, col2, col3, col4 = st.columns([1, 2, 1.5, 1.5])
+            
+            with col1:
+                entry_type = st.selectbox(f"Type", ['DEBIT', 'CREDIT'], key=f"type_{i}")
+            
+            with col2:
+                account_display = st.selectbox(f"Account", account_options, key=f"acc_{i}")
+                acc_code = account_code_map.get(account_display, '')
+                acc_name = account_display.split('(')[0].strip() if account_display else ''
+            
+            with col3:
+                amount = st.number_input(f"Amount", min_value=0.0, step=100.0, key=f"amt_{i}")
+            
+            with col4:
+                narration = st.text_input(f"Narration", key=f"nar_{i}", placeholder="Optional")
+            
+            if account_display and amount > 0 and acc_code:
+                entries.append({
+                    'entry_type': entry_type,
+                    'account_code': acc_code,
+                    'account_name': acc_name,
+                    'amount': amount,
+                    'narration': narration
+                })
+        
+        total_debits = sum(e['amount'] for e in entries if e['entry_type'] == 'DEBIT')
+        total_credits = sum(e['amount'] for e in entries if e['entry_type'] == 'CREDIT')
+        
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Debits", f"₹{total_debits:,.2f}")
+        with col2:
+            st.metric("Total Credits", f"₹{total_credits:,.2f}")
+        with col3:
+            diff = total_debits - total_credits
+            if abs(diff) < 0.01 and total_debits > 0:
+                st.success("✅ Balanced")
+            else:
+                st.error(f"❌ Difference: ₹{diff:,.2f}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if edit_mode:
+                submit = st.form_submit_button("💾 Update Voucher", type="primary")
+            else:
+                submit = st.form_submit_button("💾 Save Voucher", type="primary")
+        
+        with col2:
+            if edit_mode and st.form_submit_button("🗑️ Delete Voucher", type="secondary"):
+                return {'action': 'delete'}
+        
+        if submit:
+            if len(entries) == 0:
+                st.error("Please enter at least one valid entry")
+                return None
+            
+            if total_debits == 0 and total_credits == 0:
+                st.error("Please enter amounts greater than zero")
+                return None
+            
+            if abs(diff) > 0.01:
+                st.error("Total Debits must equal Total Credits")
+                return None
+            
+            if edit_mode:
+                voucher_type = voucher_data['voucher_type']
+            else:
+                voucher_type = st.session_state.get('voucher_type', 'JOURNAL')
+            
+            return {
+                'action': 'save' if not edit_mode else 'update',
+                'voucher_type': voucher_type,
+                'voucher_date': voucher_date.strftime('%Y-%m-%d'),
+                'description': description,
+                'entries': entries
+            }
+    
+    return None
+
+def render_voucher_list():
+    """Render list of vouchers"""
+    st.subheader("📋 Voucher List")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_type = st.selectbox("Filter by Type", ['ALL', 'JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'])
+    
+    with col2:
+        if st.button("🔄 Refresh List"):
+            st.rerun()
+    
+    if filter_type == 'ALL':
+        vouchers = get_all_vouchers(limit=200)
+    else:
+        vouchers = get_vouchers_by_type(filter_type)
+    
+    if not vouchers:
+        st.info("No vouchers found")
+        return None
+    
+    voucher_data = []
+    for v in vouchers:
+        voucher_data.append({
+            'Voucher No': v['voucher_number'],
+            'Type': v['voucher_type'],
+            'Date': v['voucher_date'],
+            'Description': v['description'][:50] + '...' if len(v['description']) > 50 else v['description'],
+            'Amount': f"₹{v['total_amount']:,.2f}",
+            'Status': v['status'],
+            'Created': v['created_date'][:16],
+            'By': v['created_by']
+        })
+    
+    df = pd.DataFrame(voucher_data)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    selected_voucher = st.selectbox("Select Voucher to View/Edit/Delete", 
+                                   [""] + [v['voucher_number'] for v in vouchers])
+    
+    if selected_voucher:
+        return selected_voucher
+    
+    return None
+
 # ============== CUSTOMER MANAGEMENT UI ==============
 def render_customer_management():
     """Render customer management section with edit/delete"""
@@ -1224,6 +1642,7 @@ def render_customer_management():
         
         with col2:
             if st.button("🗑️ Delete Customer", type="secondary"):
+                # Show confirmation dialog
                 st.session_state.delete_customer_id = cust_id
                 st.session_state.show_delete_confirmation = True
                 st.rerun()
@@ -1262,7 +1681,7 @@ def render_customer_management():
             with st.form("edit_customer_form"):
                 st.markdown("### 📋 Personal Details")
                 
-                full_name = st.text_input("Full Name*", value=edit_cust.get('full_name', ''))
+                full_name = st.text_input("Full Name*", value=edit_cust['full_name'])
                 
                 # Handle date parsing with error handling
                 dob_value = None
@@ -1491,273 +1910,6 @@ def render_journal_entries_management():
     st.divider()
     st.caption(f"Total Journal Entries: {len(entries)}")
 
-# ============== VOUCHER UI FUNCTIONS ==============
-def render_journal_voucher_form(voucher_data=None, edit_mode=False):
-    """Render journal voucher entry form"""
-    st.subheader("📝 Journal Voucher")
-    
-    all_accounts = get_all_accounts()
-    account_options = []
-    account_code_map = {}
-    
-    for code, data in all_accounts.items():
-        display_text = f"{data['account_name']} ({code}) - {data['account_type']}"
-        account_options.append(display_text)
-        account_code_map[display_text] = code
-    
-    if not account_options:
-        st.warning("No accounts found. Please create accounts first.")
-        return None
-    
-    with st.form("journal_voucher_form"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            voucher_date = st.date_input("Voucher Date", value=datetime.now().date())
-            if edit_mode and voucher_data:
-                voucher_date = datetime.strptime(voucher_data['voucher_date'], '%Y-%m-%d').date()
-        
-        with col2:
-            if edit_mode:
-                st.text_input("Voucher Number", value=voucher_data['voucher_number'], disabled=True)
-            else:
-                st.text_input("Voucher Number", value="Auto-generated", disabled=True)
-        
-        with col3:
-            if edit_mode:
-                voucher_type = voucher_data['voucher_type']
-                st.text_input("Voucher Type", value=voucher_type, disabled=True)
-            else:
-                voucher_type = st.selectbox("Voucher Type", ['JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'], key="voucher_type")
-        
-        description = st.text_area("Description", value=voucher_data.get('description', '') if edit_mode else '')
-        
-        st.markdown("---")
-        st.markdown("### Voucher Entries")
-        st.info("💡 For each entry: Select DEBIT or CREDIT, choose an account, and enter amount")
-        
-        entries = []
-        num_entries = st.number_input("Number of entries", min_value=2, max_value=10, value=2, step=1)
-        
-        for i in range(num_entries):
-            st.markdown(f"**Entry {i+1}**")
-            col1, col2, col3, col4 = st.columns([1, 2, 1.5, 1.5])
-            
-            with col1:
-                entry_type = st.selectbox(f"Type", ['DEBIT', 'CREDIT'], key=f"type_{i}")
-            
-            with col2:
-                account_display = st.selectbox(f"Account", account_options, key=f"acc_{i}")
-                acc_code = account_code_map.get(account_display, '')
-                acc_name = account_display.split('(')[0].strip() if account_display else ''
-            
-            with col3:
-                amount = st.number_input(f"Amount", min_value=0.0, step=100.0, key=f"amt_{i}")
-            
-            with col4:
-                narration = st.text_input(f"Narration", key=f"nar_{i}", placeholder="Optional")
-            
-            if account_display and amount > 0 and acc_code:
-                entries.append({
-                    'entry_type': entry_type,
-                    'account_code': acc_code,
-                    'account_name': acc_name,
-                    'amount': amount,
-                    'narration': narration
-                })
-        
-        total_debits = sum(e['amount'] for e in entries if e['entry_type'] == 'DEBIT')
-        total_credits = sum(e['amount'] for e in entries if e['entry_type'] == 'CREDIT')
-        
-        st.markdown("---")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Debits", f"₹{total_debits:,.2f}")
-        with col2:
-            st.metric("Total Credits", f"₹{total_credits:,.2f}")
-        with col3:
-            diff = total_debits - total_credits
-            if abs(diff) < 0.01 and total_debits > 0:
-                st.success("✅ Balanced")
-            else:
-                st.error(f"❌ Difference: ₹{diff:,.2f}")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if edit_mode:
-                submit = st.form_submit_button("💾 Update Voucher", type="primary")
-            else:
-                submit = st.form_submit_button("💾 Save Voucher", type="primary")
-        
-        with col2:
-            if edit_mode and st.form_submit_button("🗑️ Delete Voucher", type="secondary"):
-                return {'action': 'delete'}
-        
-        if submit:
-            if len(entries) == 0:
-                st.error("Please enter at least one valid entry")
-                return None
-            
-            if total_debits == 0 and total_credits == 0:
-                st.error("Please enter amounts greater than zero")
-                return None
-            
-            if abs(diff) > 0.01:
-                st.error("Total Debits must equal Total Credits")
-                return None
-            
-            if edit_mode:
-                voucher_type = voucher_data['voucher_type']
-            else:
-                voucher_type = st.session_state.get('voucher_type', 'JOURNAL')
-            
-            return {
-                'action': 'save' if not edit_mode else 'update',
-                'voucher_type': voucher_type,
-                'voucher_date': voucher_date.strftime('%Y-%m-%d'),
-                'description': description,
-                'entries': entries
-            }
-    
-    return None
-
-def render_voucher_list():
-    """Render list of vouchers"""
-    st.subheader("📋 Voucher List")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        filter_type = st.selectbox("Filter by Type", ['ALL', 'JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'])
-    
-    with col2:
-        if st.button("🔄 Refresh List"):
-            st.rerun()
-    
-    if filter_type == 'ALL':
-        vouchers = get_all_vouchers(limit=200)
-    else:
-        vouchers = get_vouchers_by_type(filter_type)
-    
-    if not vouchers:
-        st.info("No vouchers found")
-        return None
-    
-    voucher_data = []
-    for v in vouchers:
-        voucher_data.append({
-            'Voucher No': v['voucher_number'],
-            'Type': v['voucher_type'],
-            'Date': v['voucher_date'],
-            'Description': v['description'][:50] + '...' if len(v['description']) > 50 else v['description'],
-            'Amount': f"₹{v['total_amount']:,.2f}",
-            'Status': v['status'],
-            'Created': v['created_date'][:16],
-            'By': v['created_by']
-        })
-    
-    df = pd.DataFrame(voucher_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    selected_voucher = st.selectbox("Select Voucher to View/Edit/Delete", 
-                                   [""] + [v['voucher_number'] for v in vouchers])
-    
-    if selected_voucher:
-        return selected_voucher
-    
-    return None
-
-def get_vouchers_by_type(voucher_type):
-    """Get vouchers by type"""
-    try:
-        result = execute_query('''
-            SELECT voucher_number, voucher_type, voucher_date, description, total_amount, status, created_date, created_by
-            FROM vouchers
-            WHERE voucher_type = ?
-            ORDER BY created_date DESC
-        ''', (voucher_type,), fetch=True)
-        
-        vouchers = []
-        for row in result:
-            vouchers.append({
-                'voucher_number': row[0],
-                'voucher_type': row[1],
-                'voucher_date': row[2],
-                'description': row[3],
-                'total_amount': row[4],
-                'status': row[5],
-                'created_date': row[6],
-                'created_by': row[7]
-            })
-        return vouchers
-    except Exception as e:
-        print(f"Error in get_vouchers_by_type: {e}")
-        return []
-
-def update_voucher(voucher_number, voucher_date, description, entries, username):
-    """Update an existing voucher"""
-    try:
-        # Check if voucher exists
-        result = execute_query('SELECT * FROM vouchers WHERE voucher_number = ?', (voucher_number,), fetch=True)
-        if not result:
-            return False, "Voucher not found"
-        
-        # Get old entries
-        old_entries = execute_query('SELECT entry_type, account_code, amount FROM voucher_entries WHERE voucher_number = ?', 
-                                  (voucher_number,), fetch=True)
-        
-        # Reverse old entries
-        for entry in old_entries:
-            if entry[0] == 'DEBIT':
-                success, msg = update_account_balance(entry[1], entry[2], is_debit=False)
-            else:
-                success, msg = update_account_balance(entry[1], entry[2], is_debit=True)
-            if not success:
-                return False, f"Error reversing old entries: {msg}"
-        
-        # Delete old entries
-        execute_query('DELETE FROM voucher_entries WHERE voucher_number = ?', (voucher_number,), commit=True)
-        execute_query('DELETE FROM journal_entries WHERE voucher_number = ?', (voucher_number,), commit=True)
-        
-        total_amount = sum(entry['amount'] for entry in entries)
-        
-        current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        execute_query('''
-            UPDATE vouchers 
-            SET voucher_date = ?, description = ?, total_amount = ?, updated_date = ?, updated_by = ?
-            WHERE voucher_number = ?
-        ''', (voucher_date, description, total_amount, current_date, username, voucher_number), commit=True)
-        
-        # Insert new entries
-        for entry in entries:
-            execute_query('''
-                INSERT INTO voucher_entries 
-                (voucher_number, entry_type, account_code, account_name, amount, narration)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (voucher_number, entry['entry_type'], entry['account_code'], 
-                  entry['account_name'], entry['amount'], entry.get('narration', '')), commit=True)
-        
-        # Update balances
-        for entry in entries:
-            if entry['entry_type'] == 'DEBIT':
-                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
-            else:
-                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
-            if not success:
-                return False, f"Error updating balance for {entry['account_name']}: {msg}"
-        
-        # Record in journal entries
-        for entry in entries:
-            execute_query('''
-                INSERT INTO journal_entries 
-                (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (voucher_date, entry['account_code'], entry['account_name'], 
-                  entry['entry_type'], entry['amount'], description, voucher_number, username, voucher_number), commit=True)
-        
-        return True, f"Voucher {voucher_number} updated successfully"
-    except Exception as e:
-        print(f"Error in update_voucher: {e}")
-        return False, f"Error updating voucher: {str(e)}"
-
 # ============== MAIN APP ==============
 def main():
     try:
@@ -1779,10 +1931,6 @@ def main():
             st.session_state.show_delete_confirmation = False
         if 'delete_customer_id' not in st.session_state:
             st.session_state.delete_customer_id = None
-        if 'customer_age' not in st.session_state:
-            st.session_state.customer_age = ""
-        if 'nominee_age' not in st.session_state:
-            st.session_state.nominee_age = ""
         
         # Header
         col1, col2, col3 = st.columns([2.5, 1.5, 1])
@@ -2017,6 +2165,12 @@ def main():
                 with col1:
                     st.subheader("➕ Register New Customer")
                     
+                    # Initialize session state for age if not exists
+                    if 'customer_age' not in st.session_state:
+                        st.session_state.customer_age = ""
+                    if 'nominee_age' not in st.session_state:
+                        st.session_state.nominee_age = ""
+                    
                     with st.form("customer_form", clear_on_submit=False):
                         st.markdown("### 📋 Personal Details")
                         
@@ -2033,22 +2187,24 @@ def main():
                             help="Select date of birth (1900 to present)"
                         )
                         
-                        # Calculate age immediately
-                        age = None
-                        if date_of_birth:
-                            today = datetime.now().date()
-                            age = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
-                            st.session_state.customer_age = str(age)
-                            st.success(f"🎂 Age: {age} years")
-                        else:
-                            st.session_state.customer_age = ""
-                            st.info("📅 Please select date of birth to calculate age")
-                        
                         st.text_input(
                             "Age (Auto-calculated)*",
                             value=st.session_state.customer_age,
-                            disabled=True
+                            disabled=True,
+                            help="Age will be auto-calculated when you click the Calculate button"
                         )
+                        
+                        calc_age = st.form_submit_button("📅 Calculate Age")
+                        if calc_age:
+                            if date_of_birth:
+                                today = datetime.now().date()
+                                age_value = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+                                st.session_state.customer_age = str(age_value)
+                                st.session_state.dob_value = date_of_birth
+                                st.session_state.full_name = full_name
+                                st.success(f"✅ Age calculated: {age_value} years")
+                            else:
+                                st.warning("⚠️ Please select a Date of Birth first")
                         
                         address = st.text_area("Address*", value=st.session_state.get('address', ''))
                         
@@ -2091,20 +2247,23 @@ def main():
                                 help="Select nominee's date of birth (1900 to present)"
                             )
                             
-                            # Calculate nominee age immediately
-                            if nominee_dob:
-                                today = datetime.now().date()
-                                nominee_age = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
-                                st.session_state.nominee_age = str(nominee_age)
-                                st.caption(f"🎂 Nominee Age: {nominee_age} years")
-                            else:
-                                st.session_state.nominee_age = ""
-                            
                             st.text_input(
                                 "Nominee Age (Auto-calculated)",
                                 value=st.session_state.nominee_age,
-                                disabled=True
+                                disabled=True,
+                                help="Age will be auto-calculated when you click the Calculate button"
                             )
+                            
+                            calc_nom_age = st.form_submit_button("📅 Calculate Nominee Age")
+                            if calc_nom_age:
+                                if nominee_dob:
+                                    today = datetime.now().date()
+                                    age_value = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
+                                    st.session_state.nominee_age = str(age_value)
+                                    st.session_state.nominee_dob_value = nominee_dob
+                                    st.success(f"✅ Nominee Age calculated: {age_value} years")
+                                else:
+                                    st.warning("⚠️ Please select a Nominee Date of Birth first")
                             
                             nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)", value=st.session_state.get('nominee_relation', ''))
                         with col_h:
@@ -2160,7 +2319,7 @@ def main():
                             if not date_of_birth:
                                 errors.append("Date of Birth is required")
                             if not st.session_state.customer_age or st.session_state.customer_age == "":
-                                errors.append("Please select a valid Date of Birth")
+                                errors.append("Please calculate Age using the 'Calculate Age' button")
                             if not address:
                                 errors.append("Address is required")
                             if not phone:
@@ -2366,18 +2525,20 @@ def main():
                             if submitted:
                                 if head_name:
                                     limit_value = daily_limit if daily_limit > 0 else None
-                                    # Generate account code
-                                    account_code = generate_account_code(head_type)
-                                    date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                    
-                                    execute_query('''
-                                        INSERT INTO accounts 
-                                        (account_code, account_name, account_type, balance, daily_limit, interest_rate, created_date, created_by, is_active)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                    ''', (account_code, head_name.upper(), head_type, initial_balance, limit_value, None, date, user['username'], 1), commit=True)
-                                    st.success(f"Account '{head_name}' created with code {account_code}")
-                                    st.balloons()
-                                    st.rerun()
+                                    success, msg = create_account(
+                                        head_name, 
+                                        head_type, 
+                                        initial_balance,
+                                        limit_value,
+                                        None,
+                                        user['username']
+                                    )
+                                    if success:
+                                        st.success(msg)
+                                        st.balloons()
+                                        st.rerun()
+                                    else:
+                                        st.error(msg)
                                 else:
                                     st.warning("Please enter a head name")
                     
@@ -2465,9 +2626,16 @@ def main():
                                     st.subheader("🗑️ Delete Head")
                                     st.warning(f"⚠️ You are about to delete '{head_data['account_name']}'")
                                     
-                                    result = execute_query('SELECT COUNT(*) FROM transactions WHERE account_code = ?', 
-                                                         (acc_code,), fetch=True)
-                                    txn_count = result[0][0] if result else 0
+                                    try:
+                                        conn = get_db_connection()
+                                        if conn:
+                                            cursor = conn.cursor()
+                                            cursor.execute('SELECT COUNT(*) FROM transactions WHERE account_code = ?', (acc_code,))
+                                            txn_count = cursor.fetchone()[0]
+                                            conn.close()
+                                    except Exception as e:
+                                        print(f"Error checking transactions: {e}")
+                                        txn_count = 0
                                     
                                     if txn_count > 0:
                                         st.info(f"This account has {txn_count} transactions. It will be marked as inactive.")

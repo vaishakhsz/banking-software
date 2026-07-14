@@ -11,67 +11,83 @@ from io import BytesIO
 from PIL import Image
 import re
 import threading
+import uuid
 
-# ============== DATABASE SETUP ==============
+# ============== DATABASE SETUP WITH SINGLE CONNECTION ==============
 DB_FILE = "banking_system.db"
 _db_lock = threading.Lock()
+_connection = None
 
 def get_db_connection():
-    """Get database connection"""
+    """Get a database connection with proper locking"""
+    global _connection
+    
     with _db_lock:
         try:
-            conn = sqlite3.connect(DB_FILE, timeout=60.0, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=60000")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA cache_size=10000")
-            return conn
-        except Exception as e:
+            if _connection is None:
+                _connection = sqlite3.connect(DB_FILE, timeout=60.0, check_same_thread=False)
+                _connection.execute("PRAGMA journal_mode=WAL")
+                _connection.execute("PRAGMA busy_timeout=60000")
+                _connection.execute("PRAGMA synchronous=NORMAL")
+                _connection.execute("PRAGMA cache_size=10000")
+            return _connection
+        except sqlite3.OperationalError as e:
             print(f"Database connection error: {e}")
-            return None
+            time.sleep(1)
+            _connection = None
+            return get_db_connection()
 
-def hash_password(password):
-    """Hash password using SHA-256"""
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def migrate_database():
-    """Add missing columns to existing tables"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return
-        cursor = conn.cursor()
-        
-        # Check if value_date column exists in sb_transactions
-        cursor.execute("PRAGMA table_info(sb_transactions)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'value_date' not in columns:
-            print("Adding value_date column to sb_transactions...")
-            cursor.execute("ALTER TABLE sb_transactions ADD COLUMN value_date TEXT")
-            cursor.execute("UPDATE sb_transactions SET value_date = transaction_date WHERE value_date IS NULL")
-            conn.commit()
-            print("value_date column added successfully")
-        
-        if 'created_date' not in columns:
-            print("Adding created_date column to sb_transactions...")
-            cursor.execute("ALTER TABLE sb_transactions ADD COLUMN created_date TEXT")
-            cursor.execute("UPDATE sb_transactions SET created_date = transaction_date WHERE created_date IS NULL")
-            conn.commit()
-            print("created_date column added successfully")
-        
-        conn.close()
-        print("Database migration completed successfully")
-    except Exception as e:
-        print(f"Error in migrate_database: {e}")
+def execute_query(query, params=None, fetch=False, commit=False):
+    """Execute a query with retry logic"""
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            if fetch:
+                result = cursor.fetchall()
+                cursor.close()
+                return result
+            elif commit:
+                conn.commit()
+                cursor.close()
+                return True
+            else:
+                cursor.close()
+                return True
+        except sqlite3.OperationalError as e:
+            error_msg = str(e)
+            if "database is locked" in error_msg or "DatabaseError" in error_msg:
+                wait_time = (attempt + 1) * 1.0
+                time.sleep(wait_time)
+                global _connection
+                _connection = None
+                continue
+            else:
+                print(f"Query error: {e}")
+                if fetch:
+                    return []
+                return False
+        except Exception as e:
+            print(f"Query error: {e}")
+            if fetch:
+                return []
+            return False
+    
+    if fetch:
+        return []
+    return False
 
 def init_database():
-    """Initialize all tables for Complete Banking System"""
+    """Initialize SQLite database with all required tables"""
     try:
         conn = get_db_connection()
-        if conn is None:
-            print("Failed to get database connection")
-            return
         cursor = conn.cursor()
         
         # Users table
@@ -87,32 +103,42 @@ def init_database():
             )
         ''')
         
-        # Accounts table (Chart of Accounts)
+        # Savings Accounts table with KYC
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS accounts (
+            CREATE TABLE IF NOT EXISTS savings_accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_code TEXT UNIQUE NOT NULL,
-                account_name TEXT NOT NULL,
-                account_type TEXT NOT NULL,
+                account_number TEXT UNIQUE NOT NULL,
+                kyc_id TEXT UNIQUE NOT NULL,
+                customer_name TEXT NOT NULL,
+                address TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                email TEXT NOT NULL,
+                id_type TEXT NOT NULL,
+                id_number TEXT NOT NULL,
+                aadhar_number TEXT,
+                pan_number TEXT,
+                date_of_birth TEXT,
+                nominee_name TEXT,
+                nominee_relation TEXT,
+                nominee_phone TEXT,
+                interest_rate REAL DEFAULT 4.0,
                 balance REAL DEFAULT 0,
-                daily_limit REAL DEFAULT NULL,
-                maturity_date TEXT DEFAULT NULL,
-                interest_rate REAL DEFAULT NULL,
-                created_date TEXT NOT NULL,
+                opening_date TEXT NOT NULL,
+                last_transaction_date TEXT,
                 is_active INTEGER DEFAULT 1,
-                created_by TEXT
+                created_by TEXT,
+                FOREIGN KEY (kyc_id) REFERENCES kyc_documents(kyc_id)
             )
         ''')
         
-        # Customers table with KYC
+        # KYC Documents table
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS customers (
+            CREATE TABLE IF NOT EXISTS kyc_documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id TEXT UNIQUE NOT NULL,
-                full_name TEXT NOT NULL,
+                kyc_id TEXT UNIQUE NOT NULL,
+                customer_name TEXT NOT NULL,
                 address TEXT NOT NULL,
                 phone TEXT NOT NULL,
-                whatsapp_number TEXT,
                 email TEXT NOT NULL,
                 id_type TEXT NOT NULL,
                 id_number TEXT NOT NULL,
@@ -121,49 +147,46 @@ def init_database():
                 pan_number TEXT,
                 pan_image TEXT,
                 date_of_birth TEXT,
-                age INTEGER,
                 nominee_name TEXT,
-                nominee_address TEXT,
                 nominee_relation TEXT,
-                nominee_dob TEXT,
-                nominee_age INTEGER,
-                nominee_aadhar TEXT,
-                nominee_aadhar_image TEXT,
-                nominee_pan TEXT,
-                nominee_pan_image TEXT,
-                kyc_completed INTEGER DEFAULT 1,
+                nominee_phone TEXT,
+                kyc_status TEXT DEFAULT 'PENDING',
                 created_date TEXT NOT NULL,
-                created_by TEXT
+                verified_date TEXT,
+                verified_by TEXT
             )
         ''')
         
-        # Customer Accounts
+        # Savings Account Transactions
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS customer_accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id TEXT NOT NULL,
-                account_code TEXT NOT NULL,
-                balance REAL DEFAULT 0,
-                FOREIGN KEY (customer_id) REFERENCES customers(customer_id),
-                FOREIGN KEY (account_code) REFERENCES accounts(account_code)
-            )
-        ''')
-        
-        # Transactions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transactions (
+            CREATE TABLE IF NOT EXISTS savings_transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 transaction_id TEXT UNIQUE NOT NULL,
-                date TEXT NOT NULL,
-                account_code TEXT NOT NULL,
+                account_number TEXT NOT NULL,
+                transaction_date TEXT NOT NULL,
+                particulars TEXT NOT NULL,
+                debit REAL DEFAULT 0,
+                credit REAL DEFAULT 0,
+                balance REAL NOT NULL,
                 transaction_type TEXT NOT NULL,
-                amount REAL NOT NULL,
                 description TEXT,
                 ref_no TEXT,
-                balance_after REAL,
                 username TEXT,
-                voucher_number TEXT,
-                FOREIGN KEY (account_code) REFERENCES accounts(account_code)
+                FOREIGN KEY (account_number) REFERENCES savings_accounts(account_number)
+            )
+        ''')
+        
+        # Interest Calculation Log
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS interest_calculations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_number TEXT NOT NULL,
+                calculation_date TEXT NOT NULL,
+                quarter TEXT NOT NULL,
+                balance REAL NOT NULL,
+                interest_rate REAL NOT NULL,
+                interest_amount REAL NOT NULL,
+                FOREIGN KEY (account_number) REFERENCES savings_accounts(account_number)
             )
         ''')
         
@@ -179,175 +202,26 @@ def init_database():
                 description TEXT,
                 ref_no TEXT,
                 username TEXT,
-                voucher_number TEXT,
-                FOREIGN KEY (account_code) REFERENCES accounts(account_code)
-            )
-        ''')
-        
-        # Customer transactions
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS customer_transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id TEXT NOT NULL,
-                date TEXT NOT NULL,
-                transaction_type TEXT NOT NULL,
-                amount REAL NOT NULL,
-                account_code TEXT NOT NULL,
-                description TEXT,
-                username TEXT,
-                voucher_number TEXT,
-                FOREIGN KEY (customer_id) REFERENCES customers(customer_id),
-                FOREIGN KEY (account_code) REFERENCES accounts(account_code)
-            )
-        ''')
-        
-        # Cash transactions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cash_transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                transaction_id TEXT UNIQUE NOT NULL,
-                date TEXT NOT NULL,
-                transaction_type TEXT NOT NULL,
-                amount REAL NOT NULL,
-                description TEXT,
-                balance_after REAL,
-                username TEXT,
-                customer_id TEXT,
-                voucher_number TEXT,
-                FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
-            )
-        ''')
-        
-        # Vouchers table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vouchers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                voucher_number TEXT UNIQUE NOT NULL,
-                voucher_type TEXT NOT NULL,
-                voucher_date TEXT NOT NULL,
-                description TEXT,
-                total_amount REAL DEFAULT 0,
-                status TEXT DEFAULT 'DRAFT',
-                created_date TEXT NOT NULL,
-                created_by TEXT,
-                updated_date TEXT,
-                updated_by TEXT
-            )
-        ''')
-        
-        # Voucher entries table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS voucher_entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                voucher_number TEXT NOT NULL,
-                entry_type TEXT NOT NULL,
-                account_code TEXT NOT NULL,
-                account_name TEXT NOT NULL,
-                amount REAL NOT NULL,
-                narration TEXT,
-                FOREIGN KEY (voucher_number) REFERENCES vouchers(voucher_number),
-                FOREIGN KEY (account_code) REFERENCES accounts(account_code)
-            )
-        ''')
-        
-        # ============== SAVINGS BANK ACCOUNT TABLES ==============
-        # SB Account Master table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sb_accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_number TEXT UNIQUE NOT NULL,
-                customer_id TEXT NOT NULL,
-                customer_name TEXT NOT NULL,
-                kyc_id TEXT NOT NULL,
-                kyc_type TEXT NOT NULL,
-                address TEXT,
-                phone TEXT,
-                email TEXT,
-                opening_balance REAL DEFAULT 0,
-                current_balance REAL DEFAULT 0,
-                interest_rate REAL DEFAULT 3.5,
-                account_status TEXT DEFAULT 'ACTIVE',
-                opening_date TEXT NOT NULL,
-                last_interest_date TEXT,
-                created_by TEXT,
-                nominee_name TEXT,
-                nominee_relation TEXT,
-                aadhar_number TEXT,
-                pan_number TEXT
-            )
-        ''')
-        
-        # SB Account Transactions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sb_transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                transaction_id TEXT UNIQUE NOT NULL,
-                account_number TEXT NOT NULL,
-                transaction_date TEXT NOT NULL,
-                value_date TEXT NOT NULL,
-                particulars TEXT NOT NULL,
-                debit REAL DEFAULT 0,
-                credit REAL DEFAULT 0,
-                balance REAL NOT NULL,
-                transaction_type TEXT NOT NULL,
-                ref_no TEXT,
-                created_by TEXT,
-                created_date TEXT NOT NULL,
-                FOREIGN KEY (account_number) REFERENCES sb_accounts(account_number)
-            )
-        ''')
-        
-        # SB Interest History table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sb_interest_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_number TEXT NOT NULL,
-                quarter_start TEXT NOT NULL,
-                quarter_end TEXT NOT NULL,
-                interest_rate REAL NOT NULL,
-                average_balance REAL NOT NULL,
-                interest_amount REAL NOT NULL,
-                credited_date TEXT NOT NULL,
-                FOREIGN KEY (account_number) REFERENCES sb_accounts(account_number)
-            )
-        ''')
-        
-        # KYC Documents table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS kyc_documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kyc_id TEXT UNIQUE NOT NULL,
-                customer_name TEXT NOT NULL,
-                aadhar_number TEXT,
-                pan_number TEXT,
-                aadhar_image TEXT,
-                pan_image TEXT,
-                address TEXT,
-                phone TEXT,
-                email TEXT,
-                document_type TEXT,
-                upload_date TEXT,
-                verified INTEGER DEFAULT 0
+                voucher_number TEXT
             )
         ''')
         
         conn.commit()
         
         # Check if default admin user exists
-        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
+        cursor.execute("SELECT COUNT(*) FROM users")
         count = cursor.fetchone()[0]
         
         if count == 0:
-            print("Creating default users...")
             current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             admin_password = hash_password("admin123")
-            
             cursor.execute('''
                 INSERT INTO users 
                 (username, password_hash, full_name, role, created_date)
                 VALUES (?, ?, ?, ?, ?)
             ''', ("admin", admin_password, "System Administrator", "admin", current_date))
             
+            # Insert demo users
             demo_password = hash_password("demo123")
             demo_users = [
                 ("teller1", demo_password, "Teller One", "user"),
@@ -360,67 +234,30 @@ def init_database():
                     (username, password_hash, full_name, role, created_date)
                     VALUES (?, ?, ?, ?, ?)
                 ''', (user[0], user[1], user[2], user[3], current_date))
-            
-            conn.commit()
-            print("Default users created successfully")
         
-        # Check if default accounts exist
-        cursor.execute("SELECT COUNT(*) FROM accounts")
-        count = cursor.fetchone()[0]
-        
-        if count == 0:
-            current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            default_accounts = [
-                ('1000', 'CASH', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-                ('1100', 'BANK_SAVINGS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-                ('1200', 'BANK_CURRENT', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-                ('1300', 'FD', 'ASSET', 0, None, None, 7.0, current_date, 1, 'system'),
-                ('1400', 'DAILY_COLLECTION', 'ASSET', 0, 50000, None, None, current_date, 1, 'system'),
-                ('2100', 'CUSTOMER_DEPOSITS', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
-                ('2200', 'FD_LIABILITY', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
-                ('3100', 'CAPITAL', 'EQUITY', 1000000, None, None, None, current_date, 1, 'system'),
-                ('3200', 'RETAINED_EARNINGS', 'EQUITY', 0, None, None, None, current_date, 1, 'system'),
-                ('4100', 'INTEREST_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
-                ('4200', 'SERVICE_CHARGE', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
-                ('5100', 'GENERAL_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5200', 'SALARY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5300', 'RENT_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5400', 'UTILITY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-            ]
-            
-            for acc in default_accounts:
-                cursor.execute('''
-                    INSERT INTO accounts 
-                    (account_code, account_name, account_type, balance, daily_limit, maturity_date, interest_rate, created_date, is_active, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (acc[0], acc[1], acc[2], acc[3], acc[4], acc[5], acc[6], acc[7], acc[8], acc[9]))
-        
-        conn.close()
-        print("Database initialized successfully")
-        migrate_database()
+        conn.commit()
     except Exception as e:
         print(f"Error in init_database: {e}")
-        print(traceback.format_exc())
+        raise e
+
+def hash_password(password):
+    """Hash password using SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def verify_user(username, password):
     """Verify user credentials"""
     try:
         conn = get_db_connection()
-        if conn is None:
-            return None
         cursor = conn.cursor()
-        
-        hashed = hash_password(password)
-        
         cursor.execute('SELECT * FROM users WHERE username = ? AND password_hash = ?', 
-                       (username, hashed))
+                       (username, hash_password(password)))
         user = cursor.fetchone()
         
         if user:
+            # Update last login
             cursor.execute('UPDATE users SET last_login = ? WHERE username = ?',
                            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), username))
             conn.commit()
-            conn.close()
             return {
                 'id': user[0],
                 'username': user[1],
@@ -429,20 +266,57 @@ def verify_user(username, password):
                 'created_date': user[5],
                 'last_login': user[6] if len(user) > 6 else None
             }
-        conn.close()
     except Exception as e:
         print(f"Error in verify_user: {e}")
         return None
     return None
 
 # ============== HELPER FUNCTIONS ==============
+def generate_account_number():
+    """Generate a unique savings account number"""
+    try:
+        # Get the last account number
+        result = execute_query('SELECT account_number FROM savings_accounts ORDER BY id DESC LIMIT 1', fetch=True)
+        
+        if result:
+            last_number = result[0][0]
+            # Extract the numeric part after SB-
+            num_part = int(last_number.split('-')[1])
+            new_num = num_part + 1
+        else:
+            new_num = 1000001
+        
+        return f"SB-{str(new_num).zfill(7)}"
+    except Exception as e:
+        print(f"Error generating account number: {e}")
+        return f"SB-{str(int(time.time()))[-7:]}"
+
+def generate_kyc_id():
+    """Generate a unique KYC ID"""
+    try:
+        # Get the last KYC ID
+        result = execute_query('SELECT kyc_id FROM kyc_documents ORDER BY id DESC LIMIT 1', fetch=True)
+        
+        if result:
+            last_id = result[0][0]
+            num_part = int(last_id.split('-')[1])
+            new_num = num_part + 1
+        else:
+            new_num = 10001
+        
+        return f"KYC-{str(new_num).zfill(6)}"
+    except Exception as e:
+        print(f"Error generating KYC ID: {e}")
+        return f"KYC-{str(int(time.time()))[-6:]}"
+
 def calculate_age_from_date(dob):
-    """Calculate age from date object"""
+    """Calculate age from date string"""
     if not dob:
         return None
     try:
+        dob_date = datetime.strptime(dob, '%Y-%m-%d').date()
         today = datetime.now().date()
-        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        age = today.year - dob_date.year - ((today.month, today.day) < (dob_date.month, dob_date.day))
         return age
     except Exception as e:
         print(f"Error calculating age: {e}")
@@ -473,1745 +347,491 @@ def image_to_base64(image_file):
         print(f"Error converting image: {e}")
         return None
 
-def display_image_from_base64(base64_string):
-    """Display image from base64 string"""
-    if not base64_string:
-        return None
+# ============== SAVINGS ACCOUNT FUNCTIONS ==============
+def create_savings_account(data, username):
+    """Create a new savings account with KYC"""
     try:
-        return f"data:image/jpeg;base64,{base64_string}"
-    except Exception as e:
-        print(f"Error displaying image: {e}")
-        return None
-
-def generate_account_number():
-    """Generate unique SB account number"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return f"SB{datetime.now().strftime('%Y%m')}{str(int(time.time()))[-6:]}"
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM sb_accounts")
-        count = cursor.fetchone()[0]
-        conn.close()
-        year = datetime.now().strftime('%Y')
-        month = datetime.now().strftime('%m')
-        return f"SB{year}{month}{str(count + 1).zfill(6)}"
-    except Exception as e:
-        print(f"Error generating account number: {e}")
-        return f"SB{datetime.now().strftime('%Y%m')}{str(int(time.time()))[-6:]}"
-
-def generate_transaction_id():
-    """Generate unique transaction ID"""
-    return f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{str(int(time.time()))[-6:]}"
-
-def generate_voucher_number(voucher_type):
-    """Generate unique voucher number"""
-    prefix_map = {
-        'JOURNAL': 'JV',
-        'RECEIPT': 'RV',
-        'PAYMENT': 'PV',
-        'CONTRA': 'CV'
-    }
-    prefix = prefix_map.get(voucher_type, 'V')
-    year = datetime.now().strftime('%Y')
-    return f"{prefix}-{year}-{str(int(time.time()))[-6:]}"
-
-def calculate_interest(principal, rate, days):
-    """Calculate simple interest"""
-    return (principal * rate * days) / (100 * 365)
-
-# ============== ACCOUNT FUNCTIONS ==============
-def get_account_balance(account_code):
-    """Get current balance of an account"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return 0
-        cursor = conn.cursor()
-        cursor.execute('SELECT balance FROM accounts WHERE account_code = ?', (account_code,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else 0
-    except Exception as e:
-        print(f"Error in get_account_balance: {e}")
-        return 0
-
-def get_all_accounts():
-    """Get all active accounts"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return {}
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT account_code, account_name, account_type, balance, daily_limit, is_active
-            FROM accounts 
-            WHERE is_active = 1
-            ORDER BY account_code
-        ''')
-        result = cursor.fetchall()
-        conn.close()
-        
-        accounts = {}
-        for row in result:
-            accounts[row[0]] = {
-                'account_code': row[0],
-                'account_name': row[1],
-                'account_type': row[2],
-                'balance': row[3],
-                'daily_limit': row[4] if row[4] is not None else None,
-                'is_active': row[5]
-            }
-        return accounts
-    except Exception as e:
-        print(f"Error in get_all_accounts: {e}")
-        return {}
-
-def get_accounts_by_type(account_type):
-    """Get all accounts of a specific type"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT account_code, account_name, account_type, balance, daily_limit, interest_rate, is_active, created_date, created_by
-            FROM accounts 
-            WHERE account_type = ? AND is_active = 1
-            ORDER BY account_code
-        ''', (account_type,))
-        result = cursor.fetchall()
-        conn.close()
-        
-        accounts = []
-        for row in result:
-            accounts.append({
-                'account_code': row[0],
-                'account_name': row[1],
-                'account_type': row[2],
-                'balance': row[3],
-                'daily_limit': row[4] if row[4] is not None else None,
-                'interest_rate': row[5],
-                'is_active': row[6],
-                'created_date': row[7],
-                'created_by': row[8] if len(row) > 8 else 'system'
-            })
-        return accounts
-    except Exception as e:
-        print(f"Error in get_accounts_by_type: {e}")
-        return []
-
-def update_account_balance(account_code, amount, is_debit=True):
-    """Update account balance with debit/credit logic"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT account_type, balance FROM accounts WHERE account_code = ? AND is_active = 1', 
-                      (account_code,))
-        result = cursor.fetchone()
-        if not result:
-            conn.close()
-            return False, f"Account {account_code} not found"
-        
-        acc_type, current_balance = result
-        
-        if acc_type in ['ASSET', 'EXPENSE']:
-            if is_debit:
-                new_balance = current_balance + amount
-            else:
-                new_balance = current_balance - amount
-        else:
-            if is_debit:
-                new_balance = current_balance - amount
-            else:
-                new_balance = current_balance + amount
-        
-        cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
-        conn.commit()
-        conn.close()
-        return True, new_balance
-    except Exception as e:
-        print(f"Error in update_account_balance: {e}")
-        return False, str(e)
-
-# ============== JOURNAL VOUCHER FUNCTIONS ==============
-def save_voucher(voucher_type, voucher_date, description, entries, username, status='POSTED'):
-    """Save a new voucher and update account balances"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        voucher_number = generate_voucher_number(voucher_type)
-        current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        total_amount = sum(entry['amount'] for entry in entries)
-        
-        cursor.execute('''
-            INSERT INTO vouchers 
-            (voucher_number, voucher_type, voucher_date, description, total_amount, status, created_date, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (voucher_number, voucher_type, voucher_date, description, total_amount, status, current_date, username))
-        
-        for entry in entries:
-            cursor.execute('''
-                INSERT INTO voucher_entries 
-                (voucher_number, entry_type, account_code, account_name, amount, narration)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (voucher_number, entry['entry_type'], entry['account_code'], 
-                  entry['account_name'], entry['amount'], entry.get('narration', '')))
-        
-        for entry in entries:
-            if entry['entry_type'] == 'DEBIT':
-                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=True)
-            else:
-                success, msg = update_account_balance(entry['account_code'], entry['amount'], is_debit=False)
-            if not success:
-                conn.close()
-                return False, f"Error updating balance for {entry['account_name']}: {msg}"
-        
-        for entry in entries:
-            cursor.execute('''
-                INSERT INTO journal_entries 
-                (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (voucher_date, entry['account_code'], entry['account_name'], 
-                  entry['entry_type'], entry['amount'], description, voucher_number, username, voucher_number))
-        
-        conn.commit()
-        conn.close()
-        return True, f"Voucher {voucher_number} saved successfully"
-    except Exception as e:
-        print(f"Error in save_voucher: {e}")
-        return False, f"Error saving voucher: {str(e)}"
-
-def get_all_vouchers(limit=100):
-    """Get all vouchers"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT voucher_number, voucher_type, voucher_date, description, total_amount, status, created_date, created_by
-            FROM vouchers
-            ORDER BY created_date DESC
-            LIMIT ?
-        ''', (limit,))
-        result = cursor.fetchall()
-        conn.close()
-        
-        vouchers = []
-        for row in result:
-            vouchers.append({
-                'voucher_number': row[0],
-                'voucher_type': row[1],
-                'voucher_date': row[2],
-                'description': row[3],
-                'total_amount': row[4],
-                'status': row[5],
-                'created_date': row[6],
-                'created_by': row[7]
-            })
-        return vouchers
-    except Exception as e:
-        print(f"Error in get_all_vouchers: {e}")
-        return []
-
-def get_voucher(voucher_number):
-    """Get voucher details"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return None
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT voucher_number, voucher_type, voucher_date, description, total_amount, status
-            FROM vouchers 
-            WHERE voucher_number = ?
-        ''', (voucher_number,))
-        voucher = cursor.fetchone()
-        
-        if not voucher:
-            conn.close()
-            return None
-        
-        cursor.execute('''
-            SELECT entry_type, account_code, account_name, amount, narration
-            FROM voucher_entries 
-            WHERE voucher_number = ?
-            ORDER BY id
-        ''', (voucher_number,))
-        entries = cursor.fetchall()
-        
-        conn.close()
-        
-        return {
-            'voucher_number': voucher[0],
-            'voucher_type': voucher[1],
-            'voucher_date': voucher[2],
-            'description': voucher[3],
-            'total_amount': voucher[4],
-            'status': voucher[5],
-            'entries': [
-                {
-                    'entry_type': e[0],
-                    'account_code': e[1],
-                    'account_name': e[2],
-                    'amount': e[3],
-                    'narration': e[4] if e[4] else ''
-                }
-                for e in entries
-            ]
-        }
-    except Exception as e:
-        print(f"Error in get_voucher: {e}")
-        return None
-
-def delete_voucher(voucher_number):
-    """Delete a voucher and reverse balances"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM vouchers WHERE voucher_number = ?', (voucher_number,))
-        if not cursor.fetchone():
-            conn.close()
-            return False, "Voucher not found"
-        
-        cursor.execute('SELECT entry_type, account_code, amount FROM voucher_entries WHERE voucher_number = ?', 
-                      (voucher_number,))
-        entries = cursor.fetchall()
-        
-        for entry in entries:
-            if entry[0] == 'DEBIT':
-                success, msg = update_account_balance(entry[1], entry[2], is_debit=False)
-            else:
-                success, msg = update_account_balance(entry[1], entry[2], is_debit=True)
-            if not success:
-                conn.close()
-                return False, f"Error reversing entries: {msg}"
-        
-        cursor.execute('DELETE FROM voucher_entries WHERE voucher_number = ?', (voucher_number,))
-        cursor.execute('DELETE FROM journal_entries WHERE voucher_number = ?', (voucher_number,))
-        cursor.execute('DELETE FROM vouchers WHERE voucher_number = ?', (voucher_number,))
-        
-        conn.commit()
-        conn.close()
-        return True, f"Voucher {voucher_number} deleted successfully"
-    except Exception as e:
-        print(f"Error in delete_voucher: {e}")
-        return False, f"Error deleting voucher: {str(e)}"
-
-# ============== SB ACCOUNT FUNCTIONS ==============
-def create_sb_account(data, username):
-    """Create a new Savings Bank Account"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
+        # Generate account number and KYC ID
         account_number = generate_account_number()
-        opening_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        kyc_id = generate_kyc_id()
         
-        cursor.execute('''
-            INSERT INTO sb_accounts (
-                account_number, customer_id, customer_name, kyc_id, kyc_type,
-                address, phone, email, opening_balance, current_balance,
-                interest_rate, account_status, opening_date, created_by,
-                nominee_name, nominee_relation, aadhar_number, pan_number
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        opening_date = datetime.now().strftime('%Y-%m-%d')
+        
+        # Insert KYC document
+        execute_query('''
+            INSERT INTO kyc_documents 
+            (kyc_id, customer_name, address, phone, email, id_type, id_number,
+             aadhar_number, aadhar_image, pan_number, pan_image, date_of_birth,
+             nominee_name, nominee_relation, nominee_phone,
+             kyc_status, created_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            account_number,
-            data['customer_id'],
+            kyc_id,
             data['customer_name'],
-            data['kyc_id'],
-            data['kyc_type'],
             data['address'],
             data['phone'],
             data['email'],
-            data['opening_balance'],
-            data['opening_balance'],
-            data['interest_rate'],
-            'ACTIVE',
+            data['id_type'],
+            data['id_number'],
+            data.get('aadhar_number'),
+            data.get('aadhar_image'),
+            data.get('pan_number'),
+            data.get('pan_image'),
+            data['date_of_birth'],
+            data.get('nominee_name'),
+            data.get('nominee_relation'),
+            data.get('nominee_phone'),
+            'VERIFIED',
+            current_date
+        ), commit=True)
+        
+        # Insert savings account
+        execute_query('''
+            INSERT INTO savings_accounts 
+            (account_number, kyc_id, customer_name, address, phone, email,
+             id_type, id_number, aadhar_number, pan_number, date_of_birth,
+             nominee_name, nominee_relation, nominee_phone,
+             interest_rate, balance, opening_date, last_transaction_date,
+             is_active, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            account_number,
+            kyc_id,
+            data['customer_name'],
+            data['address'],
+            data['phone'],
+            data['email'],
+            data['id_type'],
+            data['id_number'],
+            data.get('aadhar_number'),
+            data.get('pan_number'),
+            data['date_of_birth'],
+            data.get('nominee_name'),
+            data.get('nominee_relation'),
+            data.get('nominee_phone'),
+            data.get('interest_rate', 4.0),
+            0.0,
             opening_date,
+            opening_date,
+            1,
+            username
+        ), commit=True)
+        
+        # Record initial journal entry
+        execute_query('''
+            INSERT INTO journal_entries 
+            (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            opening_date,
+            '2100',
+            'CUSTOMER_DEPOSITS',
+            'CREDIT',
+            0,
+            f'Account opening for {data["customer_name"]} - {account_number}',
+            account_number,
             username,
-            data.get('nominee_name', ''),
-            data.get('nominee_relation', ''),
-            data.get('aadhar_number', ''),
-            data.get('pan_number', '')
-        ))
+            f'JV-{account_number}'
+        ), commit=True)
         
-        if data['opening_balance'] > 0:
-            transaction_id = generate_transaction_id()
-            cursor.execute('''
-                INSERT INTO sb_transactions (
-                    transaction_id, account_number, transaction_date, value_date,
-                    particulars, credit, balance, transaction_type, created_by, created_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                transaction_id,
-                account_number,
-                opening_date,
-                opening_date,
-                'Opening Balance',
-                data['opening_balance'],
-                data['opening_balance'],
-                'DEPOSIT',
-                username,
-                opening_date
-            ))
-        
-        conn.commit()
-        conn.close()
-        return True, f"SB Account {account_number} created successfully for {data['customer_name']}"
+        return True, f"Account created successfully! Account Number: {account_number}, KYC ID: {kyc_id}"
     except Exception as e:
-        print(f"Error in create_sb_account: {e}")
+        print(f"Error creating savings account: {e}")
         return False, f"Error creating account: {str(e)}"
 
-def get_sb_account(account_number):
-    """Get SB account details"""
+def get_all_savings_accounts():
+    """Get all savings accounts"""
     try:
-        conn = get_db_connection()
-        if conn is None:
-            return None
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM sb_accounts WHERE account_number = ?', (account_number,))
-        result = cursor.fetchone()
-        conn.close()
-        if result:
-            columns = ['id', 'account_number', 'customer_id', 'customer_name', 'kyc_id', 'kyc_type',
-                      'address', 'phone', 'email', 'opening_balance', 'current_balance',
-                      'interest_rate', 'account_status', 'opening_date', 'last_interest_date',
-                      'created_by', 'nominee_name', 'nominee_relation', 'aadhar_number', 'pan_number']
-            return dict(zip(columns, result))
-        return None
-    except Exception as e:
-        print(f"Error in get_sb_account: {e}")
-        return None
-
-def get_all_sb_accounts():
-    """Get all SB accounts"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT account_number, customer_id, customer_name, kyc_id, 
-                   opening_balance, current_balance, interest_rate, 
-                   account_status, opening_date
-            FROM sb_accounts 
+        result = execute_query('''
+            SELECT account_number, customer_name, phone, email, balance, 
+                   interest_rate, opening_date, is_active, kyc_id
+            FROM savings_accounts
             ORDER BY opening_date DESC
-        ''')
-        result = cursor.fetchall()
-        conn.close()
+        ''', fetch=True)
         
         accounts = []
         for row in result:
             accounts.append({
                 'account_number': row[0],
-                'customer_id': row[1],
-                'customer_name': row[2],
-                'kyc_id': row[3],
-                'opening_balance': row[4],
-                'current_balance': row[5],
-                'interest_rate': row[6],
-                'account_status': row[7],
-                'opening_date': row[8]
+                'customer_name': row[1],
+                'phone': row[2],
+                'email': row[3],
+                'balance': row[4],
+                'interest_rate': row[5],
+                'opening_date': row[6],
+                'is_active': row[7],
+                'kyc_id': row[8]
             })
         return accounts
     except Exception as e:
-        print(f"Error in get_all_sb_accounts: {e}")
+        print(f"Error getting savings accounts: {e}")
         return []
 
-def get_sb_transactions(account_number, from_date=None, to_date=None, limit=1000):
-    """Get transactions for an SB account"""
+def get_savings_account(account_number):
+    """Get savings account details"""
     try:
-        conn = get_db_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
+        result = execute_query('''
+            SELECT * FROM savings_accounts 
+            WHERE account_number = ?
+        ''', (account_number,), fetch=True)
         
+        if result:
+            columns = ['id', 'account_number', 'kyc_id', 'customer_name', 'address', 'phone', 
+                      'email', 'id_type', 'id_number', 'aadhar_number', 'pan_number', 
+                      'date_of_birth', 'nominee_name', 'nominee_relation', 'nominee_phone',
+                      'interest_rate', 'balance', 'opening_date', 'last_transaction_date', 
+                      'is_active', 'created_by']
+            return dict(zip(columns, result[0]))
+        return None
+    except Exception as e:
+        print(f"Error getting savings account: {e}")
+        return None
+
+def get_savings_account_balance(account_number):
+    """Get savings account balance"""
+    try:
+        result = execute_query('SELECT balance FROM savings_accounts WHERE account_number = ?', 
+                              (account_number,), fetch=True)
+        if result:
+            return result[0][0]
+        return 0
+    except Exception as e:
+        print(f"Error getting balance: {e}")
+        return 0
+
+def update_savings_account_balance(account_number, amount, transaction_type):
+    """Update savings account balance"""
+    try:
+        current_balance = get_savings_account_balance(account_number)
+        
+        if transaction_type == 'DEBIT':
+            if current_balance < amount:
+                return False, "Insufficient balance"
+            new_balance = current_balance - amount
+        else:  # CREDIT
+            new_balance = current_balance + amount
+        
+        execute_query('''
+            UPDATE savings_accounts 
+            SET balance = ?, last_transaction_date = ?
+            WHERE account_number = ?
+        ''', (new_balance, datetime.now().strftime('%Y-%m-%d'), account_number), commit=True)
+        
+        return True, new_balance
+    except Exception as e:
+        print(f"Error updating balance: {e}")
+        return False, str(e)
+
+def record_savings_transaction(account_number, particulars, debit, credit, 
+                               transaction_type, description='', ref_no='', username=''):
+    """Record a savings account transaction"""
+    try:
+        transaction_id = f"TXN-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8]}"
+        current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get current balance
+        current_balance = get_savings_account_balance(account_number)
+        
+        # Calculate new balance
+        if debit > 0:
+            if current_balance < debit:
+                return False, "Insufficient balance"
+            new_balance = current_balance - debit
+        else:
+            new_balance = current_balance + credit
+        
+        # Insert transaction
+        execute_query('''
+            INSERT INTO savings_transactions 
+            (transaction_id, account_number, transaction_date, particulars, 
+             debit, credit, balance, transaction_type, description, ref_no, username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            transaction_id, account_number, current_date, particulars,
+            debit, credit, new_balance, transaction_type, description, ref_no, username
+        ), commit=True)
+        
+        # Update account balance
+        execute_query('''
+            UPDATE savings_accounts 
+            SET balance = ?, last_transaction_date = ?
+            WHERE account_number = ?
+        ''', (new_balance, current_date.split(' ')[0], account_number), commit=True)
+        
+        return True, transaction_id
+    except Exception as e:
+        print(f"Error recording transaction: {e}")
+        return False, str(e)
+
+def calculate_quarterly_interest(account_number):
+    """Calculate and post interest for a savings account"""
+    try:
+        # Get account details
+        account = get_savings_account(account_number)
+        if not account:
+            return False, "Account not found"
+        
+        if not account['is_active']:
+            return False, "Account is inactive"
+        
+        # Get current quarter
+        today = datetime.now()
+        quarter = f"Q{(today.month - 1) // 3 + 1}-{today.year}"
+        
+        # Check if interest already calculated for this quarter
+        result = execute_query('''
+            SELECT COUNT(*) FROM interest_calculations 
+            WHERE account_number = ? AND quarter = ?
+        ''', (account_number, quarter), fetch=True)
+        
+        if result and result[0][0] > 0:
+            return False, f"Interest already calculated for {quarter}"
+        
+        # Get average balance for the quarter
+        # For simplicity, use current balance
+        balance = account['balance']
+        interest_rate = account['interest_rate']
+        
+        # Calculate interest (simple interest for quarter)
+        # Interest = Balance * Rate * (3/12)
+        interest_amount = balance * (interest_rate / 100) * 0.25
+        
+        if interest_amount <= 0:
+            return False, "No interest to credit (balance is zero or negative)"
+        
+        # Record interest calculation
+        execute_query('''
+            INSERT INTO interest_calculations 
+            (account_number, calculation_date, quarter, balance, interest_rate, interest_amount)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            account_number,
+            datetime.now().strftime('%Y-%m-%d'),
+            quarter,
+            balance,
+            interest_rate,
+            interest_amount
+        ), commit=True)
+        
+        # Credit interest to account
+        success, msg = record_savings_transaction(
+            account_number,
+            f"Interest credited for {quarter}",
+            0,
+            interest_amount,
+            'INTEREST',
+            f"Quarterly interest at {interest_rate}% on balance ₹{balance:,.2f}",
+            f"INT-{quarter}",
+            'SYSTEM'
+        )
+        
+        if success:
+            return True, f"Interest ₹{interest_amount:,.2f} credited for {quarter}"
+        else:
+            return False, msg
+            
+    except Exception as e:
+        print(f"Error calculating interest: {e}")
+        return False, str(e)
+
+def calculate_all_quarterly_interest():
+    """Calculate interest for all savings accounts"""
+    try:
+        accounts = get_all_savings_accounts()
+        results = []
+        
+        for account in accounts:
+            if account['is_active'] and account['balance'] > 0:
+                success, msg = calculate_quarterly_interest(account['account_number'])
+                results.append({
+                    'account_number': account['account_number'],
+                    'customer_name': account['customer_name'],
+                    'success': success,
+                    'message': msg
+                })
+        
+        return results
+    except Exception as e:
+        print(f"Error calculating all interest: {e}")
+        return []
+
+def get_account_transactions(account_number, from_date=None, to_date=None):
+    """Get transactions for an account within date range"""
+    try:
         query = '''
-            SELECT transaction_id, transaction_date, value_date, particulars, debit, credit, balance, 
-                   transaction_type, ref_no, created_by, created_date
-            FROM sb_transactions 
+            SELECT transaction_date, particulars, debit, credit, balance, 
+                   transaction_type, description, ref_no, username
+            FROM savings_transactions
             WHERE account_number = ?
         '''
         params = [account_number]
         
-        if from_date:
-            query += ' AND value_date >= ?'
+        if from_date and to_date:
+            query += ' AND transaction_date BETWEEN ? AND ?'
             params.append(from_date)
-        if to_date:
-            query += ' AND value_date <= ?'
             params.append(to_date)
         
-        query += ' ORDER BY value_date DESC, created_date DESC LIMIT ?'
-        params.append(limit)
+        query += ' ORDER BY transaction_date DESC'
         
-        cursor.execute(query, params)
-        result = cursor.fetchall()
-        conn.close()
+        result = execute_query(query, tuple(params), fetch=True)
         
         transactions = []
         for row in result:
             transactions.append({
-                'transaction_id': row[0],
-                'transaction_date': row[1],
-                'value_date': row[2] if len(row) > 2 else row[1],
-                'particulars': row[3],
-                'debit': row[4],
-                'credit': row[5],
-                'balance': row[6],
-                'transaction_type': row[7],
-                'ref_no': row[8],
-                'created_by': row[9] if len(row) > 9 else '',
-                'created_date': row[10] if len(row) > 10 else row[1]
+                'date': row[0],
+                'particulars': row[1],
+                'debit': row[2],
+                'credit': row[3],
+                'balance': row[4],
+                'type': row[5],
+                'description': row[6] if row[6] else '',
+                'ref_no': row[7] if row[7] else '',
+                'username': row[8]
             })
         return transactions
     except Exception as e:
-        print(f"Error in get_sb_transactions: {e}")
+        print(f"Error getting transactions: {e}")
         return []
 
-def deposit_sb_account(account_number, amount, particulars, value_date, username):
-    """Deposit money into SB account with date"""
+def generate_account_report(account_number, from_date, to_date):
+    """Generate a detailed account report"""
     try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT current_balance FROM sb_accounts WHERE account_number = ?', (account_number,))
-        result = cursor.fetchone()
-        if not result:
-            conn.close()
-            return False, "Account not found"
-        
-        current_balance = result[0]
-        new_balance = current_balance + amount
-        transaction_id = generate_transaction_id()
-        transaction_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        cursor.execute('UPDATE sb_accounts SET current_balance = ? WHERE account_number = ?', 
-                      (new_balance, account_number))
-        
-        cursor.execute('''
-            INSERT INTO sb_transactions (
-                transaction_id, account_number, transaction_date, value_date,
-                particulars, credit, balance, transaction_type, created_by, created_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            transaction_id,
-            account_number,
-            transaction_date,
-            value_date,
-            particulars,
-            amount,
-            new_balance,
-            'DEPOSIT',
-            username,
-            transaction_date
-        ))
-        
-        conn.commit()
-        conn.close()
-        return True, f"Deposited ₹{amount:,.2f} on {value_date}. New balance: ₹{new_balance:,.2f}"
-    except Exception as e:
-        print(f"Error in deposit_sb_account: {e}")
-        return False, f"Error depositing: {str(e)}"
-
-def withdraw_sb_account(account_number, amount, particulars, value_date, username):
-    """Withdraw money from SB account with date"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT current_balance FROM sb_accounts WHERE account_number = ?', (account_number,))
-        result = cursor.fetchone()
-        if not result:
-            conn.close()
-            return False, "Account not found"
-        
-        current_balance = result[0]
-        if current_balance < amount:
-            conn.close()
-            return False, f"Insufficient balance. Available: ₹{current_balance:,.2f}"
-        
-        new_balance = current_balance - amount
-        transaction_id = generate_transaction_id()
-        transaction_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        cursor.execute('UPDATE sb_accounts SET current_balance = ? WHERE account_number = ?', 
-                      (new_balance, account_number))
-        
-        cursor.execute('''
-            INSERT INTO sb_transactions (
-                transaction_id, account_number, transaction_date, value_date,
-                particulars, debit, balance, transaction_type, created_by, created_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            transaction_id,
-            account_number,
-            transaction_date,
-            value_date,
-            particulars,
-            amount,
-            new_balance,
-            'WITHDRAWAL',
-            username,
-            transaction_date
-        ))
-        
-        conn.commit()
-        conn.close()
-        return True, f"Withdrawn ₹{amount:,.2f} on {value_date}. New balance: ₹{new_balance:,.2f}"
-    except Exception as e:
-        print(f"Error in withdraw_sb_account: {e}")
-        return False, f"Error withdrawing: {str(e)}"
-
-def calculate_and_credit_interest(account_number):
-    """Calculate and credit quarterly interest for SB account"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT current_balance, interest_rate FROM sb_accounts WHERE account_number = ?', 
-                      (account_number,))
-        result = cursor.fetchone()
-        if not result:
-            conn.close()
-            return False, "Account not found"
-        
-        current_balance, interest_rate = result
-        interest = current_balance * (interest_rate / 100) * (90 / 365)
-        
-        if interest <= 0:
-            conn.close()
-            return False, "No interest to credit"
-        
-        new_balance = current_balance + interest
-        cursor.execute('UPDATE sb_accounts SET current_balance = ? WHERE account_number = ?',
-                      (new_balance, account_number))
-        
-        transaction_id = generate_transaction_id()
-        transaction_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        value_date = datetime.now().strftime('%Y-%m-%d')
-        
-        cursor.execute('''
-            INSERT INTO sb_transactions (
-                transaction_id, account_number, transaction_date, value_date,
-                particulars, credit, balance, transaction_type, created_by, created_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            transaction_id,
-            account_number,
-            transaction_date,
-            value_date,
-            f'Quarterly Interest @ {interest_rate}%',
-            interest,
-            new_balance,
-            'INTEREST',
-            'SYSTEM',
-            transaction_date
-        ))
-        
-        conn.commit()
-        conn.close()
-        return True, f"Interest ₹{interest:,.2f} credited at {interest_rate}%"
-    except Exception as e:
-        print(f"Error in calculate_and_credit_interest: {e}")
-        return False, f"Error calculating interest: {str(e)}"
-
-def get_interest_history(account_number):
-    """Get interest history for an account"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT quarter_start, quarter_end, interest_rate, average_balance, interest_amount, credited_date
-            FROM sb_interest_history 
-            WHERE account_number = ?
-            ORDER BY quarter_start DESC
-        ''', (account_number,))
-        result = cursor.fetchall()
-        conn.close()
-        
-        history = []
-        for row in result:
-            history.append({
-                'quarter_start': row[0],
-                'quarter_end': row[1],
-                'interest_rate': row[2],
-                'average_balance': row[3],
-                'interest_amount': row[4],
-                'credited_date': row[5]
-            })
-        return history
-    except Exception as e:
-        print(f"Error in get_interest_history: {e}")
-        return []
-
-def generate_sb_account_report(account_number, from_date, to_date):
-    """Generate detailed report for SB account"""
-    try:
-        account = get_sb_account(account_number)
+        account = get_savings_account(account_number)
         if not account:
-            return None
+            return None, "Account not found"
         
-        transactions = get_sb_transactions(account_number, from_date, to_date)
+        transactions = get_account_transactions(account_number, from_date, to_date)
         
+        # Calculate summary
         total_debits = sum(t['debit'] for t in transactions)
         total_credits = sum(t['credit'] for t in transactions)
+        opening_balance = get_balance_before_date(account_number, from_date)
+        closing_balance = account['balance']
         
         report = {
             'account': account,
             'transactions': transactions,
             'summary': {
+                'opening_balance': opening_balance,
                 'total_debits': total_debits,
                 'total_credits': total_credits,
-                'opening_balance': account['opening_balance'],
-                'closing_balance': account['current_balance'],
-                'net_change': account['current_balance'] - account['opening_balance']
+                'closing_balance': closing_balance,
+                'from_date': from_date,
+                'to_date': to_date
             }
         }
-        return report
+        
+        return report, None
     except Exception as e:
-        print(f"Error in generate_sb_account_report: {e}")
-        return None
+        print(f"Error generating report: {e}")
+        return None, str(e)
 
-# ============== KYC FUNCTIONS ==============
-def create_kyc(data, username):
-    """Create KYC record"""
+def get_balance_before_date(account_number, date):
+    """Get account balance before a specific date"""
     try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        kyc_id = f"KYC{datetime.now().strftime('%Y%m%d')}{str(int(time.time()))[-6:]}"
-        upload_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        cursor.execute('''
-            INSERT INTO kyc_documents (
-                kyc_id, customer_name, aadhar_number, pan_number,
-                aadhar_image, pan_image, address, phone, email,
-                document_type, upload_date, verified
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            kyc_id,
-            data['customer_name'],
-            data.get('aadhar_number', ''),
-            data.get('pan_number', ''),
-            data.get('aadhar_image', ''),
-            data.get('pan_image', ''),
-            data['address'],
-            data['phone'],
-            data['email'],
-            data.get('document_type', 'SB Account'),
-            upload_date,
-            0
-        ))
-        
-        conn.commit()
-        conn.close()
-        return True, f"KYC {kyc_id} created successfully"
-    except Exception as e:
-        print(f"Error in create_kyc: {e}")
-        return False, f"Error creating KYC: {str(e)}"
-
-def get_kyc(kyc_id):
-    """Get KYC details"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return None
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM kyc_documents WHERE kyc_id = ?', (kyc_id,))
-        result = cursor.fetchone()
-        conn.close()
-        if result:
-            columns = ['id', 'kyc_id', 'customer_name', 'aadhar_number', 'pan_number',
-                      'aadhar_image', 'pan_image', 'address', 'phone', 'email',
-                      'document_type', 'upload_date', 'verified']
-            return dict(zip(columns, result))
-        return None
-    except Exception as e:
-        print(f"Error in get_kyc: {e}")
-        return None
-
-def get_all_kyc():
-    """Get all KYC records"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT kyc_id, customer_name, aadhar_number, pan_number, 
-                   address, phone, email, upload_date, verified
-            FROM kyc_documents
-            ORDER BY upload_date DESC
-        ''')
-        result = cursor.fetchall()
-        conn.close()
-        
-        kyc_list = []
-        for row in result:
-            kyc_list.append({
-                'kyc_id': row[0],
-                'customer_name': row[1],
-                'aadhar_number': row[2],
-                'pan_number': row[3],
-                'address': row[4],
-                'phone': row[5],
-                'email': row[6],
-                'upload_date': row[7],
-                'verified': row[8]
-            })
-        return kyc_list
-    except Exception as e:
-        print(f"Error in get_all_kyc: {e}")
-        return []
-
-# ============== CUSTOMER FUNCTIONS ==============
-def create_customer(data, username):
-    """Create a new customer with KYC"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT MAX(CAST(SUBSTR(customer_id, 5) AS INTEGER)) FROM customers')
-        max_id = cursor.fetchone()[0]
-        new_id = (max_id or 1000) + 1
-        customer_id = f"CUST{new_id}"
-        
-        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        cursor.execute('''
-            INSERT INTO customers 
-            (customer_id, full_name, address, phone, whatsapp_number, email, id_type, id_number,
-             aadhar_number, aadhar_image, pan_number, pan_image,
-             date_of_birth, age,
-             nominee_name, nominee_address, nominee_relation, nominee_dob, nominee_age,
-             nominee_aadhar, nominee_aadhar_image, nominee_pan, nominee_pan_image,
-             kyc_completed, created_date, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            customer_id,
-            data['full_name'],
-            data['address'],
-            data['phone'],
-            data['whatsapp_number'],
-            data['email'],
-            data['id_type'],
-            data['id_number'],
-            data['aadhar_number'],
-            data['aadhar_image'],
-            data['pan_number'],
-            data['pan_image'],
-            data['date_of_birth'],
-            data['age'],
-            data['nominee_name'],
-            data['nominee_address'],
-            data['nominee_relation'],
-            data['nominee_dob'],
-            data['nominee_age'],
-            data['nominee_aadhar'],
-            data['nominee_aadhar_image'],
-            data['nominee_pan'],
-            data['nominee_pan_image'],
-            1,
-            date,
-            username
-        ))
-        
-        for acc_code in ['1100', '1200', '1300']:
-            cursor.execute('''
-                INSERT INTO customer_accounts (customer_id, account_code, balance)
-                VALUES (?, ?, ?)
-            ''', (customer_id, acc_code, 0))
-        
-        conn.commit()
-        conn.close()
-        return True, f"Customer {data['full_name']} created with ID: {customer_id}"
-    except Exception as e:
-        print(f"Error in create_customer: {e}")
-        return False, f"Error creating customer: {str(e)}"
-
-def get_all_customers():
-    """Get all customers"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return {}
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT customer_id, full_name, address, phone, whatsapp_number, email, 
-                   id_type, id_number, aadhar_number, pan_number, date_of_birth, age,
-                   nominee_name, nominee_address, nominee_relation, nominee_dob, nominee_age,
-                   created_date
-            FROM customers
-            WHERE kyc_completed = 1
-            ORDER BY created_date DESC
-        ''')
-        result = cursor.fetchall()
-        conn.close()
-        
-        customers = {}
-        for row in result:
-            customers[row[0]] = {
-                'customer_id': row[0],
-                'full_name': row[1],
-                'address': row[2],
-                'phone': row[3],
-                'whatsapp_number': row[4],
-                'email': row[5],
-                'id_type': row[6],
-                'id_number': row[7],
-                'aadhar_number': row[8],
-                'pan_number': row[9],
-                'date_of_birth': row[10],
-                'age': row[11],
-                'nominee_name': row[12],
-                'nominee_address': row[13],
-                'nominee_relation': row[14],
-                'nominee_dob': row[15],
-                'nominee_age': row[16],
-                'created_date': row[17]
-            }
-        return customers
-    except Exception as e:
-        print(f"Error in get_all_customers: {e}")
-        return {}
-
-def get_customer_details(customer_id):
-    """Get customer details including images"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return None
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM customers WHERE customer_id = ?', (customer_id,))
-        result = cursor.fetchone()
-        conn.close()
+        result = execute_query('''
+            SELECT balance FROM savings_transactions 
+            WHERE account_number = ? AND transaction_date < ?
+            ORDER BY transaction_date DESC LIMIT 1
+        ''', (account_number, date), fetch=True)
         
         if result:
-            columns = ['id', 'customer_id', 'full_name', 'address', 'phone', 'whatsapp_number', 
-                      'email', 'id_type', 'id_number', 'aadhar_number', 'aadhar_image', 
-                      'pan_number', 'pan_image', 'date_of_birth', 'age', 'nominee_name', 
-                      'nominee_address', 'nominee_relation', 'nominee_dob', 'nominee_age', 
-                      'nominee_aadhar', 'nominee_aadhar_image', 'nominee_pan', 'nominee_pan_image',
-                      'kyc_completed', 'created_date', 'created_by']
-            return dict(zip(columns, result))
-        return None
-    except Exception as e:
-        print(f"Error in get_customer_details: {e}")
-        return None
-
-def get_customer_balances(customer_id):
-    """Get customer's account balances"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return {}
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT account_code, balance 
-            FROM customer_accounts 
-            WHERE customer_id = ?
-        ''', (customer_id,))
-        result = cursor.fetchall()
-        conn.close()
+            return result[0][0]
         
-        balances = {}
-        for row in result:
-            balances[row[0]] = row[1]
-        return balances
+        # If no transactions before date, return initial balance
+        result = execute_query('SELECT balance FROM savings_accounts WHERE account_number = ?', 
+                              (account_number,), fetch=True)
+        if result:
+            return result[0][0]
+        return 0
     except Exception as e:
-        print(f"Error in get_customer_balances: {e}")
-        return {}
+        print(f"Error getting balance before date: {e}")
+        return 0
 
-def update_customer(customer_id, data, username):
-    """Update customer details"""
+def update_savings_account(account_number, data, username):
+    """Update savings account details"""
     try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE customers 
-            SET full_name = ?, address = ?, phone = ?, whatsapp_number = ?, email = ?,
+        execute_query('''
+            UPDATE savings_accounts 
+            SET customer_name = ?, address = ?, phone = ?, email = ?,
                 id_type = ?, id_number = ?, aadhar_number = ?, pan_number = ?,
-                date_of_birth = ?, age = ?,
-                nominee_name = ?, nominee_address = ?, nominee_relation = ?,
-                nominee_dob = ?, nominee_age = ?,
-                nominee_aadhar = ?, nominee_pan = ?
-            WHERE customer_id = ?
+                date_of_birth = ?, nominee_name = ?, nominee_relation = ?,
+                nominee_phone = ?, interest_rate = ?
+            WHERE account_number = ?
         ''', (
-            data['full_name'],
+            data['customer_name'],
             data['address'],
             data['phone'],
-            data['whatsapp_number'],
             data['email'],
             data['id_type'],
             data['id_number'],
-            data['aadhar_number'],
-            data['pan_number'],
+            data.get('aadhar_number'),
+            data.get('pan_number'),
             data['date_of_birth'],
-            data['age'],
-            data['nominee_name'],
-            data['nominee_address'],
-            data['nominee_relation'],
-            data['nominee_dob'],
-            data['nominee_age'],
-            data['nominee_aadhar'],
-            data['nominee_pan'],
-            customer_id
-        ))
+            data.get('nominee_name'),
+            data.get('nominee_relation'),
+            data.get('nominee_phone'),
+            data.get('interest_rate', 4.0),
+            account_number
+        ), commit=True)
         
-        conn.commit()
-        conn.close()
-        return True, f"Customer {data['full_name']} updated successfully"
+        return True, f"Account updated successfully"
     except Exception as e:
-        print(f"Error in update_customer: {e}")
-        return False, f"Error updating customer: {str(e)}"
+        print(f"Error updating account: {e}")
+        return False, str(e)
 
-def delete_customer(customer_id):
-    """Delete a customer"""
+def close_savings_account(account_number):
+    """Close a savings account"""
     try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
+        account = get_savings_account(account_number)
+        if not account:
+            return False, "Account not found"
         
-        cursor.execute('SELECT customer_id FROM customers WHERE customer_id = ? AND kyc_completed = 1', (customer_id,))
-        if not cursor.fetchone():
-            conn.close()
-            return False, "Customer not found"
+        if account['balance'] > 0:
+            return False, "Account has balance. Please withdraw all funds before closing."
         
-        cursor.execute('SELECT COUNT(*) FROM customer_transactions WHERE customer_id = ?', (customer_id,))
-        count = cursor.fetchone()[0]
+        execute_query('''
+            UPDATE savings_accounts 
+            SET is_active = 0
+            WHERE account_number = ?
+        ''', (account_number,), commit=True)
+        
+        return True, "Account closed successfully"
+    except Exception as e:
+        print(f"Error closing account: {e}")
+        return False, str(e)
+
+def delete_savings_account(account_number):
+    """Delete a savings account (hard delete)"""
+    try:
+        account = get_savings_account(account_number)
+        if not account:
+            return False, "Account not found"
+        
+        # Check if there are transactions
+        result = execute_query('SELECT COUNT(*) FROM savings_transactions WHERE account_number = ?', 
+                              (account_number,), fetch=True)
+        count = result[0][0] if result else 0
         
         if count > 0:
-            cursor.execute('UPDATE customers SET kyc_completed = 0 WHERE customer_id = ?', (customer_id,))
-            conn.commit()
-            conn.close()
-            return True, "Customer has transactions. Marked as inactive."
-        else:
-            cursor.execute('DELETE FROM customer_accounts WHERE customer_id = ?', (customer_id,))
-            cursor.execute('DELETE FROM customer_transactions WHERE customer_id = ?', (customer_id,))
-            cursor.execute('DELETE FROM customers WHERE customer_id = ?', (customer_id,))
-            conn.commit()
-            conn.close()
-            return True, "Customer deleted successfully"
+            return False, "Account has transactions. Cannot delete. Please close it instead."
+        
+        # Delete related records
+        execute_query('DELETE FROM interest_calculations WHERE account_number = ?', 
+                     (account_number,), commit=True)
+        execute_query('DELETE FROM savings_accounts WHERE account_number = ?', 
+                     (account_number,), commit=True)
+        
+        return True, "Account deleted successfully"
     except Exception as e:
-        print(f"Error in delete_customer: {e}")
-        return False, f"Error deleting customer: {str(e)}"
-
-# ============== FINANCIAL REPORTS ==============
-def get_balance_sheet():
-    """Generate balance sheet"""
-    accounts = get_all_accounts()
-    
-    assets = {}
-    liabilities = {}
-    equity = {}
-    
-    for code, data in accounts.items():
-        acc_type = data['account_type']
-        balance = data['balance']
-        
-        if acc_type == 'ASSET':
-            assets[data['account_name']] = balance
-        elif acc_type == 'LIABILITY':
-            liabilities[data['account_name']] = balance
-        elif acc_type == 'EQUITY':
-            equity[data['account_name']] = balance
-    
-    return {
-        'assets': assets,
-        'liabilities': liabilities,
-        'equity': equity,
-        'total_assets': sum(assets.values()),
-        'total_liabilities': sum(liabilities.values()),
-        'total_equity': sum(equity.values())
-    }
-
-def get_profit_loss():
-    """Generate Profit & Loss statement"""
-    accounts = get_all_accounts()
-    
-    income = {}
-    expenses = {}
-    
-    for code, data in accounts.items():
-        acc_type = data['account_type']
-        balance = data['balance']
-        
-        if acc_type == 'INCOME':
-            income[data['account_name']] = balance
-        elif acc_type == 'EXPENSE':
-            expenses[data['account_name']] = balance
-    
-    total_income = sum(income.values())
-    total_expenses = sum(expenses.values())
-    
-    return {
-        'income': income,
-        'expenses': expenses,
-        'total_income': total_income,
-        'total_expenses': total_expenses,
-        'net_profit': total_income - total_expenses
-    }
-
-def get_trial_balance():
-    """Generate trial balance"""
-    accounts = get_all_accounts()
-    
-    trial_balance = []
-    total_debits = 0
-    total_credits = 0
-    
-    for code, data in accounts.items():
-        balance = data['balance']
-        acc_type = data['account_type']
-        
-        if acc_type in ['ASSET', 'EXPENSE']:
-            trial_balance.append({
-                'Account Code': code,
-                'Account Name': data['account_name'],
-                'Account Type': acc_type,
-                'Debit': balance,
-                'Credit': 0
-            })
-            total_debits += balance
-        else:
-            trial_balance.append({
-                'Account Code': code,
-                'Account Name': data['account_name'],
-                'Account Type': acc_type,
-                'Debit': 0,
-                'Credit': balance
-            })
-            total_credits += balance
-    
-    return pd.DataFrame(trial_balance), total_debits, total_credits
+        print(f"Error deleting account: {e}")
+        return False, str(e)
 
 # ============== UI FUNCTIONS ==============
-def display_account_card(acc_code, icon, color):
-    """Display an account card"""
-    try:
-        accounts = get_all_accounts()
-        if acc_code not in accounts:
-            return
-        
-        data = accounts[acc_code]
-        balance = data.get('balance', 0)
-        acc_name = data.get('account_name', 'Unknown')
-        acc_type = data.get('account_type', 'Unknown')
-        
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, {color}20, {color}05);
-            padding: 12px;
-            border-radius: 8px;
-            border-left: 4px solid {color};
-            margin-bottom: 6px;
-        ">
-            <div style="display: flex; justify-content: space-between;">
-                <span style="font-size: 11px; color: #888;">{acc_code} | {acc_type}</span>
-                <span style="font-size: 11px; color: #888;">{icon}</span>
-            </div>
-            <div style="font-size: 13px; font-weight: 500;">{acc_name.replace('_', ' ').title()}</div>
-            <div style="font-size: 18px; font-weight: bold;">₹{balance:,.2f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    except Exception as e:
-        print(f"Error in display_account_card for {acc_code}: {e}")
-
-def render_kyc_form():
-    """Render KYC registration form"""
-    st.subheader("📋 KYC Registration")
-    
-    with st.form("kyc_form"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            customer_name = st.text_input("Customer Full Name*")
-            address = st.text_area("Address*")
-            phone = st.text_input("Phone Number*")
-            email = st.text_input("Email*")
-            
-        with col2:
-            aadhar_number = st.text_input("Aadhaar Number (12 digits)*")
-            if aadhar_number and not re.match(r'^\d{12}$', aadhar_number):
-                st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
-            
-            pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*")
-            if pan_number and not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan_number):
-                st.error("❌ Invalid PAN number. Format: ABCDE1234F")
-            
-            document_type = st.selectbox("Document Type", ["SB Account", "Loan", "FD", "Other"])
-        
-        aadhar_image = st.file_uploader("Upload Aadhaar Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="kyc_aadhar")
-        pan_image = st.file_uploader("Upload PAN Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="kyc_pan")
-        
-        submitted = st.form_submit_button("✅ Register KYC")
-        
-        if submitted:
-            errors = []
-            if not customer_name:
-                errors.append("Customer Name is required")
-            if not address:
-                errors.append("Address is required")
-            if not phone:
-                errors.append("Phone Number is required")
-            if not email:
-                errors.append("Email is required")
-            if not aadhar_number:
-                errors.append("Aadhaar Number is required")
-            elif not re.match(r'^\d{12}$', aadhar_number):
-                errors.append("Invalid Aadhaar number (must be 12 digits)")
-            if not pan_number:
-                errors.append("PAN Number is required")
-            elif not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan_number):
-                errors.append("Invalid PAN number (format: ABCDE1234F)")
-            if not aadhar_image:
-                errors.append("Aadhaar Card image is required")
-            if not pan_image:
-                errors.append("PAN Card image is required")
-            
-            if errors:
-                for error in errors:
-                    st.error(error)
-            else:
-                aadhar_image_b64 = image_to_base64(aadhar_image)
-                pan_image_b64 = image_to_base64(pan_image)
-                
-                kyc_data = {
-                    'customer_name': customer_name,
-                    'address': address,
-                    'phone': phone,
-                    'email': email,
-                    'aadhar_number': aadhar_number,
-                    'pan_number': pan_number,
-                    'aadhar_image': aadhar_image_b64,
-                    'pan_image': pan_image_b64,
-                    'document_type': document_type
-                }
-                
-                success, msg = create_kyc(kyc_data, st.session_state.user['username'])
-                if success:
-                    st.success(msg)
-                    st.balloons()
-                    st.rerun()
-                else:
-                    st.error(msg)
-
-def render_sb_account_creation():
-    """Render SB Account creation form"""
-    st.subheader("🏦 Create Savings Bank Account")
-    
-    kyc_list = get_all_kyc()
-    kyc_options = [""] + [f"{k['customer_name']} ({k['kyc_id']})" for k in kyc_list]
-    selected_kyc = st.selectbox("Select Existing KYC*", kyc_options)
-    
-    if selected_kyc:
-        kyc_id = selected_kyc.split('(')[-1].replace(')', '')
-        kyc_data = get_kyc(kyc_id)
-        
-        if kyc_data:
-            st.info(f"✅ KYC Verified for: {kyc_data['customer_name']}")
-            
-            with st.form("sb_account_form"):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    customer_name = st.text_input("Customer Name*", value=kyc_data['customer_name'], disabled=True)
-                    customer_id = st.text_input("Customer ID*", value=f"CUST{kyc_id}", disabled=True)
-                    kyc_type = st.selectbox("KYC Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"])
-                    
-                with col2:
-                    address = st.text_area("Address*", value=kyc_data['address'])
-                    phone = st.text_input("Phone*", value=kyc_data['phone'])
-                    email = st.text_input("Email*", value=kyc_data['email'])
-                
-                st.markdown("### 💰 Account Details")
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    opening_balance = st.number_input("Opening Balance*", min_value=0.0, step=100.0, value=0.0)
-                
-                with col2:
-                    interest_rate = st.number_input("Interest Rate (%)*", min_value=0.0, max_value=20.0, step=0.1, value=3.5)
-                
-                with col3:
-                    nominee_name = st.text_input("Nominee Name")
-                    nominee_relation = st.text_input("Nominee Relation")
-                
-                submitted = st.form_submit_button("✅ Create SB Account")
-                
-                if submitted:
-                    if not customer_name or not address or not phone or not email:
-                        st.error("Please fill all required fields")
-                    else:
-                        account_data = {
-                            'customer_id': customer_id,
-                            'customer_name': customer_name,
-                            'kyc_id': kyc_id,
-                            'kyc_type': kyc_type,
-                            'address': address,
-                            'phone': phone,
-                            'email': email,
-                            'opening_balance': opening_balance,
-                            'interest_rate': interest_rate,
-                            'nominee_name': nominee_name,
-                            'nominee_relation': nominee_relation,
-                            'aadhar_number': kyc_data.get('aadhar_number', ''),
-                            'pan_number': kyc_data.get('pan_number', '')
-                        }
-                        
-                        success, msg = create_sb_account(account_data, st.session_state.user['username'])
-                        if success:
-                            st.success(msg)
-                            st.balloons()
-                            st.rerun()
-                        else:
-                            st.error(msg)
-    else:
-        st.info("📋 Please register KYC first before creating SB account.")
-
-def render_sb_account_operations():
-    """Render SB Account operations (Deposit, Withdraw, Interest)"""
-    st.subheader("💰 Savings Bank Account Operations")
-    
-    accounts = get_all_sb_accounts()
-    if not accounts:
-        st.warning("No SB accounts found. Please create an account first.")
-        return
-    
-    account_options = [f"{a['account_number']} - {a['customer_name']} (₹{a['current_balance']:,.2f})" 
-                      for a in accounts if a['account_status'] == 'ACTIVE']
-    
-    if not account_options:
-        st.warning("No active SB accounts found.")
-        return
-    
-    selected_account = st.selectbox("Select Account", account_options)
-    
-    if selected_account:
-        account_number = selected_account.split(' - ')[0]
-        account = get_sb_account(account_number)
-        
-        if account:
-            st.metric("💰 Current Balance", f"₹{account['current_balance']:,.2f}")
-            st.caption(f"📊 Interest Rate: {account['interest_rate']}%")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.markdown("### 💵 Deposit")
-                deposit_date = st.date_input("Deposit Date", value=datetime.now().date(), key="deposit_date")
-                deposit_amount = st.number_input("Amount", min_value=0.0, step=100.0, key="deposit_amt")
-                deposit_particulars = st.text_input("Particulars", key="deposit_particulars", placeholder="e.g., Cash deposit")
-                
-                if st.button("💰 Deposit", key="deposit_btn"):
-                    if deposit_amount > 0:
-                        success, msg = deposit_sb_account(
-                            account_number, 
-                            deposit_amount, 
-                            deposit_particulars, 
-                            deposit_date.strftime('%Y-%m-%d'),
-                            st.session_state.user['username']
-                        )
-                        if success:
-                            st.success(msg)
-                            st.rerun()
-                        else:
-                            st.error(msg)
-                    else:
-                        st.warning("Enter amount greater than zero")
-            
-            with col2:
-                st.markdown("### 💸 Withdraw")
-                withdraw_date = st.date_input("Withdrawal Date", value=datetime.now().date(), key="withdraw_date")
-                withdraw_amount = st.number_input("Amount", min_value=0.0, step=100.0, key="withdraw_amt")
-                withdraw_particulars = st.text_input("Particulars", key="withdraw_particulars", placeholder="e.g., ATM withdrawal")
-                
-                if st.button("💸 Withdraw", key="withdraw_btn"):
-                    if withdraw_amount > 0:
-                        success, msg = withdraw_sb_account(
-                            account_number, 
-                            withdraw_amount, 
-                            withdraw_particulars, 
-                            withdraw_date.strftime('%Y-%m-%d'),
-                            st.session_state.user['username']
-                        )
-                        if success:
-                            st.success(msg)
-                            st.rerun()
-                        else:
-                            st.error(msg)
-                    else:
-                        st.warning("Enter amount greater than zero")
-            
-            with col3:
-                st.markdown("### 📊 Interest")
-                st.caption(f"Current Rate: {account['interest_rate']}%")
-                if st.button("🧮 Calculate & Credit Interest", key="interest_btn"):
-                    success, msg = calculate_and_credit_interest(account_number)
-                    if success:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-
-def render_sb_account_report():
-    """Render SB Account report"""
-    st.subheader("📊 Savings Bank Account Report")
-    
-    accounts = get_all_sb_accounts()
-    if not accounts:
-        st.warning("No SB accounts found.")
-        return
-    
-    account_options = [f"{a['account_number']} - {a['customer_name']}" for a in accounts]
-    selected_account = st.selectbox("Select Account for Report", account_options)
-    
-    if selected_account:
-        account_number = selected_account.split(' - ')[0]
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            from_date = st.date_input("From Date", value=datetime.now().date() - timedelta(days=30))
-        with col2:
-            to_date = st.date_input("To Date", value=datetime.now().date())
-        
-        if st.button("📄 Generate Report", key="report_btn"):
-            report = generate_sb_account_report(
-                account_number,
-                from_date.strftime('%Y-%m-%d'),
-                to_date.strftime('%Y-%m-%d')
-            )
-            
-            if report:
-                account = report['account']
-                transactions = report['transactions']
-                summary = report['summary']
-                
-                st.markdown("### 📋 Account Summary")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Account Number", account['account_number'])
-                    st.metric("Customer", account['customer_name'])
-                with col2:
-                    st.metric("Opening Balance", f"₹{summary['opening_balance']:,.2f}")
-                    st.metric("Closing Balance", f"₹{summary['closing_balance']:,.2f}")
-                with col3:
-                    st.metric("Total Debits", f"₹{summary['total_debits']:,.2f}")
-                    st.metric("Total Credits", f"₹{summary['total_credits']:,.2f}")
-                
-                st.markdown("### 📝 Transaction Details")
-                if transactions:
-                    txn_data = []
-                    for t in transactions:
-                        txn_data.append({
-                            'Transaction Date': t['transaction_date'],
-                            'Value Date': t['value_date'],
-                            'Particulars': t['particulars'],
-                            'Debit': f"₹{t['debit']:,.2f}" if t['debit'] > 0 else '-',
-                            'Credit': f"₹{t['credit']:,.2f}" if t['credit'] > 0 else '-',
-                            'Balance': f"₹{t['balance']:,.2f}",
-                            'Type': t['transaction_type']
-                        })
-                    df = pd.DataFrame(txn_data)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download CSV",
-                        data=csv,
-                        file_name=f"SB_Account_{account_number}_{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    st.info("No transactions for the selected period")
-                
-                st.markdown("### 📈 Interest History")
-                interest_history = get_interest_history(account_number)
-                if interest_history:
-                    interest_data = []
-                    for ih in interest_history:
-                        interest_data.append({
-                            'Quarter Start': ih['quarter_start'],
-                            'Quarter End': ih['quarter_end'],
-                            'Rate': f"{ih['interest_rate']}%",
-                            'Avg Balance': f"₹{ih['average_balance']:,.2f}",
-                            'Interest': f"₹{ih['interest_amount']:,.2f}",
-                            'Credited Date': ih['credited_date']
-                        })
-                    df_interest = pd.DataFrame(interest_data)
-                    st.dataframe(df_interest, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No interest history available")
-
-def render_sb_account_list():
-    """Render SB Account list"""
-    st.subheader("📋 Savings Bank Account List")
-    
-    accounts = get_all_sb_accounts()
-    if not accounts:
-        st.info("No SB accounts created yet.")
-        return
-    
-    account_data = []
-    for acc in accounts:
-        account_data.append({
-            'Account No': acc['account_number'],
-            'Customer': acc['customer_name'],
-            'KYC ID': acc['kyc_id'],
-            'Opening Balance': f"₹{acc['opening_balance']:,.2f}",
-            'Current Balance': f"₹{acc['current_balance']:,.2f}",
-            'Interest Rate': f"{acc['interest_rate']}%",
-            'Status': acc['account_status'],
-            'Opening Date': acc['opening_date']
-        })
-    
-    df = pd.DataFrame(account_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-def render_journal_voucher_form():
-    """Render journal voucher entry form"""
-    st.subheader("📝 Create Journal Voucher")
-    
-    all_accounts = get_all_accounts()
-    account_options = []
-    account_code_map = {}
-    
-    for code, data in all_accounts.items():
-        display_text = f"{data['account_name']} ({code}) - {data['account_type']}"
-        account_options.append(display_text)
-        account_code_map[display_text] = code
-    
-    if not account_options:
-        st.warning("No accounts found. Please create accounts first.")
-        return None
-    
-    with st.form("journal_voucher_form"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            voucher_date = st.date_input("Voucher Date", value=datetime.now().date())
-        with col2:
-            st.text_input("Voucher Number", value="Auto-generated", disabled=True)
-        with col3:
-            voucher_type = st.selectbox("Voucher Type", ['JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'])
-        
-        description = st.text_area("Description")
-        
-        st.markdown("---")
-        st.markdown("### Voucher Entries")
-        st.info("💡 For each entry: Select DEBIT or CREDIT, choose an account, and enter amount")
-        
-        entries = []
-        num_entries = st.number_input("Number of entries", min_value=2, max_value=10, value=2, step=1)
-        
-        for i in range(num_entries):
-            st.markdown(f"**Entry {i+1}**")
-            col1, col2, col3, col4 = st.columns([1, 2, 1.5, 1.5])
-            
-            with col1:
-                entry_type = st.selectbox(f"Type", ['DEBIT', 'CREDIT'], key=f"type_{i}")
-            
-            with col2:
-                account_display = st.selectbox(f"Account", account_options, key=f"acc_{i}")
-                acc_code = account_code_map.get(account_display, '')
-                acc_name = account_display.split('(')[0].strip() if account_display else ''
-            
-            with col3:
-                amount = st.number_input(f"Amount", min_value=0.0, step=100.0, key=f"amt_{i}")
-            
-            with col4:
-                narration = st.text_input(f"Narration", key=f"nar_{i}", placeholder="Optional")
-            
-            if account_display and amount > 0 and acc_code:
-                entries.append({
-                    'entry_type': entry_type,
-                    'account_code': acc_code,
-                    'account_name': acc_name,
-                    'amount': amount,
-                    'narration': narration
-                })
-        
-        total_debits = sum(e['amount'] for e in entries if e['entry_type'] == 'DEBIT')
-        total_credits = sum(e['amount'] for e in entries if e['entry_type'] == 'CREDIT')
-        
-        st.markdown("---")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Debits", f"₹{total_debits:,.2f}")
-        with col2:
-            st.metric("Total Credits", f"₹{total_credits:,.2f}")
-        with col3:
-            diff = total_debits - total_credits
-            if abs(diff) < 0.01 and total_debits > 0:
-                st.success("✅ Balanced")
-            else:
-                st.error(f"❌ Difference: ₹{diff:,.2f}")
-        
-        submitted = st.form_submit_button("💾 Save Voucher", type="primary")
-        
-        if submitted:
-            if len(entries) == 0:
-                st.error("Please enter at least one valid entry")
-                return None
-            
-            if total_debits == 0 and total_credits == 0:
-                st.error("Please enter amounts greater than zero")
-                return None
-            
-            if abs(diff) > 0.01:
-                st.error("Total Debits must equal Total Credits")
-                return None
-            
-            return {
-                'voucher_type': voucher_type,
-                'voucher_date': voucher_date.strftime('%Y-%m-%d'),
-                'description': description,
-                'entries': entries
-            }
-    
-    return None
-
-def render_voucher_list():
-    """Render list of vouchers"""
-    st.subheader("📋 Voucher List")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        filter_type = st.selectbox("Filter by Type", ['ALL', 'JOURNAL', 'RECEIPT', 'PAYMENT', 'CONTRA'])
-    
-    with col2:
-        if st.button("🔄 Refresh List"):
-            st.rerun()
-    
-    if filter_type == 'ALL':
-        vouchers = get_all_vouchers(limit=200)
-    else:
-        vouchers = get_vouchers_by_type(filter_type)
-    
-    if not vouchers:
-        st.info("No vouchers found")
-        return None
-    
-    voucher_data = []
-    for v in vouchers:
-        voucher_data.append({
-            'Voucher No': v['voucher_number'],
-            'Type': v['voucher_type'],
-            'Date': v['voucher_date'],
-            'Description': v['description'][:50] + '...' if len(v['description']) > 50 else v['description'],
-            'Amount': f"₹{v['total_amount']:,.2f}",
-            'Status': v['status'],
-            'Created': v['created_date'][:16],
-            'By': v['created_by']
-        })
-    
-    df = pd.DataFrame(voucher_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    selected_voucher = st.selectbox("Select Voucher to View/Edit/Delete", 
-                                   [""] + [v['voucher_number'] for v in vouchers])
-    
-    if selected_voucher:
-        return selected_voucher
-    
-    return None
-
-def get_vouchers_by_type(voucher_type):
-    """Get vouchers by type"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT voucher_number, voucher_type, voucher_date, description, total_amount, status, created_date, created_by
-            FROM vouchers
-            WHERE voucher_type = ?
-            ORDER BY created_date DESC
-        ''', (voucher_type,))
-        result = cursor.fetchall()
-        conn.close()
-        
-        vouchers = []
-        for row in result:
-            vouchers.append({
-                'voucher_number': row[0],
-                'voucher_type': row[1],
-                'voucher_date': row[2],
-                'description': row[3],
-                'total_amount': row[4],
-                'status': row[5],
-                'created_date': row[6],
-                'created_by': row[7]
-            })
-        return vouchers
-    except Exception as e:
-        print(f"Error in get_vouchers_by_type: {e}")
-        return []
-
-def render_customer_management():
-    """Render customer management section"""
-    st.subheader("👥 Customer Management")
-    
-    customers = get_all_customers()
-    
-    if not customers:
-        st.info("No customers registered yet.")
-        return
-    
-    cust_data = []
-    for cid, cust in customers.items():
-        balances = get_customer_balances(cid)
-        cust_data.append({
-            'ID': cid,
-            'Name': cust['full_name'],
-            'Phone': cust['phone'],
-            'WhatsApp': cust.get('whatsapp_number', ''),
-            'Email': cust['email'],
-            'Aadhaar': cust.get('aadhar_number', ''),
-            'PAN': cust.get('pan_number', ''),
-            'Age': cust.get('age', ''),
-            'Savings': f"₹{balances.get('1100', 0):,.2f}",
-            'Current': f"₹{balances.get('1200', 0):,.2f}",
-            'FD': f"₹{balances.get('1300', 0):,.2f}"
-        })
-    
-    df = pd.DataFrame(cust_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-# ============== LOGIN PAGE ==============
 def login_page():
     """Display login page"""
-    st.title("🏦 Complete Banking System")
+    st.title("🏦 Savings Bank System")
     st.subheader("🔐 Login")
     
     if not os.path.exists(DB_FILE):
@@ -2247,16 +867,628 @@ def logout():
     st.session_state.user = None
     st.rerun()
 
+def render_account_opening():
+    """Render account opening form"""
+    st.subheader("📝 Open New Savings Account")
+    
+    with st.form("open_account_form"):
+        st.markdown("### 👤 Customer Details")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            customer_name = st.text_input("Full Name*")
+            phone = st.text_input("Phone Number*")
+            email = st.text_input("Email*")
+            date_of_birth = st.date_input("Date of Birth*", 
+                                         min_value=datetime(1900, 1, 1).date(),
+                                         max_value=datetime.now().date())
+            
+            if date_of_birth:
+                age = calculate_age_from_date(date_of_birth.strftime('%Y-%m-%d'))
+                st.caption(f"Age: {age} years")
+        
+        with col2:
+            address = st.text_area("Address*")
+            id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"])
+            id_number = st.text_input("ID Number*")
+        
+        st.markdown("### 🪪 KYC Documents")
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            aadhar_number = st.text_input("Aadhaar Number (12 digits)")
+            if aadhar_number and not validate_aadhar(aadhar_number):
+                st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
+            
+            aadhar_image = st.file_uploader("Upload Aadhaar Card Image", type=['jpg', 'jpeg', 'png', 'pdf'])
+        
+        with col4:
+            pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)")
+            if pan_number and not validate_pan(pan_number):
+                st.error("❌ Invalid PAN number. Format: ABCDE1234F")
+            
+            pan_image = st.file_uploader("Upload PAN Card Image", type=['jpg', 'jpeg', 'png', 'pdf'])
+        
+        st.markdown("### 👤 Nominee Details (Optional)")
+        
+        col5, col6 = st.columns(2)
+        with col5:
+            nominee_name = st.text_input("Nominee Name")
+            nominee_relation = st.text_input("Relation with Nominee")
+        
+        with col6:
+            nominee_phone = st.text_input("Nominee Phone Number")
+        
+        st.markdown("### 💰 Account Settings")
+        
+        interest_rate = st.number_input(
+            "Interest Rate (%) per annum",
+            min_value=0.0,
+            max_value=15.0,
+            value=4.0,
+            step=0.1,
+            help="Interest rate applied quarterly"
+        )
+        
+        col7, col8 = st.columns(2)
+        with col7:
+            submit = st.form_submit_button("✅ Open Account", type="primary")
+        with col8:
+            clear = st.form_submit_button("🔄 Clear Form")
+        
+        if submit:
+            # Validate
+            errors = []
+            if not customer_name:
+                errors.append("Customer name is required")
+            if not phone:
+                errors.append("Phone number is required")
+            if not email:
+                errors.append("Email is required")
+            if not date_of_birth:
+                errors.append("Date of birth is required")
+            if not address:
+                errors.append("Address is required")
+            if not id_type:
+                errors.append("ID type is required")
+            if not id_number:
+                errors.append("ID number is required")
+            
+            if errors:
+                for error in errors:
+                    st.error(error)
+            else:
+                data = {
+                    'customer_name': customer_name,
+                    'address': address,
+                    'phone': phone,
+                    'email': email,
+                    'id_type': id_type,
+                    'id_number': id_number,
+                    'aadhar_number': aadhar_number if aadhar_number else None,
+                    'aadhar_image': image_to_base64(aadhar_image) if aadhar_image else None,
+                    'pan_number': pan_number if pan_number else None,
+                    'pan_image': image_to_base64(pan_image) if pan_image else None,
+                    'date_of_birth': date_of_birth.strftime('%Y-%m-%d'),
+                    'nominee_name': nominee_name if nominee_name else None,
+                    'nominee_relation': nominee_relation if nominee_relation else None,
+                    'nominee_phone': nominee_phone if nominee_phone else None,
+                    'interest_rate': interest_rate
+                }
+                
+                success, msg = create_savings_account(data, st.session_state.user['username'])
+                
+                if success:
+                    st.success(msg)
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error(msg)
+        
+        if clear:
+            st.rerun()
+
+def render_account_transactions():
+    """Render transaction entry form"""
+    st.subheader("💰 Record Transaction")
+    
+    accounts = get_all_savings_accounts()
+    
+    if not accounts:
+        st.info("No savings accounts available. Please open an account first.")
+        return
+    
+    account_options = [f"{acc['account_number']} - {acc['customer_name']}" for acc in accounts if acc['is_active']]
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        selected = st.selectbox("Select Account", account_options)
+        if selected:
+            account_number = selected.split(' - ')[0]
+            account = get_savings_account(account_number)
+            if account:
+                st.metric("Current Balance", f"₹{account['balance']:,.2f}")
+                st.caption(f"Interest Rate: {account['interest_rate']}% p.a.")
+    
+    with col2:
+        st.info("""
+        📝 **Instructions:**
+        - Use Credit for deposits
+        - Use Debit for withdrawals
+        - Particulars should describe the transaction
+        """)
+    
+    with st.form("transaction_form"):
+        st.markdown("### Transaction Details")
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            transaction_type = st.selectbox("Transaction Type", ["CREDIT", "DEBIT"])
+            amount = st.number_input("Amount (₹)", min_value=0.0, step=100.0, value=0.0)
+        
+        with col4:
+            particulars = st.text_input("Particulars*", placeholder="e.g., Salary, Rent, Withdrawal")
+            description = st.text_area("Description (Optional)", placeholder="Additional details")
+        
+        ref_no = st.text_input("Reference Number (Optional)")
+        
+        col5, col6 = st.columns(2)
+        with col5:
+            submit = st.form_submit_button("💾 Record Transaction", type="primary")
+        with col6:
+            clear = st.form_submit_button("🔄 Clear")
+        
+        if submit:
+            if not selected:
+                st.error("Please select an account")
+            elif not particulars:
+                st.error("Particulars is required")
+            elif amount <= 0:
+                st.error("Amount must be greater than zero")
+            else:
+                if transaction_type == "DEBIT":
+                    debit = amount
+                    credit = 0
+                else:
+                    debit = 0
+                    credit = amount
+                
+                success, msg = record_savings_transaction(
+                    account_number,
+                    particulars,
+                    debit,
+                    credit,
+                    transaction_type,
+                    description,
+                    ref_no,
+                    st.session_state.user['username']
+                )
+                
+                if success:
+                    st.success(f"Transaction recorded successfully! Transaction ID: {msg}")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error(msg)
+        
+        if clear:
+            st.rerun()
+
+def render_interest_calculation():
+    """Render interest calculation section"""
+    st.subheader("💰 Quarterly Interest Calculation")
+    
+    accounts = get_all_savings_accounts()
+    
+    if not accounts:
+        st.info("No savings accounts available.")
+        return
+    
+    active_accounts = [acc for acc in accounts if acc['is_active'] and acc['balance'] > 0]
+    
+    if not active_accounts:
+        st.info("No active accounts with balance for interest calculation.")
+        return
+    
+    st.info("ℹ️ Interest is calculated quarterly on the account balance.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric("Active Accounts", len(active_accounts))
+    
+    with col2:
+        total_balance = sum(acc['balance'] for acc in active_accounts)
+        st.metric("Total Balance", f"₹{total_balance:,.2f}")
+    
+    # Calculate interest for all accounts
+    if st.button("🔄 Calculate Interest for All Accounts", type="primary"):
+        with st.spinner("Calculating interest..."):
+            results = calculate_all_quarterly_interest()
+            
+            if results:
+                success_count = sum(1 for r in results if r['success'])
+                st.success(f"Interest calculated for {success_count} accounts")
+                
+                # Show results table
+                results_data = []
+                for r in results:
+                    results_data.append({
+                        'Account': r['account_number'],
+                        'Customer': r['customer_name'],
+                        'Status': '✅ Success' if r['success'] else '❌ Failed',
+                        'Message': r['message']
+                    })
+                
+                df = pd.DataFrame(results_data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No interest calculated. All accounts may have zero balance or already received interest.")
+    
+    # Individual account interest calculation
+    st.divider()
+    st.subheader("📊 Calculate Interest for Individual Account")
+    
+    account_options = [f"{acc['account_number']} - {acc['customer_name']} (₹{acc['balance']:,.2f})" 
+                      for acc in active_accounts]
+    
+    selected = st.selectbox("Select Account", account_options)
+    
+    if selected:
+        account_number = selected.split(' - ')[0]
+        account = get_savings_account(account_number)
+        
+        if account:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Balance", f"₹{account['balance']:,.2f}")
+            with col2:
+                st.metric("Interest Rate", f"{account['interest_rate']}%")
+            with col3:
+                quarterly_interest = account['balance'] * (account['interest_rate'] / 100) * 0.25
+                st.metric("Quarterly Interest", f"₹{quarterly_interest:,.2f}")
+            
+            if st.button("💵 Calculate Interest for This Account", type="secondary"):
+                success, msg = calculate_quarterly_interest(account_number)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+def render_account_reports():
+    """Render account reports section"""
+    st.subheader("📊 Account Reports")
+    
+    accounts = get_all_savings_accounts()
+    
+    if not accounts:
+        st.info("No savings accounts available.")
+        return
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        account_options = [f"{acc['account_number']} - {acc['customer_name']}" 
+                          for acc in accounts if acc['is_active']]
+        selected = st.selectbox("Select Account", account_options)
+    
+    with col2:
+        st.info("📝 Select date range for the report")
+    
+    if selected:
+        account_number = selected.split(' - ')[0]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            from_date = st.date_input("From Date", 
+                                     value=datetime.now().date() - timedelta(days=30),
+                                     key="report_from")
+        with col2:
+            to_date = st.date_input("To Date", 
+                                   value=datetime.now().date(),
+                                   key="report_to")
+        
+        if from_date > to_date:
+            st.error("From date must be before To date")
+        else:
+            report, error = generate_account_report(
+                account_number,
+                from_date.strftime('%Y-%m-%d'),
+                to_date.strftime('%Y-%m-%d')
+            )
+            
+            if error:
+                st.error(f"Error generating report: {error}")
+            elif report:
+                account = report['account']
+                summary = report['summary']
+                transactions = report['transactions']
+                
+                st.divider()
+                
+                # Account header
+                st.markdown(f"""
+                ### 📄 Account Statement
+                **Account Number:** {account['account_number']}  
+                **Customer Name:** {account['customer_name']}  
+                **Phone:** {account['phone']}  
+                **Email:** {account['email']}  
+                **Interest Rate:** {account['interest_rate']}% p.a.
+                """)
+                
+                st.markdown(f"**Period:** {from_date.strftime('%d-%b-%Y')} to {to_date.strftime('%d-%b-%Y')}")
+                
+                # Summary
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Opening Balance", f"₹{summary['opening_balance']:,.2f}")
+                with col2:
+                    st.metric("Total Debits", f"₹{summary['total_debits']:,.2f}")
+                with col3:
+                    st.metric("Total Credits", f"₹{summary['total_credits']:,.2f}")
+                with col4:
+                    st.metric("Closing Balance", f"₹{summary['closing_balance']:,.2f}")
+                
+                # Transaction table
+                if transactions:
+                    st.markdown("#### Transaction Details")
+                    
+                    tx_data = []
+                    for tx in transactions:
+                        tx_data.append({
+                            'Date': tx['date'][:10],
+                            'Time': tx['date'][11:16] if len(tx['date']) > 10 else '',
+                            'Particulars': tx['particulars'],
+                            'Debit': f"₹{tx['debit']:,.2f}" if tx['debit'] > 0 else '-',
+                            'Credit': f"₹{tx['credit']:,.2f}" if tx['credit'] > 0 else '-',
+                            'Balance': f"₹{tx['balance']:,.2f}",
+                            'Type': tx['type'],
+                            'Ref No': tx['ref_no'] if tx['ref_no'] else '-'
+                        })
+                    
+                    df = pd.DataFrame(tx_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    
+                    # Download options
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        csv = df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download CSV",
+                            data=csv,
+                            file_name=f"account_statement_{account_number}_{datetime.now().strftime('%Y%m%d')}.csv",
+                            mime="text/csv"
+                        )
+                    
+                    with col2:
+                        st.caption(f"Total Transactions: {len(transactions)}")
+                else:
+                    st.info("No transactions found for the selected period")
+
+def render_account_management():
+    """Render account management section (edit/delete/close)"""
+    st.subheader("⚙️ Account Management")
+    
+    accounts = get_all_savings_accounts()
+    
+    if not accounts:
+        st.info("No savings accounts available.")
+        return
+    
+    account_options = [f"{acc['account_number']} - {acc['customer_name']} (₹{acc['balance']:,.2f})" 
+                      for acc in accounts]
+    
+    selected = st.selectbox("Select Account to Manage", account_options)
+    
+    if selected:
+        account_number = selected.split(' - ')[0]
+        account = get_savings_account(account_number)
+        
+        if account:
+            st.divider()
+            
+            # Account details display
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Account Number", account['account_number'])
+                st.metric("KYC ID", account['kyc_id'])
+            with col2:
+                st.metric("Customer Name", account['customer_name'])
+                st.metric("Balance", f"₹{account['balance']:,.2f}")
+            with col3:
+                st.metric("Interest Rate", f"{account['interest_rate']}%")
+                st.metric("Status", "Active" if account['is_active'] else "Closed")
+            
+            st.caption(f"Opened: {account['opening_date']}")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.subheader("✏️ Edit Account")
+                with st.form("edit_account_form"):
+                    edit_name = st.text_input("Customer Name", value=account['customer_name'])
+                    edit_phone = st.text_input("Phone", value=account['phone'])
+                    edit_email = st.text_input("Email", value=account['email'])
+                    edit_address = st.text_area("Address", value=account['address'])
+                    edit_interest = st.number_input(
+                        "Interest Rate (%)",
+                        min_value=0.0,
+                        max_value=15.0,
+                        value=account['interest_rate'],
+                        step=0.1
+                    )
+                    
+                    if st.form_submit_button("💾 Update Account"):
+                        data = {
+                            'customer_name': edit_name,
+                            'address': edit_address,
+                            'phone': edit_phone,
+                            'email': edit_email,
+                            'id_type': account['id_type'],
+                            'id_number': account['id_number'],
+                            'aadhar_number': account.get('aadhar_number'),
+                            'pan_number': account.get('pan_number'),
+                            'date_of_birth': account['date_of_birth'],
+                            'nominee_name': account.get('nominee_name'),
+                            'nominee_relation': account.get('nominee_relation'),
+                            'nominee_phone': account.get('nominee_phone'),
+                            'interest_rate': edit_interest
+                        }
+                        
+                        success, msg = update_savings_account(account_number, data, 
+                                                             st.session_state.user['username'])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+            
+            with col2:
+                st.subheader("🔒 Close Account")
+                
+                if account['is_active']:
+                    if account['balance'] > 0:
+                        st.warning(f"⚠️ Account has balance: ₹{account['balance']:,.2f}. Please withdraw all funds before closing.")
+                    else:
+                        if st.button("🔒 Close Account", type="primary"):
+                            success, msg = close_savings_account(account_number)
+                            if success:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                else:
+                    st.info("Account is already closed.")
+            
+            with col3:
+                st.subheader("🗑️ Delete Account")
+                st.warning("⚠️ This will permanently delete the account.")
+                st.caption("Only accounts with no transactions can be deleted.")
+                
+                if st.button("🗑️ Delete Account", type="secondary"):
+                    success, msg = delete_savings_account(account_number)
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+def render_interest_log():
+    """Render interest calculation log"""
+    st.subheader("📋 Interest Calculation Log")
+    
+    try:
+        result = execute_query('''
+            SELECT account_number, calculation_date, quarter, balance, interest_rate, interest_amount
+            FROM interest_calculations
+            ORDER BY calculation_date DESC
+            LIMIT 100
+        ''', fetch=True)
+        
+        if not result:
+            st.info("No interest calculations recorded yet.")
+            return
+        
+        data = []
+        for row in result:
+            # Get customer name for display
+            account = get_savings_account(row[0])
+            customer_name = account['customer_name'] if account else 'Unknown'
+            
+            data.append({
+                'Account': row[0],
+                'Customer': customer_name,
+                'Date': row[1],
+                'Quarter': row[2],
+                'Balance': f"₹{row[3]:,.2f}",
+                'Rate': f"{row[4]}%",
+                'Interest': f"₹{row[5]:,.2f}"
+            })
+        
+        df = pd.DataFrame(data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Summary
+        total_interest = sum(row[5] for row in result)
+        st.metric("Total Interest Paid", f"₹{total_interest:,.2f}")
+        
+    except Exception as e:
+        st.error(f"Error loading interest log: {str(e)}")
+
+def render_dashboard():
+    """Render main dashboard"""
+    st.header("📊 Dashboard")
+    
+    accounts = get_all_savings_accounts()
+    
+    if not accounts:
+        st.info("No savings accounts opened yet.")
+        return
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    active_accounts = [acc for acc in accounts if acc['is_active']]
+    total_balance = sum(acc['balance'] for acc in accounts)
+    active_balance = sum(acc['balance'] for acc in active_accounts)
+    
+    with col1:
+        st.metric("Total Accounts", len(accounts))
+    with col2:
+        st.metric("Active Accounts", len(active_accounts))
+    with col3:
+        st.metric("Total Balance", f"₹{total_balance:,.2f}")
+    with col4:
+        st.metric("Active Balance", f"₹{active_balance:,.2f}")
+    
+    st.divider()
+    
+    # Show accounts list
+    st.subheader("📋 All Accounts")
+    
+    if accounts:
+        account_data = []
+        for acc in accounts:
+            account_data.append({
+                'Account No': acc['account_number'],
+                'Customer': acc['customer_name'],
+                'Phone': acc['phone'],
+                'Balance': f"₹{acc['balance']:,.2f}",
+                'Interest Rate': f"{acc['interest_rate']}%",
+                'Opened': acc['opening_date'],
+                'Status': '🟢 Active' if acc['is_active'] else '🔴 Closed'
+            })
+        
+        df = pd.DataFrame(account_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    # Quick actions
+    st.divider()
+    st.subheader("⚡ Quick Actions")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📝 Open New Account", use_container_width=True):
+            st.session_state.active_tab = "Open Account"
+            st.rerun()
+    
+    with col2:
+        if st.button("💰 Record Transaction", use_container_width=True):
+            st.session_state.active_tab = "Transactions"
+            st.rerun()
+    
+    with col3:
+        if st.button("📊 View Reports", use_container_width=True):
+            st.session_state.active_tab = "Reports"
+            st.rerun()
+
 # ============== MAIN APP ==============
 def main():
     try:
         if not os.path.exists(DB_FILE):
-            print("Database not found. Initializing...")
             init_database()
-        else:
-            print("Database found. Checking tables...")
-            init_database()
-            migrate_database()
         
         if 'logged_in' not in st.session_state or not st.session_state.logged_in:
             login_page()
@@ -2264,10 +1496,14 @@ def main():
         
         user = st.session_state.user
         
+        # Initialize session state
+        if 'active_tab' not in st.session_state:
+            st.session_state.active_tab = "Dashboard"
+        
         # Header
         col1, col2, col3 = st.columns([2.5, 1.5, 1])
         with col1:
-            st.title("🏦 Complete Banking System")
+            st.title("🏦 Savings Bank System")
         with col2:
             st.markdown(f"**👤 {user['full_name']}**")
             st.caption(f"Role: {user['role']}")
@@ -2277,450 +1513,49 @@ def main():
         
         st.divider()
         
-        # Sidebar
-        with st.sidebar:
-            st.header("📊 Account Overview")
-            
-            try:
-                st.subheader("💰 Cash & Bank")
-                display_account_card('1000', '💵', '#00A86B')
-                display_account_card('1100', '🏦', '#2E86AB')
-                display_account_card('1200', '🏦', '#1B4F72')
-                
-                st.divider()
-                
-                with st.expander("🏦 Other ASSETS", expanded=True):
-                    for code in ['1300', '1400']:
-                        display_account_card(code, '💰', '#2E86AB')
-                
-                with st.expander("🏛️ LIABILITIES", expanded=True):
-                    for code in ['2100', '2200']:
-                        display_account_card(code, '🏛️', '#A23B72')
-                
-                with st.expander("📈 EQUITY", expanded=True):
-                    for code in ['3100', '3200']:
-                        display_account_card(code, '📈', '#F18F01')
-                
-                with st.expander("📊 INCOME", expanded=True):
-                    income_accounts = get_accounts_by_type('INCOME')
-                    for acc in income_accounts:
-                        display_account_card(acc['account_code'], '📊', '#1B998B')
-                
-                with st.expander("📉 EXPENSES", expanded=True):
-                    expense_accounts = get_accounts_by_type('EXPENSE')
-                    for acc in expense_accounts:
-                        display_account_card(acc['account_code'], '📉', '#D65D5D')
-                
-                st.divider()
-                
-                accounts = get_all_accounts()
-                if accounts:
-                    total_assets = sum(data.get('balance', 0) for code, data in accounts.items() if data.get('account_type') == 'ASSET')
-                    total_liabilities = sum(data.get('balance', 0) for code, data in accounts.items() if data.get('account_type') == 'LIABILITY')
-                    total_equity = sum(data.get('balance', 0) for code, data in accounts.items() if data.get('account_type') == 'EQUITY')
-                    
-                    st.metric("Total Assets", f"₹{total_assets:,.2f}")
-                    st.metric("Total Liabilities", f"₹{total_liabilities:,.2f}")
-                    st.metric("Total Equity", f"₹{total_equity:,.2f}")
-            except Exception as e:
-                st.error(f"Error loading sidebar: {str(e)}")
+        # Main Navigation
+        tabs = ["📊 Dashboard", "📝 Open Account", "💰 Transactions", 
+                "📊 Reports", "💵 Interest", "📋 Interest Log", "⚙️ Manage Accounts"]
         
-        # Main Tabs
-        tabs = ["📝 Journal Vouchers", "💰 Cash & Bank", "👥 Customers & KYC", 
-                "🏦 SB Accounts", "📊 Financial Reports", "📋 Trial Balance", "⚙️ Head Management"]
+        tab_names = ["Dashboard", "Open Account", "Transactions", 
+                    "Reports", "Interest", "Interest Log", "Manage Accounts"]
         
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(tabs)
+        current_tab = st.session_state.active_tab
         
-        # ---------- TAB 1: JOURNAL VOUCHERS ----------
-        with tab1:
-            st.header("📝 Voucher Management")
-            
-            voucher_tab1, voucher_tab2 = st.tabs(["➕ Create Voucher", "📋 View/Edit/Delete Vouchers"])
-            
-            with voucher_tab1:
-                result = render_journal_voucher_form()
-                if result:
-                    success, msg = save_voucher(
-                        result['voucher_type'],
-                        result['voucher_date'],
-                        result['description'],
-                        result['entries'],
-                        user['username']
-                    )
-                    if success:
-                        st.success(msg)
-                        st.balloons()
-                        st.rerun()
-                    else:
-                        st.error(msg)
-            
-            with voucher_tab2:
-                selected_voucher = render_voucher_list()
-                
-                if selected_voucher:
-                    voucher_data = get_voucher(selected_voucher)
-                    if voucher_data:
-                        st.divider()
-                        st.subheader(f"✏️ Managing Voucher: {selected_voucher}")
-                        
-                        with st.expander("📄 Voucher Details", expanded=True):
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("Voucher Number", voucher_data['voucher_number'])
-                            with col2:
-                                st.metric("Type", voucher_data['voucher_type'])
-                            with col3:
-                                st.metric("Status", voucher_data['status'])
-                            
-                            st.caption(f"Date: {voucher_data['voucher_date']}")
-                            st.caption(f"Description: {voucher_data['description']}")
-                        
-                        st.markdown("**Voucher Entries**")
-                        entries_data = []
-                        for entry in voucher_data['entries']:
-                            entries_data.append({
-                                'Type': entry['entry_type'],
-                                'Account Code': entry['account_code'],
-                                'Account Name': entry['account_name'],
-                                'Amount': f"₹{entry['amount']:,.2f}",
-                                'Narration': entry['narration']
-                            })
-                        df_entries = pd.DataFrame(entries_data)
-                        st.dataframe(df_entries, use_container_width=True, hide_index=True)
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            if st.button("✏️ Edit This Voucher", type="primary"):
-                                st.info("Edit functionality coming soon")
-                        
-                        with col2:
-                            if st.button("🗑️ Delete This Voucher", type="secondary"):
-                                st.warning(f"⚠️ Are you sure you want to delete voucher {selected_voucher}?")
-                                if st.button("✅ Yes, Delete Voucher", type="primary"):
-                                    success, msg = delete_voucher(selected_voucher)
-                                    if success:
-                                        st.success(msg)
-                                        st.rerun()
-                                    else:
-                                        st.error(msg)
+        # Find the index of the current tab
+        tab_index = 0
+        for i, name in enumerate(tab_names):
+            if name == current_tab:
+                tab_index = i
+                break
         
-        # ---------- TAB 2: CASH & BANK ----------
-        with tab2:
-            st.header("💰 Cash & Bank Transactions")
-            
-            col1, col2, col3 = st.columns(3)
-            cash_balance = get_account_balance('1000')
-            bank_savings = get_account_balance('1100')
-            bank_current = get_account_balance('1200')
-            
-            with col1:
-                st.metric("💵 Cash Balance", f"₹{cash_balance:,.2f}")
-            with col2:
-                st.metric("🏦 Bank Savings", f"₹{bank_savings:,.2f}")
-            with col3:
-                st.metric("🏦 Bank Current", f"₹{bank_current:,.2f}")
-            
-            st.info("💡 Use Journal Vouchers tab to create Cash/Bank entries with proper voucher numbers")
+        selected_tab = st.radio("Navigation", tabs, index=tab_index, horizontal=True)
         
-        # ---------- TAB 3: CUSTOMERS & KYC ----------
-        with tab3:
-            st.header("👥 Customer Management with KYC")
-            
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.subheader("➕ Register New Customer")
-                
-                with st.form("customer_form"):
-                    st.markdown("### 📋 Personal Details")
-                    
-                    full_name = st.text_input("Full Name*")
-                    
-                    min_date = datetime(1900, 1, 1).date()
-                    max_date = datetime.now().date()
-                    
-                    date_of_birth = st.date_input(
-                        "Date of Birth*", 
-                        value=None,
-                        min_value=min_date,
-                        max_value=max_date,
-                        help="Select date of birth (1900 to present)"
-                    )
-                    
-                    age = None
-                    if date_of_birth:
-                        today = datetime.now().date()
-                        age = today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
-                        st.success(f"🎂 Age: {age} years")
-                    
-                    address = st.text_area("Address*")
-                    
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        phone = st.text_input("Phone Number*")
-                        email = st.text_input("Email*")
-                    with col_b:
-                        whatsapp_number = st.text_input("WhatsApp Number")
-                    
-                    st.markdown("### 🪪 KYC Documents")
-                    st.markdown("**Aadhaar Details (Compulsory)**")
-                    col_c, col_d = st.columns(2)
-                    with col_c:
-                        aadhar_number = st.text_input("Aadhaar Number (12 digits)*")
-                        if aadhar_number and not validate_aadhar(aadhar_number):
-                            st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
-                    with col_d:
-                        aadhar_image = st.file_uploader("Upload Aadhaar Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="aadhar_upload")
-                    
-                    st.markdown("**PAN Card Details (Compulsory)**")
-                    col_e, col_f = st.columns(2)
-                    with col_e:
-                        pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*")
-                        if pan_number and not validate_pan(pan_number):
-                            st.error("❌ Invalid PAN number. Format: ABCDE1234F")
-                    with col_f:
-                        pan_image = st.file_uploader("Upload PAN Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="pan_upload")
-                    
-                    st.markdown("### 👤 Nominee Details")
-                    col_g, col_h = st.columns(2)
-                    with col_g:
-                        nominee_name = st.text_input("Nominee Full Name")
-                        nominee_dob = st.date_input(
-                            "Nominee Date of Birth", 
-                            value=None,
-                            min_value=min_date,
-                            max_value=max_date,
-                            help="Select nominee's date of birth (1900 to present)"
-                        )
-                        if nominee_dob:
-                            today = datetime.now().date()
-                            nominee_age = today.year - nominee_dob.year - ((today.month, today.day) < (nominee_dob.month, nominee_dob.day))
-                            st.caption(f"🎂 Nominee Age: {nominee_age} years")
-                        nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)")
-                    with col_h:
-                        nominee_address = st.text_area("Nominee Address")
-                    
-                    st.markdown("**Nominee Aadhaar Details (Optional)**")
-                    col_i, col_j = st.columns(2)
-                    with col_i:
-                        nominee_aadhar = st.text_input("Nominee Aadhaar Number")
-                        if nominee_aadhar and not validate_aadhar(nominee_aadhar):
-                            st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
-                    with col_j:
-                        nominee_aadhar_image = st.file_uploader("Upload Nominee Aadhaar Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_aadhar_upload")
-                    
-                    st.markdown("**Nominee PAN Details (Optional)**")
-                    col_k, col_l = st.columns(2)
-                    with col_k:
-                        nominee_pan = st.text_input("Nominee PAN Number")
-                        if nominee_pan and not validate_pan(nominee_pan):
-                            st.error("❌ Invalid PAN number. Format: ABCDE1234F")
-                    with col_l:
-                        nominee_pan_image = st.file_uploader("Upload Nominee PAN Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_pan_upload")
-                    
-                    st.markdown("### 📝 Additional Information")
-                    id_type = st.selectbox("ID Type*", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"])
-                    id_number = st.text_input("ID Number*")
-                    
-                    submitted = st.form_submit_button("✅ Register Customer")
-                    
-                    if submitted:
-                        errors = []
-                        if not full_name:
-                            errors.append("Full Name is required")
-                        if not date_of_birth:
-                            errors.append("Date of Birth is required")
-                        if not address:
-                            errors.append("Address is required")
-                        if not phone:
-                            errors.append("Phone Number is required")
-                        if not email:
-                            errors.append("Email is required")
-                        if not aadhar_number:
-                            errors.append("Aadhar Number is required")
-                        elif not validate_aadhar(aadhar_number):
-                            errors.append("Invalid Aadhaar number (must be 12 digits)")
-                        if not pan_number:
-                            errors.append("PAN Number is required")
-                        elif not validate_pan(pan_number):
-                            errors.append("Invalid PAN number (format: ABCDE1234F)")
-                        if not aadhar_image:
-                            errors.append("Aadhaar Card image is required")
-                        if not pan_image:
-                            errors.append("PAN Card image is required")
-                        if not id_type:
-                            errors.append("ID Type is required")
-                        if not id_number:
-                            errors.append("ID Number is required")
-                        
-                        if errors:
-                            for error in errors:
-                                st.error(error)
-                        else:
-                            aadhar_image_b64 = image_to_base64(aadhar_image)
-                            pan_image_b64 = image_to_base64(pan_image)
-                            nominee_aadhar_image_b64 = image_to_base64(nominee_aadhar_image) if nominee_aadhar_image else None
-                            nominee_pan_image_b64 = image_to_base64(nominee_pan_image) if nominee_pan_image else None
-                            
-                            customer_data = {
-                                'full_name': full_name,
-                                'address': address,
-                                'phone': phone,
-                                'whatsapp_number': whatsapp_number,
-                                'email': email,
-                                'id_type': id_type,
-                                'id_number': id_number,
-                                'aadhar_number': aadhar_number,
-                                'aadhar_image': aadhar_image_b64,
-                                'pan_number': pan_number,
-                                'pan_image': pan_image_b64,
-                                'date_of_birth': date_of_birth.strftime('%Y-%m-%d') if date_of_birth else None,
-                                'age': age,
-                                'nominee_name': nominee_name,
-                                'nominee_address': nominee_address,
-                                'nominee_relation': nominee_relation,
-                                'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
-                                'nominee_age': calculate_age_from_date(nominee_dob) if nominee_dob else None,
-                                'nominee_aadhar': nominee_aadhar,
-                                'nominee_aadhar_image': nominee_aadhar_image_b64,
-                                'nominee_pan': nominee_pan,
-                                'nominee_pan_image': nominee_pan_image_b64
-                            }
-                            
-                            success, msg = create_customer(customer_data, user['username'])
-                            if success:
-                                st.success(msg)
-                                st.balloons()
-                                st.rerun()
-                            else:
-                                st.error(msg)
-            
-            with col2:
-                render_customer_management()
+        # Update session state
+        for i, name in enumerate(tab_names):
+            if selected_tab == tabs[i]:
+                st.session_state.active_tab = name
         
-        # ---------- TAB 4: SB ACCOUNTS ----------
-        with tab4:
-            st.header("🏦 Savings Bank Accounts")
-            
-            sb_tab1, sb_tab2, sb_tab3, sb_tab4 = st.tabs(["📋 KYC Registration", "🏦 Create SB Account", "💰 Account Operations", "📊 Reports"])
-            
-            with sb_tab1:
-                render_kyc_form()
-            
-            with sb_tab2:
-                render_sb_account_creation()
-            
-            with sb_tab3:
-                render_sb_account_operations()
-            
-            with sb_tab4:
-                render_sb_account_report()
+        # Render selected tab
+        if st.session_state.active_tab == "Dashboard":
+            render_dashboard()
+        elif st.session_state.active_tab == "Open Account":
+            render_account_opening()
+        elif st.session_state.active_tab == "Transactions":
+            render_account_transactions()
+        elif st.session_state.active_tab == "Reports":
+            render_account_reports()
+        elif st.session_state.active_tab == "Interest":
+            render_interest_calculation()
+        elif st.session_state.active_tab == "Interest Log":
+            render_interest_log()
+        elif st.session_state.active_tab == "Manage Accounts":
+            render_account_management()
         
-        # ---------- TAB 5: FINANCIAL REPORTS ----------
-        with tab5:
-            st.header("📊 Financial Reports")
-            
-            report_type = st.radio("Select Report", ["Balance Sheet", "Profit & Loss Account"], horizontal=True)
-            
-            if report_type == "Balance Sheet":
-                st.subheader("📋 Balance Sheet")
-                bs = get_balance_sheet()
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("### ASSETS")
-                    for acc, bal in bs['assets'].items():
-                        st.metric(acc.replace('_', ' ').title(), f"₹{bal:,.2f}")
-                    st.markdown(f"### **Total Assets: ₹{bs['total_assets']:,.2f}**")
-                    
-                    st.markdown("### LIABILITIES")
-                    for acc, bal in bs['liabilities'].items():
-                        st.metric(acc.replace('_', ' ').title(), f"₹{bal:,.2f}")
-                    st.markdown(f"### **Total Liabilities: ₹{bs['total_liabilities']:,.2f}**")
-                
-                with col2:
-                    st.markdown("### EQUITY")
-                    for acc, bal in bs['equity'].items():
-                        st.metric(acc.replace('_', ' ').title(), f"₹{bal:,.2f}")
-                    st.markdown(f"### **Total Equity: ₹{bs['total_equity']:,.2f}**")
-                    
-                    st.divider()
-                    st.markdown("### ✅ Balance Sheet Check")
-                    total = bs['total_liabilities'] + bs['total_equity']
-                    if abs(bs['total_assets'] - total) < 0.01:
-                        st.success(f"✅ Assets = Liabilities + Equity\n₹{bs['total_assets']:,.2f} = ₹{total:,.2f}")
-                    else:
-                        st.error(f"❌ Difference: ₹{bs['total_assets'] - total:,.2f}")
-            
-            else:
-                st.subheader("📊 Profit & Loss Account")
-                pl = get_profit_loss()
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("### INCOME")
-                    if pl['income']:
-                        for acc, bal in pl['income'].items():
-                            st.metric(acc.replace('_', ' ').title(), f"₹{bal:,.2f}")
-                        st.markdown(f"### **Total Income: ₹{pl['total_income']:,.2f}**")
-                    else:
-                        st.info("No income accounts found")
-                
-                with col2:
-                    st.markdown("### EXPENSES")
-                    if pl['expenses']:
-                        for acc, bal in pl['expenses'].items():
-                            st.metric(acc.replace('_', ' ').title(), f"₹{bal:,.2f}")
-                        st.markdown(f"### **Total Expenses: ₹{pl['total_expenses']:,.2f}**")
-                    else:
-                        st.info("No expense accounts found")
-                
-                st.divider()
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Income", f"₹{pl['total_income']:,.2f}")
-                with col2:
-                    st.metric("Total Expenses", f"₹{pl['total_expenses']:,.2f}")
-                with col3:
-                    if pl['net_profit'] >= 0:
-                        st.success(f"NET PROFIT: ₹{pl['net_profit']:,.2f} 🎉")
-                    else:
-                        st.error(f"NET LOSS: ₹{abs(pl['net_profit']):,.2f}")
+        # Footer
+        st.divider()
+        st.caption("🏦 Savings Bank System | All rights reserved")
         
-        # ---------- TAB 6: TRIAL BALANCE ----------
-        with tab6:
-            st.header("📋 Trial Balance")
-            
-            tb_df, total_debits, total_credits = get_trial_balance()
-            
-            if not tb_df.empty:
-                st.dataframe(tb_df, use_container_width=True, hide_index=True)
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Debits", f"₹{total_debits:,.2f}")
-                with col2:
-                    st.metric("Total Credits", f"₹{total_credits:,.2f}")
-                with col3:
-                    diff = total_debits - total_credits
-                    if abs(diff) < 0.01:
-                        st.success("✅ Trial Balance is Balanced!")
-                    else:
-                        st.error(f"❌ Difference: ₹{diff:,.2f}")
-            else:
-                st.info("No accounts to display.")
-        
-        # ---------- TAB 7: HEAD MANAGEMENT ----------
-        with tab7:
-            st.header("⚙️ Expense & Income Head Management")
-            
-            if user['role'] not in ['admin', 'manager']:
-                st.warning("⚠️ Only administrators and managers can manage expense/income heads.")
-            else:
-                st.info("Head management coming soon. Use the chart of accounts from the main system.")
-    
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
         print(f"Error in main: {e}")

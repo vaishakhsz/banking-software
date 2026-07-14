@@ -44,35 +44,26 @@ def migrate_database():
         columns = [col[1] for col in cursor.fetchall()]
         
         if 'interest_payable' not in columns:
-            print("Adding interest_payable column to sb_interest_history...")
             cursor.execute("ALTER TABLE sb_interest_history ADD COLUMN interest_payable REAL DEFAULT 0")
             conn.commit()
-            print("interest_payable column added successfully")
         
         if 'voucher_number' not in columns:
-            print("Adding voucher_number column to sb_interest_history...")
             cursor.execute("ALTER TABLE sb_interest_history ADD COLUMN voucher_number TEXT")
             conn.commit()
-            print("voucher_number column added successfully")
         
         # Check if sb_accounts table has interest_payable
         cursor.execute("PRAGMA table_info(sb_accounts)")
         columns = [col[1] for col in cursor.fetchall()]
         
         if 'interest_payable' not in columns:
-            print("Adding interest_payable column to sb_accounts...")
             cursor.execute("ALTER TABLE sb_accounts ADD COLUMN interest_payable REAL DEFAULT 0")
             conn.commit()
-            print("interest_payable column added to sb_accounts successfully")
         
         if 'last_interest_credited' not in columns:
-            print("Adding last_interest_credited column to sb_accounts...")
             cursor.execute("ALTER TABLE sb_accounts ADD COLUMN last_interest_credited TEXT")
             conn.commit()
-            print("last_interest_credited column added successfully")
         
         conn.close()
-        print("Database migration completed successfully")
     except Exception as e:
         print(f"Error in migrate_database: {e}")
 
@@ -249,7 +240,7 @@ def init_database():
             )
         ''')
         
-        # SB Interest History - Fixed schema
+        # SB Interest History
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_interest_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -342,7 +333,6 @@ def init_database():
                 ''', acc)
         
         conn.close()
-        print("Database initialized successfully")
         migrate_database()
     except Exception as e:
         print(f"Error in init_database: {e}")
@@ -367,18 +357,6 @@ def verify_user(username, password):
         return None
     return None
 
-def get_safe_float(value, default=0):
-    try:
-        if value is None:
-            return default
-        if isinstance(value, str):
-            if value.strip() == '':
-                return default
-            return float(value)
-        return float(value)
-    except (ValueError, TypeError):
-        return default
-
 def image_to_base64(image_file):
     if image_file is None:
         return None
@@ -387,6 +365,14 @@ def image_to_base64(image_file):
         buffered = BytesIO()
         image.save(buffered, format="JPEG", quality=85)
         return base64.b64encode(buffered.getvalue()).decode()
+    except:
+        return None
+
+def display_image_from_base64(base64_string):
+    if not base64_string:
+        return None
+    try:
+        return f"data:image/jpeg;base64,{base64_string}"
     except:
         return None
 
@@ -400,15 +386,17 @@ def validate_pan(pan):
         return True
     return bool(re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan))
 
-def calculate_age_from_date(dob):
-    if not dob:
-        return None
+def get_safe_float(value, default=0):
     try:
-        today = datetime.now().date()
-        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-        return age
-    except:
-        return None
+        if value is None:
+            return default
+        if isinstance(value, str):
+            if value.strip() == '':
+                return default
+            return float(value)
+        return float(value)
+    except (ValueError, TypeError):
+        return default
 
 # ============== ACCOUNT FUNCTIONS ==============
 def get_all_accounts():
@@ -555,7 +543,8 @@ def get_all_customers():
         cursor.execute('''
             SELECT customer_id, full_name, address, phone, whatsapp_number, email, 
                    id_type, id_number, aadhar_number, pan_number, date_of_birth, age,
-                   nominee_name, nominee_address, nominee_relation, nominee_dob, nominee_age
+                   nominee_name, nominee_address, nominee_relation, nominee_dob, nominee_age,
+                   aadhar_image, pan_image, nominee_aadhar_image, nominee_pan_image
             FROM customers WHERE kyc_completed = 1 ORDER BY created_date DESC
         ''')
         result = cursor.fetchall()
@@ -567,7 +556,11 @@ def get_all_customers():
                 'whatsapp_number': row[4], 'email': row[5], 'id_type': row[6], 'id_number': row[7],
                 'aadhar_number': row[8], 'pan_number': row[9], 'date_of_birth': row[10], 'age': row[11],
                 'nominee_name': row[12], 'nominee_address': row[13], 'nominee_relation': row[14],
-                'nominee_dob': row[15], 'nominee_age': row[16]
+                'nominee_dob': row[15], 'nominee_age': row[16],
+                'aadhar_image': row[17] if len(row) > 17 else None,
+                'pan_image': row[18] if len(row) > 18 else None,
+                'nominee_aadhar_image': row[19] if len(row) > 19 else None,
+                'nominee_pan_image': row[20] if len(row) > 20 else None
             }
         return customers
     except:
@@ -608,55 +601,6 @@ def get_customer_balances(customer_id):
         return balances
     except:
         return {}
-
-def update_customer(customer_id, data, username):
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE customers SET full_name = ?, address = ?, phone = ?, whatsapp_number = ?, email = ?,
-                id_type = ?, id_number = ?, aadhar_number = ?, pan_number = ?,
-                date_of_birth = ?, age = ?, nominee_name = ?, nominee_address = ?, nominee_relation = ?,
-                nominee_dob = ?, nominee_age = ?, nominee_aadhar = ?, nominee_pan = ?
-            WHERE customer_id = ?
-        ''', (data['full_name'], data['address'], data['phone'], data['whatsapp_number'], data['email'],
-              data['id_type'], data['id_number'], data['aadhar_number'], data['pan_number'],
-              data['date_of_birth'], data['age'], data['nominee_name'], data['nominee_address'],
-              data['nominee_relation'], data['nominee_dob'], data['nominee_age'],
-              data['nominee_aadhar'], data['nominee_pan'], customer_id))
-        conn.commit()
-        conn.close()
-        return True, f"Customer updated successfully"
-    except Exception as e:
-        return False, f"Error: {str(e)}"
-
-def delete_customer(customer_id):
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return False, "Database connection failed"
-        cursor = conn.cursor()
-        cursor.execute('SELECT customer_id FROM customers WHERE customer_id = ? AND kyc_completed = 1', (customer_id,))
-        if not cursor.fetchone():
-            conn.close()
-            return False, "Customer not found"
-        cursor.execute('SELECT COUNT(*) FROM customer_transactions WHERE customer_id = ?', (customer_id,))
-        count = cursor.fetchone()[0]
-        if count > 0:
-            cursor.execute('UPDATE customers SET kyc_completed = 0 WHERE customer_id = ?', (customer_id,))
-            conn.commit()
-            conn.close()
-            return True, "Customer marked as inactive"
-        else:
-            cursor.execute('DELETE FROM customer_accounts WHERE customer_id = ?', (customer_id,))
-            cursor.execute('DELETE FROM customers WHERE customer_id = ?', (customer_id,))
-            conn.commit()
-            conn.close()
-            return True, "Customer deleted successfully"
-    except Exception as e:
-        return False, f"Error: {str(e)}"
 
 # ============== VOUCHER FUNCTIONS ==============
 def generate_voucher_number(voucher_type):
@@ -721,28 +665,6 @@ def get_all_vouchers(limit=100):
         return vouchers
     except:
         return []
-
-def get_voucher(voucher_number):
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return None
-        cursor = conn.cursor()
-        cursor.execute('SELECT voucher_number, voucher_type, voucher_date, description, total_amount, status FROM vouchers WHERE voucher_number = ?', (voucher_number,))
-        voucher = cursor.fetchone()
-        if not voucher:
-            conn.close()
-            return None
-        cursor.execute('SELECT entry_type, account_code, account_name, amount, narration FROM voucher_entries WHERE voucher_number = ? ORDER BY id', (voucher_number,))
-        entries = cursor.fetchall()
-        conn.close()
-        return {
-            'voucher_number': voucher[0], 'voucher_type': voucher[1], 'voucher_date': voucher[2],
-            'description': voucher[3], 'total_amount': voucher[4], 'status': voucher[5],
-            'entries': [{'entry_type': e[0], 'account_code': e[1], 'account_name': e[2], 'amount': e[3], 'narration': e[4] if e[4] else ''} for e in entries]
-        }
-    except:
-        return None
 
 def delete_voucher(voucher_number):
     try:
@@ -850,30 +772,6 @@ def get_all_sb_accounts():
                 'opening_date': row[9] if row[9] else ''
             })
         return accounts
-    except Exception as e:
-        print(f"Error in get_all_sb_accounts: {e}")
-        return []
-
-def get_sb_transactions(account_number, limit=100):
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT transaction_id, transaction_date, value_date, particulars, debit, credit, balance, transaction_type
-            FROM sb_transactions WHERE account_number = ? ORDER BY transaction_date DESC LIMIT ?
-        ''', (account_number, limit))
-        result = cursor.fetchall()
-        conn.close()
-        transactions = []
-        for row in result:
-            transactions.append({
-                'transaction_id': row[0], 'transaction_date': row[1], 'value_date': row[2],
-                'particulars': row[3], 'debit': row[4], 'credit': row[5],
-                'balance': row[6], 'transaction_type': row[7]
-            })
-        return transactions
     except:
         return []
 
@@ -972,8 +870,6 @@ def calculate_and_credit_interest(account_number, username):
                       (value_date, '2500', 'SB_INTEREST_PAYABLE', 'CREDIT', interest, f'Interest on SB Account {account_number}', voucher_number, username, voucher_number))
         cursor.execute('UPDATE accounts SET balance = balance + ? WHERE account_code = "5999"', (interest,))
         cursor.execute('UPDATE accounts SET balance = balance + ? WHERE account_code = "2500"', (interest,))
-        
-        # Insert interest history
         cursor.execute('''
             INSERT INTO sb_interest_history (account_number, quarter_start, quarter_end, interest_rate,
                 average_balance, interest_amount, interest_payable, credited_date, voucher_number)
@@ -1045,31 +941,78 @@ def display_account_card(acc_code, icon, color):
 
 # ============== UI RENDER FUNCTIONS ==============
 def render_customer_registration():
-    st.subheader("➕ Register New Customer")
+    st.subheader("📝 Register New Customer with KYC")
+    
+    # Initialize session state for images
+    if 'aadhar_preview' not in st.session_state:
+        st.session_state.aadhar_preview = None
+    if 'pan_preview' not in st.session_state:
+        st.session_state.pan_preview = None
+    if 'nominee_aadhar_preview' not in st.session_state:
+        st.session_state.nominee_aadhar_preview = None
+    if 'nominee_pan_preview' not in st.session_state:
+        st.session_state.nominee_pan_preview = None
+    
     with st.form("customer_form"):
+        st.markdown("### 📋 Personal Details")
         col1, col2 = st.columns(2)
         with col1:
             full_name = st.text_input("Full Name*")
             address = st.text_area("Address*")
-            phone = st.text_input("Phone*")
+            phone = st.text_input("Phone Number*")
             email = st.text_input("Email*")
+            whatsapp = st.text_input("WhatsApp Number")
         with col2:
-            aadhar = st.text_input("Aadhaar Number (12 digits)*")
-            if aadhar and not validate_aadhar(aadhar):
-                st.error("Invalid Aadhaar")
-            pan = st.text_input("PAN Number*")
-            if pan and not validate_pan(pan):
-                st.error("Invalid PAN")
+            dob = st.date_input("Date of Birth", min_value=datetime(1900, 1, 1).date(), max_value=datetime.now().date())
+            if dob:
+                age = datetime.now().year - dob.year - ((datetime.now().month, datetime.now().day) < (dob.month, dob.day))
+                st.info(f"Age: {age} years")
+            else:
+                age = None
             id_type = st.selectbox("ID Type", ["Aadhaar", "PAN", "Passport", "Driving License", "Voter ID"])
             id_number = st.text_input("ID Number*")
+        
+        st.markdown("### 🪪 KYC Documents (Compulsory)")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Aadhaar Card**")
+            aadhar_number = st.text_input("Aadhaar Number (12 digits)*")
+            if aadhar_number and not validate_aadhar(aadhar_number):
+                st.error("Invalid Aadhaar number. Must be 12 digits.")
+            aadhar_file = st.file_uploader("Upload Aadhaar Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="aadhar_upload")
+        with col2:
+            st.markdown("**PAN Card**")
+            pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*")
+            if pan_number and not validate_pan(pan_number):
+                st.error("Invalid PAN number. Format: ABCDE1234F")
+            pan_file = st.file_uploader("Upload PAN Card Image*", type=['jpg', 'jpeg', 'png', 'pdf'], key="pan_upload")
         
         st.markdown("### 👤 Nominee Details")
         col1, col2 = st.columns(2)
         with col1:
-            nominee_name = st.text_input("Nominee Name")
-            nominee_relation = st.text_input("Nominee Relation")
+            nominee_name = st.text_input("Nominee Full Name")
+            nominee_relation = st.text_input("Nominee Relation (e.g., Spouse, Son, Daughter)")
+            nominee_dob = st.date_input("Nominee Date of Birth", min_value=datetime(1900, 1, 1).date(), max_value=datetime.now().date())
+            if nominee_dob:
+                nominee_age = datetime.now().year - nominee_dob.year - ((datetime.now().month, datetime.now().day) < (nominee_dob.month, nominee_dob.day))
+                st.caption(f"Nominee Age: {nominee_age} years")
+            else:
+                nominee_age = None
         with col2:
             nominee_address = st.text_area("Nominee Address")
+        
+        st.markdown("**Nominee Documents (Optional)**")
+        col1, col2 = st.columns(2)
+        with col1:
+            nominee_aadhar = st.text_input("Nominee Aadhaar Number")
+            if nominee_aadhar and not validate_aadhar(nominee_aadhar):
+                st.error("Invalid Aadhaar number. Must be 12 digits.")
+            nominee_aadhar_file = st.file_uploader("Upload Nominee Aadhaar Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_aadhar_upload")
+        with col2:
+            nominee_pan = st.text_input("Nominee PAN Number")
+            if nominee_pan and not validate_pan(nominee_pan):
+                st.error("Invalid PAN number. Format: ABCDE1234F")
+            nominee_pan_file = st.file_uploader("Upload Nominee PAN Image", type=['jpg', 'jpeg', 'png', 'pdf'], key="nom_pan_upload")
         
         if st.form_submit_button("✅ Register Customer"):
             errors = []
@@ -1081,30 +1024,42 @@ def render_customer_registration():
                 errors.append("Phone required")
             if not email:
                 errors.append("Email required")
-            if not aadhar:
-                errors.append("Aadhaar required")
-            elif not validate_aadhar(aadhar):
-                errors.append("Invalid Aadhaar")
-            if not pan:
-                errors.append("PAN required")
-            elif not validate_pan(pan):
-                errors.append("Invalid PAN")
+            if not aadhar_number:
+                errors.append("Aadhaar Number required")
+            elif not validate_aadhar(aadhar_number):
+                errors.append("Invalid Aadhaar number")
+            if not pan_number:
+                errors.append("PAN Number required")
+            elif not validate_pan(pan_number):
+                errors.append("Invalid PAN number")
+            if not aadhar_file:
+                errors.append("Aadhaar Card image required")
+            if not pan_file:
+                errors.append("PAN Card image required")
+            if not id_number:
+                errors.append("ID Number required")
             
             if errors:
                 for e in errors:
                     st.error(e)
             else:
+                aadhar_image_b64 = image_to_base64(aadhar_file)
+                pan_image_b64 = image_to_base64(pan_file)
+                nominee_aadhar_b64 = image_to_base64(nominee_aadhar_file) if nominee_aadhar_file else None
+                nominee_pan_b64 = image_to_base64(nominee_pan_file) if nominee_pan_file else None
+                
                 data = {
                     'full_name': full_name, 'address': address, 'phone': phone,
-                    'whatsapp_number': '', 'email': email, 'id_type': id_type,
-                    'id_number': id_number, 'aadhar_number': aadhar,
-                    'aadhar_image': None, 'pan_number': pan, 'pan_image': None,
-                    'date_of_birth': None, 'age': None,
-                    'nominee_name': nominee_name, 'nominee_address': nominee_address,
-                    'nominee_relation': nominee_relation, 'nominee_dob': None,
-                    'nominee_age': None, 'nominee_aadhar': None,
-                    'nominee_aadhar_image': None, 'nominee_pan': None,
-                    'nominee_pan_image': None
+                    'whatsapp_number': whatsapp, 'email': email, 'id_type': id_type,
+                    'id_number': id_number, 'aadhar_number': aadhar_number,
+                    'aadhar_image': aadhar_image_b64, 'pan_number': pan_number,
+                    'pan_image': pan_image_b64, 'date_of_birth': dob.strftime('%Y-%m-%d') if dob else None,
+                    'age': age, 'nominee_name': nominee_name,
+                    'nominee_address': nominee_address, 'nominee_relation': nominee_relation,
+                    'nominee_dob': nominee_dob.strftime('%Y-%m-%d') if nominee_dob else None,
+                    'nominee_age': nominee_age, 'nominee_aadhar': nominee_aadhar,
+                    'nominee_aadhar_image': nominee_aadhar_b64, 'nominee_pan': nominee_pan,
+                    'nominee_pan_image': nominee_pan_b64
                 }
                 success, msg = create_customer(data, st.session_state.user['username'])
                 st.success(msg) if success else st.error(msg)
@@ -1125,9 +1080,77 @@ def render_customer_list():
             'Email': cust['email'], 'Aadhaar': cust.get('aadhar_number', ''),
             'PAN': cust.get('pan_number', ''), 'Age': cust.get('age', ''),
             'Savings': f"₹{balances.get('1100', 0):,.2f}",
-            'Current': f"₹{balances.get('1200', 0):,.2f}"
+            'Current': f"₹{balances.get('1200', 0):,.2f}",
+            'Nominee': cust.get('nominee_name', 'N/A')
         })
     st.dataframe(pd.DataFrame(cust_data), use_container_width=True, hide_index=True)
+    
+    # View customer details with images
+    st.divider()
+    st.subheader("🔍 View Customer Details")
+    selected = st.selectbox("Select Customer", [""] + [f"{c['full_name']} ({cid})" for cid, c in customers.items()])
+    if selected:
+        cust_id = selected.split('(')[-1].replace(')', '')
+        cust = customers[cust_id]
+        details = get_customer_details(cust_id)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"**Name:** {cust['full_name']}")
+            st.markdown(f"**ID:** {cust_id}")
+            st.markdown(f"**Phone:** {cust['phone']}")
+            st.markdown(f"**WhatsApp:** {cust.get('whatsapp_number', 'N/A')}")
+        with col2:
+            st.markdown(f"**Email:** {cust['email']}")
+            st.markdown(f"**DOB:** {cust.get('date_of_birth', 'N/A')}")
+            st.markdown(f"**Age:** {cust.get('age', 'N/A')} years")
+            st.markdown(f"**ID Type:** {cust.get('id_type', 'N/A')}")
+        with col3:
+            st.markdown(f"**Aadhaar:** {cust.get('aadhar_number', 'N/A')}")
+            st.markdown(f"**PAN:** {cust.get('pan_number', 'N/A')}")
+        
+        st.markdown("---")
+        st.markdown("### 📎 Uploaded Documents")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Aadhaar Card**")
+            if details and details.get('aadhar_image'):
+                st.image(display_image_from_base64(details['aadhar_image']), use_container_width=True)
+            else:
+                st.caption("No Aadhaar image uploaded")
+            
+            st.markdown("**PAN Card**")
+            if details and details.get('pan_image'):
+                st.image(display_image_from_base64(details['pan_image']), use_container_width=True)
+            else:
+                st.caption("No PAN image uploaded")
+        with col2:
+            st.markdown("**Nominee Aadhaar Card**")
+            if details and details.get('nominee_aadhar_image'):
+                st.image(display_image_from_base64(details['nominee_aadhar_image']), use_container_width=True)
+            else:
+                st.caption("No Nominee Aadhaar image uploaded")
+            
+            st.markdown("**Nominee PAN Card**")
+            if details and details.get('nominee_pan_image'):
+                st.image(display_image_from_base64(details['nominee_pan_image']), use_container_width=True)
+            else:
+                st.caption("No Nominee PAN image uploaded")
+        
+        if cust.get('nominee_name'):
+            st.markdown("---")
+            st.markdown("### 👤 Nominee Details")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(f"**Name:** {cust.get('nominee_name', 'N/A')}")
+                st.markdown(f"**Relation:** {cust.get('nominee_relation', 'N/A')}")
+            with col2:
+                st.markdown(f"**DOB:** {cust.get('nominee_dob', 'N/A')}")
+                st.markdown(f"**Age:** {cust.get('nominee_age', 'N/A')} years")
+            with col3:
+                st.markdown(f"**Aadhaar:** {cust.get('nominee_aadhar', 'N/A')}")
+                st.markdown(f"**PAN:** {cust.get('nominee_pan', 'N/A')}")
+            st.markdown(f"**Address:** {cust.get('nominee_address', 'N/A')}")
 
 def render_head_management():
     st.subheader("⚙️ Head Management")
@@ -1337,13 +1360,6 @@ def render_sb_report():
             with col3:
                 st.metric("Interest Rate", f"{account['interest_rate']}%")
                 st.metric("Interest Payable", f"₹{account['interest_payable']:,.2f}")
-            
-            # Show transactions
-            transactions = get_sb_transactions(acc_no, 50)
-            if transactions:
-                st.markdown("### 📝 Recent Transactions")
-                df = pd.DataFrame(transactions)
-                st.dataframe(df, use_container_width=True, hide_index=True)
 
 def render_sb_account_creation():
     st.subheader("🏦 Create Savings Bank Account")
@@ -1409,7 +1425,6 @@ def main():
     try:
         if not os.path.exists(DB_FILE):
             init_database()
-        # Always run migration to ensure columns exist
         migrate_database()
         
         if 'logged_in' not in st.session_state or not st.session_state.logged_in:

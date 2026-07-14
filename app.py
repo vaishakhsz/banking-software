@@ -82,13 +82,14 @@ def init_database():
             )
         ''')
         
-        # SB Account Transactions table
+        # SB Account Transactions table - Updated with date field
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 transaction_id TEXT UNIQUE NOT NULL,
                 account_number TEXT NOT NULL,
                 transaction_date TEXT NOT NULL,
+                value_date TEXT NOT NULL,
                 particulars TEXT NOT NULL,
                 debit REAL DEFAULT 0,
                 credit REAL DEFAULT 0,
@@ -96,6 +97,7 @@ def init_database():
                 transaction_type TEXT NOT NULL,
                 ref_no TEXT,
                 created_by TEXT,
+                created_date TEXT NOT NULL,
                 FOREIGN KEY (account_number) REFERENCES sb_accounts(account_number)
             )
         ''')
@@ -136,7 +138,7 @@ def init_database():
         
         conn.commit()
         
-        # Check if default admin user exists - FIXED
+        # Check if default admin user exists
         cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
         count = cursor.fetchone()[0]
         
@@ -145,14 +147,12 @@ def init_database():
             current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             admin_password = hash_password("admin123")
             
-            # Insert admin user
             cursor.execute('''
                 INSERT INTO users 
                 (username, password_hash, full_name, role, created_date)
                 VALUES (?, ?, ?, ?, ?)
             ''', ("admin", admin_password, "System Administrator", "admin", current_date))
             
-            # Insert demo users
             demo_password = hash_password("demo123")
             demo_users = [
                 ("teller1", demo_password, "Teller One", "user"),
@@ -183,7 +183,6 @@ def verify_user(username, password):
             return None
         cursor = conn.cursor()
         
-        # Hash the password
         hashed = hash_password(password)
         
         cursor.execute('SELECT * FROM users WHERE username = ? AND password_hash = ?', 
@@ -191,7 +190,6 @@ def verify_user(username, password):
         user = cursor.fetchone()
         
         if user:
-            # Update last login
             cursor.execute('UPDATE users SET last_login = ? WHERE username = ?',
                            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), username))
             conn.commit()
@@ -294,18 +292,20 @@ def create_sb_account(data, username):
             transaction_id = generate_transaction_id()
             cursor.execute('''
                 INSERT INTO sb_transactions (
-                    transaction_id, account_number, transaction_date,
-                    particulars, credit, balance, transaction_type, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    transaction_id, account_number, transaction_date, value_date,
+                    particulars, credit, balance, transaction_type, created_by, created_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 transaction_id,
                 account_number,
+                opening_date,
                 opening_date,
                 'Opening Balance',
                 data['opening_balance'],
                 data['opening_balance'],
                 'DEPOSIT',
-                username
+                username,
+                opening_date
             ))
         
         conn.commit()
@@ -379,21 +379,21 @@ def get_sb_transactions(account_number, from_date=None, to_date=None, limit=1000
         cursor = conn.cursor()
         
         query = '''
-            SELECT transaction_id, transaction_date, particulars, debit, credit, balance, 
-                   transaction_type, ref_no, created_by
+            SELECT transaction_id, transaction_date, value_date, particulars, debit, credit, balance, 
+                   transaction_type, ref_no, created_by, created_date
             FROM sb_transactions 
             WHERE account_number = ?
         '''
         params = [account_number]
         
         if from_date:
-            query += ' AND transaction_date >= ?'
+            query += ' AND value_date >= ?'
             params.append(from_date)
         if to_date:
-            query += ' AND transaction_date <= ?'
+            query += ' AND value_date <= ?'
             params.append(to_date)
         
-        query += ' ORDER BY transaction_date DESC LIMIT ?'
+        query += ' ORDER BY value_date DESC, created_date DESC LIMIT ?'
         params.append(limit)
         
         cursor.execute(query, params)
@@ -405,21 +405,23 @@ def get_sb_transactions(account_number, from_date=None, to_date=None, limit=1000
             transactions.append({
                 'transaction_id': row[0],
                 'transaction_date': row[1],
-                'particulars': row[2],
-                'debit': row[3],
-                'credit': row[4],
-                'balance': row[5],
-                'transaction_type': row[6],
-                'ref_no': row[7],
-                'created_by': row[8]
+                'value_date': row[2],
+                'particulars': row[3],
+                'debit': row[4],
+                'credit': row[5],
+                'balance': row[6],
+                'transaction_type': row[7],
+                'ref_no': row[8],
+                'created_by': row[9],
+                'created_date': row[10]
             })
         return transactions
     except Exception as e:
         print(f"Error in get_sb_transactions: {e}")
         return []
 
-def deposit_sb_account(account_number, amount, particulars, username):
-    """Deposit money into SB account"""
+def deposit_sb_account(account_number, amount, particulars, value_date, username):
+    """Deposit money into SB account with date"""
     try:
         conn = get_db_connection()
         if conn is None:
@@ -442,32 +444,34 @@ def deposit_sb_account(account_number, amount, particulars, username):
         cursor.execute('UPDATE sb_accounts SET current_balance = ? WHERE account_number = ?', 
                       (new_balance, account_number))
         
-        # Record transaction
+        # Record transaction with value date
         cursor.execute('''
             INSERT INTO sb_transactions (
-                transaction_id, account_number, transaction_date,
-                particulars, credit, balance, transaction_type, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                transaction_id, account_number, transaction_date, value_date,
+                particulars, credit, balance, transaction_type, created_by, created_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             transaction_id,
             account_number,
             transaction_date,
+            value_date,
             particulars,
             amount,
             new_balance,
             'DEPOSIT',
-            username
+            username,
+            transaction_date
         ))
         
         conn.commit()
         conn.close()
-        return True, f"Deposited ₹{amount:,.2f} successfully. New balance: ₹{new_balance:,.2f}"
+        return True, f"Deposited ₹{amount:,.2f} on {value_date}. New balance: ₹{new_balance:,.2f}"
     except Exception as e:
         print(f"Error in deposit_sb_account: {e}")
         return False, f"Error depositing: {str(e)}"
 
-def withdraw_sb_account(account_number, amount, particulars, username):
-    """Withdraw money from SB account"""
+def withdraw_sb_account(account_number, amount, particulars, value_date, username):
+    """Withdraw money from SB account with date"""
     try:
         conn = get_db_connection()
         if conn is None:
@@ -494,26 +498,28 @@ def withdraw_sb_account(account_number, amount, particulars, username):
         cursor.execute('UPDATE sb_accounts SET current_balance = ? WHERE account_number = ?', 
                       (new_balance, account_number))
         
-        # Record transaction
+        # Record transaction with value date
         cursor.execute('''
             INSERT INTO sb_transactions (
-                transaction_id, account_number, transaction_date,
-                particulars, debit, balance, transaction_type, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                transaction_id, account_number, transaction_date, value_date,
+                particulars, debit, balance, transaction_type, created_by, created_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             transaction_id,
             account_number,
             transaction_date,
+            value_date,
             particulars,
             amount,
             new_balance,
             'WITHDRAWAL',
-            username
+            username,
+            transaction_date
         ))
         
         conn.commit()
         conn.close()
-        return True, f"Withdrawn ₹{amount:,.2f} successfully. New balance: ₹{new_balance:,.2f}"
+        return True, f"Withdrawn ₹{amount:,.2f} on {value_date}. New balance: ₹{new_balance:,.2f}"
     except Exception as e:
         print(f"Error in withdraw_sb_account: {e}")
         return False, f"Error withdrawing: {str(e)}"
@@ -551,20 +557,24 @@ def calculate_and_credit_interest(account_number):
         # Record interest transaction
         transaction_id = generate_transaction_id()
         transaction_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        value_date = datetime.now().strftime('%Y-%m-%d')
+        
         cursor.execute('''
             INSERT INTO sb_transactions (
-                transaction_id, account_number, transaction_date,
-                particulars, credit, balance, transaction_type, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                transaction_id, account_number, transaction_date, value_date,
+                particulars, credit, balance, transaction_type, created_by, created_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             transaction_id,
             account_number,
             transaction_date,
+            value_date,
             f'Quarterly Interest @ {interest_rate}%',
             interest,
             new_balance,
             'INTEREST',
-            'SYSTEM'
+            'SYSTEM',
+            transaction_date
         ))
         
         conn.commit()
@@ -786,7 +796,6 @@ def render_kyc_form():
                 for error in errors:
                     st.error(error)
             else:
-                # Convert images to base64
                 aadhar_image_b64 = image_to_base64(aadhar_image)
                 pan_image_b64 = image_to_base64(pan_image)
                 
@@ -814,7 +823,6 @@ def render_sb_account_creation():
     """Render SB Account creation form"""
     st.subheader("🏦 Create Savings Bank Account")
     
-    # Get existing KYC records for selection
     kyc_list = get_all_kyc()
     kyc_options = [""] + [f"{k['customer_name']} ({k['kyc_id']})" for k in kyc_list]
     selected_kyc = st.selectbox("Select Existing KYC*", kyc_options)
@@ -914,12 +922,19 @@ def render_sb_account_operations():
             
             with col1:
                 st.markdown("### 💵 Deposit")
+                deposit_date = st.date_input("Deposit Date", value=datetime.now().date(), key="deposit_date")
                 deposit_amount = st.number_input("Amount", min_value=0.0, step=100.0, key="deposit_amt")
                 deposit_particulars = st.text_input("Particulars", key="deposit_particulars", placeholder="e.g., Cash deposit")
+                
                 if st.button("💰 Deposit", key="deposit_btn"):
                     if deposit_amount > 0:
-                        success, msg = deposit_sb_account(account_number, deposit_amount, deposit_particulars, 
-                                                        st.session_state.user['username'])
+                        success, msg = deposit_sb_account(
+                            account_number, 
+                            deposit_amount, 
+                            deposit_particulars, 
+                            deposit_date.strftime('%Y-%m-%d'),
+                            st.session_state.user['username']
+                        )
                         if success:
                             st.success(msg)
                             st.rerun()
@@ -930,12 +945,19 @@ def render_sb_account_operations():
             
             with col2:
                 st.markdown("### 💸 Withdraw")
+                withdraw_date = st.date_input("Withdrawal Date", value=datetime.now().date(), key="withdraw_date")
                 withdraw_amount = st.number_input("Amount", min_value=0.0, step=100.0, key="withdraw_amt")
                 withdraw_particulars = st.text_input("Particulars", key="withdraw_particulars", placeholder="e.g., ATM withdrawal")
+                
                 if st.button("💸 Withdraw", key="withdraw_btn"):
                     if withdraw_amount > 0:
-                        success, msg = withdraw_sb_account(account_number, withdraw_amount, withdraw_particulars, 
-                                                        st.session_state.user['username'])
+                        success, msg = withdraw_sb_account(
+                            account_number, 
+                            withdraw_amount, 
+                            withdraw_particulars, 
+                            withdraw_date.strftime('%Y-%m-%d'),
+                            st.session_state.user['username']
+                        )
                         if success:
                             st.success(msg)
                             st.rerun()
@@ -1005,7 +1027,8 @@ def render_sb_account_report():
                     txn_data = []
                     for t in transactions:
                         txn_data.append({
-                            'Date': t['transaction_date'],
+                            'Transaction Date': t['transaction_date'],
+                            'Value Date': t['value_date'],
                             'Particulars': t['particulars'],
                             'Debit': f"₹{t['debit']:,.2f}" if t['debit'] > 0 else '-',
                             'Credit': f"₹{t['credit']:,.2f}" if t['credit'] > 0 else '-',
@@ -1117,7 +1140,6 @@ def main():
             init_database()
         else:
             print("Database found. Checking tables...")
-            # Ensure tables exist even if database exists
             init_database()
         
         if 'logged_in' not in st.session_state or not st.session_state.logged_in:

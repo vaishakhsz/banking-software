@@ -429,6 +429,7 @@ def get_account_balance(account_code):
         return 0
 
 def update_account_balance(account_code, amount, is_debit=True):
+    """Update account balance with debit/credit logic"""
     try:
         conn = get_db_connection()
         if conn is None:
@@ -438,17 +439,23 @@ def update_account_balance(account_code, amount, is_debit=True):
         result = cursor.fetchone()
         if not result:
             conn.close()
-            return False, "Account not found"
+            return False, f"Account {account_code} not found"
         acc_type, current_balance = result
+        
+        # Determine new balance based on account type and debit/credit
         if acc_type in ['ASSET', 'EXPENSE']:
+            # Debit increases, Credit decreases
             new_balance = current_balance + amount if is_debit else current_balance - amount
-        else:
+        else:  # LIABILITY, EQUITY, INCOME
+            # Credit increases, Debit decreases
             new_balance = current_balance - amount if is_debit else current_balance + amount
+        
         cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
         conn.commit()
         conn.close()
         return True, new_balance
     except Exception as e:
+        print(f"Error in update_account_balance: {e}")
         return False, str(e)
 
 def create_account(account_name, account_type, initial_balance=0, daily_limit=None, username=""):
@@ -776,7 +783,6 @@ def get_all_sb_accounts():
         return []
 
 def get_sb_transactions(account_number, limit=100):
-    """Get recent transactions for an SB account"""
     try:
         conn = get_db_connection()
         if conn is None:
@@ -804,12 +810,10 @@ def get_sb_transactions(account_number, limit=100):
                 'transaction_type': row[7]
             })
         return transactions
-    except Exception as e:
-        print(f"Error in get_sb_transactions: {e}")
+    except:
         return []
 
 def get_sb_transactions_by_date(account_number, from_date, to_date):
-    """Get transactions for a date range"""
     try:
         conn = get_db_connection()
         if conn is None:
@@ -836,8 +840,7 @@ def get_sb_transactions_by_date(account_number, from_date, to_date):
                 'transaction_type': row[7]
             })
         return transactions
-    except Exception as e:
-        print(f"Error in get_sb_transactions_by_date: {e}")
+    except:
         return []
 
 def deposit_sb_account(account_number, amount, particulars, value_date, username):
@@ -900,51 +903,91 @@ def withdraw_sb_account(account_number, amount, particulars, value_date, usernam
         return False, f"Error: {str(e)}"
 
 def calculate_and_credit_interest(account_number, username):
+    """Calculate and credit quarterly interest for SB account with DOUBLE ENTRY"""
     try:
         conn = get_db_connection()
         if conn is None:
             return False, "Database connection failed"
         cursor = conn.cursor()
+        
+        # Get account details
         cursor.execute('SELECT current_balance, interest_rate, interest_payable, customer_name FROM sb_accounts WHERE account_number = ?', (account_number,))
         result = cursor.fetchone()
         if not result:
             conn.close()
             return False, "Account not found"
+        
         current_balance, interest_rate, interest_payable, customer_name = result
         interest = current_balance * (interest_rate / 100) * (90 / 365)
+        
         if interest <= 0:
             conn.close()
             return False, "No interest to credit"
+        
+        # ============== PART 1: Update SB Account ==============
         new_balance = current_balance + interest
         new_interest_payable = get_safe_float(interest_payable) + interest
+        
         cursor.execute('UPDATE sb_accounts SET current_balance = ?, interest_payable = ?, last_interest_credited = ? WHERE account_number = ?',
                       (new_balance, new_interest_payable, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), account_number))
+        
+        # Record SB transaction
         transaction_id = generate_transaction_id()
         transaction_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         value_date = datetime.now().strftime('%Y-%m-%d')
+        
         cursor.execute('''
             INSERT INTO sb_transactions (transaction_id, account_number, transaction_date, value_date,
                 particulars, credit, balance, transaction_type, created_by, created_date)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (transaction_id, account_number, transaction_date, value_date, f'Quarterly Interest @ {interest_rate}%',
               interest, new_balance, 'INTEREST', 'SYSTEM', transaction_date))
+        
+        # ============== PART 2: POST DOUBLE ENTRY TO MAIN SYSTEM ==============
         voucher_number = generate_voucher_number('INTEREST')
-        cursor.execute('INSERT INTO journal_entries (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                      (value_date, '5999', 'SB_INTEREST_EXPENSE', 'DEBIT', interest, f'Interest on SB Account {account_number}', voucher_number, username, voucher_number))
-        cursor.execute('INSERT INTO journal_entries (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                      (value_date, '2500', 'SB_INTEREST_PAYABLE', 'CREDIT', interest, f'Interest on SB Account {account_number}', voucher_number, username, voucher_number))
-        cursor.execute('UPDATE accounts SET balance = balance + ? WHERE account_code = "5999"', (interest,))
-        cursor.execute('UPDATE accounts SET balance = balance + ? WHERE account_code = "2500"', (interest,))
+        
+        # DEBIT: SB Interest Expense (5999) - Expense increases
+        cursor.execute('''
+            INSERT INTO journal_entries (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (value_date, '5999', 'SB_INTEREST_EXPENSE', 'DEBIT', interest, 
+              f'Quarterly Interest on SB Account {account_number} - {customer_name}', voucher_number, username, voucher_number))
+        
+        # CREDIT: SB Interest Payable (2500) - Liability increases
+        cursor.execute('''
+            INSERT INTO journal_entries (date, account_code, account_name, entry_type, amount, description, ref_no, username, voucher_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (value_date, '2500', 'SB_INTEREST_PAYABLE', 'CREDIT', interest, 
+              f'Quarterly Interest on SB Account {account_number} - {customer_name}', voucher_number, username, voucher_number))
+        
+        # ============== PART 3: UPDATE ACCOUNT BALANCES IN MAIN ACCOUNTS TABLE ==============
+        # Update SB Interest Expense (DEBIT - increases expense)
+        exp_success, exp_balance = update_account_balance('5999', interest, is_debit=True)
+        if not exp_success:
+            conn.close()
+            return False, f"Error updating SB Interest Expense: {exp_balance}"
+        
+        # Update SB Interest Payable (CREDIT - increases liability)
+        pay_success, pay_balance = update_account_balance('2500', interest, is_debit=False)
+        if not pay_success:
+            conn.close()
+            return False, f"Error updating SB Interest Payable: {pay_balance}"
+        
+        # ============== PART 4: Record in interest history ==============
         cursor.execute('''
             INSERT INTO sb_interest_history (account_number, quarter_start, quarter_end, interest_rate,
                 average_balance, interest_amount, interest_payable, credited_date, voucher_number)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (account_number, datetime.now().replace(day=1).strftime('%Y-%m-%d'), datetime.now().strftime('%Y-%m-%d'),
               interest_rate, current_balance, interest, interest, transaction_date, voucher_number))
+        
         conn.commit()
         conn.close()
-        return True, f"Interest ₹{interest:,.2f} credited at {interest_rate}%"
+        
+        # Verification message
+        return True, f"Interest ₹{interest:,.2f} credited at {interest_rate}%.\n\nJournal Entry:\nDr SB_INTEREST_EXPENSE (5999) - ₹{interest:,.2f}\nCr SB_INTEREST_PAYABLE (2500) - ₹{interest:,.2f}"
     except Exception as e:
+        print(f"Error in calculate_and_credit_interest: {e}")
         return False, f"Error: {str(e)}"
 
 # ============== FINANCIAL REPORTS ==============
@@ -956,10 +999,22 @@ def get_trial_balance():
         balance = data['balance']
         acc_type = data['account_type']
         if acc_type in ['ASSET', 'EXPENSE']:
-            trial_balance.append({'Account Code': code, 'Account Name': data['account_name'], 'Account Type': acc_type, 'Debit': balance, 'Credit': 0})
+            trial_balance.append({
+                'Account Code': code, 
+                'Account Name': data['account_name'], 
+                'Account Type': acc_type, 
+                'Debit': balance, 
+                'Credit': 0
+            })
             total_debits += balance
         else:
-            trial_balance.append({'Account Code': code, 'Account Name': data['account_name'], 'Account Type': acc_type, 'Debit': 0, 'Credit': balance})
+            trial_balance.append({
+                'Account Code': code, 
+                'Account Name': data['account_name'], 
+                'Account Type': acc_type, 
+                'Debit': 0, 
+                'Credit': balance
+            })
             total_credits += balance
     return pd.DataFrame(trial_balance), total_debits, total_credits
 
@@ -973,9 +1028,14 @@ def get_balance_sheet():
             liabilities[data['account_name']] = data['balance']
         elif data['account_type'] == 'EQUITY':
             equity[data['account_name']] = data['balance']
-    return {'assets': assets, 'liabilities': liabilities, 'equity': equity, 
-            'total_assets': sum(assets.values()), 'total_liabilities': sum(liabilities.values()), 
-            'total_equity': sum(equity.values())}
+    return {
+        'assets': assets, 
+        'liabilities': liabilities, 
+        'equity': equity, 
+        'total_assets': sum(assets.values()), 
+        'total_liabilities': sum(liabilities.values()), 
+        'total_equity': sum(equity.values())
+    }
 
 def get_profit_loss():
     accounts = get_all_accounts()
@@ -985,8 +1045,13 @@ def get_profit_loss():
             income[data['account_name']] = data['balance']
         elif data['account_type'] == 'EXPENSE':
             expenses[data['account_name']] = data['balance']
-    return {'income': income, 'expenses': expenses, 'total_income': sum(income.values()), 
-            'total_expenses': sum(expenses.values()), 'net_profit': sum(income.values()) - sum(expenses.values())}
+    return {
+        'income': income, 
+        'expenses': expenses, 
+        'total_income': sum(income.values()), 
+        'total_expenses': sum(expenses.values()), 
+        'net_profit': sum(income.values()) - sum(expenses.values())
+    }
 
 def display_account_card(acc_code, icon, color):
     accounts = get_all_accounts()
@@ -1423,9 +1488,11 @@ def render_sb_operations():
             st.caption(f"Estimated Quarterly Interest: ₹{est_interest:,.2f}")
             if st.button("🧮 Calculate & Credit Interest"):
                 success, msg = calculate_and_credit_interest(acc_no, st.session_state.user['username'])
-                st.success(msg) if success else st.error(msg)
                 if success:
+                    st.success(msg)
                     st.rerun()
+                else:
+                    st.error(msg)
 
 def render_sb_report():
     st.subheader("📊 SB Account Report")
@@ -1434,7 +1501,6 @@ def render_sb_report():
         st.warning("No SB accounts found.")
         return
     
-    # Account selection
     account_options = [f"{a['account_number']} - {a['customer_name']}" for a in accounts]
     selected = st.selectbox("Select Account", account_options)
     
@@ -1471,26 +1537,19 @@ def render_sb_report():
                 to_date = st.date_input("To Date", value=datetime.now().date(), key="report_to")
             
             if st.button("📄 Generate Report", key="generate_report_btn"):
-                # Get transactions for the date range
                 transactions = get_sb_transactions_by_date(acc_no, from_date.strftime('%Y-%m-%d'), to_date.strftime('%Y-%m-%d'))
                 
                 if transactions:
                     st.markdown("### 📝 Transaction Details")
-                    
-                    # Create DataFrame
                     df = pd.DataFrame(transactions)
-                    
-                    # Format for display
                     display_df = df.copy()
                     display_df['Debit'] = display_df['debit'].apply(lambda x: f"₹{x:,.2f}" if x > 0 else '-')
                     display_df['Credit'] = display_df['credit'].apply(lambda x: f"₹{x:,.2f}" if x > 0 else '-')
                     display_df['Balance'] = display_df['balance'].apply(lambda x: f"₹{x:,.2f}")
                     
-                    # Select columns to display
                     display_columns = ['value_date', 'particulars', 'Debit', 'Credit', 'Balance', 'transaction_type']
                     st.dataframe(display_df[display_columns], use_container_width=True, hide_index=True)
                     
-                    # Summary Statistics
                     st.markdown("### 📊 Transaction Summary")
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
@@ -1501,11 +1560,10 @@ def render_sb_report():
                         st.metric("Total Credits", f"₹{total_credits:,.2f}")
                     with col3:
                         net_change = total_credits - total_debits
-                        st.metric("Net Change", f"₹{net_change:,.2f}", delta=net_change)
+                        st.metric("Net Change", f"₹{net_change:,.2f}")
                     with col4:
                         st.metric("Closing Balance", f"₹{account['current_balance']:,.2f}")
                     
-                    # Download as CSV
                     csv = df.to_csv(index=False)
                     st.download_button(
                         label="📥 Download CSV",
@@ -1516,7 +1574,6 @@ def render_sb_report():
                 else:
                     st.info("No transactions found for the selected period")
             
-            # Show recent transactions without date filter
             st.markdown("---")
             st.markdown("### 📝 Recent Transactions (Last 10)")
             recent_transactions = get_sb_transactions(acc_no, 10)

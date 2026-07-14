@@ -31,6 +31,75 @@ def get_db_connection():
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+def ensure_accounts_exist():
+    """Ensure all required accounts exist in the database"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return
+        cursor = conn.cursor()
+        
+        current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # List of all required accounts
+        required_accounts = [
+            # ===== ASSETS (1xxx) =====
+            ('1000', 'CASH', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+            ('1001', 'PETTY_CASH', 'ASSET', 0, 10000, None, None, current_date, 1, 'system'),
+            ('1100', 'BANK_SAVINGS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+            ('1200', 'BANK_CURRENT', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+            ('1300', 'FD', 'ASSET', 0, None, None, 7.0, current_date, 1, 'system'),
+            ('1400', 'DAILY_COLLECTION', 'ASSET', 0, 50000, None, None, current_date, 1, 'system'),
+            ('1500', 'SUNDRY_DEBTORS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+            ('1600', 'LOANS_ADVANCED', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
+            
+            # ===== LIABILITIES (2xxx) =====
+            ('2100', 'CUSTOMER_DEPOSITS', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
+            ('2200', 'FD_LIABILITY', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
+            ('2300', 'SUNDRY_CREDITORS', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
+            ('2400', 'LOANS_TAKEN', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
+            ('2500', 'SB_INTEREST_PAYABLE', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
+            
+            # ===== EQUITY (3xxx) =====
+            ('3100', 'CAPITAL', 'EQUITY', 1000000, None, None, None, current_date, 1, 'system'),
+            ('3200', 'RETAINED_EARNINGS', 'EQUITY', 0, None, None, None, current_date, 1, 'system'),
+            
+            # ===== INCOME (4xxx) =====
+            ('4100', 'INTEREST_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
+            ('4200', 'SERVICE_CHARGE', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
+            ('4300', 'COMMISSION_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
+            ('4400', 'RENT_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
+            
+            # ===== EXPENSES (5xxx) =====
+            ('5100', 'GENERAL_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5200', 'SALARY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5300', 'RENT_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5400', 'UTILITY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5500', 'CONVEYANCE_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5600', 'TRAVEL_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5700', 'STATIONERY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5800', 'TELEPHONE_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5900', 'ADVERTISING_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+            ('5999', 'SB_INTEREST_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
+        ]
+        
+        for acc in required_accounts:
+            # Check if account exists
+            cursor.execute('SELECT COUNT(*) FROM accounts WHERE account_code = ?', (acc[0],))
+            if cursor.fetchone()[0] == 0:
+                # Account doesn't exist, insert it
+                cursor.execute('''
+                    INSERT INTO accounts (account_code, account_name, account_type, balance, daily_limit, maturity_date, interest_rate, created_date, is_active, created_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', acc)
+                print(f"Created account: {acc[1]} ({acc[0]})")
+        
+        conn.commit()
+        conn.close()
+        print("All required accounts ensured")
+    except Exception as e:
+        print(f"Error in ensure_accounts_exist: {e}")
+
 def migrate_database():
     try:
         conn = get_db_connection()
@@ -86,7 +155,7 @@ def init_database():
             )
         ''')
         
-        # Accounts table with ALL accounts
+        # Accounts table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -290,58 +359,11 @@ def init_database():
                               (user[0], demo_password, user[1], "user", current_date))
             conn.commit()
         
-        # Check if default accounts exist - COMPLETE LIST
-        cursor.execute("SELECT COUNT(*) FROM accounts")
-        if cursor.fetchone()[0] == 0:
-            current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            default_accounts = [
-                # ===== ASSETS (1xxx) =====
-                ('1000', 'CASH', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-                ('1001', 'PETTY_CASH', 'ASSET', 0, 10000, None, None, current_date, 1, 'system'),
-                ('1100', 'BANK_SAVINGS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-                ('1200', 'BANK_CURRENT', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-                ('1300', 'FD', 'ASSET', 0, None, None, 7.0, current_date, 1, 'system'),
-                ('1400', 'DAILY_COLLECTION', 'ASSET', 0, 50000, None, None, current_date, 1, 'system'),
-                ('1500', 'SUNDRY_DEBTORS', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-                ('1600', 'LOANS_ADVANCED', 'ASSET', 0, None, None, None, current_date, 1, 'system'),
-                
-                # ===== LIABILITIES (2xxx) =====
-                ('2100', 'CUSTOMER_DEPOSITS', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
-                ('2200', 'FD_LIABILITY', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
-                ('2300', 'SUNDRY_CREDITORS', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
-                ('2400', 'LOANS_TAKEN', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
-                ('2500', 'SB_INTEREST_PAYABLE', 'LIABILITY', 0, None, None, None, current_date, 1, 'system'),
-                
-                # ===== EQUITY (3xxx) =====
-                ('3100', 'CAPITAL', 'EQUITY', 1000000, None, None, None, current_date, 1, 'system'),
-                ('3200', 'RETAINED_EARNINGS', 'EQUITY', 0, None, None, None, current_date, 1, 'system'),
-                
-                # ===== INCOME (4xxx) =====
-                ('4100', 'INTEREST_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
-                ('4200', 'SERVICE_CHARGE', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
-                ('4300', 'COMMISSION_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
-                ('4400', 'RENT_INCOME', 'INCOME', 0, None, None, None, current_date, 1, 'system'),
-                
-                # ===== EXPENSES (5xxx) =====
-                ('5100', 'GENERAL_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5200', 'SALARY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5300', 'RENT_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5400', 'UTILITY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5500', 'CONVEYANCE_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5600', 'TRAVEL_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5700', 'STATIONERY_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5800', 'TELEPHONE_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5900', 'ADVERTISING_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-                ('5999', 'SB_INTEREST_EXPENSE', 'EXPENSE', 0, None, None, None, current_date, 1, 'system'),
-            ]
-            for acc in default_accounts:
-                cursor.execute('''
-                    INSERT INTO accounts (account_code, account_name, account_type, balance, daily_limit, maturity_date, interest_rate, created_date, is_active, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', acc)
-        
         conn.close()
         migrate_database()
+        
+        # Ensure all accounts exist
+        ensure_accounts_exist()
     except Exception as e:
         print(f"Error in init_database: {e}")
 
@@ -1615,7 +1637,6 @@ def render_sb_report():
             else:
                 st.info("No recent transactions found")
 
-# ============== VERIFICATION FUNCTION ==============
 def verify_account_balances():
     st.subheader("🔍 Account Balance Verification")
     
@@ -1672,7 +1693,10 @@ def main():
     try:
         if not os.path.exists(DB_FILE):
             init_database()
-        migrate_database()
+        else:
+            # Even if database exists, ensure all accounts are present
+            ensure_accounts_exist()
+            migrate_database()
         
         if 'logged_in' not in st.session_state or not st.session_state.logged_in:
             login_page()
@@ -1829,4 +1853,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

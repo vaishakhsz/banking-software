@@ -10,8 +10,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 import re
-import json
-import threading
+import threading  # <-- THIS WAS MISSING
 
 # ============== DATABASE SETUP ==============
 DB_FILE = "savings_bank.db"
@@ -38,6 +37,19 @@ def init_database():
         if conn is None:
             return
         cursor = conn.cursor()
+        
+        # Users table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                full_name TEXT NOT NULL,
+                role TEXT DEFAULT 'user',
+                created_date TEXT NOT NULL,
+                last_login TEXT
+            )
+        ''')
         
         # SB Account Master table
         cursor.execute('''
@@ -118,11 +130,77 @@ def init_database():
         ''')
         
         conn.commit()
+        
+        # Check if default admin user exists
+        cursor.execute("SELECT COUNT(*) FROM users")
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            admin_password = hash_password("admin123")
+            cursor.execute('''
+                INSERT INTO users 
+                (username, password_hash, full_name, role, created_date)
+                VALUES (?, ?, ?, ?, ?)
+            ''', ("admin", admin_password, "System Administrator", "admin", current_date))
+            
+            # Insert demo users
+            demo_password = hash_password("demo123")
+            demo_users = [
+                ("teller1", demo_password, "Teller One", "user"),
+                ("teller2", demo_password, "Teller Two", "user"),
+                ("manager", demo_password, "Branch Manager", "manager"),
+            ]
+            for user in demo_users:
+                cursor.execute('''
+                    INSERT INTO users 
+                    (username, password_hash, full_name, role, created_date)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user[0], user[1], user[2], user[3], current_date))
+        
+        conn.commit()
         conn.close()
     except Exception as e:
         print(f"Error in init_database: {e}")
 
 # ============== HELPER FUNCTIONS ==============
+def hash_password(password):
+    """Hash password using SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_user(username, password):
+    """Verify user credentials"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return None
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM users WHERE username = ? AND password_hash = ?', 
+                       (username, hash_password(password)))
+        user = cursor.fetchone()
+        conn.close()
+        
+        if user:
+            # Update last login
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('UPDATE users SET last_login = ? WHERE username = ?',
+                           (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), username))
+            conn.commit()
+            conn.close()
+            return {
+                'id': user[0],
+                'username': user[1],
+                'full_name': user[3],
+                'role': user[4],
+                'created_date': user[5],
+                'last_login': user[6] if len(user) > 6 else None
+            }
+    except Exception as e:
+        print(f"Error in verify_user: {e}")
+        return None
+    return None
+
 def generate_account_number():
     """Generate unique SB account number"""
     try:
@@ -172,6 +250,29 @@ def calculate_average_balance(transactions, start_date, end_date):
 def calculate_interest(principal, rate, days):
     """Calculate simple interest"""
     return (principal * rate * days) / (100 * 365)
+
+def image_to_base64(image_file):
+    """Convert uploaded image to base64 string for storage"""
+    if image_file is None:
+        return None
+    try:
+        image = Image.open(image_file)
+        buffered = BytesIO()
+        image.save(buffered, format="JPEG", quality=85)
+        return base64.b64encode(buffered.getvalue()).decode()
+    except Exception as e:
+        print(f"Error converting image: {e}")
+        return None
+
+def display_image_from_base64(base64_string):
+    """Display image from base64 string"""
+    if not base64_string:
+        return None
+    try:
+        return f"data:image/jpeg;base64,{base64_string}"
+    except Exception as e:
+        print(f"Error displaying image: {e}")
+        return None
 
 # ============== SB ACCOUNT FUNCTIONS ==============
 def create_sb_account(data, username):
@@ -741,11 +842,11 @@ def render_kyc_form():
         with col2:
             aadhar_number = st.text_input("Aadhaar Number (12 digits)*")
             if aadhar_number and not re.match(r'^\d{12}$', aadhar_number):
-                st.error("Invalid Aadhaar number. Must be 12 digits.")
+                st.error("❌ Invalid Aadhaar number. Must be 12 digits.")
             
             pan_number = st.text_input("PAN Number (e.g., ABCDE1234F)*")
             if pan_number and not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan_number):
-                st.error("Invalid PAN number. Format: ABCDE1234F")
+                st.error("❌ Invalid PAN number. Format: ABCDE1234F")
             
             document_type = st.selectbox("Document Type", ["SB Account", "Loan", "FD", "Other"])
         
@@ -819,7 +920,7 @@ def render_sb_account_creation():
         kyc_data = get_kyc(kyc_id)
         
         if kyc_data:
-            st.info(f"KYC Verified for: {kyc_data['customer_name']}")
+            st.info(f"✅ KYC Verified for: {kyc_data['customer_name']}")
             
             with st.form("sb_account_form"):
                 col1, col2 = st.columns(2)
@@ -877,7 +978,7 @@ def render_sb_account_creation():
                         else:
                             st.error(msg)
     else:
-        st.info("Please register KYC first before creating SB account.")
+        st.info("📋 Please register KYC first before creating SB account.")
 
 def render_sb_account_operations():
     """Render SB Account operations (Deposit, Withdraw, Interest)"""
@@ -902,8 +1003,8 @@ def render_sb_account_operations():
         account = get_sb_account(account_number)
         
         if account:
-            st.metric("Current Balance", f"₹{account['current_balance']:,.2f}")
-            st.caption(f"Interest Rate: {account['interest_rate']}%")
+            st.metric("💰 Current Balance", f"₹{account['current_balance']:,.2f}")
+            st.caption(f"📊 Interest Rate: {account['interest_rate']}%")
             
             col1, col2, col3 = st.columns(3)
             
@@ -1065,30 +1166,6 @@ def render_sb_account_list():
     df = pd.DataFrame(account_data)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
-# ============== IMAGE HELPER ==============
-def image_to_base64(image_file):
-    """Convert uploaded image to base64 string for storage"""
-    if image_file is None:
-        return None
-    try:
-        image = Image.open(image_file)
-        buffered = BytesIO()
-        image.save(buffered, format="JPEG", quality=85)
-        return base64.b64encode(buffered.getvalue()).decode()
-    except Exception as e:
-        print(f"Error converting image: {e}")
-        return None
-
-def display_image_from_base64(base64_string):
-    """Display image from base64 string"""
-    if not base64_string:
-        return None
-    try:
-        return f"data:image/jpeg;base64,{base64_string}"
-    except Exception as e:
-        print(f"Error displaying image: {e}")
-        return None
-
 # ============== LOGIN PAGE ==============
 def login_page():
     """Display login page"""
@@ -1121,36 +1198,6 @@ def login_page():
                 st.error(f"Login error: {str(e)}")
     
     st.caption("Default Users: admin/admin123, teller1/demo123, teller2/demo123, manager/demo123")
-
-def verify_user(username, password):
-    """Verify user credentials"""
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            return None
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE username = ? AND password_hash = ?', 
-                       (username, hash_password(password)))
-        user = cursor.fetchone()
-        conn.close()
-        
-        if user:
-            return {
-                'id': user[0],
-                'username': user[1],
-                'full_name': user[3],
-                'role': user[4],
-                'created_date': user[5],
-                'last_login': user[6] if len(user) > 6 else None
-            }
-    except Exception as e:
-        print(f"Error in verify_user: {e}")
-        return None
-    return None
-
-def hash_password(password):
-    """Hash password using SHA-256"""
-    return hashlib.sha256(password.encode()).hexdigest()
 
 def logout():
     """Logout user"""

@@ -1,11 +1,4 @@
-Here is the fixed, full code for your application.
 
-### What was fixed:
-
-1. **The Rerun Loop Trap Resolved:** `ensure_accounts_exist()` and `migrate_database()` are now safely protected using an initialization flag in `st.session_state`. They will **only execute once per browser session**, instead of locking the database file on every interaction or page switch.
-2. **Journal Loading Performance Improved:** Added an optimized date window filter or row limit fallback where the entries are retrieved, stopping long queries from locking up your multi-threaded database.
-
-```python
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -1422,5 +1415,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-```
 

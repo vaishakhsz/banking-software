@@ -63,7 +63,6 @@ def init_database():
         except:
             # If column doesn't exist, delete and recreate
             os.remove('banking_system.db')
-            st.warning("Database recreated with correct structure")
     
     conn = sqlite3.connect('banking_system.db', check_same_thread=False)
     c = conn.cursor()
@@ -262,6 +261,8 @@ def init_session_state():
         st.session_state.user_id = None
     if 'role' not in st.session_state:
         st.session_state.role = None
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "login"
 
 # Helper functions
 def get_db_connection():
@@ -288,7 +289,7 @@ def add_audit_log(user_id, action, table_affected, record_id, old_values=None, n
         conn.commit()
         conn.close()
     except Exception as e:
-        st.error(f"Audit log error: {e}")
+        pass  # Silently handle audit log errors
 
 def calculate_emi(principal, annual_rate, tenure_months):
     monthly_rate = annual_rate / (12 * 100)
@@ -336,29 +337,17 @@ def login_page():
                     
                     hashed_pw = hash_password(password)
                     
-                    # Debug: Show table structure
-                    c.execute("PRAGMA table_info(users)")
-                    columns = c.fetchall()
-                    
-                    # Check if password column exists
-                    column_names = [col[1] for col in columns]
-                    
-                    if 'password' not in column_names:
-                        st.error("Database structure is incorrect. Please restart the app.")
-                        st.info("Available columns: " + ", ".join(column_names))
-                        conn.close()
-                        return
-                    
                     c.execute("SELECT id, username, role, password FROM users WHERE username = ?", (username,))
                     user = c.fetchone()
                     
                     if user:
-                        stored_password = user[3]  # password is 4th column (index 3)
+                        stored_password = user[3]
                         if stored_password == hashed_pw:
                             st.session_state.logged_in = True
                             st.session_state.user_id = user[0]
                             st.session_state.username = user[1]
                             st.session_state.role = user[2]
+                            st.session_state.current_page = "customer_registration"
                             
                             add_audit_log(user[0], 'LOGIN', 'users', str(user[0]))
                             
@@ -372,7 +361,6 @@ def login_page():
                     conn.close()
                 except Exception as e:
                     st.error(f"Login error: {str(e)}")
-                    st.info("Try refreshing the page or clearing the app cache")
 
 # Customer Registration
 def customer_registration():
@@ -639,7 +627,7 @@ def main():
     # Initialize session state first
     init_session_state()
     
-    # Initialize database (this will recreate if structure is wrong)
+    # Initialize database
     try:
         init_database()
     except Exception as e:
@@ -650,39 +638,42 @@ def main():
             st.rerun()
         return
     
-    # Sidebar
-    with st.sidebar:
-        if st.session_state.logged_in:
-            st.markdown(f"### Welcome, {st.session_state.username}!")
-            st.markdown(f"**Role:** {st.session_state.role}")
-            st.markdown("---")
-            
-            # Navigation
-            menu_options = {
-                "📋 Customer Registration & KYC": customer_registration,
-                "💰 Account Management": account_management,
-            }
-            
-            selected_menu = st.radio("Select Module", list(menu_options.keys()))
-            
-            st.markdown("---")
-            if st.button("🚪 Logout", use_container_width=True):
-                if st.session_state.user_id:
-                    add_audit_log(st.session_state.user_id, 'LOGOUT', 'users', str(st.session_state.user_id))
-                st.session_state.logged_in = False
-                st.session_state.username = None
-                st.session_state.user_id = None
-                st.session_state.role = None
-                st.rerun()
-        else:
-            st.markdown("### Banking System")
-            st.info("Please login to access the system")
+    # Define menu options with string keys
+    menu_options = {
+        "📋 Customer Registration & KYC": "customer_registration",
+        "💰 Account Management": "account_management",
+    }
     
-    # Main content
-    if st.session_state.logged_in:
-        selected_menu()
-    else:
+    # If not logged in, show login page
+    if not st.session_state.logged_in:
         login_page()
+        return
+    
+    # Sidebar for logged-in users
+    with st.sidebar:
+        st.markdown(f"### Welcome, {st.session_state.username}!")
+        st.markdown(f"**Role:** {st.session_state.role}")
+        st.markdown("---")
+        
+        # Navigation
+        st.markdown("### Navigation")
+        selected_menu = st.radio("Select Module", list(menu_options.keys()))
+        
+        st.markdown("---")
+        if st.button("🚪 Logout", use_container_width=True):
+            if st.session_state.user_id:
+                add_audit_log(st.session_state.user_id, 'LOGOUT', 'users', str(st.session_state.user_id))
+            st.session_state.logged_in = False
+            st.session_state.username = None
+            st.session_state.user_id = None
+            st.session_state.role = None
+            st.rerun()
+    
+    # Main content - call appropriate function based on selection
+    if selected_menu == "📋 Customer Registration & KYC":
+        customer_registration()
+    elif selected_menu == "💰 Account Management":
+        account_management()
 
 if __name__ == "__main__":
     main()

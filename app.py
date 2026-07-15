@@ -49,212 +49,208 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Database initialization - MUST be called before any database operations
-@st.cache_resource
+# Database initialization
 def init_database():
     """Initialize database and create all tables"""
-    try:
-        conn = sqlite3.connect('banking_system.db', check_same_thread=False)
-        c = conn.cursor()
+    # Delete existing database if it has wrong structure
+    if os.path.exists('banking_system.db'):
+        try:
+            # Test if users table has correct structure
+            conn = sqlite3.connect('banking_system.db')
+            c = conn.cursor()
+            c.execute("SELECT password FROM users LIMIT 1")
+            conn.close()
+        except:
+            # If column doesn't exist, delete and recreate
+            os.remove('banking_system.db')
+            st.warning("Database recreated with correct structure")
+    
+    conn = sqlite3.connect('banking_system.db', check_same_thread=False)
+    c = conn.cursor()
+    
+    # Create all tables fresh
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'staff',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS customers (
+        customer_id TEXT PRIMARY KEY,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        date_of_birth DATE NOT NULL,
+        email TEXT UNIQUE,
+        phone TEXT,
+        address TEXT,
+        id_proof_type TEXT,
+        id_proof_number TEXT,
+        kyc_status TEXT DEFAULT 'pending',
+        kyc_date TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER,
+        FOREIGN KEY (created_by) REFERENCES users (id)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS accounts (
+        account_number TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        account_type TEXT NOT NULL,
+        balance REAL DEFAULT 0.00,
+        interest_rate REAL DEFAULT 0.00,
+        status TEXT DEFAULT 'active',
+        opened_date DATE NOT NULL,
+        closed_date DATE,
+        FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS transactions (
+        transaction_id TEXT PRIMARY KEY,
+        account_number TEXT NOT NULL,
+        transaction_type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        balance_before REAL,
+        balance_after REAL,
+        description TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (account_number) REFERENCES accounts (account_number)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS fixed_deposits (
+        fd_id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        principal_amount REAL NOT NULL,
+        interest_rate REAL NOT NULL,
+        tenure_months INTEGER NOT NULL,
+        start_date DATE NOT NULL,
+        maturity_date DATE NOT NULL,
+        maturity_amount REAL,
+        status TEXT DEFAULT 'active',
+        FOREIGN KEY (customer_id) REFERENCES customers (customer_id),
+        FOREIGN KEY (account_number) REFERENCES accounts (account_number)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (
+        rd_id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        monthly_amount REAL NOT NULL,
+        interest_rate REAL NOT NULL,
+        tenure_months INTEGER NOT NULL,
+        start_date DATE NOT NULL,
+        maturity_date DATE NOT NULL,
+        maturity_amount REAL,
+        installments_paid INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'active',
+        FOREIGN KEY (customer_id) REFERENCES customers (customer_id),
+        FOREIGN KEY (account_number) REFERENCES accounts (account_number)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS loans (
+        loan_id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        loan_type TEXT NOT NULL,
+        principal_amount REAL NOT NULL,
+        interest_rate REAL NOT NULL,
+        tenure_months INTEGER NOT NULL,
+        emi_amount REAL,
+        start_date DATE NOT NULL,
+        end_date DATE,
+        outstanding_amount REAL,
+        status TEXT DEFAULT 'active',
+        FOREIGN KEY (customer_id) REFERENCES customers (customer_id),
+        FOREIGN KEY (account_number) REFERENCES accounts (account_number)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS emi_payments (
+        payment_id TEXT PRIMARY KEY,
+        loan_id TEXT NOT NULL,
+        payment_date DATE NOT NULL,
+        amount REAL NOT NULL,
+        principal_component REAL,
+        interest_component REAL,
+        outstanding_after REAL,
+        FOREIGN KEY (loan_id) REFERENCES loans (loan_id)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (
+        voucher_id TEXT PRIMARY KEY,
+        voucher_date DATE NOT NULL,
+        narration TEXT,
+        total_amount REAL,
+        status TEXT DEFAULT 'draft',
+        created_by INTEGER,
+        approved_by INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (created_by) REFERENCES users (id),
+        FOREIGN KEY (approved_by) REFERENCES users (id)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
+        entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        voucher_id TEXT NOT NULL,
+        account_head TEXT NOT NULL,
+        debit_amount REAL DEFAULT 0.00,
+        credit_amount REAL DEFAULT 0.00,
+        FOREIGN KEY (voucher_id) REFERENCES journal_vouchers (voucher_id)
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS chart_of_accounts (
+        account_head TEXT PRIMARY KEY,
+        account_type TEXT NOT NULL,
+        category TEXT NOT NULL
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
+        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        action TEXT NOT NULL,
+        table_affected TEXT,
+        record_id TEXT,
+        old_values TEXT,
+        new_values TEXT,
+        ip_address TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
+    # Insert default users if not exists
+    c.execute("SELECT COUNT(*) FROM users")
+    if c.fetchone()[0] == 0:
+        # Create admin user - password: admin123
+        admin_password = hashlib.sha256('admin123'.encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                 ('admin', admin_password, 'admin'))
         
-        # Enable WAL mode for better concurrent access
-        c.execute("PRAGMA journal_mode=WAL")
-        
-        # Users table
-        c.execute('''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
-        
-        # Customers table with KYC
-        c.execute('''CREATE TABLE IF NOT EXISTS customers (
-            customer_id TEXT PRIMARY KEY,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            date_of_birth DATE NOT NULL,
-            email TEXT UNIQUE,
-            phone TEXT,
-            address TEXT,
-            id_proof_type TEXT,
-            id_proof_number TEXT,
-            kyc_status TEXT DEFAULT 'pending',
-            kyc_date TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_by INTEGER,
-            FOREIGN KEY (created_by) REFERENCES users (id)
-        )''')
-        
-        # Accounts table
-        c.execute('''CREATE TABLE IF NOT EXISTS accounts (
-            account_number TEXT PRIMARY KEY,
-            customer_id TEXT NOT NULL,
-            account_type TEXT NOT NULL,
-            balance DECIMAL(15,2) DEFAULT 0.00,
-            interest_rate DECIMAL(5,2) DEFAULT 0.00,
-            status TEXT DEFAULT 'active',
-            opened_date DATE NOT NULL,
-            closed_date DATE,
-            FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
-        )''')
-        
-        # Transactions table
-        c.execute('''CREATE TABLE IF NOT EXISTS transactions (
-            transaction_id TEXT PRIMARY KEY,
-            account_number TEXT NOT NULL,
-            transaction_type TEXT NOT NULL,
-            amount DECIMAL(15,2) NOT NULL,
-            balance_before DECIMAL(15,2),
-            balance_after DECIMAL(15,2),
-            description TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (account_number) REFERENCES accounts (account_number)
-        )''')
-        
-        # FD/RD Accounts
-        c.execute('''CREATE TABLE IF NOT EXISTS fixed_deposits (
-            fd_id TEXT PRIMARY KEY,
-            customer_id TEXT NOT NULL,
-            account_number TEXT NOT NULL,
-            principal_amount DECIMAL(15,2) NOT NULL,
-            interest_rate DECIMAL(5,2) NOT NULL,
-            tenure_months INTEGER NOT NULL,
-            start_date DATE NOT NULL,
-            maturity_date DATE NOT NULL,
-            maturity_amount DECIMAL(15,2),
-            status TEXT DEFAULT 'active',
-            FOREIGN KEY (customer_id) REFERENCES customers (customer_id),
-            FOREIGN KEY (account_number) REFERENCES accounts (account_number)
-        )''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (
-            rd_id TEXT PRIMARY KEY,
-            customer_id TEXT NOT NULL,
-            account_number TEXT NOT NULL,
-            monthly_amount DECIMAL(15,2) NOT NULL,
-            interest_rate DECIMAL(5,2) NOT NULL,
-            tenure_months INTEGER NOT NULL,
-            start_date DATE NOT NULL,
-            maturity_date DATE NOT NULL,
-            maturity_amount DECIMAL(15,2),
-            installments_paid INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'active',
-            FOREIGN KEY (customer_id) REFERENCES customers (customer_id),
-            FOREIGN KEY (account_number) REFERENCES accounts (account_number)
-        )''')
-        
-        # Loans table
-        c.execute('''CREATE TABLE IF NOT EXISTS loans (
-            loan_id TEXT PRIMARY KEY,
-            customer_id TEXT NOT NULL,
-            account_number TEXT NOT NULL,
-            loan_type TEXT NOT NULL,
-            principal_amount DECIMAL(15,2) NOT NULL,
-            interest_rate DECIMAL(5,2) NOT NULL,
-            tenure_months INTEGER NOT NULL,
-            emi_amount DECIMAL(15,2),
-            start_date DATE NOT NULL,
-            end_date DATE,
-            outstanding_amount DECIMAL(15,2),
-            status TEXT DEFAULT 'active',
-            FOREIGN KEY (customer_id) REFERENCES customers (customer_id),
-            FOREIGN KEY (account_number) REFERENCES accounts (account_number)
-        )''')
-        
-        # EMI Payments
-        c.execute('''CREATE TABLE IF NOT EXISTS emi_payments (
-            payment_id TEXT PRIMARY KEY,
-            loan_id TEXT NOT NULL,
-            payment_date DATE NOT NULL,
-            amount DECIMAL(15,2) NOT NULL,
-            principal_component DECIMAL(15,2),
-            interest_component DECIMAL(15,2),
-            outstanding_after DECIMAL(15,2),
-            FOREIGN KEY (loan_id) REFERENCES loans (loan_id)
-        )''')
-        
-        # Journal Vouchers
-        c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (
-            voucher_id TEXT PRIMARY KEY,
-            voucher_date DATE NOT NULL,
-            narration TEXT,
-            total_amount DECIMAL(15,2),
-            status TEXT DEFAULT 'draft',
-            created_by INTEGER,
-            approved_by INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (created_by) REFERENCES users (id),
-            FOREIGN KEY (approved_by) REFERENCES users (id)
-        )''')
-        
-        # Journal Voucher Entries
-        c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
-            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            voucher_id TEXT NOT NULL,
-            account_head TEXT NOT NULL,
-            debit_amount DECIMAL(15,2) DEFAULT 0.00,
-            credit_amount DECIMAL(15,2) DEFAULT 0.00,
-            FOREIGN KEY (voucher_id) REFERENCES journal_vouchers (voucher_id)
-        )''')
-        
-        # Chart of Accounts
-        c.execute('''CREATE TABLE IF NOT EXISTS chart_of_accounts (
-            account_head TEXT PRIMARY KEY,
-            account_type TEXT NOT NULL,
-            category TEXT NOT NULL
-        )''')
-        
-        # Audit Logs
-        c.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
-            log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            action TEXT NOT NULL,
-            table_affected TEXT,
-            record_id TEXT,
-            old_values TEXT,
-            new_values TEXT,
-            ip_address TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
-        
-        # Insert default admin user if not exists
-        c.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
-        if c.fetchone()[0] == 0:
-            admin_password = hashlib.sha256('admin123'.encode()).hexdigest()
-            c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                     ('admin', admin_password, 'admin'))
-            
-            # Insert default staff user
-            staff_password = hashlib.sha256('staff123'.encode()).hexdigest()
-            c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                     ('staff', staff_password, 'staff'))
-        
-        # Insert default chart of accounts if not exists
-        default_accounts = [
-            ('CASH', 'asset', 'current_asset'),
-            ('BANK', 'asset', 'current_asset'),
-            ('LOANS_RECEIVABLE', 'asset', 'current_asset'),
-            ('FIXED_DEPOSITS', 'asset', 'non_current_asset'),
-            ('CUSTOMER_DEPOSITS', 'liability', 'current_liability'),
-            ('SAVINGS_DEPOSITS', 'liability', 'current_liability'),
-            ('CURRENT_DEPOSITS', 'liability', 'current_liability'),
-            ('INTEREST_INCOME', 'income', 'operating_income'),
-            ('INTEREST_EXPENSE', 'expense', 'operating_expense'),
-            ('SALARY', 'expense', 'operating_expense'),
-            ('RENT', 'expense', 'operating_expense'),
-            ('UTILITIES', 'expense', 'operating_expense'),
-        ]
-        
-        for account in default_accounts:
-            c.execute("INSERT OR IGNORE INTO chart_of_accounts (account_head, account_type, category) VALUES (?, ?, ?)", account)
-        
-        conn.commit()
-        return conn
-    except Exception as e:
-        st.error(f"Database initialization error: {e}")
-        return None
+        # Create staff user - password: staff123
+        staff_password = hashlib.sha256('staff123'.encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                 ('staff', staff_password, 'staff'))
+    
+    # Insert default chart of accounts
+    default_accounts = [
+        ('CASH', 'asset', 'current_asset'),
+        ('BANK', 'asset', 'current_asset'),
+        ('LOANS_RECEIVABLE', 'asset', 'current_asset'),
+        ('FIXED_DEPOSITS', 'asset', 'non_current_asset'),
+        ('CUSTOMER_DEPOSITS', 'liability', 'current_liability'),
+        ('SAVINGS_DEPOSITS', 'liability', 'current_liability'),
+        ('CURRENT_DEPOSITS', 'liability', 'current_liability'),
+        ('INTEREST_INCOME', 'income', 'operating_income'),
+        ('INTEREST_EXPENSE', 'expense', 'operating_expense'),
+        ('SALARY', 'expense', 'operating_expense'),
+        ('RENT', 'expense', 'operating_expense'),
+        ('UTILITIES', 'expense', 'operating_expense'),
+    ]
+    
+    for account in default_accounts:
+        c.execute("INSERT OR IGNORE INTO chart_of_accounts (account_head, account_type, category) VALUES (?, ?, ?)", account)
+    
+    conn.commit()
+    return conn
 
 # Session state initialization
 def init_session_state():
@@ -281,19 +277,18 @@ def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def add_audit_log(user_id, action, table_affected, record_id, old_values=None, new_values=None):
-    conn = get_db_connection()
-    c = conn.cursor()
     try:
+        conn = get_db_connection()
+        c = conn.cursor()
         c.execute("""INSERT INTO audit_logs (user_id, action, table_affected, record_id, old_values, new_values) 
                      VALUES (?, ?, ?, ?, ?, ?)""",
                   (user_id, action, table_affected, record_id, 
                    json.dumps(old_values) if old_values else None,
                    json.dumps(new_values) if new_values else None))
         conn.commit()
+        conn.close()
     except Exception as e:
         st.error(f"Audit log error: {e}")
-    finally:
-        conn.close()
 
 def calculate_emi(principal, annual_rate, tenure_months):
     monthly_rate = annual_rate / (12 * 100)
@@ -302,21 +297,21 @@ def calculate_emi(principal, annual_rate, tenure_months):
 
 def calculate_fd_maturity(principal, annual_rate, tenure_months):
     rate = annual_rate / 100
-    n = 4  # Quarterly compounding
+    n = 4
     t = tenure_months / 12
     amount = principal * (1 + rate/n) ** (n * t)
     return round(amount, 2)
 
 def calculate_rd_maturity(monthly_amount, annual_rate, tenure_months):
     rate = annual_rate / 100
-    n = 4  # Quarterly compounding for RD
+    n = 4
     total = 0
     for i in range(tenure_months):
         remaining_months = tenure_months - i
         total += monthly_amount * (1 + rate/n) ** (n * remaining_months/12)
     return round(total, 2)
 
-# Part 1: Login
+# Login Page
 def login_page():
     st.markdown('<h1 class="main-header">🏦 Banking Management System</h1>', unsafe_allow_html=True)
     
@@ -328,7 +323,7 @@ def login_page():
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Login")
+            submit = st.form_submit_button("Login", use_container_width=True)
             
             if submit:
                 if not username or not password:
@@ -340,27 +335,46 @@ def login_page():
                     c = conn.cursor()
                     
                     hashed_pw = hash_password(password)
-                    c.execute("SELECT id, username, role FROM users WHERE username = ? AND password = ?", 
-                             (username, hashed_pw))
+                    
+                    # Debug: Show table structure
+                    c.execute("PRAGMA table_info(users)")
+                    columns = c.fetchall()
+                    
+                    # Check if password column exists
+                    column_names = [col[1] for col in columns]
+                    
+                    if 'password' not in column_names:
+                        st.error("Database structure is incorrect. Please restart the app.")
+                        st.info("Available columns: " + ", ".join(column_names))
+                        conn.close()
+                        return
+                    
+                    c.execute("SELECT id, username, role, password FROM users WHERE username = ?", (username,))
                     user = c.fetchone()
                     
                     if user:
-                        st.session_state.logged_in = True
-                        st.session_state.user_id = user[0]
-                        st.session_state.username = user[1]
-                        st.session_state.role = user[2]
-                        
-                        add_audit_log(user[0], 'LOGIN', 'users', str(user[0]))
-                        
-                        st.success("Login successful!")
-                        st.rerun()
+                        stored_password = user[3]  # password is 4th column (index 3)
+                        if stored_password == hashed_pw:
+                            st.session_state.logged_in = True
+                            st.session_state.user_id = user[0]
+                            st.session_state.username = user[1]
+                            st.session_state.role = user[2]
+                            
+                            add_audit_log(user[0], 'LOGIN', 'users', str(user[0]))
+                            
+                            st.success("Login successful!")
+                            st.rerun()
+                        else:
+                            st.error("Invalid password")
                     else:
-                        st.error("Invalid credentials")
+                        st.error("User not found")
+                    
                     conn.close()
                 except Exception as e:
-                    st.error(f"Login error: {e}")
+                    st.error(f"Login error: {str(e)}")
+                    st.info("Try refreshing the page or clearing the app cache")
 
-# Part 2: Customer Registration
+# Customer Registration
 def customer_registration():
     st.markdown('<h2 class="sub-header">Customer Registration & KYC</h2>', unsafe_allow_html=True)
     
@@ -434,7 +448,7 @@ def customer_registration():
     except Exception as e:
         st.error(f"Error loading customers: {e}")
 
-# Part 3: Account Management
+# Account Management
 def account_management():
     st.markdown('<h2 class="sub-header">Account Management</h2>', unsafe_allow_html=True)
     
@@ -462,7 +476,7 @@ def account_management():
                         initial_deposit = st.number_input("Initial Deposit", min_value=0.0, value=500.0, step=100.0)
                     
                     if account_type == "Savings Account":
-                        interest_rate = st.number_input("Interest Rate (%)", min_value=0.0, value=4.0, step=0.25)
+                        interest_rate = 4.0
                         min_balance = 500.0
                     else:
                         interest_rate = 0.0
@@ -492,7 +506,7 @@ def account_management():
                                             balance_before, balance_after, description)
                                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
                                         (trans_id, account_number, 'deposit', initial_deposit,
-                                         0.0, initial_deposit, 'Initial deposit - Account opening'))
+                                         0.0, initial_deposit, 'Initial deposit'))
                             
                             conn.commit()
                             add_audit_log(st.session_state.user_id, 'CREATE', 'accounts', account_number,
@@ -525,7 +539,7 @@ def account_management():
                     
                     if st.form_submit_button("Deposit"):
                         acc_data = account_options[selected_account]
-                        new_balance = acc_data[3] + amount
+                        new_balance = float(acc_data[3]) + amount
                         
                         conn = get_db_connection()
                         c = conn.cursor()
@@ -570,7 +584,7 @@ def account_management():
                     description = st.text_input("Description")
                     
                     if st.form_submit_button("Withdraw"):
-                        new_balance = acc_data[3] - amount
+                        new_balance = float(acc_data[3]) - amount
                         
                         conn = get_db_connection()
                         c = conn.cursor()
@@ -620,12 +634,21 @@ def account_management():
     except Exception as e:
         st.error(f"Error loading accounts: {e}")
 
-# Main navigation
+# Main App
 def main():
+    # Initialize session state first
     init_session_state()
     
-    # Initialize database first
-    init_database()
+    # Initialize database (this will recreate if structure is wrong)
+    try:
+        init_database()
+    except Exception as e:
+        st.error(f"Database initialization error: {e}")
+        if st.button("Reset Database"):
+            if os.path.exists('banking_system.db'):
+                os.remove('banking_system.db')
+            st.rerun()
+        return
     
     # Sidebar
     with st.sidebar:
@@ -663,5 +686,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-     
 

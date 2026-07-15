@@ -6,6 +6,7 @@ import hashlib
 import os
 import time
 import re
+import traceback
 
 # ============== DATABASE SETUP ==============
 DB_FILE = "banking_system.db"
@@ -122,8 +123,8 @@ def init_db():
     c.execute("SELECT * FROM users WHERE username='admin'")
     if not c.fetchone():
         hashed = hashlib.sha256("admin123".encode()).hexdigest()
-        c.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?)", 
-                 (None, "admin", hashed, "Administrator", "admin"))
+        c.execute("INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)", 
+                 ("admin", hashed, "Administrator", "admin"))
     
     # Insert default accounts
     c.execute("SELECT * FROM accounts")
@@ -393,25 +394,6 @@ def get_profit_loss():
     return income, expenses
 
 # ============== UI ==============
-def login_page():
-    st.title("🏦 Complete Banking System")
-    st.subheader("🔐 Login")
-    
-    if not os.path.exists(DB_FILE):
-        init_db()
-    
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.form_submit_button("Login"):
-            user = verify_user(username, password)
-            if user:
-                st.session_state.logged_in = True
-                st.session_state.user = user
-                st.rerun()
-            else:
-                st.error("Invalid credentials")
-
 def display_account_card(code, icon, color):
     accounts = get_accounts()
     if code not in accounts:
@@ -428,15 +410,43 @@ def display_account_card(code, icon, color):
     </div>
     """, unsafe_allow_html=True)
 
+def login_page():
+    st.title("🏦 Complete Banking System")
+    st.subheader("🔐 Login")
+    
+    if not os.path.exists(DB_FILE):
+        init_db()
+    
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Login")
+        
+        if submit:
+            user = verify_user(username, password)
+            if user:
+                st.session_state.logged_in = True
+                st.session_state.user = user
+                st.success(f"Welcome, {user['full_name']}!")
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
+
 def main():
     try:
+        # Initialize database if not exists
         if not os.path.exists(DB_FILE):
             init_db()
         
-        if 'logged_in' not in st.session_state or not st.session_state.logged_in:
+        # Check if user is logged in
+        if 'logged_in' not in st.session_state:
+            st.session_state.logged_in = False
+        
+        if not st.session_state.logged_in:
             login_page()
             return
         
+        # Get user from session state
         user = st.session_state.user
         
         # Header
@@ -449,6 +459,7 @@ def main():
         with col3:
             if st.button("🚪 Logout"):
                 st.session_state.logged_in = False
+                st.session_state.user = None
                 st.rerun()
         
         st.divider()
@@ -736,7 +747,7 @@ def main():
                 st.info("No accounts")
     
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(f"An error occurred: {str(e)}")
         print(traceback.format_exc())
 
 if __name__ == "__main__":

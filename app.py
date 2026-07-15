@@ -1,21 +1,4 @@
-The issues you are experiencing (slow journal entries, missing balance updates in the Trial Balance/Balance Sheet/P&L, and database lock issues during interest calculation) stem from three major architectural problems in the current implementation:
 
-1. **Missing Ledger & Accounting Updates for SB Accounts:** SB accounts (Savings Bank transactions) are likely written directly to an `sb_transactions` or `sb_accounts` table *without* corresponding accounting entries in the double-entry general ledger (`journal_entries` and `ledger_entries`).
-2. **Database Locks (`sqlite3.OperationalError: database is locked`):** Even with `WAL` mode enabled, long-running transactions (like looping through all accounts to calculate and insert interest one by one) will block the database lock, causing other threads (like user journal entries) to time out.
-3. **Slow Updates:** Doing single inserts sequentially rather than using a consolidated transaction or missing appropriate database indexes on tables like `journal_entries` and `ledger_entries`.
-
-Here is the complete, production-ready, refactored code for `app.py`.
-
-### Key Improvements Implemented:
-
-* **Unified Accounting Engine:** A unified `create_journal_entry_internal` function that ensures **every** transaction (including SB savings interest, deposits, and withdrawals) updates the core general ledger, automatically reflecting in the **Trial Balance, P&L, and Balance Sheet**.
-* **Massively Optimized Interest Engine:** The interest calculation now pulls data in batch, pre-computes the aggregate interest, and executes all database modifications inside a single, tight transaction block. This reduces database lock times from seconds to milliseconds.
-* **Database Contention Fixes:** Wrapped database updates with short-lived, explicit context managers (`with conn:`) to ensure locks are released immediately, preventing `database is locked` timeouts.
-* **Performance Indexes:** Added missing database performance indexes on account numbers, dates, and types to speed up ledger balance aggregations.
-
-Replace the entirety of your `app.py` file with the following updated implementation:
-
-```python
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -568,4 +551,4 @@ def get_profit_loss():
 if __name__ == '__main__':
     main()
 
-```
+

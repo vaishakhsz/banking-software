@@ -858,9 +858,9 @@ class SBAccountModule:
                 conn.close()
                 return False, "Customer KYC not verified"
             
-            if initial_deposit < 500:
+            if initial_deposit > 0:
                 conn.close()
-                return False, "Minimum initial deposit is ₹500"
+                return False, "Minimum initial deposit is ₹0"
             
             account_number = SBAccountModule.generate_account_number()
             today = datetime.now().date()

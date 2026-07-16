@@ -1,28 +1,6 @@
-To build a complete, highly reliable Core Banking & ERP application in Streamlit without falling into execution loops or database locks, the architecture must handle data mutations efficiently.
-
-Below is the architecture outline and the complete production-grade code incorporating **Savings Bank (SB) Portfolios**, **Fixed Deposit / Recurring Deposit (FD/RD) Systems**, **Double-Entry Voucher Bookings**, and an automated accounting ledger matrix (**Trial Balance**, **Profit & Loss**, and dynamic internal validations).
-
----
-
-### 🏛️ Architecture & System Design Highlights
-
-* **Session-Isolated DB Initialization:** To prevent infinite loading screen traps caused by Streamlit's structural reruns, database structure creation and migrations are wrapped inside a session state conditional initialization gate (`st.session_state.db_initialized`).
-* **Thread-Safe WAL SQLite Mode:** The database backend operates with a local thread lock, `WAL` (Write-Ahead Logging) journal mode, and elevated busy timeout thresholds ($60,000\text{ ms}$) to prevent multi-session locking during concurrent ledger posting operations.
-* **Pure Double-Entry Validation:** Every financial transaction—whether an SB cash deposit, an FD booking, or a custom journal entry—mandates that the mathematical summation of Debits exactly matches Credits ($\sum \text{Debits} = \sum \text{Credits}$) prior to committing to the ledger.
-* **Cross-Module Accounting Engine:** All dynamic components seamlessly post to predefined chart of accounts ledger heads:
-* **1000 (CASH / ASSET)**: Liquid funds tracking cash counter operations.
-* **2100 (CUSTOMER DEPOSITS / LIABILITY)**: Active Savings Account (SB) balances.
-* **2200 (FD LIABILITY / LIABILITY)**: Active Fixed Deposit liability holdings.
-* **4100 (INTEREST INCOME / INCOME)**: Yield earned on financing loops.
-* **5999 (SB INTEREST EXPENSE / EXPENSE)**: Accumulating cost of customer deposits.
 
 
 
----
-
-### 💻 The Complete Production-Ready Code
-
-```python
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -792,4 +770,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-```
+

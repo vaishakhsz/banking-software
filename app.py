@@ -977,74 +977,237 @@ class SBAccountModule:
             return False, str(e)
     
     @staticmethod
+    def preview_interest(account_number):
+        """Preview estimated interest for an account"""
+        conn = db.get_connection()
+        c = conn.cursor()
+        try:
+            c.execute("SELECT balance, interest_rate, last_interest_date, opened_date FROM sb_accounts WHERE account_number = ? AND status = 'Active'", (account_number,))
+            account = c.fetchone()
+            if not account:
+                conn.close()
+                return False, "Account not found"
+            
+            current_balance, rate, last_int_date, opened_date = account
+            today = datetime.now().date()
+            
+            # Determine current quarter
+            current_month = today.month
+            if current_month in [1, 2, 3]:
+                quarter_start = datetime(today.year, 1, 1).date()
+            elif current_month in [4, 5, 6]:
+                quarter_start = datetime(today.year, 4, 1).date()
+            elif current_month in [7, 8, 9]:
+                quarter_start = datetime(today.year, 7, 1).date()
+            else:
+                quarter_start = datetime(today.year, 10, 1).date()
+            
+            calc_start = max(last_int_date or opened_date, quarter_start)
+            days = (today - calc_start).days
+            
+            daily_rate = rate / 36500
+            estimated_interest = round(current_balance * daily_rate * days, 2)
+            
+            conn.close()
+            return True, {
+                'account': account_number,
+                'current_balance': current_balance,
+                'rate': rate,
+                'period_start': calc_start,
+                'days_elapsed': days,
+                'estimated_interest': estimated_interest
+            }
+        except Exception as e:
+            conn.close()
+            return False, str(e)
+    
+    @staticmethod
     def calculate_quarterly_interest(account_number=None, created_by=None):
+        """Calculate and credit quarterly interest based on daily minimum balance"""
         conn = db.get_connection()
         c = conn.cursor()
         
         try:
             today = datetime.now().date()
-            quarter_start = today - relativedelta(months=3)
             
+            # Determine current quarter
+            current_month = today.month
+            if current_month in [1, 2, 3]:
+                quarter_start = datetime(today.year, 1, 1).date()
+                quarter_end = min(today, datetime(today.year, 3, 31).date())
+            elif current_month in [4, 5, 6]:
+                quarter_start = datetime(today.year, 4, 1).date()
+                quarter_end = min(today, datetime(today.year, 6, 30).date())
+            elif current_month in [7, 8, 9]:
+                quarter_start = datetime(today.year, 7, 1).date()
+                quarter_end = min(today, datetime(today.year, 9, 30).date())
+            else:
+                quarter_start = datetime(today.year, 10, 1).date()
+                quarter_end = min(today, datetime(today.year, 12, 31).date())
+            
+            # Get accounts eligible for interest
             if account_number:
                 c.execute("""
-                    SELECT account_number, balance, interest_rate, last_interest_date 
+                    SELECT account_number, balance, interest_rate, last_interest_date, opened_date
                     FROM sb_accounts 
                     WHERE account_number = ? AND status = 'Active'
                 """, (account_number,))
             else:
                 c.execute("""
-                    SELECT account_number, balance, interest_rate, last_interest_date 
+                    SELECT account_number, balance, interest_rate, last_interest_date, opened_date
                     FROM sb_accounts 
-                    WHERE status = 'Active' AND last_interest_date <= ?
-                """, (today - relativedelta(months=3),))
+                    WHERE status = 'Active' 
+                    AND (last_interest_date IS NULL OR last_interest_date < ?)
+                """, (quarter_start,))
             
             accounts = c.fetchall()
             results = []
             
             for account in accounts:
-                acc_num, balance, rate, last_int_date = account
+                acc_num, current_balance, rate, last_int_date, opened_date = account
+                
+                # Determine calculation start date
+                if last_int_date and last_int_date > quarter_start:
+                    calc_start = last_int_date
+                elif opened_date > quarter_start:
+                    calc_start = opened_date
+                else:
+                    calc_start = quarter_start
+                
+                days_in_period = (quarter_end - calc_start).days
+                
+                if days_in_period <= 0:
+                    continue
+                
+                # Get daily balances for the period
+                daily_balances = []
                 
                 c.execute("""
-                    SELECT MIN(balance_after) FROM sb_transactions 
-                    WHERE account_number = ? AND created_at >= ? AND created_at <= ?
-                """, (acc_num, quarter_start, today))
+                    SELECT DATE(created_at), balance_after 
+                    FROM sb_transactions 
+                    WHERE account_number = ? AND DATE(created_at) BETWEEN ? AND ?
+                    ORDER BY created_at ASC
+                """, (acc_num, calc_start, quarter_end))
                 
-                min_balance_result = c.fetchone()
-                min_balance = min_balance_result[0] if min_balance_result and min_balance_result[0] else balance
+                transactions = c.fetchall()
                 
-                quarterly_rate = rate / 400
-                interest = round(min_balance * quarterly_rate, 2)
+                current_date = calc_start
+                current_daily_balance = None
+                
+                if transactions:
+                    for txn in transactions:
+                        txn_date = datetime.strptime(txn[0], '%Y-%m-%d').date()
+                        
+                        # Fill days before this transaction
+                        while current_date < txn_date and current_date <= quarter_end:
+                            if current_daily_balance is None:
+                                c.execute("""
+                                    SELECT balance_after FROM sb_transactions 
+                                    WHERE account_number = ? AND DATE(created_at) < ?
+                                    ORDER BY created_at DESC LIMIT 1
+                                """, (acc_num, current_date))
+                                prev = c.fetchone()
+                                current_daily_balance = prev[0] if prev else current_balance
+                            daily_balances.append(current_daily_balance)
+                            current_date += timedelta(days=1)
+                        
+                        current_daily_balance = txn[1]
+                        daily_balances.append(current_daily_balance)
+                        current_date = txn_date + timedelta(days=1)
+                    
+                    # Fill remaining days
+                    while current_date <= quarter_end:
+                        if current_daily_balance is None:
+                            current_daily_balance = current_balance
+                        daily_balances.append(current_daily_balance)
+                        current_date += timedelta(days=1)
+                else:
+                    # No transactions - use current balance for all days
+                    c.execute("""
+                        SELECT balance_after FROM sb_transactions 
+                        WHERE account_number = ? AND DATE(created_at) < ?
+                        ORDER BY created_at DESC LIMIT 1
+                    """, (acc_num, calc_start))
+                    prev = c.fetchone()
+                    daily_balance = prev[0] if prev else current_balance
+                    daily_balances = [daily_balance] * days_in_period
+                
+                if not daily_balances:
+                    daily_balances = [current_balance] * days_in_period
+                
+                # Calculate minimum monthly balances
+                monthly_mins = []
+                month_start = calc_start
+                
+                while month_start <= quarter_end:
+                    # Get last day of month
+                    if month_start.month == 12:
+                        month_end = datetime(month_start.year, 12, 31).date()
+                    else:
+                        month_end = datetime(month_start.year, month_start.month + 1, 1).date() - timedelta(days=1)
+                    month_end = min(month_end, quarter_end)
+                    
+                    start_idx = (month_start - calc_start).days
+                    end_idx = min((month_end - calc_start).days + 1, len(daily_balances))
+                    
+                    if start_idx < len(daily_balances):
+                        month_balances = daily_balances[start_idx:end_idx]
+                        if month_balances:
+                            monthly_mins.append(min(month_balances))
+                    
+                    month_start = month_end + timedelta(days=1)
+                
+                if monthly_mins:
+                    min_balance = min(monthly_mins)
+                else:
+                    min_balance = min(daily_balances)
+                
+                # Calculate interest using daily rate
+                daily_rate = rate / 36500  # rate/100/365
+                interest = round(min_balance * daily_rate * days_in_period, 2)
                 
                 if interest > 0:
-                    new_balance = balance + interest
+                    new_balance = current_balance + interest
                     c.execute("UPDATE sb_accounts SET balance = ?, last_interest_date = ? WHERE account_number = ?",
-                             (new_balance, today, acc_num))
+                             (new_balance, quarter_end, acc_num))
                     
+                    # Record interest transaction
                     txn_id = f"INT{uuid.uuid4().hex[:8].upper()}"
+                    quarter_num = ((quarter_end.month - 1) // 3) + 1
                     c.execute("""
                         INSERT INTO sb_transactions 
                         (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (txn_id, acc_num, 'Interest_Credit', interest, balance, new_balance, f'Quarterly Interest Q{((today.month-1)//3)+1} {today.year}', created_by))
+                        VALUES (?, ?, 'Interest_Credit', ?, ?, ?, ?, ?)
+                    """, (txn_id, acc_num, interest, current_balance, new_balance, 
+                          f'Quarterly Interest Q{quarter_num} {quarter_end.year} ({days_in_period} days)', created_by))
                     
+                    # DOUBLE-ENTRY: Debit INTEREST_ON_SB (Expense), Credit SB_ACCOUNTS (Liability)
                     voucher_id = JournalVoucherModule.create_auto_voucher(
-                        'Interest', today, f'Quarterly interest credited to {acc_num}', created_by,
+                        'Interest', quarter_end, 
+                        f'Quarterly interest credited to {acc_num} for Q{quarter_num} {quarter_end.year}',
+                        created_by,
                         [('INTEREST_ON_SB', interest, 0), ('SB_ACCOUNTS', 0, interest)]
                     )
                     
-                    c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
+                    c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", 
+                             (voucher_id, txn_id))
                     
+                    # Record interest calculation details
                     c.execute("""
                         INSERT INTO interest_calculations 
-                        (account_number, interest_period_start, interest_period_end, minimum_balance, interest_rate, interest_amount, is_credited, voucher_id)
+                        (account_number, interest_period_start, interest_period_end, minimum_balance, 
+                         interest_rate, interest_amount, is_credited, voucher_id)
                         VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-                    """, (acc_num, quarter_start, today, min_balance, rate, interest, voucher_id))
+                    """, (acc_num, calc_start, quarter_end, min_balance, rate, interest, voucher_id))
                     
                     results.append({
                         'account': acc_num,
-                        'min_balance': min_balance,
-                        'interest': interest,
-                        'new_balance': new_balance
+                        'period': f"{calc_start} to {quarter_end}",
+                        'days': days_in_period,
+                        'min_balance': f"₹{min_balance:,.2f}",
+                        'rate': f"{rate}%",
+                        'interest': f"₹{interest:,.2f}",
+                        'new_balance': f"₹{new_balance:,.2f}"
                     })
             
             conn.commit()
@@ -1270,6 +1433,7 @@ class FinancialReportingModule:
                 coa.account_head,
                 coa.account_name,
                 coa.account_type,
+                coa.category,
                 COALESCE(SUM(je.debit_amount), 0) as total_debit,
                 COALESCE(SUM(je.credit_amount), 0) as total_credit
             FROM chart_of_accounts coa
@@ -1277,7 +1441,7 @@ class FinancialReportingModule:
             LEFT JOIN journal_vouchers jv ON je.voucher_id = jv.voucher_id AND jv.voucher_date <= ? AND jv.status = 'Approved'
             WHERE coa.is_active = 1
             GROUP BY coa.account_head
-            ORDER BY coa.account_type, coa.account_head
+            ORDER BY coa.account_type, coa.category, coa.account_head
         """, (as_of_date,))
         
         data = c.fetchall()
@@ -1288,7 +1452,7 @@ class FinancialReportingModule:
         total_credit = 0
         
         for row in data:
-            net = row[3] - row[4]
+            net = row[4] - row[5]
             if net > 0:
                 dr_balance, cr_balance = net, 0
             else:
@@ -1297,32 +1461,93 @@ class FinancialReportingModule:
             total_debit += dr_balance
             total_credit += cr_balance
             
-            result.append({
-                'account_head': row[0],
-                'account_name': row[1],
-                'account_type': row[2],
-                'debit': dr_balance,
-                'credit': cr_balance
-            })
+            if dr_balance > 0 or cr_balance > 0:
+                result.append({
+                    'account_head': row[0],
+                    'account_name': row[1],
+                    'account_type': row[2],
+                    'category': row[3],
+                    'debit': dr_balance,
+                    'credit': cr_balance
+                })
         
         return result, total_debit, total_credit
     
     @staticmethod
     def get_balance_sheet(as_of_date=None):
+        """Generate Balance Sheet with proper SB Account liabilities"""
         if as_of_date is None:
             as_of_date = datetime.now().date()
         
-        trial_balance, _, _ = FinancialReportingModule.get_trial_balance(as_of_date)
+        conn = db.get_connection()
+        c = conn.cursor()
         
-        assets = [item for item in trial_balance if item['account_type'] == 'Asset' and (item['debit'] > 0 or item['credit'] > 0)]
-        liabilities = [item for item in trial_balance if item['account_type'] == 'Liability' and (item['debit'] > 0 or item['credit'] > 0)]
-        equity = [item for item in trial_balance if item['account_type'] == 'Equity' and (item['debit'] > 0 or item['credit'] > 0)]
+        # Get trial balance data with proper grouping
+        c.execute("""
+            SELECT 
+                coa.account_head,
+                coa.account_name,
+                coa.account_type,
+                coa.category,
+                COALESCE(SUM(je.debit_amount), 0) as total_debit,
+                COALESCE(SUM(je.credit_amount), 0) as total_credit
+            FROM chart_of_accounts coa
+            LEFT JOIN journal_entries je ON coa.account_head = je.account_head
+            LEFT JOIN journal_vouchers jv ON je.voucher_id = jv.voucher_id 
+                AND jv.voucher_date <= ? AND jv.status = 'Approved'
+            WHERE coa.is_active = 1
+            GROUP BY coa.account_head
+            ORDER BY coa.account_type, coa.category, coa.account_head
+        """, (as_of_date,))
         
+        data = c.fetchall()
+        
+        # Calculate P&L for retained earnings
+        c.execute("""
+            SELECT 
+                COALESCE(SUM(CASE WHEN coa.account_type = 'Income' THEN je.credit_amount - je.debit_amount ELSE 0 END), 0) -
+                COALESCE(SUM(CASE WHEN coa.account_type = 'Expense' THEN je.debit_amount - je.credit_amount ELSE 0 END), 0)
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.voucher_id
+            JOIN chart_of_accounts coa ON je.account_head = coa.account_head
+            WHERE jv.voucher_date <= ? AND jv.status = 'Approved' AND coa.account_type IN ('Income', 'Expense')
+        """, (as_of_date,))
+        
+        net_profit = c.fetchone()[0] or 0
+        conn.close()
+        
+        # Categorize accounts
+        assets = []
+        liabilities = []
+        equity = []
+        
+        for row in data:
+            head, name, acc_type, category, debit, credit = row
+            net = debit - credit
+            
+            item = {
+                'account_head': head,
+                'account_name': name,
+                'account_type': acc_type,
+                'category': category,
+                'debit': debit,
+                'credit': credit,
+                'net': net
+            }
+            
+            if acc_type == 'Asset' and net != 0:
+                assets.append(item)
+            elif acc_type == 'Liability' and net != 0:
+                liabilities.append(item)
+            elif acc_type == 'Equity' and net != 0:
+                equity.append(item)
+        
+        # Calculate totals
         total_assets = sum(item['debit'] - item['credit'] for item in assets)
         total_liabilities = sum(item['credit'] - item['debit'] for item in liabilities)
-        total_equity = sum(item['credit'] - item['debit'] for item in equity)
+        total_equity = sum(item['credit'] - item['debit'] for item in equity) + net_profit
         
-        return assets, liabilities, equity, total_assets, total_liabilities, total_equity
+        return assets, liabilities, equity, total_assets, total_liabilities, total_equity, net_profit
     
     @staticmethod
     def get_profit_loss(from_date, to_date):
@@ -1631,27 +1856,95 @@ def sb_account_ui():
             st.info("No active SB accounts")
     
     with tab3:
-        st.markdown("### Quarterly Interest Calculation")
+        st.markdown("### 📊 Interest Calculation & Preview")
         
-        if st.button("🧮 Calculate & Credit Interest for All Accounts", use_container_width=True):
-            with st.spinner("Calculating interest..."):
-                success, results = SBAccountModule.calculate_quarterly_interest(
-                    created_by=st.session_state.user['user_id']
+        # Preview interest
+        st.markdown("#### 🔍 Preview Estimated Interest")
+        conn = db.get_connection()
+        c = conn.cursor()
+        c.execute("SELECT account_number, balance FROM sb_accounts WHERE status = 'Active'")
+        preview_accounts = c.fetchall()
+        conn.close()
+        
+        if preview_accounts:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                preview_acc = st.selectbox(
+                    "Select Account",
+                    [f"{acc[0]} (₹{acc[1]:,.2f})" for acc in preview_accounts],
+                    key="preview_acc"
                 )
-                if success:
-                    st.success(f"✅ Interest calculated for {len(results)} accounts")
-                    if results:
-                        df = pd.DataFrame(results)
-                        st.dataframe(df, use_container_width=True, hide_index=True)
-                else:
-                    st.error(results)
+            with col2:
+                st.write("")
+                st.write("")
+                if st.button("🔍 Preview", use_container_width=True):
+                    acc_num = preview_acc.split(" ")[0]
+                    success, result = SBAccountModule.preview_interest(acc_num)
+                    if success:
+                        st.info(f"""
+                        **📊 Interest Preview**
+                        - Account: {result['account']}
+                        - Current Balance: ₹{result['current_balance']:,.2f}
+                        - Interest Rate: {result['rate']}%
+                        - Period: {result['period_start']} to today
+                        - Days Elapsed: {result['days_elapsed']}
+                        - **Estimated Interest: ₹{result['estimated_interest']:,.2f}**
+                        """)
+                    else:
+                        st.error(result)
+        else:
+            st.info("No active SB accounts")
         
-        st.markdown("### Interest History")
+        st.markdown("---")
+        st.markdown("#### 💰 Credit Quarterly Interest")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🧮 Calculate for All Accounts", use_container_width=True):
+                with st.spinner("Calculating interest based on daily minimum balances..."):
+                    success, results = SBAccountModule.calculate_quarterly_interest(
+                        created_by=st.session_state.user['user_id']
+                    )
+                    if success:
+                        if results:
+                            st.success(f"✅ Interest credited to {len(results)} accounts!")
+                            df = pd.DataFrame(results)
+                            st.dataframe(df, use_container_width=True, hide_index=True)
+                            st.balloons()
+                        else:
+                            st.info("No accounts eligible for interest this quarter")
+                    else:
+                        st.error(f"Error: {results}")
+        
+        with col2:
+            if preview_accounts:
+                specific_acc = st.selectbox(
+                    "Or select specific account",
+                    [acc[0] for acc in preview_accounts],
+                    key="specific_acc"
+                )
+                if st.button(f"🧮 Credit Interest for {specific_acc}", use_container_width=True):
+                    with st.spinner(f"Calculating interest for {specific_acc}..."):
+                        success, results = SBAccountModule.calculate_quarterly_interest(
+                            account_number=specific_acc,
+                            created_by=st.session_state.user['user_id']
+                        )
+                        if success and results:
+                            st.success(f"✅ Interest credited to {specific_acc}!")
+                            df = pd.DataFrame(results)
+                            st.dataframe(df, use_container_width=True, hide_index=True)
+                        elif success:
+                            st.info("Account not eligible for interest yet")
+                        else:
+                            st.error(f"Error: {results}")
+        
+        st.markdown("---")
+        st.markdown("### 📜 Interest Calculation History")
         conn = db.get_connection()
         c = conn.cursor()
         c.execute("""
             SELECT account_number, interest_period_start, interest_period_end, 
-                   minimum_balance, interest_rate, interest_amount, is_credited
+                   minimum_balance, interest_rate, interest_amount, is_credited, calculated_at
             FROM interest_calculations 
             ORDER BY calculated_at DESC LIMIT 20
         """)
@@ -1659,10 +1952,27 @@ def sb_account_ui():
         conn.close()
         
         if history:
-            df = pd.DataFrame(history, columns=['Account', 'Period Start', 'Period End', 'Min Balance', 'Rate', 'Interest', 'Credited'])
+            df = pd.DataFrame(history, columns=['Account', 'Period Start', 'Period End', 
+                                                 'Min Balance', 'Rate', 'Interest', 
+                                                 'Credited', 'Calculated At'])
+            df['Min Balance'] = df['Min Balance'].apply(lambda x: f"₹{x:,.2f}")
+            df['Interest'] = df['Interest'].apply(lambda x: f"₹{x:,.2f}")
+            df['Credited'] = df['Credited'].apply(lambda x: '✅ Yes' if x else '⏳ Pending')
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("No interest calculations yet")
+        
+        st.markdown("""
+        <div class="info-box">
+            <strong>📐 Interest Calculation Method:</strong><br>
+            <strong>1. Period:</strong> Quarterly (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec)<br>
+            <strong>2. Method:</strong> Daily minimum balance method<br>
+            <strong>3. Formula:</strong> Min Monthly Balance × Rate% × (Days/365)<br>
+            <strong>4. Compounding:</strong> Interest credited quarterly and added to principal<br>
+            <strong>5. Double-Entry:</strong> Debit INTEREST_ON_SB (Expense) | Credit SB_ACCOUNTS (Liability)<br>
+            <strong>6. Balance Sheet Impact:</strong> SB_ACCOUNTS appears under Liabilities
+        </div>
+        """, unsafe_allow_html=True)
     
     with tab4:
         st.markdown("### SB Account List")
@@ -1683,6 +1993,10 @@ def sb_account_ui():
             df = pd.DataFrame(accounts, columns=['Account No', 'Customer', 'Balance', 'Rate', 'Opened', 'Status'])
             df['Balance'] = df['Balance'].apply(lambda x: f"₹{x:,.2f}")
             st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # Show total SB deposits (liability)
+            total_sb_deposits = sum(float(row[2]) for row in accounts)
+            st.info(f"💰 **Total SB Deposits (Liability): ₹{total_sb_deposits:,.2f}**")
         else:
             st.info("No SB accounts")
 
@@ -1800,19 +2114,20 @@ def reports_ui():
             if data:
                 df_data = []
                 for item in data:
-                    if item['debit'] > 0 or item['credit'] > 0:
-                        df_data.append({
-                            'Account Head': item['account_head'],
-                            'Account Name': item['account_name'],
-                            'Type': item['account_type'],
-                            'Debit (₹)': f"{item['debit']:,.2f}" if item['debit'] > 0 else "",
-                            'Credit (₹)': f"{item['credit']:,.2f}" if item['credit'] > 0 else ""
-                        })
+                    df_data.append({
+                        'Account Head': item['account_head'],
+                        'Account Name': item['account_name'],
+                        'Type': item['account_type'],
+                        'Category': item['category'],
+                        'Debit (₹)': f"{item['debit']:,.2f}" if item['debit'] > 0 else "",
+                        'Credit (₹)': f"{item['credit']:,.2f}" if item['credit'] > 0 else ""
+                    })
                 
                 df_data.append({
                     'Account Head': 'TOTAL',
                     'Account Name': '',
                     'Type': '',
+                    'Category': '',
                     'Debit (₹)': f"**{total_debit:,.2f}**",
                     'Credit (₹)': f"**{total_credit:,.2f}**"
                 })
@@ -1828,11 +2143,11 @@ def reports_ui():
                 st.info("No transactions found")
     
     with tab2:
-        st.markdown("### Balance Sheet")
+        st.markdown("### 💰 Balance Sheet")
         bs_date = st.date_input("As at", datetime.now().date(), key="bs_date")
         
         if st.button("Generate Balance Sheet", use_container_width=True):
-            assets, liabilities, equity, total_assets, total_liabilities, total_equity = FinancialReportingModule.get_balance_sheet(bs_date)
+            assets, liabilities, equity, total_assets, total_liabilities, total_equity, net_profit = FinancialReportingModule.get_balance_sheet(bs_date)
             
             col1, col2 = st.columns(2)
             
@@ -1840,24 +2155,52 @@ def reports_ui():
                 st.markdown("#### 🟢 ASSETS")
                 for item in assets:
                     amount = item['debit'] - item['credit']
-                    if amount != 0:
-                        st.write(f"- **{item['account_name']}:** ₹{amount:,.2f}")
-                st.markdown(f"**Total Assets: ₹{total_assets:,.2f}**")
+                    st.markdown(f"- **{item['account_name']}:** ₹{amount:,.2f}")
+                    st.caption(f"  Category: {item['category']}")
+                st.markdown(f"---")
+                st.markdown(f"### **Total Assets: ₹{total_assets:,.2f}**")
             
             with col2:
-                st.markdown("#### 🔴 LIABILITIES & EQUITY")
+                st.markdown("#### 🔴 LIABILITIES")
                 for item in liabilities:
                     amount = item['credit'] - item['debit']
-                    if amount != 0:
-                        st.write(f"- **{item['account_name']}:** ₹{amount:,.2f}")
+                    st.markdown(f"- **{item['account_name']}:** ₹{amount:,.2f}")
+                    st.caption(f"  Category: {item['category']}")
+                st.markdown(f"**Total Liabilities: ₹{total_liabilities:,.2f}**")
                 
+                st.markdown("---")
+                st.markdown("#### 💙 EQUITY")
                 for item in equity:
                     amount = item['credit'] - item['debit']
-                    if amount != 0:
-                        st.write(f"- **{item['account_name']}:** ₹{amount:,.2f}")
+                    st.markdown(f"- **{item['account_name']}:** ₹{amount:,.2f}")
                 
+                if net_profit > 0:
+                    st.markdown(f"- **Retained Earnings (Current P&L):** ₹{net_profit:,.2f}")
+                elif net_profit < 0:
+                    st.markdown(f"- **Accumulated Loss:** ₹{abs(net_profit):,.2f}")
+                
+                st.markdown(f"**Total Equity: ₹{total_equity:,.2f}**")
+                
+                st.markdown("---")
                 total_le = total_liabilities + total_equity
-                st.markdown(f"**Total Liabilities & Equity: ₹{total_le:,.2f}**")
+                st.markdown(f"### **Total Liabilities & Equity: ₹{total_le:,.2f}**")
+            
+            # Balance check
+            if abs(total_assets - total_le) < 0.01:
+                st.success("✅ Balance Sheet is balanced! (Assets = Liabilities + Equity)")
+            else:
+                st.error(f"❌ Balance Sheet difference: ₹{abs(total_assets - total_le):,.2f}")
+        
+        st.markdown("---")
+        st.markdown("""
+        <div class="info-box">
+            <strong>📐 Balance Sheet Structure:</strong><br>
+            • <strong>Assets</strong> = Liabilities + Equity<br>
+            • <strong>SB_ACCOUNTS</strong> appears under Liabilities as customer deposits<br>
+            • <strong>Net Profit/Loss</strong> from P&L is added to Equity as Retained Earnings<br>
+            • All SB deposits, withdrawals, and interest affect the SB_ACCOUNTS liability balance
+        </div>
+        """, unsafe_allow_html=True)
     
     with tab3:
         st.markdown("### Profit & Loss Statement")

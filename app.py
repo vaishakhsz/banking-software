@@ -647,21 +647,18 @@ class RDAccountModule:
             start_date = datetime.now().date()
             maturity_date = start_date + relativedelta(months=tenure_months)
             
-            # Calculate RD maturity (compound interest formula)
-            r = interest_rate / 400  # quarterly rate
-            n = tenure_months / 3  # number of quarters
+            r = interest_rate / 400
+            n = tenure_months / 3
             maturity_amount = round(monthly_amount * (((1 + r) ** n - 1) / r) * (1 + r), 2)
             
             c.execute("INSERT INTO rd_accounts (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, total_installments, nominee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, tenure_months, nominee_id, created_by))
             
-            # Create installment schedule
             for i in range(tenure_months):
                 due_date = start_date + relativedelta(months=i+1)
                 c.execute("INSERT INTO rd_installments (rd_id, installment_number, due_date, amount) VALUES (?, ?, ?, ?)",
                          (rd_id, i+1, due_date, monthly_amount))
             
-            # Pay first installment if balance available
             if sb[0] >= monthly_amount:
                 old_balance, new_balance = sb[0], sb[0] - monthly_amount
                 c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_balance, sb_account))
@@ -743,9 +740,6 @@ class RDAccountModule:
             if rd[8] < rd[9]:
                 conn.close()
                 return False, f"All installments not paid ({rd[8]}/{rd[9]})"
-            if datetime.now().date() < rd[6]:
-                conn.close()
-                return False, "RD not yet matured"
             
             interest = rd[7] - (rd[3] * rd[9])
             c.execute("UPDATE rd_accounts SET status = 'Matured' WHERE rd_id = ?", (rd_id,))
@@ -913,7 +907,6 @@ class FinancialReportingModule:
         total_liabilities = sum(i['credit'] - i['debit'] for i in liabilities)
         total_equity = sum(i['credit'] - i['debit'] for i in equity)
         
-        # Add P&L to equity
         income_items = [i for i in tb if i['account_type'] == 'Income']
         expense_items = [i for i in tb if i['account_type'] == 'Expense']
         net_profit = sum(i['credit'] - i['debit'] for i in income_items) - sum(i['debit'] - i['credit'] for i in expense_items)
@@ -983,7 +976,7 @@ def voucher_ui():
             with c1:
                 acc = st.selectbox(f"Debit {i+1}", [""] + account_options, key=f"dr_{i}")
             with c2:
-                amt = st.number_input(f"Amount {i+1}", 0.0, step=100.0, key=f"dramt_{i}")
+                amt = st.number_input(f"Amount {i+1}", min_value=0.0, value=0.0, step=100.0, key=f"dramt_{i}")
             if acc and amt > 0:
                 debit_entries.append((acc.split(" - ")[0], amt, 0))
         
@@ -994,7 +987,7 @@ def voucher_ui():
             with c1:
                 acc = st.selectbox(f"Credit {i+1}", [""] + account_options, key=f"cr_{i}")
             with c2:
-                amt = st.number_input(f"Amount {i+1}", 0.0, step=100.0, key=f"cramt_{i}")
+                amt = st.number_input(f"Amount {i+1}", min_value=0.0, value=0.0, step=100.0, key=f"cramt_{i}")
             if acc and amt > 0:
                 credit_entries.append((acc.split(" - ")[0], 0, amt))
         
@@ -1055,8 +1048,8 @@ def sb_account_ui():
                 selected = st.selectbox("Customer *", list(cust_options.keys()))
                 c1, c2 = st.columns(2)
                 with c1:
-                    deposit = st.number_input("Initial Deposit", 0.0, step=500.0)
-                    rate = st.number_input("Interest Rate (%)", 0.0, 4.0, 0.25)
+                    deposit = st.number_input("Initial Deposit", min_value=0.0, value=0.0, step=500.0)
+                    rate = st.number_input("Interest Rate (%)", min_value=0.0, max_value=10.0, value=4.0, step=0.25)
                 with c2:
                     st.info("📌 Zero Balance Account (Min: ₹0)")
                 if st.form_submit_button("Open Account", use_container_width=True):
@@ -1082,7 +1075,7 @@ def sb_account_ui():
                 with st.form("deposit"):
                     opts = {f"{a[1]} - {a[0]} (₹{a[2]:,.2f})": a for a in accounts}
                     acc = st.selectbox("Account", list(opts.keys()), key="dep")
-                    amt = st.number_input("Amount *", 1.0, step=100.0, key="dep_amt")
+                    amt = st.number_input("Amount *", min_value=1.0, value=100.0, step=100.0, key="dep_amt")
                     desc = st.text_input("Description", key="dep_desc")
                     if st.form_submit_button("Deposit 💰"):
                         success, msg = SBAccountModule.deposit(opts[acc][0], amt, desc, st.session_state.user['user_id'])
@@ -1093,7 +1086,7 @@ def sb_account_ui():
                     opts = {f"{a[1]} - {a[0]} (₹{a[2]:,.2f})": a for a in accounts}
                     acc = st.selectbox("Account", list(opts.keys()), key="wit")
                     a = opts[acc]
-                    amt = st.number_input("Amount *", 0.0, float(a[2]), step=100.0, key="wit_amt")
+                    amt = st.number_input("Amount *", min_value=0.0, max_value=float(a[2]), value=0.0, step=100.0, key="wit_amt")
                     desc = st.text_input("Description", key="wit_desc")
                     if st.form_submit_button("Withdraw 💸"):
                         success, msg = SBAccountModule.withdraw(a[0], amt, desc, st.session_state.user['user_id'])
@@ -1156,9 +1149,9 @@ def fd_account_ui():
                 st.info(f"Customer: {acc[1]} | Balance: ₹{acc[4]:,.2f}")
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    principal = st.number_input("Principal *", 100.0, float(acc[4]), step=1000.0)
+                    principal = st.number_input("Principal *", min_value=100.0, max_value=float(acc[4]), value=min(1000.0, float(acc[4])), step=1000.0)
                 with c2:
-                    rate = st.number_input("Interest Rate (%)", 1.0, 7.0, 0.5)
+                    rate = st.number_input("Interest Rate (%)", min_value=1.0, max_value=15.0, value=7.0, step=0.5)
                 with c3:
                     tenure = st.selectbox("Tenure (Months)", [3, 6, 12, 24, 36, 48, 60])
                 if principal > 0:
@@ -1218,9 +1211,9 @@ def rd_account_ui():
                 acc = opts[selected]
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    monthly = st.number_input("Monthly Amount *", 100.0, step=100.0)
+                    monthly = st.number_input("Monthly Amount *", min_value=100.0, value=500.0, step=100.0)
                 with c2:
-                    rate = st.number_input("Interest Rate (%)", 1.0, 6.5, 0.5)
+                    rate = st.number_input("Interest Rate (%)", min_value=1.0, max_value=15.0, value=6.5, step=0.5)
                 with c3:
                     tenure = st.selectbox("Tenure (Months)", [12, 24, 36, 48, 60])
                 if st.form_submit_button("Open RD", use_container_width=True):

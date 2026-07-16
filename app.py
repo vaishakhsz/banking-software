@@ -1,6 +1,4 @@
 
-
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -201,10 +199,6 @@ def update_ledger_head_balance(cursor, account_code, amount, is_debit=True):
     cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
 
 def execute_double_entry_voucher(v_type, v_date, description, line_items, username):
-    """
-    Core atomic process workflow executing double-entry voucher allocations.
-    line_items format structure: list of dicts -> [{'account_code', 'entry_type': 'DEBIT'/'CREDIT', 'amount', 'narration'}]
-    """
     total_debits = sum(get_safe_float(item['amount']) for item in line_items if item['entry_type'] == 'DEBIT')
     total_credits = sum(get_safe_float(item['amount']) for item in line_items if item['entry_type'] == 'CREDIT')
     
@@ -227,13 +221,11 @@ def execute_double_entry_voucher(v_type, v_date, description, line_items, userna
             name_row = cursor.fetchone()
             acc_name = name_row[0] if name_row else "UNKNOWN HEAD"
             
-            # Post transaction record directly into historical journals
             cursor.execute('''
                 INSERT INTO journal_entries (date, account_code, account_name, entry_type, amount, description, voucher_number, username)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (v_date, code, acc_name, item['entry_type'], amt, item.get('narration', description), v_num, username))
             
-            # Mutation step calculating financial impact inside global COA ledger indices
             update_ledger_head_balance(cursor, code, amt, is_debit=is_deb)
             
         conn.commit()
@@ -260,7 +252,6 @@ def open_sb_portfolio(cust_name, phone, initial_dep, rate, opening_date, usernam
         conn.close()
         
         if initial_dep > 0:
-            # Rebalance the core systems ledger sheet automatically via transaction pathways
             items = [
                 {'account_code': '1000', 'entry_type': 'DEBIT', 'amount': initial_dep, 'narration': f"Opening portfolio allocation cash deposit for {acc_num}"},
                 {'account_code': '2100', 'entry_type': 'CREDIT', 'amount': initial_dep, 'narration': f"Opening dynamic portfolio allocation for {acc_num}"}
@@ -292,7 +283,6 @@ def post_sb_transaction(acc_no, txn_type, amount, val_date, username):
         conn.commit()
         conn.close()
         
-        # Double-entry transaction engine ledger synchronization routing pathways
         if txn_type == "DEPOSIT":
             items = [
                 {'account_code': '1000', 'entry_type': 'DEBIT', 'amount': amount, 'narration': f"Cash counter deposit into portfolio tracking ledger: {acc_no}"},
@@ -315,17 +305,16 @@ def provision_fdrd_portfolio(cust_name, prod_type, principal, installment, rate,
         cursor = conn.cursor()
         acc_num = f"{prod_type}{datetime.now().strftime('%Y%m')}{str(int(time.time()))[-5:]}"
         
-        # Financial projection algorithms
         t_years = tenure / 12.0
         if prod_type == "FD":
             mat_amt = principal * ((1.0 + (rate / 100.0)) ** t_years)
             cur_bal = principal
-        else: # RD compounding formula logic structures
+        else:
             n = tenure
             i = (rate / 100.0) / 12.0
             mat_amt = installment * (((1.0 + i)**n - 1.0) / i) * (1.0 + i)
             cur_bal = installment
-            principal = installment # Initial footprint placement tracking value metrics
+            principal = installment
             
         op_d = datetime.strptime(opening_date, '%Y-%m-%d')
         mat_d = (op_d + timedelta(days=int(tenure * 30.4375))).strftime('%Y-%m-%d')
@@ -339,7 +328,6 @@ def provision_fdrd_portfolio(cust_name, prod_type, principal, installment, rate,
         conn.commit()
         conn.close()
         
-        # Route balance sheet integration pipelines seamlessly
         target_coa = '2200' if prod_type == "FD" else '2250'
         book_amt = principal if prod_type == "FD" else installment
         
@@ -428,7 +416,8 @@ def login_page():
                 
                 if res:
                     st.session_state.logged_in = True
-                    st.session_state.user = {'username': res[0], 'name': res[1], 'role': res[2]}
+                    # Fixed: Explicitly mapping to 'full_name' key structure to prevent mapping anomalies
+                    st.session_state.user = {'username': res[0], 'full_name': res[1], 'role': res[2]}
                     st.success("Authorization confirmed. Loading engine dashboard environment...")
                     st.rerun()
                 else:
@@ -440,7 +429,6 @@ def login_page():
 def main():
     st.set_page_config(page_title="Nexus Core Banking Suite", page_icon="🏦", layout="wide")
     
-    # 1. Gatekeeper thread-safe workspace setup execution once per system lifespan
     if not os.path.exists(DB_FILE):
         init_database()
         
@@ -454,13 +442,13 @@ def main():
         
     user = st.session_state.user
     
-    # Global Header Component Structure UI
     col_h1, col_h2 = st.columns([3, 1])
     with col_h1:
         st.markdown("<h1 style='margin:0; padding:0; color:#0f172a;'>🏦 NEXUS CORE BANKING ENGINE</h1>", unsafe_allow_html=True)
         st.caption(f"Operated Session Context Authenticated Module Node Active | System Terminal ID: 2026-NEXUS")
     with col_h2:
-        st.markdown(f"<div style='text-align:right; margin-top:5px;'><b>{user['name']}</b> ({user['role'].upper()})</div>", unsafe_allow_html=True)
+        # Fixed: Querying user['full_name'] safely to avoid KeyError crashes
+        st.markdown(f"<div style='text-align:right; margin-top:5px;'><b>{user['full_name']}</b> ({user['role'].upper()})</div>", unsafe_allow_html=True)
         if st.button("Terminate Session Sequence", use_container_width=True):
             st.session_state.logged_in = False
             st.session_state.user = None
@@ -468,7 +456,6 @@ def main():
             
     st.divider()
     
-    # Navigation Matrix Controls Layout
     t_sb, t_fdrd, t_voucher, t_journal, t_trial, t_pl, t_audit = st.tabs([
         "💰 Savings Bank Module",
         "⏳ Term Deposits (FD/RD)",
@@ -741,7 +728,6 @@ def main():
                 entries = cursor.fetchall()
                 
                 calculated_balance = 0.0
-                # Fallback injector baseline tracking validation check for initial systems capital initialization values
                 if code == '1000': calculated_balance += 5000000.0
                 if code == '3100': calculated_balance += 5000000.0
                 
@@ -769,5 +755,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 

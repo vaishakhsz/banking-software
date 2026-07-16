@@ -192,26 +192,38 @@ class DatabaseLayer:
             percentage_share REAL DEFAULT 100.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )''')
         
-        # Accounts
+        # SB Accounts
         c.execute('''CREATE TABLE IF NOT EXISTS sb_accounts (
             account_number TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(customer_id),
             balance REAL DEFAULT 0.00, interest_rate REAL DEFAULT 4.00, min_balance REAL DEFAULT 0.00,
             opened_date DATE NOT NULL, last_interest_date DATE,
             status TEXT DEFAULT 'Active' CHECK(status IN ('Active', 'Dormant', 'Closed', 'Frozen')),
-            nominee_id INTEGER REFERENCES nominees(nominee_id),
             created_by INTEGER REFERENCES users(user_id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )''')
         
+        # Migration: Add nominee_id to sb_accounts if missing
+        try:
+            c.execute("SELECT nominee_id FROM sb_accounts LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE sb_accounts ADD COLUMN nominee_id INTEGER REFERENCES nominees(nominee_id)")
+        
+        # FD Accounts
         c.execute('''CREATE TABLE IF NOT EXISTS fd_accounts (
             fd_id TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(customer_id),
             sb_account TEXT REFERENCES sb_accounts(account_number), principal_amount REAL NOT NULL,
             interest_rate REAL NOT NULL, tenure_months INTEGER NOT NULL, start_date DATE NOT NULL,
             maturity_date DATE NOT NULL, maturity_amount REAL,
             status TEXT DEFAULT 'Active' CHECK(status IN ('Active', 'Matured', 'Premature_Closed')),
-            nominee_id INTEGER REFERENCES nominees(nominee_id),
             created_by INTEGER REFERENCES users(user_id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )''')
         
+        # Migration: Add nominee_id to fd_accounts if missing
+        try:
+            c.execute("SELECT nominee_id FROM fd_accounts LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE fd_accounts ADD COLUMN nominee_id INTEGER REFERENCES nominees(nominee_id)")
+        
+        # RD Accounts
         c.execute('''CREATE TABLE IF NOT EXISTS rd_accounts (
             rd_id TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(customer_id),
             sb_account TEXT REFERENCES sb_accounts(account_number), monthly_amount REAL NOT NULL,
@@ -219,10 +231,16 @@ class DatabaseLayer:
             maturity_date DATE NOT NULL, maturity_amount REAL, installments_paid INTEGER DEFAULT 0,
             total_installments INTEGER NOT NULL,
             status TEXT DEFAULT 'Active' CHECK(status IN ('Active', 'Matured', 'Closed', 'Defaulted')),
-            nominee_id INTEGER REFERENCES nominees(nominee_id),
             created_by INTEGER REFERENCES users(user_id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )''')
         
+        # Migration: Add nominee_id to rd_accounts if missing
+        try:
+            c.execute("SELECT nominee_id FROM rd_accounts LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE rd_accounts ADD COLUMN nominee_id INTEGER REFERENCES nominees(nominee_id)")
+        
+        # RD Installments
         c.execute('''CREATE TABLE IF NOT EXISTS rd_installments (
             installment_id INTEGER PRIMARY KEY AUTOINCREMENT, rd_id TEXT REFERENCES rd_accounts(rd_id),
             installment_number INTEGER NOT NULL, due_date DATE NOT NULL, paid_date DATE,
@@ -387,9 +405,18 @@ class SBAccountModule:
             account_number = SBAccountModule.generate_account_number()
             today = datetime.now().date()
             
-            c.execute("""INSERT INTO sb_accounts (account_number, customer_id, balance, interest_rate, min_balance, opened_date, last_interest_date, nominee_id, created_by)
-                VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)""",
-                (account_number, customer_id, initial_deposit, interest_rate, today, today, nominee_id, created_by))
+            # Check if nominee_id column exists
+            c.execute("PRAGMA table_info(sb_accounts)")
+            columns = [col[1] for col in c.fetchall()]
+            
+            if 'nominee_id' in columns and nominee_id:
+                c.execute("""INSERT INTO sb_accounts (account_number, customer_id, balance, interest_rate, min_balance, opened_date, last_interest_date, nominee_id, created_by)
+                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)""",
+                    (account_number, customer_id, initial_deposit, interest_rate, today, today, nominee_id, created_by))
+            else:
+                c.execute("""INSERT INTO sb_accounts (account_number, customer_id, balance, interest_rate, min_balance, opened_date, last_interest_date, created_by)
+                    VALUES (?, ?, ?, ?, 0, ?, ?, ?)""",
+                    (account_number, customer_id, initial_deposit, interest_rate, today, today, created_by))
             
             if initial_deposit > 0:
                 txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
@@ -551,8 +578,16 @@ class FDAccountModule:
             maturity_date = start_date + relativedelta(months=tenure_months)
             maturity_amount = round(principal * (1 + (interest_rate/1200) * tenure_months), 2)
             
-            c.execute("INSERT INTO fd_accounts (fd_id, customer_id, sb_account, principal_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, nominee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                     (fd_id, customer_id, sb_account, principal, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, nominee_id, created_by))
+            # Check if nominee_id column exists
+            c.execute("PRAGMA table_info(fd_accounts)")
+            columns = [col[1] for col in c.fetchall()]
+            
+            if 'nominee_id' in columns:
+                c.execute("INSERT INTO fd_accounts (fd_id, customer_id, sb_account, principal_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, nominee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (fd_id, customer_id, sb_account, principal, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, nominee_id, created_by))
+            else:
+                c.execute("INSERT INTO fd_accounts (fd_id, customer_id, sb_account, principal_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (fd_id, customer_id, sb_account, principal, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, created_by))
             
             old_balance, new_balance = sb[0], sb[0] - principal
             c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_balance, sb_account))
@@ -651,8 +686,16 @@ class RDAccountModule:
             n = tenure_months / 3
             maturity_amount = round(monthly_amount * (((1 + r) ** n - 1) / r) * (1 + r), 2)
             
-            c.execute("INSERT INTO rd_accounts (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, total_installments, nominee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                     (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, tenure_months, nominee_id, created_by))
+            # Check if nominee_id column exists
+            c.execute("PRAGMA table_info(rd_accounts)")
+            columns = [col[1] for col in c.fetchall()]
+            
+            if 'nominee_id' in columns:
+                c.execute("INSERT INTO rd_accounts (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, total_installments, nominee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, tenure_months, nominee_id, created_by))
+            else:
+                c.execute("INSERT INTO rd_accounts (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, total_installments, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, tenure_months, created_by))
             
             for i in range(tenure_months):
                 due_date = start_date + relativedelta(months=i+1)
@@ -1494,7 +1537,6 @@ def main():
             st.session_state.user = None
             st.rerun()
     
-    # Route to appropriate UI
     if st.session_state.current_tab == 'Vouchers':
         voucher_ui()
     elif st.session_state.current_tab == 'SB Accounts':

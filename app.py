@@ -137,13 +137,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================
-# DATABASE LAYER
+# DATABASE LAYER WITH MIGRATIONS
 # ============================================
 class DatabaseLayer:
     def __init__(self):
         self.db_path = 'complete_banking.db'
         
+    def _add_column_if_not_exists(self, c, table_name, col_name, col_type):
+        """Helper to add column if it doesn't exist"""
+        try:
+            c.execute(f"SELECT {col_name} FROM {table_name} LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                c.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}")
+                print(f"Added {col_name} to {table_name}")
+            except Exception as e:
+                print(f"Could not add {col_name} to {table_name}: {e}")
+    
     def initialize_database(self):
+        # Delete old database if corrupted
         if os.path.exists(self.db_path):
             try:
                 temp_conn = sqlite3.connect(self.db_path)
@@ -157,7 +169,7 @@ class DatabaseLayer:
         c = conn.cursor()
         c.execute("PRAGMA foreign_keys=ON")
         
-        # Users
+        # ============ USERS ============
         c.execute('''CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL, full_name TEXT NOT NULL, email TEXT UNIQUE,
@@ -170,134 +182,129 @@ class DatabaseLayer:
             login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, logout_time TIMESTAMP, is_active INTEGER DEFAULT 1
         )''')
         
-        # Customers
+        # ============ CUSTOMERS ============
         c.execute('''CREATE TABLE IF NOT EXISTS customers (
             customer_id TEXT PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
             date_of_birth DATE NOT NULL, gender TEXT, email TEXT UNIQUE, phone TEXT NOT NULL,
             address TEXT, city TEXT, state TEXT, pincode TEXT, occupation TEXT, annual_income REAL,
-            kyc_status TEXT DEFAULT 'Pending', kyc_verified_by INTEGER REFERENCES users(user_id),
-            kyc_verified_date TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_by INTEGER REFERENCES users(user_id)
+            kyc_status TEXT DEFAULT 'Pending'
         )''')
+        for col, typ in [('kyc_verified_by', 'INTEGER REFERENCES users(user_id)'), ('kyc_verified_date', 'TIMESTAMP'), ('created_by', 'INTEGER REFERENCES users(user_id)'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'customers', col, typ)
         
         c.execute('''CREATE TABLE IF NOT EXISTS kyc_documents (
             doc_id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT REFERENCES customers(customer_id),
-            doc_type TEXT NOT NULL, doc_number TEXT, verification_status TEXT DEFAULT 'Pending',
-            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, verified_by INTEGER REFERENCES users(user_id)
+            doc_type TEXT NOT NULL, doc_number TEXT, verification_status TEXT DEFAULT 'Pending'
         )''')
+        for col, typ in [('uploaded_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'), ('verified_by', 'INTEGER REFERENCES users(user_id)')]:
+            self._add_column_if_not_exists(c, 'kyc_documents', col, typ)
         
         c.execute('''CREATE TABLE IF NOT EXISTS nominees (
             nominee_id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT REFERENCES customers(customer_id),
-            nominee_name TEXT NOT NULL, relationship TEXT NOT NULL, date_of_birth DATE, phone TEXT,
-            percentage_share REAL DEFAULT 100.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            nominee_name TEXT NOT NULL, relationship TEXT NOT NULL
         )''')
+        for col, typ in [('date_of_birth', 'DATE'), ('phone', 'TEXT'), ('percentage_share', 'REAL DEFAULT 100.0'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'nominees', col, typ)
         
-        # SB Accounts
+        # ============ SB ACCOUNTS ============
         c.execute('''CREATE TABLE IF NOT EXISTS sb_accounts (
             account_number TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(customer_id),
             balance REAL DEFAULT 0.00, interest_rate REAL DEFAULT 4.00, min_balance REAL DEFAULT 0.00,
             opened_date DATE NOT NULL, last_interest_date DATE,
-            status TEXT DEFAULT 'Active' CHECK(status IN ('Active', 'Dormant', 'Closed', 'Frozen')),
-            created_by INTEGER REFERENCES users(user_id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            status TEXT DEFAULT 'Active'
         )''')
+        for col, typ in [('nominee_id', 'INTEGER REFERENCES nominees(nominee_id)'), ('created_by', 'INTEGER REFERENCES users(user_id)'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'sb_accounts', col, typ)
         
-        # Migration: Add nominee_id to sb_accounts if missing
-        try:
-            c.execute("SELECT nominee_id FROM sb_accounts LIMIT 1")
-        except sqlite3.OperationalError:
-            c.execute("ALTER TABLE sb_accounts ADD COLUMN nominee_id INTEGER REFERENCES nominees(nominee_id)")
-        
-        # FD Accounts
+        # ============ FD ACCOUNTS ============
         c.execute('''CREATE TABLE IF NOT EXISTS fd_accounts (
             fd_id TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(customer_id),
-            sb_account TEXT REFERENCES sb_accounts(account_number), principal_amount REAL NOT NULL,
+            sb_account TEXT, principal_amount REAL NOT NULL,
             interest_rate REAL NOT NULL, tenure_months INTEGER NOT NULL, start_date DATE NOT NULL,
             maturity_date DATE NOT NULL, maturity_amount REAL,
-            status TEXT DEFAULT 'Active' CHECK(status IN ('Active', 'Matured', 'Premature_Closed')),
-            created_by INTEGER REFERENCES users(user_id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            status TEXT DEFAULT 'Active'
         )''')
+        for col, typ in [('nominee_id', 'INTEGER REFERENCES nominees(nominee_id)'), ('created_by', 'INTEGER REFERENCES users(user_id)'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'fd_accounts', col, typ)
         
-        # Migration: Add nominee_id to fd_accounts if missing
-        try:
-            c.execute("SELECT nominee_id FROM fd_accounts LIMIT 1")
-        except sqlite3.OperationalError:
-            c.execute("ALTER TABLE fd_accounts ADD COLUMN nominee_id INTEGER REFERENCES nominees(nominee_id)")
-        
-        # RD Accounts
+        # ============ RD ACCOUNTS ============
         c.execute('''CREATE TABLE IF NOT EXISTS rd_accounts (
             rd_id TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(customer_id),
-            sb_account TEXT REFERENCES sb_accounts(account_number), monthly_amount REAL NOT NULL,
+            sb_account TEXT, monthly_amount REAL NOT NULL,
             interest_rate REAL NOT NULL, tenure_months INTEGER NOT NULL, start_date DATE NOT NULL,
             maturity_date DATE NOT NULL, maturity_amount REAL, installments_paid INTEGER DEFAULT 0,
             total_installments INTEGER NOT NULL,
-            status TEXT DEFAULT 'Active' CHECK(status IN ('Active', 'Matured', 'Closed', 'Defaulted')),
-            created_by INTEGER REFERENCES users(user_id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            status TEXT DEFAULT 'Active'
         )''')
+        for col, typ in [('nominee_id', 'INTEGER REFERENCES nominees(nominee_id)'), ('created_by', 'INTEGER REFERENCES users(user_id)'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'rd_accounts', col, typ)
         
-        # Migration: Add nominee_id to rd_accounts if missing
-        try:
-            c.execute("SELECT nominee_id FROM rd_accounts LIMIT 1")
-        except sqlite3.OperationalError:
-            c.execute("ALTER TABLE rd_accounts ADD COLUMN nominee_id INTEGER REFERENCES nominees(nominee_id)")
-        
-        # RD Installments
+        # ============ RD INSTALLMENTS ============
         c.execute('''CREATE TABLE IF NOT EXISTS rd_installments (
             installment_id INTEGER PRIMARY KEY AUTOINCREMENT, rd_id TEXT REFERENCES rd_accounts(rd_id),
             installment_number INTEGER NOT NULL, due_date DATE NOT NULL, paid_date DATE,
-            amount REAL NOT NULL, status TEXT DEFAULT 'Pending', voucher_id TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            amount REAL NOT NULL, status TEXT DEFAULT 'Pending'
         )''')
+        for col, typ in [('voucher_id', 'TEXT'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'rd_installments', col, typ)
         
-        # Vouchers & Accounting
+        # ============ JOURNAL VOUCHERS ============
         c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (
             voucher_id TEXT PRIMARY KEY, voucher_type TEXT NOT NULL, voucher_date DATE NOT NULL,
             narration TEXT NOT NULL, total_amount REAL NOT NULL DEFAULT 0.00,
-            status TEXT DEFAULT 'Approved', is_posted INTEGER DEFAULT 0,
-            created_by INTEGER REFERENCES users(user_id), approved_by INTEGER REFERENCES users(user_id),
-            verified_by INTEGER REFERENCES users(user_id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            approved_at TIMESTAMP, verification_status TEXT DEFAULT 'Verified'
+            status TEXT DEFAULT 'Approved'
         )''')
+        for col, typ in [('is_posted', 'INTEGER DEFAULT 0'), ('created_by', 'INTEGER REFERENCES users(user_id)'), ('approved_by', 'INTEGER REFERENCES users(user_id)'), ('verified_by', 'INTEGER REFERENCES users(user_id)'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'), ('approved_at', 'TIMESTAMP'), ('verification_status', "TEXT DEFAULT 'Verified'")]:
+            self._add_column_if_not_exists(c, 'journal_vouchers', col, typ)
         
+        # ============ JOURNAL ENTRIES ============
         c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
             entry_id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_id TEXT REFERENCES journal_vouchers(voucher_id),
-            account_head TEXT, debit_amount REAL DEFAULT 0.00, credit_amount REAL DEFAULT 0.00,
-            description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            account_head TEXT, debit_amount REAL DEFAULT 0.00, credit_amount REAL DEFAULT 0.00
         )''')
+        for col, typ in [('description', 'TEXT'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'journal_entries', col, typ)
         
+        # ============ CHART OF ACCOUNTS ============
         c.execute('''CREATE TABLE IF NOT EXISTS chart_of_accounts (
             account_head TEXT PRIMARY KEY, account_name TEXT NOT NULL, account_type TEXT NOT NULL,
             category TEXT NOT NULL, sub_category TEXT, is_active INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )''')
         
-        # Transactions
+        # ============ SB TRANSACTIONS ============
         c.execute('''CREATE TABLE IF NOT EXISTS sb_transactions (
             transaction_id TEXT PRIMARY KEY, account_number TEXT REFERENCES sb_accounts(account_number),
-            transaction_type TEXT NOT NULL, amount REAL NOT NULL, balance_before REAL, balance_after REAL,
-            description TEXT, voucher_id TEXT, created_by INTEGER REFERENCES users(user_id),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            transaction_type TEXT NOT NULL, amount REAL NOT NULL, balance_before REAL, balance_after REAL
         )''')
+        for col, typ in [('description', 'TEXT'), ('voucher_id', 'TEXT'), ('created_by', 'INTEGER REFERENCES users(user_id)'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'sb_transactions', col, typ)
         
+        # ============ FD TRANSACTIONS ============
         c.execute('''CREATE TABLE IF NOT EXISTS fd_transactions (
             transaction_id TEXT PRIMARY KEY, fd_id TEXT REFERENCES fd_accounts(fd_id),
-            transaction_type TEXT NOT NULL, amount REAL NOT NULL, description TEXT, voucher_id TEXT,
-            created_by INTEGER REFERENCES users(user_id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            transaction_type TEXT NOT NULL, amount REAL NOT NULL
         )''')
+        for col, typ in [('description', 'TEXT'), ('voucher_id', 'TEXT'), ('created_by', 'INTEGER REFERENCES users(user_id)'), ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'fd_transactions', col, typ)
         
+        # ============ INTEREST CALCULATIONS ============
         c.execute('''CREATE TABLE IF NOT EXISTS interest_calculations (
             calc_id INTEGER PRIMARY KEY AUTOINCREMENT, account_number TEXT REFERENCES sb_accounts(account_number),
             interest_period_start DATE, interest_period_end DATE, minimum_balance REAL,
-            interest_rate REAL, interest_amount REAL, is_credited INTEGER DEFAULT 0, voucher_id TEXT,
-            calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            interest_rate REAL, interest_amount REAL, is_credited INTEGER DEFAULT 0
         )''')
+        for col, typ in [('voucher_id', 'TEXT'), ('calculated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')]:
+            self._add_column_if_not_exists(c, 'interest_calculations', col, typ)
         
+        # ============ AUDIT TRAIL ============
         c.execute('''CREATE TABLE IF NOT EXISTS audit_trail (
             audit_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, module TEXT NOT NULL,
             action TEXT NOT NULL, record_type TEXT, record_id TEXT, old_data TEXT, new_data TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )''')
         
-        # Default Users
+        # ============ DEFAULT DATA ============
         c.execute("SELECT COUNT(*) FROM users")
         if c.fetchone()[0] == 0:
             users = [
@@ -310,7 +317,6 @@ class DatabaseLayer:
                 c.execute("INSERT INTO users (username, password_hash, full_name, email, role) VALUES (?, ?, ?, ?, ?)",
                          (username, password_hash, full_name, email, role))
         
-        # Chart of Accounts
         c.execute("SELECT COUNT(*) FROM chart_of_accounts")
         if c.fetchone()[0] == 0:
             accounts = [
@@ -370,15 +376,6 @@ class AuthModule:
             return {'user_id': user[0], 'username': user[1], 'full_name': user[2], 'role': user[3], 'email': user[4], 'session_id': session_id}
         conn.close()
         return None
-    
-    @staticmethod
-    def logout(user_id, session_id):
-        conn = db.get_connection()
-        c = conn.cursor()
-        c.execute("UPDATE user_sessions SET logout_time = ?, is_active = 0 WHERE session_id = ? AND user_id = ?",
-                 (datetime.now(), session_id, user_id))
-        conn.commit()
-        conn.close()
 
 # ============================================
 # SB ACCOUNT MODULE
@@ -389,7 +386,7 @@ class SBAccountModule:
         return f"SB{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:6].upper()}"
     
     @staticmethod
-    def open_account(customer_id, initial_deposit=0.0, interest_rate=4.0, nominee_id=None, created_by=None):
+    def open_account(customer_id, initial_deposit=0.0, interest_rate=4.0, created_by=None):
         conn = db.get_connection()
         c = conn.cursor()
         try:
@@ -405,24 +402,17 @@ class SBAccountModule:
             account_number = SBAccountModule.generate_account_number()
             today = datetime.now().date()
             
-            # Check if nominee_id column exists
-            c.execute("PRAGMA table_info(sb_accounts)")
-            columns = [col[1] for col in c.fetchall()]
-            
-            if 'nominee_id' in columns and nominee_id:
-                c.execute("""INSERT INTO sb_accounts (account_number, customer_id, balance, interest_rate, min_balance, opened_date, last_interest_date, nominee_id, created_by)
-                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)""",
-                    (account_number, customer_id, initial_deposit, interest_rate, today, today, nominee_id, created_by))
-            else:
-                c.execute("""INSERT INTO sb_accounts (account_number, customer_id, balance, interest_rate, min_balance, opened_date, last_interest_date, created_by)
-                    VALUES (?, ?, ?, ?, 0, ?, ?, ?)""",
-                    (account_number, customer_id, initial_deposit, interest_rate, today, today, created_by))
+            c.execute("INSERT INTO sb_accounts (account_number, customer_id, balance, interest_rate, min_balance, opened_date, last_interest_date, created_by) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+                     (account_number, customer_id, initial_deposit, interest_rate, today, today, created_by))
             
             if initial_deposit > 0:
+                # Record transaction AND create journal voucher for accounting
                 txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
                 c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'Deposit', ?, 0, ?, 'Initial Deposit', ?)",
                          (txn_id, account_number, initial_deposit, initial_deposit, created_by))
-                voucher_id = JournalVoucherModule.create_auto_voucher('Receipt', today, f'Initial deposit for {account_number}', created_by,
+                
+                # THIS IS THE KEY - Create accounting entry
+                voucher_id = JournalVoucherModule.create_auto_voucher('Receipt', today, f'Initial deposit for SB Account {account_number}', created_by,
                     [('CASH_IN_HAND', initial_deposit, 0), ('SB_ACCOUNTS', 0, initial_deposit)])
                 c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
             
@@ -452,7 +442,8 @@ class SBAccountModule:
             c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'Deposit', ?, ?, ?, ?, ?)",
                      (txn_id, account_number, amount, old_balance, new_balance, description, created_by))
             
-            voucher_id = JournalVoucherModule.create_auto_voucher('Receipt', datetime.now().date(), f'Deposit in {account_number}', created_by,
+            # Accounting entry: Debit Cash, Credit SB Accounts
+            voucher_id = JournalVoucherModule.create_auto_voucher('Receipt', datetime.now().date(), f'Deposit in {account_number}: {description}', created_by,
                 [('CASH_IN_HAND', amount, 0), ('SB_ACCOUNTS', 0, amount)])
             c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
             
@@ -485,7 +476,8 @@ class SBAccountModule:
             c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'Withdrawal', ?, ?, ?, ?, ?)",
                      (txn_id, account_number, amount, old_balance, new_balance, description, created_by))
             
-            voucher_id = JournalVoucherModule.create_auto_voucher('Payment', datetime.now().date(), f'Withdrawal from {account_number}', created_by,
+            # Accounting entry: Debit SB Accounts, Credit Cash
+            voucher_id = JournalVoucherModule.create_auto_voucher('Payment', datetime.now().date(), f'Withdrawal from {account_number}: {description}', created_by,
                 [('SB_ACCOUNTS', amount, 0), ('CASH_IN_HAND', 0, amount)])
             c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
             
@@ -533,7 +525,8 @@ class SBAccountModule:
                     c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'Interest_Credit', ?, ?, ?, ?, ?)",
                              (txn_id, acc_num, interest, balance, new_balance, f'Quarterly Interest Q{((today.month-1)//3)+1} {today.year}', created_by))
                     
-                    voucher_id = JournalVoucherModule.create_auto_voucher('Interest', today, f'Interest credited to {acc_num}', created_by,
+                    # Accounting entry: Debit Interest Expense, Credit SB Accounts
+                    voucher_id = JournalVoucherModule.create_auto_voucher('Interest', today, f'Quarterly interest credited to {acc_num}', created_by,
                         [('INTEREST_ON_SB', interest, 0), ('SB_ACCOUNTS', 0, interest)])
                     c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
                     
@@ -559,7 +552,7 @@ class FDAccountModule:
         return f"FD{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:4].upper()}"
     
     @staticmethod
-    def open_fd(customer_id, sb_account, principal, interest_rate, tenure_months, nominee_id=None, created_by=None):
+    def open_fd(customer_id, sb_account, principal, interest_rate, tenure_months, created_by=None):
         conn = db.get_connection()
         c = conn.cursor()
         try:
@@ -578,29 +571,25 @@ class FDAccountModule:
             maturity_date = start_date + relativedelta(months=tenure_months)
             maturity_amount = round(principal * (1 + (interest_rate/1200) * tenure_months), 2)
             
-            # Check if nominee_id column exists
-            c.execute("PRAGMA table_info(fd_accounts)")
-            columns = [col[1] for col in c.fetchall()]
+            c.execute("INSERT INTO fd_accounts (fd_id, customer_id, sb_account, principal_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (fd_id, customer_id, sb_account, principal, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, created_by))
             
-            if 'nominee_id' in columns:
-                c.execute("INSERT INTO fd_accounts (fd_id, customer_id, sb_account, principal_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, nominee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (fd_id, customer_id, sb_account, principal, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, nominee_id, created_by))
-            else:
-                c.execute("INSERT INTO fd_accounts (fd_id, customer_id, sb_account, principal_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (fd_id, customer_id, sb_account, principal, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, created_by))
-            
+            # Deduct from SB
             old_balance, new_balance = sb[0], sb[0] - principal
             c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_balance, sb_account))
             
+            # Record SB transaction
             txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
             c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'FD_Transfer', ?, ?, ?, ?, ?)",
                      (txn_id, sb_account, principal, old_balance, new_balance, f'FD Creation - {fd_id}', created_by))
             
+            # Record FD transaction
             fd_txn_id = f"FDT{uuid.uuid4().hex[:8].upper()}"
             c.execute("INSERT INTO fd_transactions (transaction_id, fd_id, transaction_type, amount, description, created_by) VALUES (?, ?, 'FD_Creation', ?, ?, ?)",
                      (fd_txn_id, fd_id, principal, f'FD Opened - {tenure_months} months @ {interest_rate}%', created_by))
             
-            voucher_id = JournalVoucherModule.create_auto_voucher('FD', start_date, f'FD Creation {fd_id}', created_by,
+            # Accounting entry: Debit FD Investments (Asset), Credit SB Accounts (Liability)
+            voucher_id = JournalVoucherModule.create_auto_voucher('FD', start_date, f'FD Creation {fd_id} from SB {sb_account}', created_by,
                 [('FD_INVESTMENTS', principal, 0), ('SB_ACCOUNTS', 0, principal)])
             c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
             c.execute("UPDATE fd_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, fd_txn_id))
@@ -623,36 +612,38 @@ class FDAccountModule:
             if not fd:
                 conn.close()
                 return False, "FD not found"
-            if datetime.now().date() < fd[6]:
-                conn.close()
-                return False, "FD not yet matured"
             
             maturity_amount, sb_account, principal = fd[7], fd[2], fd[3]
             interest_earned = maturity_amount - principal
             
             c.execute("UPDATE fd_accounts SET status = 'Matured' WHERE fd_id = ?", (fd_id,))
             
+            # Credit back to SB
             c.execute("SELECT balance FROM sb_accounts WHERE account_number = ?", (sb_account,))
             old_balance = c.fetchone()[0]
             new_balance = old_balance + maturity_amount
             c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_balance, sb_account))
             
+            # Record SB transaction
             txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
             c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'FD_Transfer', ?, ?, ?, ?, ?)",
                      (txn_id, sb_account, maturity_amount, old_balance, new_balance, f'FD Maturity - {fd_id}', created_by))
             
+            # Record FD transaction
             fd_txn_id = f"FDT{uuid.uuid4().hex[:8].upper()}"
             c.execute("INSERT INTO fd_transactions (transaction_id, fd_id, transaction_type, amount, description, created_by) VALUES (?, ?, 'FD_Maturity', ?, ?, ?)",
                      (fd_txn_id, fd_id, maturity_amount, f'FD Matured - ₹{maturity_amount:,.2f}', created_by))
             
+            # Accounting entry: Reverse FD, Credit SB with principal and interest
             voucher_id = JournalVoucherModule.create_auto_voucher('FD', datetime.now().date(), f'FD Maturity {fd_id}', created_by,
-                [('SB_ACCOUNTS', 0, principal), ('FD_INVESTMENTS', 0, principal),
+                [('FD_INVESTMENTS', 0, principal), ('SB_ACCOUNTS', principal, 0),
                  ('INTEREST_ON_FD', interest_earned, 0), ('SB_ACCOUNTS', 0, interest_earned)])
             c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
+            c.execute("UPDATE fd_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, fd_txn_id))
             
             conn.commit()
             conn.close()
-            return True, f"FD matured. ₹{maturity_amount:,.2f} credited"
+            return True, f"FD matured. ₹{maturity_amount:,.2f} credited to SB account"
         except Exception as e:
             conn.rollback()
             conn.close()
@@ -667,7 +658,7 @@ class RDAccountModule:
         return f"RD{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:4].upper()}"
     
     @staticmethod
-    def open_rd(customer_id, sb_account, monthly_amount, interest_rate, tenure_months, nominee_id=None, created_by=None):
+    def open_rd(customer_id, sb_account, monthly_amount, interest_rate, tenure_months, created_by=None):
         conn = db.get_connection()
         c = conn.cursor()
         try:
@@ -682,26 +673,21 @@ class RDAccountModule:
             start_date = datetime.now().date()
             maturity_date = start_date + relativedelta(months=tenure_months)
             
+            # Calculate maturity amount (compound interest formula for RD)
             r = interest_rate / 400
             n = tenure_months / 3
             maturity_amount = round(monthly_amount * (((1 + r) ** n - 1) / r) * (1 + r), 2)
             
-            # Check if nominee_id column exists
-            c.execute("PRAGMA table_info(rd_accounts)")
-            columns = [col[1] for col in c.fetchall()]
+            c.execute("INSERT INTO rd_accounts (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, total_installments, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, tenure_months, created_by))
             
-            if 'nominee_id' in columns:
-                c.execute("INSERT INTO rd_accounts (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, total_installments, nominee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, tenure_months, nominee_id, created_by))
-            else:
-                c.execute("INSERT INTO rd_accounts (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, total_installments, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, tenure_months, created_by))
-            
+            # Create installment schedule
             for i in range(tenure_months):
                 due_date = start_date + relativedelta(months=i+1)
                 c.execute("INSERT INTO rd_installments (rd_id, installment_number, due_date, amount) VALUES (?, ?, ?, ?)",
                          (rd_id, i+1, due_date, monthly_amount))
             
+            # Pay first installment if balance available
             if sb[0] >= monthly_amount:
                 old_balance, new_balance = sb[0], sb[0] - monthly_amount
                 c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_balance, sb_account))
@@ -713,9 +699,11 @@ class RDAccountModule:
                 c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'RD_Transfer', ?, ?, ?, ?, ?)",
                          (txn_id, sb_account, monthly_amount, old_balance, new_balance, f'RD Installment 1/{tenure_months} - {rd_id}', created_by))
                 
-                voucher_id = JournalVoucherModule.create_auto_voucher('RD', start_date, f'RD {rd_id} Installment 1', created_by,
+                # Accounting entry
+                voucher_id = JournalVoucherModule.create_auto_voucher('RD', start_date, f'RD {rd_id} Installment 1/{tenure_months}', created_by,
                     [('RD_INVESTMENTS', monthly_amount, 0), ('SB_ACCOUNTS', 0, monthly_amount)])
                 c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
+                c.execute("UPDATE rd_installments SET voucher_id = ? WHERE rd_id = ? AND installment_number = 1", (voucher_id, rd_id))
             
             conn.commit()
             conn.close()
@@ -758,9 +746,11 @@ class RDAccountModule:
             c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'RD_Transfer', ?, ?, ?, ?, ?)",
                      (txn_id, rd[2], rd[3], sb_balance, new_balance, f'RD Installment {inst[1]}/{rd[9]} - {rd_id}', created_by))
             
-            voucher_id = JournalVoucherModule.create_auto_voucher('RD', datetime.now().date(), f'RD {rd_id} Installment {inst[1]}', created_by,
+            # Accounting entry
+            voucher_id = JournalVoucherModule.create_auto_voucher('RD', datetime.now().date(), f'RD {rd_id} Installment {inst[1]}/{rd[9]}', created_by,
                 [('RD_INVESTMENTS', rd[3], 0), ('SB_ACCOUNTS', 0, rd[3])])
             c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
+            c.execute("UPDATE rd_installments SET voucher_id = ? WHERE rd_id = ? AND installment_number = ?", (voucher_id, rd_id, inst[1]))
             
             conn.commit()
             conn.close()
@@ -784,7 +774,9 @@ class RDAccountModule:
                 conn.close()
                 return False, f"All installments not paid ({rd[8]}/{rd[9]})"
             
-            interest = rd[7] - (rd[3] * rd[9])
+            total_principal = rd[3] * rd[9]
+            interest_earned = rd[7] - total_principal
+            
             c.execute("UPDATE rd_accounts SET status = 'Matured' WHERE rd_id = ?", (rd_id,))
             
             c.execute("SELECT balance FROM sb_accounts WHERE account_number = ?", (rd[2],))
@@ -796,14 +788,15 @@ class RDAccountModule:
             c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'RD_Transfer', ?, ?, ?, ?, ?)",
                      (txn_id, rd[2], rd[7], old_balance, new_balance, f'RD Maturity - {rd_id}', created_by))
             
+            # Accounting entries: Return principal from RD to SB, and pay interest
             voucher_id = JournalVoucherModule.create_auto_voucher('RD', datetime.now().date(), f'RD Maturity {rd_id}', created_by,
-                [('SB_ACCOUNTS', 0, rd[3] * rd[9]), ('RD_INVESTMENTS', 0, rd[3] * rd[9]),
-                 ('INTEREST_ON_RD', interest, 0), ('SB_ACCOUNTS', 0, interest)])
+                [('RD_INVESTMENTS', 0, total_principal), ('SB_ACCOUNTS', total_principal, 0),
+                 ('INTEREST_ON_RD', interest_earned, 0), ('SB_ACCOUNTS', 0, interest_earned)])
             c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
             
             conn.commit()
             conn.close()
-            return True, f"RD matured. ₹{rd[7]:,.2f} credited"
+            return True, f"RD matured. ₹{rd[7]:,.2f} credited to SB account"
         except Exception as e:
             conn.rollback()
             conn.close()
@@ -828,13 +821,18 @@ class JournalVoucherModule:
             if abs(total_debit - total_credit) > 0.01:
                 conn.close()
                 return False, "Debit and Credit must be equal"
+            if total_debit == 0:
+                conn.close()
+                return False, "Amount cannot be zero"
             
             voucher_id = JournalVoucherModule.generate_voucher_id(voucher_type)
             c.execute("INSERT INTO journal_vouchers (voucher_id, voucher_type, voucher_date, narration, total_amount, status, created_by) VALUES (?, ?, ?, ?, ?, 'Approved', ?)",
                      (voucher_id, voucher_type, voucher_date, narration, total_debit, created_by))
+            
             for acc_head, debit, credit in entries:
                 c.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount) VALUES (?, ?, ?, ?)",
                          (voucher_id, acc_head, debit, credit))
+            
             conn.commit()
             conn.close()
             return True, voucher_id
@@ -874,10 +872,6 @@ class CustomerModule:
             if data.get('pan_number'):
                 c.execute("INSERT INTO kyc_documents (customer_id, doc_type, doc_number) VALUES (?, 'PAN', ?)",
                          (customer_id, data['pan_number']))
-            if data.get('nominee_name'):
-                c.execute("INSERT INTO nominees (customer_id, nominee_name, relationship, date_of_birth, phone, percentage_share) VALUES (?, ?, ?, ?, ?, ?)",
-                         (customer_id, data['nominee_name'], data.get('nominee_relationship'), data.get('nominee_dob'),
-                          data.get('nominee_phone'), data.get('nominee_percentage', 100)))
             
             conn.commit()
             conn.close()
@@ -1058,7 +1052,7 @@ def voucher_ui():
     st.markdown("### Recent Vouchers")
     conn = db.get_connection()
     c = conn.cursor()
-    c.execute("SELECT voucher_id, voucher_type, voucher_date, narration, total_amount, status FROM journal_vouchers ORDER BY created_at DESC LIMIT 10")
+    c.execute("SELECT voucher_id, voucher_type, voucher_date, narration, total_amount FROM journal_vouchers ORDER BY created_at DESC LIMIT 10")
     vouchers = c.fetchall()
     conn.close()
     if vouchers:
@@ -1137,8 +1131,8 @@ def sb_account_ui():
     
     with tab3:
         st.markdown("### Quarterly Interest Calculation")
-        if st.button("🧮 Calculate Interest", use_container_width=True):
-            with st.spinner("Calculating..."):
+        if st.button("🧮 Calculate Interest for All Eligible Accounts", use_container_width=True):
+            with st.spinner("Calculating interest..."):
                 success, results = SBAccountModule.calculate_quarterly_interest(st.session_state.user['user_id'])
                 if success:
                     st.success("Interest calculated!")
@@ -1154,7 +1148,7 @@ def sb_account_ui():
         conn.close()
         if history:
             st.markdown("### Interest History")
-            hist_data = [{'Account': h[1], 'Period': f"{h[2]} to {h[3]}", 'Min Balance': f"₹{h[4]:,.2f}", 'Rate': f"{h[5]}%", 'Interest': f"₹{h[6]:,.2f}", 'Credited': '✅' if h[7] else '⏳'} for h in history]
+            hist_data = [{'Account': h[1], 'Period': f"{h[2]} to {h[3]}", 'Min Balance': f"₹{h[4]:,.2f}", 'Rate': f"{h[5]}%", 'Interest': f"₹{h[6]:,.2f}"} for h in history]
             st.dataframe(pd.DataFrame(hist_data), use_container_width=True, hide_index=True)
     
     with tab4:
@@ -1184,12 +1178,10 @@ def fd_account_ui():
         conn.close()
         if accounts:
             with st.form("open_fd"):
-                opts = {}
-                for a in accounts:
-                    opts[f"{a[2]} {a[3]} - {a[0]} (₹{a[4]:,.2f})"] = a
+                opts = {f"{a[2]} {a[3]} - {a[0]} (₹{a[4]:,.2f})": a for a in accounts}
                 selected = st.selectbox("SB Account *", list(opts.keys()))
                 acc = opts[selected]
-                st.info(f"Customer: {acc[1]} | Balance: ₹{acc[4]:,.2f}")
+                st.info(f"Customer ID: {acc[1]} | Balance: ₹{acc[4]:,.2f}")
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     principal = st.number_input("Principal *", min_value=100.0, max_value=float(acc[4]), value=min(1000.0, float(acc[4])), step=1000.0)
@@ -1199,7 +1191,7 @@ def fd_account_ui():
                     tenure = st.selectbox("Tenure (Months)", [3, 6, 12, 24, 36, 48, 60])
                 if principal > 0:
                     maturity = principal * (1 + (rate/1200) * tenure)
-                    st.info(f"Maturity Amount: ₹{maturity:,.2f}")
+                    st.info(f"📊 Maturity Amount after {tenure} months: ₹{maturity:,.2f}")
                 if st.form_submit_button("Open FD", use_container_width=True):
                     success, result = FDAccountModule.open_fd(acc[1], acc[0], principal, rate, tenure, created_by=st.session_state.user['user_id'])
                     if success:
@@ -1216,10 +1208,11 @@ def fd_account_ui():
         conn.close()
         if fds:
             for fd in fds:
-                with st.expander(f"{fd[0]} | ₹{fd[3]:,.2f} | Maturity: ₹{fd[7]:,.2f}"):
+                with st.expander(f"{fd[0]} | Principal: ₹{fd[3]:,.2f} | Maturity: ₹{fd[7]:,.2f}"):
                     st.write(f"Customer: {fd[10]} {fd[11]}")
                     st.write(f"Start: {fd[5]} | Maturity: {fd[6]}")
-                    if st.button("Mature", key=f"mat_{fd[0]}"):
+                    st.write(f"Interest Rate: {fd[4]}% | Tenure: {fd[5]} months")
+                    if st.button("💰 Mature this FD", key=f"mat_{fd[0]}"):
                         success, msg = FDAccountModule.mature_fd(fd[0], st.session_state.user['user_id'])
                         st.success(msg) if success else st.error(msg)
                         if success:
@@ -1277,18 +1270,20 @@ def rd_account_ui():
             for rd in rds:
                 with st.expander(f"{rd[0]} | Monthly: ₹{rd[3]:,.2f} | Paid: {rd[8]}/{rd[9]}"):
                     st.write(f"Customer: {rd[12]} {rd[13]}")
-                    conn = db.get_connection()
-                    c = conn.cursor()
-                    c.execute("SELECT * FROM rd_installments WHERE rd_id = ? AND status = 'Pending' ORDER BY installment_number LIMIT 1", (rd[0],))
-                    inst = c.fetchone()
-                    conn.close()
+                    conn2 = db.get_connection()
+                    c2 = conn2.cursor()
+                    c2.execute("SELECT * FROM rd_installments WHERE rd_id = ? AND status = 'Pending' ORDER BY installment_number LIMIT 1", (rd[0],))
+                    inst = c2.fetchone()
+                    conn2.close()
                     if inst:
                         st.info(f"Next: Installment #{inst[1]} - ₹{inst[4]:,.2f} (Due: {inst[2]})")
-                        if st.button("Pay", key=f"pay_{rd[0]}"):
+                        if st.button("💳 Pay Installment", key=f"pay_{rd[0]}"):
                             success, msg = RDAccountModule.pay_installment(rd[0], st.session_state.user['user_id'])
                             st.success(msg) if success else st.error(msg)
                             if success:
                                 st.rerun()
+                    else:
+                        st.success("All installments paid!")
         else:
             st.info("No active RDs")
     
@@ -1301,7 +1296,7 @@ def rd_account_ui():
         if rds:
             for rd in rds:
                 with st.expander(f"{rd[0]} | Maturity: ₹{rd[7]:,.2f}"):
-                    if st.button("Mature", key=f"mat_{rd[0]}"):
+                    if st.button("💰 Mature this RD", key=f"mat_{rd[0]}"):
                         success, msg = RDAccountModule.mature_rd(rd[0], st.session_state.user['user_id'])
                         st.success(msg) if success else st.error(msg)
                         if success:
@@ -1392,7 +1387,7 @@ def reports_ui():
                 df_data.append({'Account': 'TOTAL', 'Name': '', 'Type': '', 'Debit': f"₹{td:,.2f}", 'Credit': f"₹{tc:,.2f}"})
                 st.dataframe(pd.DataFrame(df_data), use_container_width=True, hide_index=True)
                 if abs(td - tc) < 0.01:
-                    st.success(f"✅ Balanced! Total: ₹{td:,.2f}")
+                    st.success(f"✅ Trial Balance is balanced! Total: ₹{td:,.2f}")
                 else:
                     st.error(f"❌ Not Balanced! Difference: ₹{abs(td-tc):,.2f}")
     
@@ -1407,22 +1402,27 @@ def reports_ui():
                     amt = i['debit'] - i['credit']
                     if amt != 0:
                         st.write(f"- {i['account_name']}: ₹{amt:,.2f}")
-                st.markdown(f"**Total: ₹{ta:,.2f}**")
+                st.markdown(f"**Total Assets: ₹{ta:,.2f}**")
             with c2:
-                st.markdown("#### 🔴 LIABILITIES & EQUITY")
+                st.markdown("#### 🔴 LIABILITIES")
                 for i in liab:
                     amt = i['credit'] - i['debit']
                     if amt != 0:
                         st.write(f"- {i['account_name']}: ₹{amt:,.2f}")
+                st.markdown(f"**Total Liabilities: ₹{tl:,.2f}**")
+                st.markdown("#### 🔵 EQUITY")
                 for i in equity:
                     amt = i['credit'] - i['debit']
                     if amt != 0:
                         st.write(f"- {i['account_name']}: ₹{amt:,.2f}")
-                st.markdown(f"**Total: ₹{tl+te:,.2f}**")
-            if abs(ta - (tl+te)) < 0.01:
-                st.success("✅ Balanced!")
+                st.markdown(f"**Total Equity: ₹{te:,.2f}**")
+            
+            total_le = tl + te
+            st.markdown(f"### Total Liabilities & Equity: ₹{total_le:,.2f}")
+            if abs(ta - total_le) < 0.01:
+                st.success("✅ Balance Sheet is balanced!")
             else:
-                st.error(f"❌ Not Balanced! Difference: ₹{abs(ta-(tl+te)):,.2f}")
+                st.error(f"❌ Not Balanced! Difference: ₹{abs(ta-total_le):,.2f}")
 
 def head_management_ui():
     st.markdown('<h2 class="sub-header">📋 Chart of Accounts</h2>', unsafe_allow_html=True)
@@ -1443,7 +1443,7 @@ def verification_ui():
     st.markdown('<h2 class="sub-header">✅ Voucher Verification</h2>', unsafe_allow_html=True)
     conn = db.get_connection()
     c = conn.cursor()
-    c.execute("SELECT voucher_id, voucher_type, voucher_date, narration, total_amount, verification_status FROM journal_vouchers WHERE verification_status = 'Pending' ORDER BY created_at DESC")
+    c.execute("SELECT voucher_id, voucher_type, voucher_date, narration, total_amount FROM journal_vouchers WHERE verification_status = 'Pending' ORDER BY created_at DESC")
     vouchers = c.fetchall()
     conn.close()
     if vouchers:
@@ -1482,6 +1482,12 @@ def verification_ui():
 # ============================================
 def main():
     init_session_state()
+    
+    # Reset database button in sidebar
+    if st.sidebar.button("🔄 Reset Database", key="reset_db_side"):
+        if os.path.exists('complete_banking.db'):
+            os.remove('complete_banking.db')
+            st.rerun()
     
     try:
         db.initialize_database()
@@ -1526,13 +1532,19 @@ def main():
         c = conn.cursor()
         c.execute("SELECT COUNT(*), COALESCE(SUM(balance), 0) FROM sb_accounts WHERE status='Active'")
         stats = c.fetchone()
+        c.execute("SELECT COUNT(*), COALESCE(SUM(principal_amount), 0) FROM fd_accounts WHERE status='Active'")
+        fd_stats = c.fetchone()
+        c.execute("SELECT COUNT(*), COALESCE(SUM(monthly_amount * installments_paid), 0) FROM rd_accounts WHERE status='Active'")
+        rd_stats = c.fetchone()
         conn.close()
-        st.metric("Active Accounts", stats[0])
-        st.metric("Total Deposits", f"₹{stats[1]:,.2f}")
+        
+        st.metric("Active SB Accounts", stats[0])
+        st.metric("Total SB Deposits", f"₹{stats[1]:,.2f}")
+        st.metric("Active FDs", fd_stats[0])
+        st.metric("Active RDs", rd_stats[0])
         
         st.markdown("---")
         if st.button("🚪 Logout", use_container_width=True):
-            AuthModule.logout(st.session_state.user['user_id'], st.session_state.user.get('session_id', ''))
             st.session_state.logged_in = False
             st.session_state.user = None
             st.rerun()

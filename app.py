@@ -19,17 +19,369 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# ============================================
+# PROFESSIONAL DARK THEME CSS
+# ============================================
 st.markdown("""
     <style>
-    .main-header { font-size: 2.5rem; color: #1f4287; text-align: center; margin-bottom: 2rem; font-weight: bold; }
-    .sub-header { font-size: 1.5rem; color: #2781b5; margin-bottom: 1rem; font-weight: bold; }
-    .module-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 1.5rem; border-radius: 10px; color: white; margin-bottom: 1rem; }
-    .success-box { padding: 1rem; background-color: #d4edda; border-radius: 0.5rem; color: #155724; border-left: 5px solid #28a745; }
-    .error-box { padding: 1rem; background-color: #f8d7da; border-radius: 0.5rem; color: #721c24; border-left: 5px solid #dc3545; }
-    .info-box { padding: 1rem; background-color: #d1ecf1; border-radius: 0.5rem; color: #0c5460; border-left: 5px solid #17a2b8; }
-    .stButton>button { width: 100%; }
-    div[data-testid="stForm"] { border: 2px solid #e0e0e0; padding: 20px; border-radius: 10px; background-color: #fafafa; }
+    /* Global Styles */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    * {
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Main container */
+    .stApp {
+        background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0d1128 100%);
+    }
+    
+    /* Header styles */
+    .main-header {
+        font-size: 2.8rem;
+        background: linear-gradient(120deg, #667eea, #764ba2, #f093fb);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        margin-bottom: 2rem;
+        font-weight: 700;
+        text-shadow: 0 0 40px rgba(102, 126, 234, 0.3);
+    }
+    
+    .sub-header {
+        font-size: 1.6rem;
+        color: #a78bfa;
+        margin-bottom: 1.5rem;
+        font-weight: 600;
+        border-bottom: 2px solid #2d2b55;
+        padding-bottom: 0.5rem;
+    }
+    
+    /* Card styles */
+    .card {
+        background: linear-gradient(135deg, rgba(26, 31, 58, 0.9), rgba(45, 43, 85, 0.9));
+        border: 1px solid rgba(102, 126, 234, 0.2);
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(10px);
+    }
+    
+    .card:hover {
+        border: 1px solid rgba(102, 126, 234, 0.5);
+        box-shadow: 0 12px 40px rgba(102, 126, 234, 0.15);
+        transform: translateY(-2px);
+        transition: all 0.3s ease;
+    }
+    
+    /* Success/Error/Info boxes */
+    .success-box {
+        padding: 1.2rem;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.1));
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        border-radius: 12px;
+        color: #6ee7b7;
+        border-left: 4px solid #10b981;
+        margin: 1rem 0;
+    }
+    
+    .error-box {
+        padding: 1.2rem;
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.1));
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        border-radius: 12px;
+        color: #fca5a5;
+        border-left: 4px solid #ef4444;
+        margin: 1rem 0;
+    }
+    
+    .info-box {
+        padding: 1.2rem;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(37, 99, 235, 0.1));
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 12px;
+        color: #93c5fd;
+        border-left: 4px solid #3b82f6;
+        margin: 1rem 0;
+    }
+    
+    .warning-box {
+        padding: 1.2rem;
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.1));
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 12px;
+        color: #fcd34d;
+        border-left: 4px solid #f59e0b;
+        margin: 1rem 0;
+    }
+    
+    /* Form styles */
+    div[data-testid="stForm"] {
+        background: linear-gradient(135deg, rgba(26, 31, 58, 0.95), rgba(45, 43, 85, 0.95));
+        border: 1px solid rgba(102, 126, 234, 0.3);
+        padding: 2rem;
+        border-radius: 20px;
+        box-shadow: 0 15px 50px rgba(0, 0, 0, 0.4);
+    }
+    
+    /* Input fields */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input,
+    .stSelectbox > div > div > select,
+    .stTextArea > div > div > textarea {
+        background: rgba(15, 18, 35, 0.8) !important;
+        border: 1px solid rgba(102, 126, 234, 0.3) !important;
+        border-radius: 10px !important;
+        color: #e2e8f0 !important;
+        padding: 0.75rem !important;
+    }
+    
+    .stTextInput > div > div > input:focus,
+    .stNumberInput > div > div > input:focus,
+    .stSelectbox > div > div > select:focus,
+    .stTextArea > div > div > textarea:focus {
+        border-color: #667eea !important;
+        box-shadow: 0 0 20px rgba(102, 126, 234, 0.3) !important;
+    }
+    
+    /* Labels */
+    .stTextInput > label,
+    .stNumberInput > label,
+    .stSelectbox > label,
+    .stTextArea > label {
+        color: #c4b5fd !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        padding: 0.75rem 2rem !important;
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4) !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 12px 35px rgba(102, 126, 234, 0.6) !important;
+        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%) !important;
+    }
+    
+    .stButton > button:active {
+        transform: translateY(0) !important;
+    }
+    
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0a0e27 0%, #1a1f3a 100%) !important;
+        border-right: 1px solid rgba(102, 126, 234, 0.2) !important;
+    }
+    
+    section[data-testid="stSidebar"] .stMarkdown {
+        color: #e2e8f0 !important;
+    }
+    
+    /* Radio buttons in sidebar */
+    .stRadio > div {
+        background: transparent !important;
+    }
+    
+    .stRadio > div > div > label {
+        color: #c4b5fd !important;
+        font-weight: 500 !important;
+    }
+    
+    .stRadio > div > div > label:hover {
+        background: rgba(102, 126, 234, 0.1) !important;
+        border-radius: 10px !important;
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        background: rgba(15, 18, 35, 0.6) !important;
+        border-radius: 15px !important;
+        padding: 0.5rem !important;
+        gap: 0.5rem !important;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: transparent !important;
+        color: #94a3b8 !important;
+        border-radius: 10px !important;
+        padding: 0.75rem 1.5rem !important;
+        font-weight: 500 !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stTabs [data-baseweb="tab"]:hover {
+        background: rgba(102, 126, 234, 0.1) !important;
+        color: #c4b5fd !important;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2)) !important;
+        color: #a78bfa !important;
+        border: 1px solid rgba(102, 126, 234, 0.3) !important;
+    }
+    
+    /* Dataframe */
+    .stDataFrame {
+        background: rgba(15, 18, 35, 0.8) !important;
+        border-radius: 15px !important;
+        border: 1px solid rgba(102, 126, 234, 0.2) !important;
+    }
+    
+    .stDataFrame [data-testid="stTable"] {
+        background: transparent !important;
+    }
+    
+    .stDataFrame th {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2)) !important;
+        color: #c4b5fd !important;
+        font-weight: 600 !important;
+    }
+    
+    .stDataFrame td {
+        color: #e2e8f0 !important;
+        border-bottom: 1px solid rgba(102, 126, 234, 0.1) !important;
+    }
+    
+    /* Metrics */
+    [data-testid="stMetric"] {
+        background: linear-gradient(135deg, rgba(26, 31, 58, 0.9), rgba(45, 43, 85, 0.9));
+        border: 1px solid rgba(102, 126, 234, 0.2);
+        border-radius: 15px;
+        padding: 1.5rem !important;
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+    }
+    
+    [data-testid="stMetric"]:hover {
+        border-color: rgba(102, 126, 234, 0.5);
+        box-shadow: 0 12px 35px rgba(102, 126, 234, 0.2);
+    }
+    
+    [data-testid="stMetric"] label {
+        color: #94a3b8 !important;
+        font-weight: 500 !important;
+    }
+    
+    [data-testid="stMetric"] [data-testid="stMetricValue"] {
+        color: #a78bfa !important;
+        font-weight: 700 !important;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background: linear-gradient(135deg, rgba(26, 31, 58, 0.8), rgba(45, 43, 85, 0.8)) !important;
+        border: 1px solid rgba(102, 126, 234, 0.2) !important;
+        border-radius: 12px !important;
+        color: #c4b5fd !important;
+        font-weight: 600 !important;
+    }
+    
+    .streamlit-expanderHeader:hover {
+        border-color: rgba(102, 126, 234, 0.5) !important;
+    }
+    
+    /* Dividers */
+    hr {
+        border-color: rgba(102, 126, 234, 0.2) !important;
+    }
+    
+    /* Success/Error messages */
+    .stAlert {
+        background: rgba(15, 18, 35, 0.9) !important;
+        border-radius: 12px !important;
+        border: 1px solid rgba(102, 126, 234, 0.2) !important;
+    }
+    
+    /* Tooltips */
+    .stTooltip {
+        background: rgba(15, 18, 35, 0.95) !important;
+        border: 1px solid rgba(102, 126, 234, 0.3) !important;
+        color: #e2e8f0 !important;
+    }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: rgba(15, 18, 35, 0.5);
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        border-radius: 10px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(135deg, #764ba2, #667eea);
+    }
+    
+    /* Balloons animation override */
+    @keyframes float-up {
+        0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+        100% { transform: translateY(-100vh) rotate(720deg); opacity: 0; }
+    }
+    
+    /* Logo-like gradient text */
+    .gradient-text {
+        background: linear-gradient(120deg, #667eea, #764ba2, #f093fb);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 700;
+    }
+    
+    /* Card grid for dashboard */
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1.5rem;
+        margin: 1rem 0;
+    }
+    
+    /* Badge styles */
+    .badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    
+    .badge-success {
+        background: rgba(16, 185, 129, 0.2);
+        color: #6ee7b7;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    
+    .badge-warning {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fcd34d;
+        border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    
+    .badge-danger {
+        background: rgba(239, 68, 68, 0.2);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    
+    .badge-info {
+        background: rgba(59, 130, 246, 0.2);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -48,10 +400,9 @@ class DatabaseLayer:
         """Initialize all database tables with proper schema"""
         if os.path.exists(self.db_path):
             try:
-                # Check if database structure is correct
                 temp_conn = sqlite3.connect(self.db_path)
                 temp_c = temp_conn.cursor()
-                temp_c.execute("SELECT password FROM users LIMIT 1")
+                temp_c.execute("SELECT password_hash FROM users LIMIT 1")
                 temp_conn.close()
             except:
                 os.remove(self.db_path)
@@ -59,11 +410,9 @@ class DatabaseLayer:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
         
-        # Enable WAL mode
         self.cursor.execute("PRAGMA journal_mode=WAL")
         self.cursor.execute("PRAGMA foreign_keys=ON")
         
-        # Create all tables
         self._create_user_tables()
         self._create_customer_tables()
         self._create_account_tables()
@@ -71,7 +420,6 @@ class DatabaseLayer:
         self._create_transaction_tables()
         self._create_loan_tables()
         
-        # Insert default data
         self._insert_default_users()
         self._insert_chart_of_accounts()
         
@@ -79,7 +427,6 @@ class DatabaseLayer:
         return self.conn
     
     def _create_user_tables(self):
-        """User management tables"""
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,7 +454,6 @@ class DatabaseLayer:
         ''')
     
     def _create_customer_tables(self):
-        """Customer & KYC tables"""
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS customers (
                 customer_id TEXT PRIMARY KEY,
@@ -161,7 +507,6 @@ class DatabaseLayer:
         ''')
     
     def _create_account_tables(self):
-        """Account management tables"""
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_accounts (
                 account_number TEXT PRIMARY KEY,
@@ -213,7 +558,6 @@ class DatabaseLayer:
         ''')
     
     def _create_voucher_tables(self):
-        """Journal Voucher tables"""
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS journal_vouchers (
                 voucher_id TEXT PRIMARY KEY,
@@ -257,7 +601,6 @@ class DatabaseLayer:
         ''')
     
     def _create_transaction_tables(self):
-        """SB Transaction tables"""
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS sb_transactions (
                 transaction_id TEXT PRIMARY KEY,
@@ -289,7 +632,6 @@ class DatabaseLayer:
         ''')
     
     def _create_loan_tables(self):
-        """Loan management tables"""
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS loans (
                 loan_id TEXT PRIMARY KEY,
@@ -338,7 +680,6 @@ class DatabaseLayer:
         ''')
     
     def _insert_default_users(self):
-        """Insert default users"""
         self.cursor.execute("SELECT COUNT(*) FROM users")
         if self.cursor.fetchone()[0] == 0:
             users = [
@@ -354,7 +695,6 @@ class DatabaseLayer:
                 )
     
     def _insert_chart_of_accounts(self):
-        """Insert default Chart of Accounts"""
         self.cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")
         if self.cursor.fetchone()[0] == 0:
             accounts = [
@@ -404,13 +744,11 @@ class DatabaseLayer:
                 )
     
     def get_connection(self):
-        """Get a fresh database connection"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
     
     def add_audit_entry(self, user_id, module, action, record_type, record_id, old_data=None, new_data=None):
-        """Add entry to audit trail"""
         try:
             conn = self.get_connection()
             c = conn.cursor()
@@ -432,15 +770,12 @@ db = DatabaseLayer()
 # MODULE 2: AUTHENTICATION & USER MANAGEMENT
 # ============================================
 class AuthModule:
-    """User authentication and session management"""
-    
     @staticmethod
     def hash_password(password):
         return hashlib.sha256(password.encode()).hexdigest()
     
     @staticmethod
     def authenticate(username, password):
-        """Authenticate user login"""
         conn = db.get_connection()
         c = conn.cursor()
         password_hash = AuthModule.hash_password(password)
@@ -452,17 +787,13 @@ class AuthModule:
         user = c.fetchone()
         
         if user:
-            # Update last login
             c.execute("UPDATE users SET last_login = ? WHERE user_id = ?", 
                      (datetime.now(), user[0]))
             conn.commit()
             
-            # Create session
             session_id = str(uuid.uuid4())
-            c.execute("""
-                INSERT INTO user_sessions (session_id, user_id)
-                VALUES (?, ?)
-            """, (session_id, user[0]))
+            c.execute("INSERT INTO user_sessions (session_id, user_id) VALUES (?, ?)",
+                     (session_id, user[0]))
             conn.commit()
             
             db.add_audit_entry(user[0], 'Authentication', 'LOGIN', 'users', str(user[0]))
@@ -483,14 +814,10 @@ class AuthModule:
     
     @staticmethod
     def logout(user_id, session_id):
-        """Logout user and end session"""
         conn = db.get_connection()
         c = conn.cursor()
-        c.execute("""
-            UPDATE user_sessions 
-            SET logout_time = ?, is_active = 0 
-            WHERE session_id = ? AND user_id = ?
-        """, (datetime.now(), session_id, user_id))
+        c.execute("UPDATE user_sessions SET logout_time = ?, is_active = 0 WHERE session_id = ? AND user_id = ?",
+                 (datetime.now(), session_id, user_id))
         conn.commit()
         db.add_audit_entry(user_id, 'Authentication', 'LOGOUT', 'users', str(user_id))
         conn.close()
@@ -499,21 +826,16 @@ class AuthModule:
 # MODULE 3: SAVINGS BANK ACCOUNT MODULE
 # ============================================
 class SBAccountModule:
-    """Savings Bank Account operations with quarterly interest"""
-    
     @staticmethod
     def generate_account_number():
-        """Generate unique SB account number"""
         return f"SB{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:6].upper()}"
     
     @staticmethod
     def open_account(customer_id, initial_deposit, interest_rate=4.0, nominee_id=None, created_by=None):
-        """Open new SB account with initial deposit"""
         conn = db.get_connection()
         c = conn.cursor()
         
         try:
-            # Validate customer exists and KYC is verified
             c.execute("SELECT kyc_status FROM customers WHERE customer_id = ?", (customer_id,))
             customer = c.fetchone()
             
@@ -532,14 +854,12 @@ class SBAccountModule:
             account_number = SBAccountModule.generate_account_number()
             today = datetime.now().date()
             
-            # Create SB account
             c.execute("""
                 INSERT INTO sb_accounts 
                 (account_number, customer_id, balance, interest_rate, min_balance, opened_date, last_interest_date, nominee_id, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (account_number, customer_id, initial_deposit, interest_rate, 500, today, today, nominee_id, created_by))
             
-            # Record deposit transaction
             txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
             c.execute("""
                 INSERT INTO sb_transactions 
@@ -547,13 +867,11 @@ class SBAccountModule:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (txn_id, account_number, 'Deposit', initial_deposit, 0, initial_deposit, 'Initial Deposit - Account Opening', created_by))
             
-            # Create journal voucher for initial deposit
             voucher_id = JournalVoucherModule.create_auto_voucher(
                 'Receipt', today, f'Initial deposit for SB Account {account_number}', created_by,
                 [('CASH_IN_HAND', initial_deposit, 0), ('SB_ACCOUNTS', 0, initial_deposit)]
             )
             
-            # Update transaction with voucher reference
             c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
             
             conn.commit()
@@ -570,7 +888,6 @@ class SBAccountModule:
     
     @staticmethod
     def deposit(account_number, amount, description, created_by):
-        """Deposit money to SB account"""
         conn = db.get_connection()
         c = conn.cursor()
         
@@ -585,10 +902,8 @@ class SBAccountModule:
             old_balance = account[0]
             new_balance = old_balance + amount
             
-            # Update balance
             c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_balance, account_number))
             
-            # Record transaction
             txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
             c.execute("""
                 INSERT INTO sb_transactions 
@@ -596,7 +911,6 @@ class SBAccountModule:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (txn_id, account_number, 'Deposit', amount, old_balance, new_balance, description, created_by))
             
-            # Create journal voucher
             voucher_id = JournalVoucherModule.create_auto_voucher(
                 'Receipt', datetime.now().date(), f'Deposit in {account_number}: {description}', created_by,
                 [('CASH_IN_HAND', amount, 0), ('SB_ACCOUNTS', 0, amount)]
@@ -617,7 +931,6 @@ class SBAccountModule:
     
     @staticmethod
     def withdraw(account_number, amount, description, created_by):
-        """Withdraw money from SB account"""
         conn = db.get_connection()
         c = conn.cursor()
         
@@ -636,10 +949,8 @@ class SBAccountModule:
             old_balance = account[0]
             new_balance = old_balance - amount
             
-            # Update balance
             c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_balance, account_number))
             
-            # Record transaction
             txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
             c.execute("""
                 INSERT INTO sb_transactions 
@@ -647,7 +958,6 @@ class SBAccountModule:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (txn_id, account_number, 'Withdrawal', amount, old_balance, new_balance, description, created_by))
             
-            # Create journal voucher
             voucher_id = JournalVoucherModule.create_auto_voucher(
                 'Payment', datetime.now().date(), f'Withdrawal from {account_number}: {description}', created_by,
                 [('SB_ACCOUNTS', amount, 0), ('CASH_IN_HAND', 0, amount)]
@@ -668,7 +978,6 @@ class SBAccountModule:
     
     @staticmethod
     def calculate_quarterly_interest(account_number=None, created_by=None):
-        """Calculate and credit quarterly interest for SB accounts"""
         conn = db.get_connection()
         c = conn.cursor()
         
@@ -695,7 +1004,6 @@ class SBAccountModule:
             for account in accounts:
                 acc_num, balance, rate, last_int_date = account
                 
-                # Calculate minimum balance for quarter
                 c.execute("""
                     SELECT MIN(balance_after) FROM sb_transactions 
                     WHERE account_number = ? AND created_at >= ? AND created_at <= ?
@@ -704,25 +1012,21 @@ class SBAccountModule:
                 min_balance_result = c.fetchone()
                 min_balance = min_balance_result[0] if min_balance_result and min_balance_result[0] else balance
                 
-                # Calculate interest (Quarterly compounding)
-                quarterly_rate = rate / 400  # rate/100/4
+                quarterly_rate = rate / 400
                 interest = round(min_balance * quarterly_rate, 2)
                 
                 if interest > 0:
-                    # Credit interest
                     new_balance = balance + interest
                     c.execute("UPDATE sb_accounts SET balance = ?, last_interest_date = ? WHERE account_number = ?",
                              (new_balance, today, acc_num))
                     
-                    # Record transaction
                     txn_id = f"INT{uuid.uuid4().hex[:8].upper()}"
                     c.execute("""
                         INSERT INTO sb_transactions 
                         (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (txn_id, acc_num, 'Interest_Credit', interest, balance, new_balance, f'Quarterly Interest for Q{((today.month-1)//3)+1} {today.year}', created_by))
+                    """, (txn_id, acc_num, 'Interest_Credit', interest, balance, new_balance, f'Quarterly Interest Q{((today.month-1)//3)+1} {today.year}', created_by))
                     
-                    # Create journal voucher for interest
                     voucher_id = JournalVoucherModule.create_auto_voucher(
                         'Interest', today, f'Quarterly interest credited to {acc_num}', created_by,
                         [('INTEREST_ON_SB', interest, 0), ('SB_ACCOUNTS', 0, interest)]
@@ -730,7 +1034,6 @@ class SBAccountModule:
                     
                     c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
                     
-                    # Record interest calculation
                     c.execute("""
                         INSERT INTO interest_calculations 
                         (account_number, interest_period_start, interest_period_end, minimum_balance, interest_rate, interest_amount, is_credited, voucher_id)
@@ -755,7 +1058,6 @@ class SBAccountModule:
     
     @staticmethod
     def get_account_details(account_number):
-        """Get complete SB account details with customer info"""
         conn = db.get_connection()
         c = conn.cursor()
         c.execute("""
@@ -771,7 +1073,6 @@ class SBAccountModule:
     
     @staticmethod
     def get_transaction_history(account_number, limit=50):
-        """Get transaction history for SB account"""
         conn = db.get_connection()
         c = conn.cursor()
         c.execute("""
@@ -787,22 +1088,17 @@ class SBAccountModule:
 # MODULE 4: JOURNAL VOUCHER MODULE
 # ============================================
 class JournalVoucherModule:
-    """Journal voucher creation and management"""
-    
     @staticmethod
     def generate_voucher_id(voucher_type):
-        """Generate unique voucher ID"""
         prefix = {'Payment': 'PMT', 'Receipt': 'RCP', 'Journal': 'JNL', 'Contra': 'CNT', 'Interest': 'INT'}
         return f"{prefix.get(voucher_type, 'JNL')}{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:4].upper()}"
     
     @staticmethod
     def create_voucher(voucher_type, voucher_date, narration, entries, created_by):
-        """Create journal voucher with debit-credit validation"""
         conn = db.get_connection()
         c = conn.cursor()
         
         try:
-            # Validate debit = credit
             total_debit = sum(entry[1] for entry in entries if len(entry) > 1)
             total_credit = sum(entry[2] for entry in entries if len(entry) > 2)
             
@@ -816,14 +1112,12 @@ class JournalVoucherModule:
             
             voucher_id = JournalVoucherModule.generate_voucher_id(voucher_type)
             
-            # Insert voucher header
             c.execute("""
                 INSERT INTO journal_vouchers 
                 (voucher_id, voucher_type, voucher_date, narration, total_amount, status, created_by)
                 VALUES (?, ?, ?, ?, ?, 'Approved', ?)
             """, (voucher_id, voucher_type, voucher_date, narration, total_debit, created_by))
             
-            # Insert voucher entries
             for entry in entries:
                 account_head, debit, credit = entry
                 c.execute("""
@@ -845,7 +1139,6 @@ class JournalVoucherModule:
     
     @staticmethod
     def create_auto_voucher(voucher_type, voucher_date, narration, created_by, entries):
-        """Auto-create and approve voucher (for system-generated transactions)"""
         success, result = JournalVoucherModule.create_voucher(
             voucher_type, voucher_date, narration, entries, created_by
         )
@@ -853,7 +1146,6 @@ class JournalVoucherModule:
     
     @staticmethod
     def get_voucher_details(voucher_id):
-        """Get complete voucher with entries"""
         conn = db.get_connection()
         c = conn.cursor()
         
@@ -878,16 +1170,12 @@ class JournalVoucherModule:
 # MODULE 5: CUSTOMER & KYC MODULE
 # ============================================
 class CustomerModule:
-    """Customer registration and KYC management"""
-    
     @staticmethod
     def generate_customer_id():
-        """Generate unique customer ID"""
         return f"CUST{uuid.uuid4().hex[:8].upper()}"
     
     @staticmethod
     def register_customer(data, created_by):
-        """Register new customer with KYC details"""
         conn = db.get_connection()
         c = conn.cursor()
         
@@ -906,7 +1194,6 @@ class CustomerModule:
                 data.get('occupation'), data.get('annual_income'), created_by
             ))
             
-            # Add KYC documents
             if 'aadhaar_number' in data and data['aadhaar_number']:
                 c.execute("""
                     INSERT INTO kyc_documents (customer_id, doc_type, doc_number, verification_status)
@@ -919,7 +1206,6 @@ class CustomerModule:
                     VALUES (?, 'PAN', ?, 'Pending')
                 """, (customer_id, data['pan_number']))
             
-            # Add nominee if provided
             if 'nominee_name' in data and data['nominee_name']:
                 c.execute("""
                     INSERT INTO nominees (customer_id, nominee_name, relationship, date_of_birth, phone, percentage_share)
@@ -940,7 +1226,6 @@ class CustomerModule:
     
     @staticmethod
     def verify_kyc(customer_id, verified_by, status='Verified'):
-        """Verify customer KYC"""
         conn = db.get_connection()
         c = conn.cursor()
         
@@ -951,7 +1236,6 @@ class CustomerModule:
                 WHERE customer_id = ?
             """, (status, verified_by, datetime.now(), datetime.now(), customer_id))
             
-            # Update document status
             c.execute("""
                 UPDATE kyc_documents 
                 SET verification_status = ?, verified_by = ?
@@ -973,11 +1257,8 @@ class CustomerModule:
 # MODULE 6: FINANCIAL REPORTING MODULE
 # ============================================
 class FinancialReportingModule:
-    """Financial statements and reports generation"""
-    
     @staticmethod
     def get_trial_balance(as_of_date=None):
-        """Generate Trial Balance"""
         conn = db.get_connection()
         c = conn.cursor()
         
@@ -1028,7 +1309,6 @@ class FinancialReportingModule:
     
     @staticmethod
     def get_balance_sheet(as_of_date=None):
-        """Generate Balance Sheet"""
         if as_of_date is None:
             as_of_date = datetime.now().date()
         
@@ -1046,7 +1326,6 @@ class FinancialReportingModule:
     
     @staticmethod
     def get_profit_loss(from_date, to_date):
-        """Generate Profit & Loss Statement"""
         conn = db.get_connection()
         c = conn.cursor()
         
@@ -1081,7 +1360,6 @@ class FinancialReportingModule:
 # SESSION STATE INITIALIZATION
 # ============================================
 def init_session_state():
-    """Initialize Streamlit session state"""
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     if 'user' not in st.session_state:
@@ -1090,22 +1368,26 @@ def init_session_state():
         st.session_state.current_tab = 'Vouchers'
 
 # ============================================
-# UI COMPONENTS
+# UI COMPONENTS WITH DARK THEME
 # ============================================
 
 def login_ui():
-    """Login interface"""
     st.markdown('<h1 class="main-header">🏦 Complete Banking System</h1>', unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.markdown("### Secure Login")
+        st.markdown("""
+            <div style='text-align: center; margin-bottom: 2rem;'>
+                <h3 style='color: #a78bfa; font-size: 1.8rem;'>Secure Login</h3>
+                <p style='color: #94a3b8;'>Enter your credentials to access the system</p>
+            </div>
+        """, unsafe_allow_html=True)
         
         with st.form("login_form"):
-            username = st.text_input("👤 Username")
-            password = st.text_input("🔒 Password", type="password")
-            submit = st.form_submit_button("Login", use_container_width=True)
+            username = st.text_input("👤 Username", placeholder="Enter your username")
+            password = st.text_input("🔒 Password", type="password", placeholder="Enter your password")
+            submit = st.form_submit_button("🔐 Login", use_container_width=True)
             
             if submit:
                 if username and password:
@@ -1113,23 +1395,25 @@ def login_ui():
                     if user:
                         st.session_state.logged_in = True
                         st.session_state.user = user
-                        st.success(f"Welcome, {user['full_name']}!")
+                        st.success(f"Welcome back, {user['full_name']}! 👋")
+                        st.balloons()
                         st.rerun()
                     else:
-                        st.error("Invalid credentials")
+                        st.error("❌ Invalid username or password")
                 else:
-                    st.error("Please enter username and password")
+                    st.error("⚠️ Please enter both username and password")
         
         st.markdown("---")
-        st.info("""
-        **Demo Credentials:**
-        - Admin: `admin` / `admin123`
-        - Manager: `manager` / `manager123`
-        - User: `user1` / `user123`
-        """)
+        st.markdown("""
+            <div class="info-box">
+                <strong>🔑 Demo Credentials:</strong><br>
+                • Admin: <code>admin</code> / <code>admin123</code><br>
+                • Manager: <code>manager</code> / <code>manager123</code><br>
+                • User: <code>user1</code> / <code>user123</code>
+            </div>
+        """, unsafe_allow_html=True)
 
 def voucher_ui():
-    """Journal Voucher creation interface"""
     st.markdown('<h2 class="sub-header">📊 Journal Voucher Creation</h2>', unsafe_allow_html=True)
     
     conn = db.get_connection()
@@ -1143,16 +1427,16 @@ def voucher_ui():
     with st.form("voucher_form"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            voucher_type = st.selectbox("Voucher Type *", ['Payment', 'Receipt', 'Journal', 'Contra', 'Interest'])
+            voucher_type = st.selectbox("📝 Voucher Type *", ['Payment', 'Receipt', 'Journal', 'Contra', 'Interest'])
         with col2:
-            voucher_date = st.date_input("Voucher Date *", datetime.now().date())
+            voucher_date = st.date_input("📅 Voucher Date *", datetime.now().date())
         with col3:
             st.write("")
         
-        narration = st.text_area("Narration *", placeholder="Enter transaction description...")
+        narration = st.text_area("📄 Narration *", placeholder="Enter transaction description...")
         
         st.markdown("---")
-        st.markdown("### Debit Entries")
+        st.markdown('<h4 style="color: #f87171;">🔴 Debit Entries</h4>', unsafe_allow_html=True)
         
         debit_entries = []
         for i in range(3):
@@ -1167,7 +1451,7 @@ def voucher_ui():
                 debit_entries.append((acc_head, amount, 0))
         
         st.markdown("---")
-        st.markdown("### Credit Entries")
+        st.markdown('<h4 style="color: #34d399;">🟢 Credit Entries</h4>', unsafe_allow_html=True)
         
         credit_entries = []
         for i in range(3):
@@ -1194,30 +1478,29 @@ def voucher_ui():
             st.metric("Total Credit", f"₹{total_credit:,.2f}")
         with col3:
             if total_debit > 0 and abs(total_debit - total_credit) < 0.01:
-                st.success("Balanced ✓")
+                st.success("✅ Balanced")
             elif total_debit > 0:
-                st.error("Not Balanced ✗")
+                st.error("❌ Not Balanced")
         
-        if st.form_submit_button("Create Voucher", use_container_width=True):
+        if st.form_submit_button("📝 Create Voucher", use_container_width=True):
             if not narration:
-                st.error("Narration is required!")
+                st.error("⚠️ Narration is required!")
             elif not debit_entries and not credit_entries:
-                st.error("At least one entry required!")
+                st.error("⚠️ At least one entry required!")
             elif abs(total_debit - total_credit) > 0.01:
-                st.error("Debit and Credit must be equal!")
+                st.error("⚠️ Debit and Credit must be equal!")
             else:
                 success, result = JournalVoucherModule.create_voucher(
                     voucher_type, voucher_date, narration, all_entries, st.session_state.user['user_id']
                 )
                 if success:
-                    st.success(f"Voucher created successfully! ID: {result}")
+                    st.success(f"✅ Voucher created successfully! ID: {result}")
                     st.balloons()
                 else:
                     st.error(result)
     
-    # Display recent vouchers
     st.markdown("---")
-    st.markdown("### Recent Vouchers")
+    st.markdown("### 📋 Recent Vouchers")
     
     conn = db.get_connection()
     c = conn.cursor()
@@ -1258,10 +1541,9 @@ def voucher_ui():
         st.info("No vouchers created yet")
 
 def sb_account_ui():
-    """Savings Bank Account interface"""
     st.markdown('<h2 class="sub-header">💰 Savings Bank Account</h2>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4 = st.tabs(["Open Account", "Deposit/Withdraw", "Interest Calculation", "Account List"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📂 Open Account", "💳 Deposit/Withdraw", "📊 Interest Calculation", "📋 Account List"])
     
     with tab1:
         st.markdown("### Open New SB Account")
@@ -1282,21 +1564,21 @@ def sb_account_ui():
                     initial_deposit = st.number_input("Initial Deposit *", min_value=500.0, value=1000.0, step=500.0)
                     interest_rate = st.number_input("Interest Rate (%)", min_value=0.0, value=4.0, step=0.25)
                 with col2:
-                    st.info(f"Minimum Balance: ₹500")
-                    st.info(f"Quarterly Interest @ {interest_rate}%")
+                    st.info("📌 Minimum Balance: ₹500")
+                    st.info(f"📈 Quarterly Interest @ {interest_rate}%")
                 
-                if st.form_submit_button("Open Account"):
+                if st.form_submit_button("Open Account", use_container_width=True):
                     success, result = SBAccountModule.open_account(
                         customer_options[selected_customer], initial_deposit, interest_rate,
                         created_by=st.session_state.user['user_id']
                     )
                     if success:
-                        st.success(f"Account opened! Number: {result}")
+                        st.success(f"✅ Account opened! Number: {result}")
                         st.balloons()
                     else:
                         st.error(result)
         else:
-            st.warning("No customers with verified KYC available")
+            st.warning("⚠️ No customers with verified KYC available")
     
     with tab2:
         st.markdown("### Deposit / Withdraw")
@@ -1311,14 +1593,14 @@ def sb_account_ui():
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("#### Deposit")
+                st.markdown("#### 💚 Deposit")
                 with st.form("deposit_form"):
                     acc_options = {f"{acc[0]} (₹{acc[2]:,.2f})": acc for acc in accounts}
                     dep_account = st.selectbox("Account", list(acc_options.keys()), key="dep_acc")
                     dep_amount = st.number_input("Amount *", min_value=1.0, step=100.0, key="dep_amt")
                     dep_desc = st.text_input("Description", key="dep_desc")
                     
-                    if st.form_submit_button("Deposit"):
+                    if st.form_submit_button("Deposit 💰"):
                         acc = acc_options[dep_account]
                         success, msg = SBAccountModule.deposit(
                             acc[0], dep_amount, dep_desc, st.session_state.user['user_id']
@@ -1329,7 +1611,7 @@ def sb_account_ui():
                             st.error(msg)
             
             with col2:
-                st.markdown("#### Withdraw")
+                st.markdown("#### 🔴 Withdraw")
                 with st.form("withdraw_form"):
                     acc_options = {f"{acc[0]} (₹{acc[2]:,.2f})": acc for acc in accounts}
                     wit_account = st.selectbox("Account", list(acc_options.keys()), key="wit_acc")
@@ -1337,7 +1619,7 @@ def sb_account_ui():
                     wit_amount = st.number_input("Amount *", min_value=1.0, max_value=float(acc[2]), step=100.0, key="wit_amt")
                     wit_desc = st.text_input("Description", key="wit_desc")
                     
-                    if st.form_submit_button("Withdraw"):
+                    if st.form_submit_button("Withdraw 💸"):
                         success, msg = SBAccountModule.withdraw(
                             acc[0], wit_amount, wit_desc, st.session_state.user['user_id']
                         )
@@ -1351,20 +1633,19 @@ def sb_account_ui():
     with tab3:
         st.markdown("### Quarterly Interest Calculation")
         
-        if st.button("Calculate & Credit Interest for All Accounts"):
+        if st.button("🧮 Calculate & Credit Interest for All Accounts", use_container_width=True):
             with st.spinner("Calculating interest..."):
                 success, results = SBAccountModule.calculate_quarterly_interest(
                     created_by=st.session_state.user['user_id']
                 )
                 if success:
-                    st.success(f"Interest calculated for {len(results)} accounts")
+                    st.success(f"✅ Interest calculated for {len(results)} accounts")
                     if results:
                         df = pd.DataFrame(results)
                         st.dataframe(df, use_container_width=True, hide_index=True)
                 else:
                     st.error(results)
         
-        # Interest calculation history
         st.markdown("### Interest History")
         conn = db.get_connection()
         c = conn.cursor()
@@ -1406,10 +1687,9 @@ def sb_account_ui():
             st.info("No SB accounts")
 
 def customer_ui():
-    """Customer registration interface"""
     st.markdown('<h2 class="sub-header">👤 Customer Registration & KYC</h2>', unsafe_allow_html=True)
     
-    tab1, tab2 = st.tabs(["Register Customer", "Customer List"])
+    tab1, tab2 = st.tabs(["📝 Register Customer", "📋 Customer List"])
     
     with tab1:
         with st.form("customer_form"):
@@ -1453,32 +1733,23 @@ def customer_ui():
             
             if st.form_submit_button("Register Customer", use_container_width=True):
                 if not first_name or not last_name or not phone:
-                    st.error("First name, last name, and phone are required!")
+                    st.error("⚠️ First name, last name, and phone are required!")
                 else:
                     data = {
-                        'first_name': first_name,
-                        'last_name': last_name,
-                        'date_of_birth': date_of_birth,
-                        'gender': gender,
-                        'email': email,
-                        'phone': phone,
-                        'address': address,
-                        'city': city,
-                        'state': state,
-                        'pincode': pincode,
-                        'aadhaar_number': aadhaar,
-                        'pan_number': pan,
-                        'nominee_name': nominee_name,
-                        'nominee_relationship': nominee_relation,
-                        'nominee_dob': nominee_dob,
-                        'nominee_percentage': nominee_percentage
+                        'first_name': first_name, 'last_name': last_name,
+                        'date_of_birth': date_of_birth, 'gender': gender,
+                        'email': email, 'phone': phone, 'address': address,
+                        'city': city, 'state': state, 'pincode': pincode,
+                        'aadhaar_number': aadhaar, 'pan_number': pan,
+                        'nominee_name': nominee_name, 'nominee_relationship': nominee_relation,
+                        'nominee_dob': nominee_dob, 'nominee_percentage': nominee_percentage
                     }
                     
                     success, result = CustomerModule.register_customer(
                         data, st.session_state.user['user_id']
                     )
                     if success:
-                        st.success(f"Customer registered! ID: {result}")
+                        st.success(f"✅ Customer registered! ID: {result}")
                     else:
                         st.error(result)
     
@@ -1495,38 +1766,35 @@ def customer_ui():
         conn.close()
         
         if customers:
-            df = pd.DataFrame(customers, columns=['ID', 'First Name', 'Last Name', 'Phone', 'Email', 'KYC', 'Created'])
-            
-            for idx, row in df.iterrows():
+            for row in customers:
                 col1, col2, col3 = st.columns([3, 2, 1])
                 with col1:
-                    st.write(f"**{row['First Name']} {row['Last Name']}** ({row['ID']})")
-                    st.caption(f"📞 {row['Phone']} | 📧 {row['Email']}")
+                    st.markdown(f"**{row[1]} {row[2]}**")
+                    st.caption(f"🆔 {row[0]} | 📞 {row[3]} | 📧 {row[4]}")
                 with col2:
-                    if row['KYC'] == 'Verified':
-                        st.success("KYC Verified ✓")
+                    if row[5] == 'Verified':
+                        st.markdown('<span class="badge badge-success">✅ KYC Verified</span>', unsafe_allow_html=True)
                     else:
-                        st.warning(f"KYC: {row['KYC']}")
+                        st.markdown(f'<span class="badge badge-warning">⏳ KYC: {row[5]}</span>', unsafe_allow_html=True)
                 with col3:
-                    if row['KYC'] != 'Verified' and st.session_state.user['role'] in ['Admin', 'Manager']:
-                        if st.button("Verify", key=f"verify_{row['ID']}"):
-                            CustomerModule.verify_kyc(row['ID'], st.session_state.user['user_id'])
+                    if row[5] != 'Verified' and st.session_state.user['role'] in ['Admin', 'Manager']:
+                        if st.button("✅ Verify", key=f"verify_{row[0]}"):
+                            CustomerModule.verify_kyc(row[0], st.session_state.user['user_id'])
                             st.rerun()
                 st.divider()
         else:
             st.info("No customers registered")
 
 def reports_ui():
-    """Financial reports interface"""
     st.markdown('<h2 class="sub-header">📈 Financial Reports</h2>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss"])
+    tab1, tab2, tab3 = st.tabs(["📊 Trial Balance", "💰 Balance Sheet", "📈 Profit & Loss"])
     
     with tab1:
         st.markdown("### Trial Balance")
         as_of_date = st.date_input("As of Date", datetime.now().date(), key="tb_date")
         
-        if st.button("Generate Trial Balance"):
+        if st.button("Generate Trial Balance", use_container_width=True):
             data, total_debit, total_credit = FinancialReportingModule.get_trial_balance(as_of_date)
             
             if data:
@@ -1563,13 +1831,13 @@ def reports_ui():
         st.markdown("### Balance Sheet")
         bs_date = st.date_input("As at", datetime.now().date(), key="bs_date")
         
-        if st.button("Generate Balance Sheet"):
+        if st.button("Generate Balance Sheet", use_container_width=True):
             assets, liabilities, equity, total_assets, total_liabilities, total_equity = FinancialReportingModule.get_balance_sheet(bs_date)
             
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("#### ASSETS")
+                st.markdown("#### 🟢 ASSETS")
                 for item in assets:
                     amount = item['debit'] - item['credit']
                     if amount != 0:
@@ -1577,7 +1845,7 @@ def reports_ui():
                 st.markdown(f"**Total Assets: ₹{total_assets:,.2f}**")
             
             with col2:
-                st.markdown("#### LIABILITIES & EQUITY")
+                st.markdown("#### 🔴 LIABILITIES & EQUITY")
                 for item in liabilities:
                     amount = item['credit'] - item['debit']
                     if amount != 0:
@@ -1600,28 +1868,27 @@ def reports_ui():
         with col2:
             to_date = st.date_input("To", datetime.now().date(), key="pl_to")
         
-        if st.button("Generate P&L"):
+        if st.button("Generate P&L", use_container_width=True):
             income, expenses, total_income, total_expenses, net_profit = FinancialReportingModule.get_profit_loss(from_date, to_date)
             
-            st.markdown("#### INCOME")
+            st.markdown("#### 🟢 INCOME")
             for item in income:
                 st.write(f"- **{item[1]}:** ₹{item[2]:,.2f}")
             st.markdown(f"**Total Income: ₹{total_income:,.2f}**")
             
             st.markdown("---")
-            st.markdown("#### EXPENSES")
+            st.markdown("#### 🔴 EXPENSES")
             for item in expenses:
                 st.write(f"- **{item[1]}:** ₹{item[2]:,.2f}")
             st.markdown(f"**Total Expenses: ₹{total_expenses:,.2f}**")
             
             st.markdown("---")
             if net_profit >= 0:
-                st.success(f"### Net Profit: ₹{net_profit:,.2f}")
+                st.success(f"### 💰 Net Profit: ₹{net_profit:,.2f}")
             else:
-                st.error(f"### Net Loss: ₹{abs(net_profit):,.2f}")
+                st.error(f"### 📉 Net Loss: ₹{abs(net_profit):,.2f}")
 
 def head_management_ui():
-    """Chart of Accounts management"""
     st.markdown('<h2 class="sub-header">📋 Chart of Accounts</h2>', unsafe_allow_html=True)
     
     with st.form("add_head"):
@@ -1635,7 +1902,7 @@ def head_management_ui():
         with col4:
             category = st.text_input("Category")
         
-        if st.form_submit_button("Add Account Head"):
+        if st.form_submit_button("➕ Add Account Head", use_container_width=True):
             if head and name:
                 try:
                     conn = db.get_connection()
@@ -1646,12 +1913,11 @@ def head_management_ui():
                     """, (head.upper().replace(' ', '_'), name, acc_type, category))
                     conn.commit()
                     conn.close()
-                    st.success(f"Added: {name}")
+                    st.success(f"✅ Added: {name}")
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
     
-    # Display chart of accounts
     conn = db.get_connection()
     c = conn.cursor()
     c.execute("SELECT * FROM chart_of_accounts WHERE is_active = 1 ORDER BY account_type, account_head")
@@ -1663,7 +1929,6 @@ def head_management_ui():
         st.dataframe(df[['Head', 'Name', 'Type', 'Category']], use_container_width=True, hide_index=True)
 
 def verification_ui():
-    """Voucher verification interface"""
     st.markdown('<h2 class="sub-header">✅ Voucher Verification</h2>', unsafe_allow_html=True)
     
     conn = db.get_connection()
@@ -1695,9 +1960,9 @@ def verification_ui():
                 
                 for e in entries:
                     if e[2] > 0:
-                        st.write(f"**Dr:** {e[1]} - ₹{e[2]:,.2f}")
+                        st.write(f"🔴 **Dr:** {e[1]} - ₹{e[2]:,.2f}")
                     if e[3] > 0:
-                        st.write(f"**Cr:** {e[1]} - ₹{e[3]:,.2f}")
+                        st.write(f"🟢 **Cr:** {e[1]} - ₹{e[3]:,.2f}")
                 
                 st.caption(f"Created by: {v[7]}")
                 
@@ -1733,34 +1998,31 @@ def verification_ui():
 # MAIN APPLICATION
 # ============================================
 def main():
-    """Main application entry point"""
     init_session_state()
     
-    # Initialize database
     try:
         db.initialize_database()
     except Exception as e:
         st.error(f"Database initialization error: {e}")
-        if st.button("Reset Database"):
+        if st.button("🔄 Reset Database"):
             if os.path.exists('complete_banking.db'):
                 os.remove('complete_banking.db')
             st.rerun()
         return
     
-    # Show login if not authenticated
     if not st.session_state.logged_in:
         login_ui()
         return
     
-    # Sidebar
     with st.sidebar:
-        st.markdown(f"### 🏦 Banking System")
-        st.markdown(f"**User:** {st.session_state.user['full_name']}")
-        st.markdown(f"**Role:** {st.session_state.user['role']}")
+        st.markdown(f"""
+            <div style='text-align: center; padding: 1rem 0;'>
+                <h3 style='color: #a78bfa; margin: 0;'>🏦 Banking System</h3>
+                <p style='color: #94a3b8; margin: 0.5rem 0;'>{st.session_state.user['full_name']}</p>
+                <span class="badge badge-info">{st.session_state.user['role']}</span>
+            </div>
+        """, unsafe_allow_html=True)
         st.markdown("---")
-        
-        # Navigation tabs
-        st.markdown("### Navigation")
         
         tabs = {
             'Vouchers': '📊 Journal Vouchers',
@@ -1773,7 +2035,7 @@ def main():
         }
         
         selected_tab = st.radio(
-            "Select Module",
+            "Navigation",
             list(tabs.keys()),
             format_func=lambda x: tabs[x],
             label_visibility="collapsed"
@@ -1790,7 +2052,6 @@ def main():
             st.session_state.user = None
             st.rerun()
     
-    # Main content area
     if st.session_state.current_tab == 'Vouchers':
         voucher_ui()
     elif st.session_state.current_tab == 'SB Accounts':
@@ -1800,8 +2061,6 @@ def main():
     elif st.session_state.current_tab == 'Reports':
         reports_ui()
     elif st.session_state.current_tab == 'Trial Balance':
-        # Redirect to Trial Balance tab in Reports
-        st.session_state.current_tab_temp = 'Trial Balance'
         reports_ui()
     elif st.session_state.current_tab == 'Head Management':
         head_management_ui()
@@ -1810,5 +2069,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
       

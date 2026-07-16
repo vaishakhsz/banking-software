@@ -2048,10 +2048,10 @@ def sb_account_ui():
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    initial_deposit = st.number_input("Initial Deposit *", min_value=500.0, value=1000.0, step=500.0)
+                    initial_deposit = st.number_input("Initial Deposit *", min_value=0.0, value=1000.0, step=500.0)
                     interest_rate = st.number_input("Interest Rate (%)", min_value=0.0, value=4.0, step=0.25)
                 with col2:
-                    st.info("📌 Minimum Balance: ₹500")
+                    st.info("📌 Minimum Balance: ₹0")
                     st.info(f"📈 Quarterly Interest @ {interest_rate}%")
                 
                 if st.form_submit_button("Open Account", use_container_width=True):

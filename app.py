@@ -472,6 +472,9 @@ class FDAccountModule:
 # ============================================
 # RD ACCOUNT MODULE - WITH PROPER ACCOUNTING
 # ============================================
+# ============================================
+# RD ACCOUNT MODULE - WITH PROPER ACCOUNTING
+# ============================================
 class RDAccountModule:
     @staticmethod
     def generate_rd_id():
@@ -520,7 +523,8 @@ class RDAccountModule:
             conn.rollback(); conn.close()
             return False, str(e)
     
-    @staticmethod    def pay_installment(rd_id, created_by=None):
+    @staticmethod
+    def pay_installment(rd_id, created_by=None):
         conn = db.get_connection()
         c = conn.cursor()
         try:
@@ -544,13 +548,48 @@ class RDAccountModule:
             txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
             c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'RD_Transfer', ?, ?, ?, ?, ?)",
                      (txn_id, rd[2], rd[3], sb_balance, new_balance, f'RD Installment {inst[1]}/{rd[9]} - {rd_id}', created_by))
-            # ACCOUNTING
+            # ACCOUNTING: RD Asset UP (Debit), SB Liability DOWN (Debit)
             voucher_id = JournalVoucherModule.create_auto_voucher('RD', datetime.now().date(), f'RD {rd_id} Installment {inst[1]}/{rd[9]}', created_by,
                 [('RD_INVESTMENTS', rd[3], 0), ('SB_ACCOUNTS', rd[3], 0)])
             c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
             
             conn.commit(); conn.close()
             return True, f"Installment {inst[1]}/{rd[9]} paid"
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+    
+    @staticmethod
+    def mature_rd(rd_id, created_by=None):
+        conn = db.get_connection()
+        c = conn.cursor()
+        try:
+            c.execute("SELECT * FROM rd_accounts WHERE rd_id = ? AND status = 'Active'", (rd_id,))
+            rd = c.fetchone()
+            if not rd: conn.close(); return False, "RD not found"
+            if rd[8] < rd[9]: conn.close(); return False, f"All installments not paid ({rd[8]}/{rd[9]})"
+            
+            total_principal = rd[3] * rd[9]
+            interest_earned = rd[7] - total_principal
+            
+            c.execute("UPDATE rd_accounts SET status = 'Matured' WHERE rd_id = ?", (rd_id,))
+            
+            c.execute("SELECT balance FROM sb_accounts WHERE account_number = ?", (rd[2],))
+            old_balance = c.fetchone()[0]
+            new_balance = old_balance + rd[7]
+            c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_balance, rd[2]))
+            
+            txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
+            c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'RD_Transfer', ?, ?, ?, ?, ?)",
+                     (txn_id, rd[2], rd[7], old_balance, new_balance, f'RD Maturity - {rd_id}', created_by))
+            # ACCOUNTING: RD Asset DOWN (Credit), SB Liability UP (Credit) + Interest expense
+            voucher_id = JournalVoucherModule.create_auto_voucher('RD', datetime.now().date(), f'RD Maturity {rd_id}', created_by,
+                [('RD_INVESTMENTS', 0, total_principal), ('SB_ACCOUNTS', total_principal, 0),
+                 ('INTEREST_ON_RD', interest_earned, 0), ('SB_ACCOUNTS', 0, interest_earned)])
+            c.execute("UPDATE sb_transactions SET voucher_id = ? WHERE transaction_id = ?", (voucher_id, txn_id))
+            
+            conn.commit(); conn.close()
+            return True, f"RD matured. ₹{rd[7]:,.2f} credited to SB account"
         except Exception as e:
             conn.rollback(); conn.close()
             return False, str(e)

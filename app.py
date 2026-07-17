@@ -10,9 +10,18 @@ from PIL import Image
 import io
 import hashlib
 import base64
-from fpdf import FPDF
 import plotly.express as px
 import plotly.graph_objects as go
+
+# Fix: Try importing fpdf with the correct package name
+try:
+    from fpdf import FPDF
+except ImportError:
+    try:
+        from fpdf2 import FPDF
+    except ImportError:
+        st.error("Please install fpdf2: pip install fpdf2")
+        FPDF = None
 
 # ==================== DATABASE SETUP ====================
 
@@ -240,6 +249,9 @@ class BankPDF(FPDF):
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'C')
 
 def generate_report_pdf(report_type, data, filename):
+    if FPDF is None:
+        return None
+    
     pdf = BankPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -310,6 +322,10 @@ def main():
         color: #1f77b4;
         text-align: center;
         margin-bottom: 2rem;
+        padding: 1rem;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
     }
     .card {
         background-color: white;
@@ -324,6 +340,16 @@ def main():
         padding: 1.5rem;
         border-radius: 10px;
         text-align: center;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .metric-card h3 {
+        font-size: 2rem;
+        margin: 0;
+    }
+    .metric-card p {
+        margin: 0.5rem 0 0 0;
+        font-size: 0.9rem;
+        opacity: 0.9;
     }
     .success-badge {
         background-color: #10b981;
@@ -350,6 +376,11 @@ def main():
         width: 100%;
         border-radius: 5px;
         font-weight: bold;
+        transition: all 0.3s;
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -391,29 +422,42 @@ def show_login_page():
                     st.session_state.page = 'register'
                     st.rerun()
             
-            st.info("Default admin: admin / admin123")
+            st.info("Default admin credentials: **admin** / **admin123**")
             st.markdown('</div>', unsafe_allow_html=True)
 
 def show_main_app():
     with st.sidebar:
         st.markdown(f"## 👤 {st.session_state.user['username']}")
-        st.markdown(f"*Role: {st.session_state.user['role'].upper()}*")
+        role_badge = {
+            'admin': '<span class="success-badge">ADMIN</span>',
+            'staff': '<span class="warning-badge">STAFF</span>',
+            'customer': '<span class="error-badge">CUSTOMER</span>'
+        }
+        st.markdown(f"*{role_badge.get(st.session_state.user['role'], 'USER')}*", unsafe_allow_html=True)
         st.divider()
         
-        menu_options = {
-            'dashboard': '📊 Dashboard',
-            'customer_management': '👥 Customer Management',
-            'kyc_verification': '🔍 KYC Verification',
-            'sb_accounts': '💰 SB Accounts',
-            'fixed_deposits': '💎 Fixed Deposits',
-            'recurring_deposits': '🔄 Recurring Deposits',
-            'transactions': '💳 Transactions',
-            'journal_vouchers': '📝 Journal Vouchers',
-            'trial_balance': '⚖️ Trial Balance',
-            'balance_sheet': '📈 Balance Sheet',
-            'profit_loss': '💵 Profit & Loss',
-            'reports': '📋 Reports'
-        }
+        # Menu based on role
+        if st.session_state.user['role'] in ['admin', 'staff']:
+            menu_options = {
+                'dashboard': '📊 Dashboard',
+                'customer_management': '👥 Customer Management',
+                'kyc_verification': '🔍 KYC Verification',
+                'sb_accounts': '💰 SB Accounts',
+                'fixed_deposits': '💎 Fixed Deposits',
+                'recurring_deposits': '🔄 Recurring Deposits',
+                'transactions': '💳 All Transactions',
+                'journal_vouchers': '📝 Journal Vouchers',
+                'trial_balance': '⚖️ Trial Balance',
+                'balance_sheet': '📈 Balance Sheet',
+                'profit_loss': '💵 Profit & Loss',
+                'reports': '📋 Reports'
+            }
+        else:
+            menu_options = {
+                'dashboard': '📊 Dashboard',
+                'my_accounts': '💰 My Accounts',
+                'transactions': '💳 My Transactions'
+            }
         
         for key, label in menu_options.items():
             if st.sidebar.button(label, key=key, use_container_width=True):
@@ -421,7 +465,7 @@ def show_main_app():
                 st.rerun()
         
         st.divider()
-        if st.sidebar.button("🚪 Logout", use_container_width=True):
+        if st.sidebar.button("🚪 Logout", use_container_width=True, type="primary"):
             st.session_state.user = None
             st.session_state.page = 'login'
             st.rerun()
@@ -435,7 +479,7 @@ def show_main_app():
         show_customer_management()
     elif page == 'kyc_verification':
         show_kyc_verification()
-    elif page == 'sb_accounts':
+    elif page == 'sb_accounts' or page == 'my_accounts':
         show_sb_accounts()
     elif page == 'fixed_deposits':
         show_fixed_deposits()
@@ -499,7 +543,7 @@ def show_dashboard():
         ''', unsafe_allow_html=True)
     
     # Recent Transactions
-    st.subheader("Recent Transactions")
+    st.subheader("📌 Recent Transactions")
     transactions = conn.execute("""
         SELECT t.transaction_id, c.first_name || ' ' || c.last_name as customer_name,
                t.transaction_type, t.amount, t.description, t.created_at
@@ -513,6 +557,8 @@ def show_dashboard():
     if transactions:
         df = pd.DataFrame(transactions, columns=['Transaction ID', 'Customer', 'Type', 'Amount', 'Description', 'Date'])
         st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No transactions yet")
     
     # Charts
     col1, col2 = st.columns(2)
@@ -568,20 +614,20 @@ def show_customer_management():
             with col1:
                 first_name = st.text_input("First Name *")
                 last_name = st.text_input("Last Name *")
-                date_of_birth = st.date_input("Date of Birth *", min_value=date(1900,1,1))
+                date_of_birth = st.date_input("Date of Birth *", min_value=date(1900,1,1), max_value=date.today())
                 gender = st.selectbox("Gender", ["Male", "Female", "Other"])
                 email = st.text_input("Email *")
                 phone = st.text_input("Phone Number *")
             
             with col2:
-                pan_number = st.text_input("PAN Number *")
-                aadhar_number = st.text_input("Aadhar Number *")
+                pan_number = st.text_input("PAN Number * (e.g., ABCDE1234F)")
+                aadhar_number = st.text_input("Aadhar Number * (12 digits)")
                 address = st.text_area("Address")
                 city = st.text_input("City")
                 state = st.text_input("State")
                 pincode = st.text_input("PIN Code")
             
-            st.subheader("KYC Documents Upload")
+            st.subheader("📎 KYC Documents Upload")
             col1, col2, col3 = st.columns(3)
             
             with col1:
@@ -593,7 +639,7 @@ def show_customer_management():
             
             signature = st.file_uploader("Signature", type=['jpg', 'jpeg', 'png'])
             
-            submitted = st.form_submit_button("Register Customer", use_container_width=True)
+            submitted = st.form_submit_button("📝 Register Customer", use_container_width=True)
             
             if submitted:
                 if not all([first_name, last_name, email, phone, pan_number, aadhar_number]):
@@ -623,8 +669,9 @@ def show_customer_management():
                         conn.commit()
                         conn.close()
                         
-                        st.success(f"Customer registered successfully! Customer ID: {customer_id}")
-                        st.info("KYC verification is pending. Admin will verify the documents.")
+                        st.success(f"✅ Customer registered successfully!")
+                        st.info(f"Customer ID: **{customer_id}**")
+                        st.warning("KYC verification is pending. Admin will verify the documents.")
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
     
@@ -632,25 +679,27 @@ def show_customer_management():
         st.subheader("Customer List")
         conn = get_db()
         customers = conn.execute("""
-            SELECT customer_id, first_name, last_name, email, phone, kyc_status, created_at
+            SELECT customer_id, first_name, last_name, email, phone, 
+                   city, kyc_status, created_at
             FROM customers
             ORDER BY created_at DESC
         """).fetchall()
         
         if customers:
             df = pd.DataFrame(customers, columns=['Customer ID', 'First Name', 'Last Name', 
-                                                  'Email', 'Phone', 'KYC Status', 'Registration Date'])
+                                                  'Email', 'Phone', 'City', 'KYC Status', 'Registration Date'])
             
             # Color code KYC status
-            def color_kyc(val):
+            def highlight_kyc(val):
                 if val == 'VERIFIED':
-                    return 'background-color: #10b981; color: white'
+                    return 'background-color: #10b981; color: white; padding: 5px; border-radius: 5px;'
                 elif val == 'PENDING':
-                    return 'background-color: #f59e0b; color: white'
-                else:
-                    return 'background-color: #ef4444; color: white'
+                    return 'background-color: #f59e0b; color: white; padding: 5px; border-radius: 5px;'
+                elif val == 'REJECTED':
+                    return 'background-color: #ef4444; color: white; padding: 5px; border-radius: 5px;'
+                return ''
             
-            styled_df = df.style.applymap(color_kyc, subset=['KYC Status'])
+            styled_df = df.style.applymap(highlight_kyc, subset=['KYC Status'])
             st.dataframe(styled_df, use_container_width=True)
             
             # Export option
@@ -668,7 +717,7 @@ def show_customer_management():
     
     with tab3:
         st.subheader("Search Customer")
-        search_term = st.text_input("Search by Name, Customer ID, Email, or Phone")
+        search_term = st.text_input("Search by Name, Customer ID, Email, Phone, or PAN")
         
         if search_term:
             conn = get_db()
@@ -680,18 +729,28 @@ def show_customer_management():
                   f'%{search_term}%', f'%{search_term}%', f'%{search_term}%')).fetchall()
             
             if customers:
+                st.success(f"Found {len(customers)} customer(s)")
                 for cust in customers:
-                    with st.expander(f"{cust[3]} {cust[4]} - {cust[2]}"):
+                    with st.expander(f"📋 {cust[3]} {cust[4]} - {cust[2]}"):
                         col1, col2 = st.columns(2)
                         with col1:
                             st.write(f"**Customer ID:** {cust[2]}")
+                            st.write(f"**Date of Birth:** {cust[5]}")
+                            st.write(f"**Gender:** {cust[6]}")
                             st.write(f"**Email:** {cust[7]}")
                             st.write(f"**Phone:** {cust[8]}")
                             st.write(f"**PAN:** {cust[12]}")
                             st.write(f"**Aadhar:** {cust[13]}")
                         with col2:
-                            st.write(f"**KYC Status:** {cust[14]}")
-                            st.write(f"**Address:** {cust[9]}, {cust[10]}, {cust[11]}")
+                            kyc_status_color = {
+                                'VERIFIED': '🟢',
+                                'PENDING': '🟡',
+                                'REJECTED': '🔴'
+                            }
+                            st.write(f"**KYC Status:** {kyc_status_color.get(cust[14], '⚪')} {cust[14]}")
+                            st.write(f"**Address:** {cust[9]}")
+                            st.write(f"**City:** {cust[10]}")
+                            st.write(f"**State:** {cust[11]} - {cust[12] if len(cust) > 11 else ''}")
                             st.write(f"**Registration Date:** {cust[20][:10] if cust[20] else 'N/A'}")
             else:
                 st.warning("No customer found")
@@ -701,7 +760,7 @@ def show_kyc_verification():
     st.markdown('<h1 class="main-header">🔍 KYC Verification</h1>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
-        st.error("Unauthorized access")
+        st.error("⛔ Unauthorized access")
         return
     
     conn = get_db()
@@ -711,14 +770,14 @@ def show_kyc_verification():
     """).fetchall()
     
     if not pending_kyc:
-        st.success("No pending KYC verifications!")
+        st.success("✅ No pending KYC verifications!")
         conn.close()
         return
     
-    st.subheader(f"Pending Verifications: {len(pending_kyc)}")
+    st.subheader(f"📋 Pending Verifications: {len(pending_kyc)}")
     
     for cust in pending_kyc:
-        with st.expander(f"📋 {cust[3]} {cust[4]} - {cust[2]}", expanded=True):
+        with st.expander(f"📄 {cust[3]} {cust[4]} - {cust[2]}", expanded=True):
             col1, col2 = st.columns(2)
             
             with col1:
@@ -738,28 +797,29 @@ def show_kyc_verification():
                 if cust[16]:  # PAN document
                     st.write("**PAN Card:**")
                     try:
-                        st.image(cust[16], width=200)
+                        st.image(cust[16], width=250)
                     except:
-                        st.write("Document uploaded (binary)")
+                        st.info("Document uploaded (binary format)")
                 
                 if cust[17]:  # Aadhar document
                     st.write("**Aadhar Card:**")
                     try:
-                        st.image(cust[17], width=200)
+                        st.image(cust[17], width=250)
                     except:
-                        st.write("Document uploaded (binary)")
+                        st.info("Document uploaded (binary format)")
                 
                 if cust[18]:  # Photo
                     st.write("**Photo:**")
                     try:
                         st.image(cust[18], width=150)
                     except:
-                        st.write("Photo uploaded (binary)")
+                        st.info("Photo uploaded (binary format)")
             
+            st.divider()
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                if st.button(f"✅ Approve - {cust[2]}", key=f"approve_{cust[0]}"):
+                if st.button(f"✅ Approve KYC", key=f"approve_{cust[0]}", use_container_width=True):
                     conn.execute("""
                         UPDATE customers 
                         SET kyc_status='VERIFIED', 
@@ -776,11 +836,12 @@ def show_kyc_verification():
                     """, (account_number, cust[0]))
                     
                     conn.commit()
-                    st.success(f"KYC approved and SB account created for {cust[3]} {cust[4]}")
+                    st.success(f"✅ KYC approved and SB account created!")
+                    st.info(f"SB Account Number: **{account_number}** (Opening Balance: ₹0.00)")
                     st.rerun()
             
             with col2:
-                if st.button(f"❌ Reject - {cust[2]}", key=f"reject_{cust[0]}"):
+                if st.button(f"❌ Reject KYC", key=f"reject_{cust[0]}", use_container_width=True):
                     conn.execute("""
                         UPDATE customers 
                         SET kyc_status='REJECTED'
@@ -791,7 +852,7 @@ def show_kyc_verification():
                     st.rerun()
             
             with col3:
-                reason = st.text_input(f"Remarks for {cust[2]}", key=f"remarks_{cust[0]}")
+                reason = st.text_input(f"Remarks", key=f"remarks_{cust[0]}", placeholder="Optional remarks")
     
     conn.close()
 
@@ -803,18 +864,33 @@ def show_sb_accounts():
     tab1, tab2, tab3 = st.tabs(["📋 Account List", "💸 Deposit/Withdraw", "📜 Account Statement"])
     
     with tab1:
-        accounts = conn.execute("""
-            SELECT a.account_number, c.first_name || ' ' || c.last_name as name,
-                   a.balance, a.status, a.created_at
-            FROM accounts a
-            JOIN customers c ON a.customer_id = c.id
-            WHERE a.account_type='SB' AND c.kyc_status='VERIFIED'
-            ORDER BY a.created_at DESC
-        """).fetchall()
+        st.subheader("SB Account List")
+        
+        # Filter for customer role
+        if st.session_state.user['role'] == 'customer':
+            accounts = conn.execute("""
+                SELECT a.account_number, c.first_name || ' ' || c.last_name as name,
+                       a.balance, a.interest_rate, a.status, a.created_at
+                FROM accounts a
+                JOIN customers c ON a.customer_id = c.id
+                WHERE a.account_type='SB' AND c.user_id=?
+                ORDER BY a.created_at DESC
+            """, (st.session_state.user['id'],)).fetchall()
+        else:
+            accounts = conn.execute("""
+                SELECT a.account_number, c.first_name || ' ' || c.last_name as name,
+                       a.balance, a.interest_rate, a.status, a.created_at
+                FROM accounts a
+                JOIN customers c ON a.customer_id = c.id
+                WHERE a.account_type='SB' AND c.kyc_status='VERIFIED'
+                ORDER BY a.created_at DESC
+            """).fetchall()
         
         if accounts:
-            df = pd.DataFrame(accounts, columns=['Account Number', 'Customer Name', 'Balance', 'Status', 'Opening Date'])
-            st.dataframe(df, use_container_width=True)
+            df = pd.DataFrame(accounts, columns=['Account Number', 'Customer Name', 'Balance', 
+                                                 'Interest Rate', 'Status', 'Opening Date'])
+            st.dataframe(df.style.format({'Balance': '₹{:,.2f}', 'Interest Rate': '{:.2f}%'}), 
+                        use_container_width=True)
             
             # Total SB balance
             total_sb = sum(acc[2] for acc in accounts)
@@ -824,54 +900,69 @@ def show_sb_accounts():
     
     with tab2:
         st.subheader("Transaction (Deposit/Withdrawal)")
-        st.warning("**Note: SB Account opening balance must be 0. All transactions will be recorded.**")
+        st.warning("**Note: SB Account opening balance must be 0. All transactions are recorded with voucher numbers.**")
         
         # Get all active SB accounts
-        accounts = conn.execute("""
-            SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance
-            FROM accounts a
-            JOIN customers c ON a.customer_id = c.id
-            WHERE a.account_type='SB' AND a.status='ACTIVE'
-        """).fetchall()
+        if st.session_state.user['role'] == 'customer':
+            accounts = conn.execute("""
+                SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance
+                FROM accounts a
+                JOIN customers c ON a.customer_id = c.id
+                WHERE a.account_type='SB' AND a.status='ACTIVE' AND c.user_id=?
+            """, (st.session_state.user['id'],)).fetchall()
+        else:
+            accounts = conn.execute("""
+                SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance
+                FROM accounts a
+                JOIN customers c ON a.customer_id = c.id
+                WHERE a.account_type='SB' AND a.status='ACTIVE'
+            """).fetchall()
         
         if accounts:
-            account_options = {f"{acc[1]} - {acc[2]} (₹{acc[3]:,.2f})": acc for acc in accounts}
+            account_options = {f"{acc[1]} - {acc[2]} (Balance: ₹{acc[3]:,.2f})": acc for acc in accounts}
             selected = st.selectbox("Select Account", list(account_options.keys()))
             
             if selected:
                 account = account_options[selected]
-                transaction_type = st.radio("Transaction Type", ["DEPOSIT", "WITHDRAWAL"])
+                transaction_type = st.radio("Transaction Type", ["💰 DEPOSIT", "💸 WITHDRAWAL"], horizontal=True)
                 
                 with st.form("sb_transaction"):
                     amount = st.number_input("Amount (₹)", min_value=0.01, step=100.0)
-                    description = st.text_input("Description")
+                    description = st.text_input("Description/Narration", placeholder="Enter transaction details")
                     
-                    if st.form_submit_button("Process Transaction", use_container_width=True):
-                        if transaction_type == "WITHDRAWAL" and amount > account[3]:
-                            st.error("Insufficient balance!")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        reference_type = st.selectbox("Payment Mode", ["CASH", "TRANSFER", "CHEQUE"])
+                    
+                    if st.form_submit_button("💳 Process Transaction", use_container_width=True):
+                        txn_type_actual = "WITHDRAWAL" if "WITHDRAWAL" in transaction_type else "DEPOSIT"
+                        
+                        if txn_type_actual == "WITHDRAWAL" and amount > account[3]:
+                            st.error("❌ Insufficient balance!")
                         else:
                             try:
                                 # Calculate new balance
-                                if transaction_type == "DEPOSIT":
+                                if txn_type_actual == "DEPOSIT":
                                     new_balance = account[3] + amount
                                     txn_type = "CREDIT"
+                                    voucher_type = "RECEIPT"
                                 else:
                                     new_balance = account[3] - amount
                                     txn_type = "DEBIT"
+                                    voucher_type = "PAYMENT"
                                 
                                 # Create transaction
                                 txn_id = generate_id('TXN')
-                                voucher_num = generate_voucher_number('RECEIPT' if txn_type == 'CREDIT' else 'PAYMENT')
+                                voucher_num = generate_voucher_number(voucher_type)
                                 
                                 conn.execute("""
                                     INSERT INTO transactions 
                                     (transaction_id, account_id, transaction_type, amount, 
                                      balance_after, description, reference_type, voucher_type, 
                                      voucher_number, created_by)
-                                    VALUES (?, ?, ?, ?, ?, ?, 'CASH', ?, ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """, (txn_id, account[0], txn_type, amount, new_balance,
-                                      description, 
-                                      'RECEIPT' if txn_type == 'CREDIT' else 'PAYMENT',
+                                      description, reference_type, voucher_type,
                                       voucher_num, st.session_state.user['id']))
                                 
                                 # Update account balance
@@ -879,7 +970,10 @@ def show_sb_accounts():
                                            (new_balance, account[0]))
                                 
                                 conn.commit()
-                                st.success(f"Transaction successful! New balance: ₹{new_balance:,.2f}")
+                                
+                                st.success(f"✅ Transaction successful!")
+                                st.info(f"Voucher: **{voucher_num}** | New Balance: **₹{new_balance:,.2f}**")
+                                st.balloons()
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {str(e)}")
@@ -889,12 +983,21 @@ def show_sb_accounts():
     with tab3:
         st.subheader("Account Statement")
         
-        accounts = conn.execute("""
-            SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name
-            FROM accounts a
-            JOIN customers c ON a.customer_id = c.id
-            WHERE a.account_type='SB' AND a.status='ACTIVE'
-        """).fetchall()
+        # Get accounts based on role
+        if st.session_state.user['role'] == 'customer':
+            accounts = conn.execute("""
+                SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name
+                FROM accounts a
+                JOIN customers c ON a.customer_id = c.id
+                WHERE a.account_type='SB' AND a.status='ACTIVE' AND c.user_id=?
+            """, (st.session_state.user['id'],)).fetchall()
+        else:
+            accounts = conn.execute("""
+                SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name
+                FROM accounts a
+                JOIN customers c ON a.customer_id = c.id
+                WHERE a.account_type='SB' AND a.status='ACTIVE'
+            """).fetchall()
         
         if accounts:
             account_options = {f"{acc[1]} - {acc[2]}": acc[0] for acc in accounts}
@@ -911,7 +1014,7 @@ def show_sb_accounts():
                 
                 transactions = conn.execute("""
                     SELECT transaction_id, created_at, transaction_type, amount, 
-                           balance_after, description, voucher_number
+                           balance_after, description, reference_type, voucher_number
                     FROM transactions
                     WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ?
                     ORDER BY created_at DESC
@@ -920,14 +1023,17 @@ def show_sb_accounts():
                 if transactions:
                     df = pd.DataFrame(transactions, 
                                     columns=['Transaction ID', 'Date', 'Type', 'Amount', 
-                                           'Balance', 'Description', 'Voucher Number'])
-                    st.dataframe(df, use_container_width=True)
+                                           'Balance', 'Description', 'Mode', 'Voucher No.'])
+                    st.dataframe(df.style.format({'Amount': '₹{:,.2f}', 'Balance': '₹{:,.2f}'}), 
+                                use_container_width=True)
                     
                     # Download statement
                     csv = df.to_csv(index=False)
-                    st.download_button("📥 Download Statement", csv, "statement.csv", "text/csv")
+                    st.download_button("📥 Download Statement", csv, "account_statement.csv", "text/csv")
                 else:
                     st.info("No transactions in selected period")
+        else:
+            st.info("No accounts available")
     
     conn.close()
 
@@ -936,14 +1042,14 @@ def show_fixed_deposits():
     
     conn = get_db()
     
-    tab1, tab2, tab3 = st.tabs(["📝 Open FD", "📋 FD List", "💰 FD Maturity"])
+    tab1, tab2, tab3 = st.tabs(["📝 Open New FD", "📋 Active FDs", "🔔 Maturity Alerts"])
     
     with tab1:
         st.subheader("Open New Fixed Deposit")
         
         customers = conn.execute("""
             SELECT c.id, c.customer_id, c.first_name || ' ' || c.last_name as name,
-                   a.account_number
+                   a.account_number, a.balance
             FROM customers c
             JOIN accounts a ON c.id = a.customer_id
             WHERE a.account_type='SB' AND c.kyc_status='VERIFIED' AND a.status='ACTIVE'
@@ -960,23 +1066,24 @@ def show_fixed_deposits():
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        principal = st.number_input("Principal Amount (₹)", min_value=1000.0, step=1000.0)
+                        principal = st.number_input("Principal Amount (₹)", min_value=1000.0, step=1000.0, value=10000.0)
                         tenure_months = st.selectbox("Tenure (Months)", [3, 6, 12, 24, 36, 60])
-                        interest_rate = st.number_input("Interest Rate (%)", min_value=3.0, max_value=10.0, value=6.5)
+                        interest_rate = st.number_input("Interest Rate (%)", min_value=3.0, max_value=10.0, value=6.5, step=0.25)
                     
                     with col2:
                         start_date = st.date_input("Start Date", date.today())
-                        nominee_name = st.text_input("Nominee Name")
-                        nominee_relation = st.text_input("Nominee Relation")
+                        nominee_name = st.text_input("Nominee Name", placeholder="Enter nominee name")
+                        nominee_relation = st.text_input("Nominee Relation", placeholder="e.g., Spouse, Son, Daughter")
                     
                     # Calculate maturity
                     maturity_date = start_date + timedelta(days=tenure_months * 30)
                     maturity_amount = calculate_fd_maturity(principal, interest_rate, tenure_months)
+                    interest_earned = maturity_amount - principal
                     
-                    st.info(f"**Maturity Date:** {maturity_date}")
-                    st.info(f"**Maturity Amount:** ₹{maturity_amount:,.2f}")
+                    st.info(f"📅 **Maturity Date:** {maturity_date.strftime('%d-%m-%Y')}")
+                    st.info(f"💰 **Maturity Amount:** ₹{maturity_amount:,.2f} (Interest: ₹{interest_earned:,.2f})")
                     
-                    if st.form_submit_button("Open FD", use_container_width=True):
+                    if st.form_submit_button("🔒 Open FD", use_container_width=True):
                         try:
                             fd_number = generate_id('FD')
                             
@@ -1002,23 +1109,25 @@ def show_fixed_deposits():
                             
                             # Record transaction
                             txn_id = generate_id('TXN')
+                            voucher_num = generate_voucher_number('RECEIPT')
                             conn.execute("""
                                 INSERT INTO transactions 
                                 (transaction_id, account_id, transaction_type, amount, 
                                  balance_after, description, reference_type, voucher_type, 
                                  voucher_number, created_by)
-                                VALUES (?, ?, 'CREDIT', ?, ?, 'FD Deposit', 'FD_DEPOSIT', 
+                                VALUES (?, ?, 'CREDIT', ?, ?, 'FD Deposit - Principal', 'FD_DEPOSIT', 
                                         'RECEIPT', ?, ?)
                             """, (txn_id, account_id, principal, principal,
-                                  generate_voucher_number('RECEIPT'),
-                                  st.session_state.user['id']))
+                                  voucher_num, st.session_state.user['id']))
                             
                             conn.commit()
-                            st.success(f"FD opened successfully! FD Number: {fd_number}")
+                            st.success(f"✅ FD opened successfully!")
+                            st.info(f"FD Number: **{fd_number}**")
+                            st.balloons()
                         except Exception as e:
                             st.error(f"Error: {str(e)}")
         else:
-            st.warning("No verified customers with SB accounts")
+            st.warning("No verified customers with SB accounts available")
     
     with tab2:
         st.subheader("Active Fixed Deposits")
@@ -1030,40 +1139,57 @@ def show_fixed_deposits():
             FROM fixed_deposits fd
             JOIN accounts a ON fd.account_id = a.id
             JOIN customers c ON a.customer_id = c.id
-            ORDER BY fd.start_date DESC
+            WHERE fd.status='ACTIVE'
+            ORDER BY fd.maturity_date
         """).fetchall()
         
         if fds:
             df = pd.DataFrame(fds, columns=['FD Number', 'Customer', 'Principal', 
                                            'Rate (%)', 'Start Date', 'Maturity Date',
                                            'Maturity Amount', 'Status'])
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df.style.format({
+                'Principal': '₹{:,.2f}',
+                'Rate (%)': '{:.2f}%',
+                'Maturity Amount': '₹{:,.2f}'
+            }), use_container_width=True)
+            
+            total_fd = sum(fd[2] for fd in fds)
+            st.info(f"**Total FD Deposits: ₹{total_fd:,.2f}**")
         else:
-            st.info("No FDs found")
+            st.info("No active FDs found")
     
     with tab3:
-        st.subheader("FD Maturity Calculator & Status")
+        st.subheader("FD Maturity Calendar")
         
-        # Show FDs nearing maturity
         today = date.today()
-        next_month = today + timedelta(days=30)
+        next_30_days = today + timedelta(days=30)
         
         maturing_fds = conn.execute("""
             SELECT fd.fd_number, c.first_name || ' ' || c.last_name as name,
-                   fd.principal_amount, fd.maturity_amount, fd.maturity_date
+                   fd.principal_amount, fd.maturity_amount, fd.maturity_date,
+                   fd.nominee_name, fd.nominee_relation
             FROM fixed_deposits fd
             JOIN accounts a ON fd.account_id = a.id
             JOIN customers c ON a.customer_id = c.id
             WHERE fd.maturity_date BETWEEN ? AND ? AND fd.status='ACTIVE'
-        """, (today, next_month)).fetchall()
+            ORDER BY fd.maturity_date
+        """, (today, next_30_days)).fetchall()
         
         if maturing_fds:
-            st.warning(f"**{len(maturing_fds)} FD(s) maturing in next 30 days**")
+            st.warning(f"🔔 **{len(maturing_fds)} FD(s) maturing in next 30 days**")
             df = pd.DataFrame(maturing_fds, columns=['FD Number', 'Customer', 'Principal', 
-                                                     'Maturity Amount', 'Maturity Date'])
-            st.dataframe(df, use_container_width=True)
+                                                     'Maturity Amount', 'Maturity Date',
+                                                     'Nominee', 'Relation'])
+            st.dataframe(df.style.format({
+                'Principal': '₹{:,.2f}',
+                'Maturity Amount': '₹{:,.2f}'
+            }), use_container_width=True)
+            
+            for fd in maturing_fds:
+                days_left = (datetime.strptime(fd[4], '%Y-%m-%d').date() - today).days
+                st.info(f"📅 {fd[0]} - {fd[1]}: **{days_left} days left** (Matures: {fd[4]})")
         else:
-            st.info("No FDs maturing in next 30 days")
+            st.success("No FDs maturing in next 30 days")
     
     conn.close()
 
@@ -1072,7 +1198,7 @@ def show_recurring_deposits():
     
     conn = get_db()
     
-    tab1, tab2, tab3 = st.tabs(["📝 Open RD", "📋 RD List", "💳 Pay Installment"])
+    tab1, tab2, tab3 = st.tabs(["📝 Open New RD", "📋 Active RDs", "💳 Pay Installment"])
     
     with tab1:
         st.subheader("Open New Recurring Deposit")
@@ -1096,9 +1222,9 @@ def show_recurring_deposits():
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        monthly_amount = st.number_input("Monthly Installment (₹)", min_value=100.0, step=100.0)
+                        monthly_amount = st.number_input("Monthly Installment (₹)", min_value=100.0, step=100.0, value=1000.0)
                         tenure_months = st.selectbox("Tenure (Months)", [6, 12, 24, 36, 48, 60])
-                        interest_rate = st.number_input("Interest Rate (%)", min_value=3.0, max_value=10.0, value=6.0)
+                        interest_rate = st.number_input("Interest Rate (%)", min_value=3.0, max_value=10.0, value=6.0, step=0.25)
                     
                     with col2:
                         start_date = st.date_input("Start Date", date.today())
@@ -1107,12 +1233,14 @@ def show_recurring_deposits():
                     
                     maturity_date = start_date + timedelta(days=tenure_months * 30)
                     maturity_amount = calculate_rd_maturity(monthly_amount, interest_rate, tenure_months)
+                    total_deposit = monthly_amount * tenure_months
+                    interest_earned = maturity_amount - total_deposit
                     
-                    st.info(f"**Maturity Date:** {maturity_date}")
-                    st.info(f"**Expected Maturity Amount:** ₹{maturity_amount:,.2f}")
-                    st.info(f"**Total Deposits:** ₹{monthly_amount * tenure_months:,.2f}")
+                    st.info(f"📅 **Maturity Date:** {maturity_date.strftime('%d-%m-%Y')}")
+                    st.info(f"💰 **Total Deposits:** ₹{total_deposit:,.2f}")
+                    st.info(f"💎 **Maturity Amount:** ₹{maturity_amount:,.2f} (Interest: ₹{interest_earned:,.2f})")
                     
-                    if st.form_submit_button("Open RD", use_container_width=True):
+                    if st.form_submit_button("🔄 Open RD", use_container_width=True):
                         try:
                             rd_number = generate_id('RD')
                             
@@ -1138,22 +1266,24 @@ def show_recurring_deposits():
                             
                             # Record first installment
                             txn_id = generate_id('TXN')
+                            voucher_num = generate_voucher_number('RECEIPT')
                             conn.execute("""
                                 INSERT INTO transactions 
                                 (transaction_id, account_id, transaction_type, amount, 
                                  balance_after, description, reference_type, voucher_type, 
                                  voucher_number, created_by)
-                                VALUES (?, ?, 'CREDIT', ?, ?, 'RD First Installment', 'RD_INSTALLMENT', 
+                                VALUES (?, ?, 'CREDIT', ?, ?, 'RD Installment 1', 'RD_INSTALLMENT', 
                                         'RECEIPT', ?, ?)
                             """, (txn_id, account_id, monthly_amount, monthly_amount,
-                                  generate_voucher_number('RECEIPT'),
-                                  st.session_state.user['id']))
+                                  voucher_num, st.session_state.user['id']))
                             
                             conn.execute("UPDATE recurring_deposits SET installments_paid=1 WHERE rd_number=?",
                                        (rd_number,))
                             
                             conn.commit()
-                            st.success(f"RD opened successfully! RD Number: {rd_number}")
+                            st.success(f"✅ RD opened successfully!")
+                            st.info(f"RD Number: **{rd_number}**")
+                            st.balloons()
                         except Exception as e:
                             st.error(f"Error: {str(e)}")
         else:
@@ -1166,21 +1296,26 @@ def show_recurring_deposits():
             SELECT rd.rd_number, c.first_name || ' ' || c.last_name as name,
                    rd.monthly_amount, rd.interest_rate, rd.start_date,
                    rd.maturity_date, rd.maturity_amount, 
-                   rd.installments_paid || '/' || rd.total_installments as installments,
-                   rd.status
+                   rd.installments_paid, rd.total_installments, rd.status
             FROM recurring_deposits rd
             JOIN accounts a ON rd.account_id = a.id
             JOIN customers c ON a.customer_id = c.id
-            ORDER BY rd.start_date DESC
+            WHERE rd.status='ACTIVE'
+            ORDER BY rd.maturity_date
         """).fetchall()
         
         if rds:
             df = pd.DataFrame(rds, columns=['RD Number', 'Customer', 'Monthly Amount',
                                            'Rate (%)', 'Start Date', 'Maturity Date',
-                                           'Maturity Amount', 'Installments', 'Status'])
-            st.dataframe(df, use_container_width=True)
+                                           'Maturity Amount', 'Paid', 'Total', 'Status'])
+            df['Progress'] = df.apply(lambda row: f"{row['Paid']}/{row['Total']} ({(row['Paid']/row['Total']*100):.0f}%)", axis=1)
+            st.dataframe(df.style.format({
+                'Monthly Amount': '₹{:,.2f}',
+                'Rate (%)': '{:.2f}%',
+                'Maturity Amount': '₹{:,.2f}'
+            }), use_container_width=True)
         else:
-            st.info("No RDs found")
+            st.info("No active RDs found")
     
     with tab3:
         st.subheader("Pay RD Installment")
@@ -1206,14 +1341,15 @@ def show_recurring_deposits():
                 rd = rd_options[selected]
                 
                 with st.form("pay_installment"):
-                    st.write(f"**Monthly Installment:** ₹{rd[3]:,.2f}")
-                    amount = st.number_input("Amount", value=float(rd[3]), min_value=float(rd[3]))
-                    description = st.text_input("Description", f"RD Installment {rd[4]+1}/{rd[5]}")
+                    st.write(f"**Monthly Installment Amount:** ₹{rd[3]:,.2f}")
+                    amount = st.number_input("Amount (₹)", value=float(rd[3]), min_value=float(rd[3]))
+                    description = st.text_input("Description", value=f"RD Installment {rd[4]+1}/{rd[5]}")
                     
-                    if st.form_submit_button("Pay Installment", use_container_width=True):
+                    if st.form_submit_button("💳 Pay Installment", use_container_width=True):
                         try:
                             # Record transaction
                             txn_id = generate_id('TXN')
+                            voucher_num = generate_voucher_number('RECEIPT')
                             conn.execute("""
                                 INSERT INTO transactions 
                                 (transaction_id, account_id, transaction_type, amount, 
@@ -1221,8 +1357,7 @@ def show_recurring_deposits():
                                  voucher_number, created_by)
                                 VALUES (?, ?, 'CREDIT', ?, ?, ?, 'RD_INSTALLMENT', 'RECEIPT', ?, ?)
                             """, (txn_id, rd[6], amount, amount, description,
-                                  generate_voucher_number('RECEIPT'),
-                                  st.session_state.user['id']))
+                                  voucher_num, st.session_state.user['id']))
                             
                             # Update installments
                             new_paid = rd[4] + 1
@@ -1239,10 +1374,10 @@ def show_recurring_deposits():
                                     SET status='MATURED' 
                                     WHERE id=?
                                 """, (rd[0],))
-                                st.info("🎉 RD matured! All installments paid.")
+                                st.info("🎉 Congratulations! RD matured. All installments paid.")
                             
                             conn.commit()
-                            st.success(f"Installment paid successfully! ({new_paid}/{rd[5]})")
+                            st.success(f"✅ Installment paid successfully! ({new_paid}/{rd[5]})")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error: {str(e)}")
@@ -1257,6 +1392,7 @@ def show_transactions():
     conn = get_db()
     
     # Filters
+    st.subheader("🔍 Filter Transactions")
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -1264,7 +1400,7 @@ def show_transactions():
     with col2:
         txn_type = st.selectbox("Transaction Type", ["All", "CREDIT", "DEBIT"])
     with col3:
-        from_date = st.date_input("From Date", date.today() - timedelta(days=7))
+        from_date = st.date_input("From Date", date.today() - timedelta(days=30))
     with col4:
         to_date = st.date_input("To Date", date.today())
     
@@ -1272,7 +1408,7 @@ def show_transactions():
     query = """
         SELECT t.transaction_id, c.first_name || ' ' || c.last_name as customer,
                a.account_number, a.account_type, t.transaction_type, t.amount,
-               t.balance_after, t.description, t.voucher_type, t.created_at
+               t.balance_after, t.description, t.reference_type, t.voucher_number, t.created_at
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
         JOIN customers c ON a.customer_id = c.id
@@ -1288,15 +1424,16 @@ def show_transactions():
         query += " AND t.transaction_type=?"
         params.append(txn_type)
     
-    query += " ORDER BY t.created_at DESC LIMIT 100"
+    query += " ORDER BY t.created_at DESC LIMIT 200"
     
     transactions = conn.execute(query, params).fetchall()
     
     if transactions:
         df = pd.DataFrame(transactions, columns=['Txn ID', 'Customer', 'Account', 'Type',
                                                   'Action', 'Amount', 'Balance', 'Description',
-                                                  'Voucher', 'Date'])
-        st.dataframe(df, use_container_width=True)
+                                                  'Mode', 'Voucher', 'Date'])
+        st.dataframe(df.style.format({'Amount': '₹{:,.2f}', 'Balance': '₹{:,.2f}'}), 
+                    use_container_width=True)
         
         # Summary
         total_credit = sum(t[5] for t in transactions if t[4] == 'CREDIT')
@@ -1308,18 +1445,22 @@ def show_transactions():
         with col2:
             st.metric("Total Debits", f"₹{total_debit:,.2f}")
         with col3:
-            st.metric("Net", f"₹{total_credit - total_debit:,.2f}")
+            st.metric("Net Flow", f"₹{total_credit - total_debit:,.2f}")
         
         # Download
         csv = df.to_csv(index=False)
         st.download_button("📥 Download Transactions", csv, "transactions.csv", "text/csv")
     else:
-        st.info("No transactions found")
+        st.info("No transactions found for the selected filters")
     
     conn.close()
 
 def show_journal_vouchers():
     st.markdown('<h1 class="main-header">📝 Journal Vouchers</h1>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
     
     conn = get_db()
     
@@ -1330,35 +1471,47 @@ def show_journal_vouchers():
         
         with st.form("journal_voucher"):
             voucher_date = st.date_input("Voucher Date", date.today())
-            description = st.text_area("Description")
+            description = st.text_area("Description/Narration", placeholder="Enter voucher description")
             
-            st.subheader("Entries")
+            st.subheader("Journal Entries")
+            st.info("Debit total must equal Credit total")
+            
             num_entries = st.number_input("Number of Entries", min_value=2, max_value=10, value=2)
             
             entries = []
+            total_debit = 0
+            total_credit = 0
+            
             for i in range(int(num_entries)):
-                st.write(f"**Entry {i+1}**")
+                st.markdown(f"**Entry {i+1}**")
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    account_head = st.text_input(f"Account Head {i+1}", key=f"head_{i}")
+                    account_head = st.text_input(f"Account Head", key=f"head_{i}", 
+                                                placeholder="e.g., Cash, Interest, Expense")
                 with col2:
-                    debit = st.number_input(f"Debit {i+1}", min_value=0.0, step=100.0, key=f"debit_{i}")
+                    debit = st.number_input(f"Debit Amount", min_value=0.0, step=100.0, key=f"debit_{i}")
                 with col3:
-                    credit = st.number_input(f"Credit {i+1}", min_value=0.0, step=100.0, key=f"credit_{i}")
+                    credit = st.number_input(f"Credit Amount", min_value=0.0, step=100.0, key=f"credit_{i}")
+                
+                total_debit += debit
+                total_credit += credit
                 
                 entries.append({
                     'account_head': account_head,
                     'debit': debit,
                     'credit': credit
                 })
+                st.divider()
             
-            if st.form_submit_button("Create Voucher", use_container_width=True):
-                total_debit = sum(e['debit'] for e in entries)
-                total_credit = sum(e['credit'] for e in entries)
-                
+            st.write(f"**Total Debit: ₹{total_debit:,.2f}** | **Total Credit: ₹{total_credit:,.2f}**")
+            
+            if abs(total_debit - total_credit) > 0.01:
+                st.error(f"⚠️ Difference: ₹{abs(total_debit - total_credit):,.2f}. Debits must equal Credits!")
+            
+            if st.form_submit_button("📝 Create Voucher", use_container_width=True):
                 if abs(total_debit - total_credit) > 0.01:
-                    st.error(f"Debits (₹{total_debit:,.2f}) must equal Credits (₹{total_credit:,.2f})")
+                    st.error("Cannot create voucher: Debits must equal Credits")
                 else:
                     try:
                         voucher_num = generate_voucher_number('JOURNAL')
@@ -1382,12 +1535,13 @@ def show_journal_vouchers():
                                       entry['debit'], entry['credit']))
                         
                         conn.commit()
-                        st.success(f"Journal Voucher created: {voucher_num}")
+                        st.success(f"✅ Journal Voucher created: **{voucher_num}**")
+                        st.balloons()
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
     
     with tab2:
-        st.subheader("Journal Vouchers")
+        st.subheader("Journal Vouchers List")
         
         vouchers = conn.execute("""
             SELECT jv.voucher_number, jv.voucher_date, jv.description,
@@ -1399,10 +1553,16 @@ def show_journal_vouchers():
         
         if vouchers:
             for v in vouchers:
-                with st.expander(f"📄 {v[0]} - {v[1]} - ₹{v[3]:,.2f} ({v[4]})"):
+                status_color = {
+                    'DRAFT': '🟡',
+                    'POSTED': '🟢',
+                    'CANCELLED': '🔴'
+                }
+                with st.expander(f"{status_color.get(v[4], '⚪')} {v[0]} - {v[1]} - ₹{v[3]:,.2f} ({v[4]})"):
                     st.write(f"**Date:** {v[1]}")
                     st.write(f"**Description:** {v[2]}")
                     st.write(f"**Created by:** {v[5]}")
+                    st.write(f"**Amount:** ₹{v[3]:,.2f}")
                     
                     # Show entries
                     entries = conn.execute("""
@@ -1414,19 +1574,34 @@ def show_journal_vouchers():
                     """, (v[0],)).fetchall()
                     
                     if entries:
-                        df = pd.DataFrame(entries, columns=['Account Head', 'Debit', 'Credit'])
-                        st.dataframe(df, use_container_width=True)
+                        df_entries = pd.DataFrame(entries, columns=['Account Head', 'Debit', 'Credit'])
+                        st.dataframe(df_entries.style.format({
+                            'Debit': '₹{:,.2f}',
+                            'Credit': '₹{:,.2f}'
+                        }), use_container_width=True)
                     
-                    if v[4] == 'DRAFT' and st.session_state.user['role'] in ['admin', 'staff']:
-                        if st.button(f"✅ Post Voucher - {v[0]}", key=f"post_{v[0]}"):
-                            conn.execute("""
-                                UPDATE journal_vouchers 
-                                SET status='POSTED', posted_by=?, posted_at=CURRENT_TIMESTAMP
-                                WHERE voucher_number=?
-                            """, (st.session_state.user['id'], v[0]))
-                            conn.commit()
-                            st.success("Voucher posted!")
-                            st.rerun()
+                    if v[4] == 'DRAFT':
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button(f"✅ Post Voucher", key=f"post_{v[0]}", use_container_width=True):
+                                conn.execute("""
+                                    UPDATE journal_vouchers 
+                                    SET status='POSTED', posted_by=?, posted_at=CURRENT_TIMESTAMP
+                                    WHERE voucher_number=?
+                                """, (st.session_state.user['id'], v[0]))
+                                conn.commit()
+                                st.success("Voucher posted successfully!")
+                                st.rerun()
+                        with col2:
+                            if st.button(f"❌ Cancel Voucher", key=f"cancel_{v[0]}", use_container_width=True):
+                                conn.execute("""
+                                    UPDATE journal_vouchers 
+                                    SET status='CANCELLED'
+                                    WHERE voucher_number=?
+                                """, (v[0],))
+                                conn.commit()
+                                st.warning("Voucher cancelled!")
+                                st.rerun()
         else:
             st.info("No journal vouchers found")
     
@@ -1440,10 +1615,7 @@ def show_trial_balance():
     st.subheader("Generate Trial Balance")
     as_on_date = st.date_input("As on Date", date.today())
     
-    if st.button("Generate Trial Balance", use_container_width=True):
-        # Calculate trial balance from accounts and transactions
-        # This is a simplified version - in real banking, you'd have proper chart of accounts
-        
+    if st.button("📊 Generate Trial Balance", use_container_width=True):
         trial_data = []
         
         # Get all SB account balances
@@ -1455,11 +1627,12 @@ def show_trial_balance():
         """).fetchall()
         
         total_sb = sum(acc[2] for acc in sb_accounts)
-        trial_data.append({
-            'account_head': 'Savings Bank Deposits',
-            'debit': 0,
-            'credit': total_sb
-        })
+        if total_sb > 0:
+            trial_data.append({
+                'account_head': 'Savings Bank Deposits',
+                'debit': 0,
+                'credit': total_sb
+            })
         
         # Get all FD deposits
         fd_total = conn.execute("""
@@ -1486,7 +1659,7 @@ def show_trial_balance():
                 'credit': rd_total
             })
         
-        # Cash in hand (from transactions)
+        # Cash in hand
         cash_balance = conn.execute("""
             SELECT 
                 COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
@@ -1494,11 +1667,12 @@ def show_trial_balance():
             WHERE reference_type='CASH'
         """).fetchone()[0]
         
-        trial_data.append({
-            'account_head': 'Cash in Hand',
-            'debit': max(cash_balance, 0),
-            'credit': max(-cash_balance, 0)
-        })
+        if cash_balance != 0:
+            trial_data.append({
+                'account_head': 'Cash in Hand',
+                'debit': max(cash_balance, 0),
+                'credit': max(-cash_balance, 0)
+            })
         
         # Interest payable
         interest_payable = conn.execute("""
@@ -1508,7 +1682,7 @@ def show_trial_balance():
         
         if interest_payable > 0:
             trial_data.append({
-                'account_head': 'Interest Payable',
+                'account_head': 'Interest Payable on FD',
                 'debit': 0,
                 'credit': interest_payable
             })
@@ -1517,49 +1691,40 @@ def show_trial_balance():
         total_debits = sum(item['debit'] for item in trial_data)
         total_credits = sum(item['credit'] for item in trial_data)
         
-        if total_debits > total_credits:
+        if abs(total_debits - total_credits) > 0.01:
+            diff = total_credits - total_debits
             trial_data.append({
-                'account_head': 'Capital Account',
-                'debit': 0,
-                'credit': total_debits - total_credits
-            })
-        elif total_credits > total_debits:
-            trial_data.append({
-                'account_head': 'Capital Account',
-                'debit': total_credits - total_debits,
-                'credit': 0
+                'account_head': 'Capital/Reserves (Balancing)',
+                'debit': max(-diff, 0),
+                'credit': max(diff, 0)
             })
         
         # Display trial balance
         if trial_data:
             df = pd.DataFrame(trial_data)
             
-            # Calculate totals
             total_debit = df['debit'].sum()
             total_credit = df['credit'].sum()
             
-            # Add totals row
-            totals_df = pd.DataFrame([{
-                'account_head': '**TOTAL**',
-                'debit': total_debit,
-                'credit': total_credit
-            }])
-            
-            df_display = pd.concat([df, totals_df], ignore_index=True)
-            
-            st.dataframe(df_display.style.format({
+            st.dataframe(df.style.format({
                 'debit': '₹{:,.2f}',
                 'credit': '₹{:,.2f}'
             }), use_container_width=True)
             
-            if abs(total_debit - total_credit) < 0.01:
-                st.success("✅ Trial Balance matches!")
-            else:
-                st.error("❌ Trial Balance does not match!")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Debit", f"₹{total_debit:,.2f}")
+            with col2:
+                st.metric("Total Credit", f"₹{total_credit:,.2f}")
+            with col3:
+                if abs(total_debit - total_credit) < 0.01:
+                    st.success("✅ Balanced!")
+                else:
+                    st.error(f"❌ Difference: ₹{abs(total_debit - total_credit):,.2f}")
             
-            # Download option
+            # Download options
             csv = df.to_csv(index=False)
-            st.download_button("📥 Download Trial Balance", csv, "trial_balance.csv", "text/csv")
+            st.download_button("📥 Download CSV", csv, "trial_balance.csv", "text/csv")
             
             # Generate PDF
             if st.button("📄 Generate PDF Report"):
@@ -1568,8 +1733,11 @@ def show_trial_balance():
                     'entries': trial_data
                 }
                 pdf_file = generate_report_pdf('trial_balance', pdf_data, 'trial_balance.pdf')
-                with open(pdf_file, 'rb') as f:
-                    st.download_button("📥 Download PDF", f, "trial_balance.pdf", "application/pdf")
+                if pdf_file:
+                    with open(pdf_file, 'rb') as f:
+                        st.download_button("📥 Download PDF", f, "trial_balance.pdf", "application/pdf")
+        else:
+            st.info("No data available for trial balance")
     
     conn.close()
 
@@ -1579,11 +1747,11 @@ def show_balance_sheet():
     conn = get_db()
     as_on_date = st.date_input("As on Date", date.today())
     
-    if st.button("Generate Balance Sheet", use_container_width=True):
-        st.subheader(f"Balance Sheet as on {as_on_date}")
+    if st.button("📊 Generate Balance Sheet", use_container_width=True):
+        st.subheader(f"Balance Sheet as on {as_on_date.strftime('%d-%m-%Y')}")
         
         # Assets
-        st.markdown("### 📊 Assets")
+        st.markdown("### 📊 ASSETS")
         
         col1, col2 = st.columns(2)
         
@@ -1595,26 +1763,36 @@ def show_balance_sheet():
                 SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
                 FROM transactions WHERE reference_type='CASH'
             """).fetchone()[0]
-            st.write(f"Cash in Hand: ₹{cash:,.2f}")
+            st.write(f"💰 Cash in Hand: **₹{cash:,.2f}**")
             
             # Bank balance
-            total_deposits = conn.execute("""
+            total_sb = conn.execute("""
                 SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'
             """).fetchone()[0]
-            st.write(f"Bank Deposits: ₹{total_deposits:,.2f}")
+            st.write(f"🏦 Bank Deposits: **₹{total_sb:,.2f}**")
         
         with col2:
-            st.markdown("**Fixed Assets**")
-            st.write("Fixed Assets: ₹0.00")
+            st.markdown("**Investments**")
             
             # FD as investments
             fd_total = conn.execute("""
                 SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'
             """).fetchone()[0]
-            st.write(f"Investments (FD): ₹{fd_total:,.2f}")
+            st.write(f"💎 Fixed Deposits: **₹{fd_total:,.2f}**")
+            
+            rd_total = conn.execute("""
+                SELECT COALESCE(SUM(monthly_amount * installments_paid), 0)
+                FROM recurring_deposits WHERE status='ACTIVE'
+            """).fetchone()[0]
+            st.write(f"🔄 Recurring Deposits: **₹{rd_total:,.2f}**")
+        
+        total_assets = cash + total_sb + fd_total + rd_total
+        st.markdown(f"### **Total Assets: ₹{total_assets:,.2f}**")
+        
+        st.divider()
         
         # Liabilities
-        st.markdown("### 📋 Liabilities")
+        st.markdown("### 📋 LIABILITIES")
         
         col1, col2 = st.columns(2)
         
@@ -1626,33 +1804,30 @@ def show_balance_sheet():
                 SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
                 FROM fixed_deposits WHERE status='ACTIVE'
             """).fetchone()[0]
-            st.write(f"Interest Payable: ₹{interest:,.2f}")
+            st.write(f"📈 Interest Payable: **₹{interest:,.2f}**")
         
         with col2:
-            st.markdown("**Long Term Liabilities**")
-            
-            # FD deposits
-            st.write(f"Fixed Deposits: ₹{fd_total:,.2f}")
-            
-            # RD deposits
-            rd_total = conn.execute("""
-                SELECT COALESCE(SUM(monthly_amount * installments_paid), 0)
-                FROM recurring_deposits WHERE status='ACTIVE'
-            """).fetchone()[0]
-            st.write(f"Recurring Deposits: ₹{rd_total:,.2f}")
+            st.markdown("**Deposits (Liabilities)**")
+            st.write(f"💎 FD Deposits: **₹{fd_total:,.2f}**")
+            st.write(f"🔄 RD Deposits: **₹{rd_total:,.2f}**")
+        
+        total_liabilities = interest + fd_total + rd_total
+        st.markdown(f"### **Total Liabilities: ₹{total_liabilities:,.2f}**")
+        
+        st.divider()
         
         # Capital
-        st.markdown("### 💰 Capital")
-        total_assets = cash + total_deposits + fd_total
-        total_liabilities = interest + fd_total + rd_total
         capital = total_assets - total_liabilities
-        st.write(f"Capital: ₹{capital:,.2f}")
+        st.markdown("### 💰 CAPITAL")
+        st.write(f"**Capital/Net Worth: ₹{capital:,.2f}**")
+        
+        st.divider()
         
         # Verification
-        st.info(f"Total Assets: ₹{total_assets:,.2f} | Total Liabilities + Capital: ₹{total_liabilities + capital:,.2f}")
-        
         if abs(total_assets - (total_liabilities + capital)) < 0.01:
-            st.success("✅ Balance Sheet balanced!")
+            st.success(f"✅ Balance Sheet Balanced! Assets (₹{total_assets:,.2f}) = Liabilities (₹{total_liabilities:,.2f}) + Capital (₹{capital:,.2f})")
+        else:
+            st.error("❌ Balance Sheet not balanced!")
     
     conn.close()
 
@@ -1667,15 +1842,15 @@ def show_profit_loss():
     with col2:
         to_date = st.date_input("To Date", date.today())
     
-    if st.button("Generate P&L", use_container_width=True):
-        st.subheader(f"Profit & Loss Account ({from_date} to {to_date})")
+    if st.button("📊 Generate P&L Statement", use_container_width=True):
+        st.subheader(f"Profit & Loss Account ({from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')})")
         
         # Income
-        st.markdown("### 📈 Income")
+        st.markdown("### 📈 INCOME")
         
         income_items = []
         
-        # Interest earned on loans (simplified)
+        # Interest earned
         interest_earned = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM transactions
             WHERE description LIKE '%interest%' AND transaction_type='CREDIT'
@@ -1687,25 +1862,40 @@ def show_profit_loss():
         # Fees and charges
         fees = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE description LIKE '%fee%' AND transaction_type='CREDIT'
+            WHERE (description LIKE '%fee%' OR description LIKE '%charge%') 
+            AND transaction_type='CREDIT'
             AND DATE(created_at) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()[0]
         
         income_items.append(('Fees & Charges', fees))
         
-        total_income = sum(item[1] for item in income_items)
+        # Other income
+        other_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM transactions
+            WHERE transaction_type='CREDIT' 
+            AND description NOT LIKE '%interest%'
+            AND description NOT LIKE '%fee%'
+            AND description NOT LIKE '%charge%'
+            AND description NOT LIKE '%deposit%'
+            AND DATE(created_at) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        
+        income_items.append(('Other Income', other_income))
         
         for item, amount in income_items:
-            st.write(f"{item}: ₹{amount:,.2f}")
+            st.write(f"• {item}: **₹{amount:,.2f}**")
         
-        st.markdown(f"**Total Income: ₹{total_income:,.2f}**")
+        total_income = sum(item[1] for item in income_items)
+        st.markdown(f"### **Total Income: ₹{total_income:,.2f}**")
+        
+        st.divider()
         
         # Expenses
-        st.markdown("### 📉 Expenses")
+        st.markdown("### 📉 EXPENSES")
         
         expense_items = []
         
-        # Interest paid on deposits
+        # Interest paid
         interest_paid = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM transactions
             WHERE description LIKE '%interest%' AND transaction_type='DEBIT'
@@ -1717,31 +1907,49 @@ def show_profit_loss():
         # Operating expenses
         operating = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE description LIKE '%expense%' AND transaction_type='DEBIT'
+            WHERE (description LIKE '%expense%' OR description LIKE '%salary%' 
+                   OR description LIKE '%rent%' OR description LIKE '%utility%')
+            AND transaction_type='DEBIT'
             AND DATE(created_at) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()[0]
         
         expense_items.append(('Operating Expenses', operating))
         
-        total_expenses = sum(item[1] for item in expense_items)
+        # Other expenses
+        other_expenses = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM transactions
+            WHERE transaction_type='DEBIT'
+            AND description NOT LIKE '%interest%'
+            AND description NOT LIKE '%expense%'
+            AND description NOT LIKE '%salary%'
+            AND description NOT LIKE '%rent%'
+            AND description NOT LIKE '%utility%'
+            AND description NOT LIKE '%withdrawal%'
+            AND DATE(created_at) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        
+        expense_items.append(('Other Expenses', other_expenses))
         
         for item, amount in expense_items:
-            st.write(f"{item}: ₹{amount:,.2f}")
+            st.write(f"• {item}: **₹{amount:,.2f}**")
         
-        st.markdown(f"**Total Expenses: ₹{total_expenses:,.2f}**")
+        total_expenses = sum(item[1] for item in expense_items)
+        st.markdown(f"### **Total Expenses: ₹{total_expenses:,.2f}**")
+        
+        st.divider()
         
         # Net Profit/Loss
         net_profit = total_income - total_expenses
         
-        st.divider()
         if net_profit >= 0:
-            st.success(f"### Net Profit: ₹{net_profit:,.2f}")
+            st.success(f"## 🎉 Net Profit: ₹{net_profit:,.2f}")
         else:
-            st.error(f"### Net Loss: ₹{abs(net_profit):,.2f}")
+            st.error(f"## 📉 Net Loss: ₹{abs(net_profit):,.2f}")
         
         # Pie chart
         fig = go.Figure(data=[go.Pie(labels=['Income', 'Expenses'], 
-                                     values=[total_income, total_expenses])])
+                                     values=[total_income, total_expenses],
+                                     hole=.3)])
         fig.update_layout(title='Income vs Expenses')
         st.plotly_chart(fig, use_container_width=True)
     
@@ -1750,37 +1958,39 @@ def show_profit_loss():
 def show_reports():
     st.markdown('<h1 class="main-header">📋 Reports</h1>', unsafe_allow_html=True)
     
-    report_type = st.selectbox("Select Report", [
-        "Customer List",
+    report_type = st.selectbox("Select Report Type", [
+        "Customer Master List",
         "Account Statement",
         "FD Maturity Report",
         "RD Installment Report",
         "Transaction Summary",
-        "KYC Status Report"
+        "KYC Status Report",
+        "Daily Transaction Report"
     ])
     
-    if report_type == "Customer List":
+    conn = get_db()
+    
+    if report_type == "Customer Master List":
         st.subheader("Customer Master List")
-        conn = get_db()
         customers = conn.execute("""
-            SELECT customer_id, first_name, last_name, email, phone, city, kyc_status, created_at
+            SELECT customer_id, first_name, last_name, email, phone, city, 
+                   kyc_status, created_at
             FROM customers ORDER BY created_at DESC
         """).fetchall()
         
         if customers:
             df = pd.DataFrame(customers, columns=['ID', 'First Name', 'Last Name', 'Email', 
-                                                  'Phone', 'City', 'KYC', 'Date'])
+                                                  'Phone', 'City', 'KYC', 'Registration Date'])
             st.dataframe(df, use_container_width=True)
             csv = df.to_csv(index=False)
-            st.download_button("📥 Download Report", csv, "customer_list.csv", "text/csv")
-        conn.close()
+            st.download_button("📥 Download CSV", csv, "customer_list.csv", "text/csv")
     
     elif report_type == "FD Maturity Report":
-        st.subheader("FD Maturity Calendar")
-        conn = get_db()
+        st.subheader("FD Maturity Report")
         fds = conn.execute("""
             SELECT fd.fd_number, c.first_name || ' ' || c.last_name as name,
-                   fd.principal_amount, fd.maturity_amount, fd.maturity_date, fd.status
+                   fd.principal_amount, fd.maturity_amount, fd.start_date,
+                   fd.maturity_date, fd.status
             FROM fixed_deposits fd
             JOIN accounts a ON fd.account_id = a.id
             JOIN customers c ON a.customer_id = c.id
@@ -1789,14 +1999,38 @@ def show_reports():
         
         if fds:
             df = pd.DataFrame(fds, columns=['FD No', 'Customer', 'Principal', 
-                                           'Maturity Amt', 'Maturity Date', 'Status'])
-            st.dataframe(df, use_container_width=True)
-        conn.close()
+                                           'Maturity Amt', 'Start Date', 'Maturity Date', 'Status'])
+            st.dataframe(df.style.format({
+                'Principal': '₹{:,.2f}',
+                'Maturity Amt': '₹{:,.2f}'
+            }), use_container_width=True)
+    
+    elif report_type == "Daily Transaction Report":
+        st.subheader("Daily Transaction Report")
+        report_date = st.date_input("Select Date", date.today())
+        
+        transactions = conn.execute("""
+            SELECT t.transaction_id, c.first_name || ' ' || c.last_name as customer,
+                   a.account_type, t.transaction_type, t.amount, t.voucher_number, t.created_at
+            FROM transactions t
+            JOIN accounts a ON t.account_id = a.id
+            JOIN customers c ON a.customer_id = c.id
+            WHERE DATE(t.created_at) = ?
+            ORDER BY t.created_at DESC
+        """, (report_date,)).fetchall()
+        
+        if transactions:
+            df = pd.DataFrame(transactions, columns=['Txn ID', 'Customer', 'Account Type',
+                                                      'Type', 'Amount', 'Voucher', 'Time'])
+            st.dataframe(df.style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
+        else:
+            st.info(f"No transactions on {report_date}")
+    
+    conn.close()
 
 # ==================== MAIN ====================
 
 if __name__ == "__main__":
     main()
-
 
 

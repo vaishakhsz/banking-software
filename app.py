@@ -1853,9 +1853,6 @@ def show_transactions():
     
     conn.close()
 
-# Include all remaining functions from the previous code...
-# (show_journal_vouchers, show_trial_balance, show_balance_sheet, show_profit_loss, show_reports)
-
 def show_journal_vouchers():
     st.markdown('<h1 class="main-header">📝 Journal Vouchers</h1>', unsafe_allow_html=True)
     

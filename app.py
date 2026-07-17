@@ -77,6 +77,7 @@ def init_database():
         status TEXT DEFAULT 'ACTIVE',
         interest_rate DECIMAL(5,2),
         last_interest_calculation DATE,
+        total_interest_earned DECIMAL(15,2) DEFAULT 0.00,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (customer_id) REFERENCES customers (id)
     )''')
@@ -648,6 +649,7 @@ def show_main_app():
                 'dashboard': '📊 Dashboard',
                 'customer_management': '👥 Customer Management',
                 'kyc_verification': '🔍 KYC Verification',
+                'create_sb_account': '🏦 Create SB Account',
                 'sb_accounts': '💰 SB Accounts',
                 'fixed_deposits': '💎 Fixed Deposits',
                 'recurring_deposits': '🔄 Recurring Deposits',
@@ -688,6 +690,8 @@ def show_main_app():
         show_customer_management()
     elif page == 'kyc_verification':
         show_kyc_verification()
+    elif page == 'create_sb_account':
+        show_create_sb_account()
     elif page == 'sb_accounts' or page == 'my_accounts':
         show_sb_accounts()
     elif page == 'fixed_deposits':
@@ -1295,6 +1299,79 @@ def show_kyc_verification():
     
     conn.close()
 
+def show_create_sb_account():
+    st.markdown('<h1 class="main-header">🏦 Create SB Account</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Open a new Savings Bank Account for a verified customer</p>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
+    
+    conn = get_db()
+    
+    # Get verified customers who don't have an SB account
+    customers = conn.execute("""
+        SELECT c.id, c.customer_id, c.first_name || ' ' || c.last_name as name,
+               c.email, c.phone
+        FROM customers c
+        WHERE c.kyc_status='VERIFIED' 
+        AND NOT EXISTS (
+            SELECT 1 FROM accounts a 
+            WHERE a.customer_id = c.id 
+            AND a.account_type='SB' 
+            AND a.status='ACTIVE'
+        )
+        ORDER BY c.created_at DESC
+    """).fetchall()
+    
+    if not customers:
+        st.info("✅ All verified customers already have SB accounts!")
+        return
+    
+    st.subheader("Select Customer for SB Account")
+    
+    customer_options = {f"{cust[1]} - {cust[2]} (Email: {cust[3]})": cust for cust in customers}
+    selected = st.selectbox("Select Customer", list(customer_options.keys()))
+    
+    if selected:
+        customer = customer_options[selected]
+        
+        st.markdown('<div class="info-box">', unsafe_allow_html=True)
+        st.write(f"**Customer ID:** {customer[1]}")
+        st.write(f"**Name:** {customer[2]}")
+        st.write(f"**Email:** {customer[3]}")
+        st.write(f"**Phone:** {customer[4]}")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        with st.form("create_sb_account_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                interest_rate = st.number_input("Interest Rate (%)", min_value=0.0, max_value=10.0, value=3.50, step=0.25)
+            with col2:
+                opening_balance = st.number_input("Opening Balance (₹)", min_value=0.0, step=100.0, value=0.0)
+            
+            if st.form_submit_button("🏦 Create SB Account", use_container_width=True):
+                try:
+                    account_number = generate_account_number('SB')
+                    
+                    conn.execute("""
+                        INSERT INTO accounts (account_number, customer_id, account_type, 
+                                             balance, interest_rate, last_interest_calculation,
+                                             total_interest_earned)
+                        VALUES (?, ?, 'SB', ?, ?, DATE('now'), 0.00)
+                    """, (account_number, customer[0], opening_balance, interest_rate))
+                    
+                    conn.commit()
+                    st.success(f"✅ SB Account created successfully!")
+                    st.info(f"Account Number: **{account_number}**")
+                    st.info(f"Opening Balance: **₹{opening_balance:,.2f}**")
+                    st.balloons()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    
+    conn.close()
+
 def show_sb_accounts():
     st.markdown('<h1 class="main-header">💰 Savings Bank Accounts</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Manage savings accounts, deposits and withdrawals</p>', unsafe_allow_html=True)
@@ -1627,7 +1704,8 @@ def show_interest_calculation():
         
         # Get all active SB accounts
         accounts = conn.execute("""
-            SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance
+            SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance,
+                   COALESCE(a.total_interest_earned, 0) as total_interest
             FROM accounts a
             JOIN customers c ON a.customer_id = c.id
             WHERE a.account_type='SB' AND a.status='ACTIVE'
@@ -1686,10 +1764,13 @@ def show_interest_calculation():
                         'Account': acc[1],
                         'Customer': acc[2],
                         'Current Balance': acc[3],
+                        'Total Interest Earned': acc[4],
                         'Min Balance': min_balance,
                         'Rate': rate,
                         'Days': days,
-                        'Interest': interest
+                        'Interest': interest,
+                        'New Total Interest': acc[4] + interest,
+                        'New Balance': acc[3] + interest
                     })
                 
                 conn.commit()
@@ -1699,9 +1780,12 @@ def show_interest_calculation():
                 df = pd.DataFrame(results)
                 st.dataframe(df.style.format({
                     'Current Balance': '₹{:,.2f}',
+                    'Total Interest Earned': '₹{:,.2f}',
                     'Min Balance': '₹{:,.2f}',
                     'Rate': '{:.2f}%',
-                    'Interest': '₹{:,.2f}'
+                    'Interest': '₹{:,.2f}',
+                    'New Total Interest': '₹{:,.2f}',
+                    'New Balance': '₹{:,.2f}'
                 }), use_container_width=True)
                 
                 st.success(f"Total Interest for period: **₹{total_interest:,.2f}**")
@@ -1712,16 +1796,12 @@ def show_interest_calculation():
                         for res in results:
                             acc_id = [a[0] for a in accounts if a[1] == res['Account']][0]
                             
-                            # Get current balance and total interest
-                            account_data = conn.execute("""
-                                SELECT balance, COALESCE(total_interest_earned, 0) FROM accounts WHERE id=?
-                            """, (acc_id,)).fetchone()
-                            
-                            current_balance = account_data[0]
-                            total_interest_earned = account_data[1] if account_data[1] else 0
-                            
-                            new_balance = current_balance + res['Interest']
-                            new_total_interest = total_interest_earned + res['Interest']
+                            # Update balance and total interest earned
+                            conn.execute("""
+                                UPDATE accounts 
+                                SET balance=?, total_interest_earned=?, last_interest_calculation=DATE('now') 
+                                WHERE id=?
+                            """, (res['New Balance'], res['New Total Interest'], acc_id))
                             
                             # Create interest credit transaction
                             txn_id = generate_id('TXN')
@@ -1733,15 +1813,8 @@ def show_interest_calculation():
                                  balance_after, description, reference_type, voucher_type, 
                                  voucher_number, created_by)
                                 VALUES (?, ?, 'CREDIT', ?, ?, 'SB Interest Credited', 'INTEREST', 'RECEIPT', ?, ?)
-                            """, (txn_id, acc_id, res['Interest'], new_balance, voucher_num,
+                            """, (txn_id, acc_id, res['Interest'], res['New Balance'], voucher_num,
                                   st.session_state.user['id']))
-                            
-                            # Update balance and total interest earned
-                            conn.execute("""
-                                UPDATE accounts 
-                                SET balance=?, total_interest_earned=?, last_interest_calculation=DATE('now') 
-                                WHERE id=?
-                            """, (new_balance, new_total_interest, acc_id))
                             
                             # Create journal entry for interest
                             journal_voucher_num = generate_voucher_number('JOURNAL')
@@ -2531,7 +2604,7 @@ def show_trial_balance():
         
         # ==================== EXPENSES (Debit Balance) ====================
         
-        # 8. Interest Paid on SB
+        # 7. Interest Paid on SB (from journal entries)
         interest_paid_sb = conn.execute("""
             SELECT COALESCE(SUM(debit_amount), 0) 
             FROM journal_entries je
@@ -2546,7 +2619,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 9. Salary & Wages
+        # 8. Salary & Wages
         salary_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Salary & Wages'
@@ -2559,7 +2632,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 10. Rent & Utilities
+        # 9. Rent & Utilities
         rent_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Rent & Utilities'
@@ -2572,7 +2645,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 11. Operating Expenses
+        # 10. Operating Expenses
         operating_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Operating Expenses'
@@ -2585,7 +2658,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 12. Administrative Expenses
+        # 11. Administrative Expenses
         admin_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Administrative Expenses'
@@ -2598,7 +2671,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 13. Other Expenses
+        # 12. Other Expenses
         other_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Other Expenses'
@@ -2613,7 +2686,7 @@ def show_trial_balance():
         
         # ==================== INCOME (Credit Balance) ====================
         
-        # 14. Interest Earned
+        # 13. Interest Earned
         interest_earned = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM income
             WHERE income_type='Interest Earned'
@@ -2626,7 +2699,7 @@ def show_trial_balance():
                 'credit': interest_earned
             })
         
-        # 15. Fees & Charges
+        # 14. Fees & Charges
         fees_income = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM income
             WHERE income_type='Fees & Charges'
@@ -2639,7 +2712,7 @@ def show_trial_balance():
                 'credit': fees_income
             })
         
-        # 16. Commission Income
+        # 15. Commission Income
         commission_income = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM income
             WHERE income_type='Commission Income'
@@ -2652,7 +2725,7 @@ def show_trial_balance():
                 'credit': commission_income
             })
         
-        # 17. Other Income
+        # 16. Other Income
         other_income = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM income
             WHERE income_type='Other Income'
@@ -2667,7 +2740,7 @@ def show_trial_balance():
         
         # ==================== CAPITAL ====================
         
-        # 18. Capital/Reserves (Balancing figure)
+        # 17. Capital/Reserves (Balancing figure)
         total_debits = sum(item['debit'] for item in trial_data)
         total_credits = sum(item['credit'] for item in trial_data)
         

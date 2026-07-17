@@ -1,757 +1,906 @@
-
 import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
 import sqlite3
+import pandas as pd
 import hashlib
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import uuid
 import os
-import time
-import traceback
-import base64
-from io import BytesIO
-from PIL import Image
-import re
-import threading
 
-# ============== GLOBAL CONFIG & SAFE DATABASE ENGINE ==============
-DB_FILE = "core_banking_erp.db"
-_db_lock = threading.Lock()
+# Page configuration
+st.set_page_config(page_title="Complete Banking System", page_icon="🏦", layout="wide", initial_sidebar_state="expanded")
 
-def get_db_connection():
-    with _db_lock:
+# ============================================
+# CSS
+# ============================================
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    * { font-family: 'Inter', sans-serif; }
+    .stApp { background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0d1128 100%); }
+    .main-header { font-size: 2.8rem; background: linear-gradient(120deg, #667eea, #764ba2, #f093fb); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-align: center; margin-bottom: 2rem; font-weight: 700; }
+    .sub-header { font-size: 1.6rem; color: #a78bfa; margin-bottom: 1.5rem; font-weight: 600; border-bottom: 2px solid #2d2b55; padding-bottom: 0.5rem; }
+    div[data-testid="stForm"] { background: linear-gradient(135deg, rgba(26, 31, 58, 0.95), rgba(45, 43, 85, 0.95)); border: 1px solid rgba(102, 126, 234, 0.3); padding: 2rem; border-radius: 20px; }
+    .stButton > button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important; color: white !important; border: none !important; border-radius: 12px !important; padding: 0.75rem 2rem !important; font-weight: 600 !important; }
+    section[data-testid="stSidebar"] { background: linear-gradient(180deg, #0a0e27 0%, #1a1f3a 100%) !important; }
+    .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.85rem; font-weight: 600; }
+    .badge-success { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+    .badge-warning { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
+    .badge-info { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
+    .info-box { padding: 1rem; background: rgba(59, 130, 246, 0.15); border-left: 4px solid #3b82f6; border-radius: 8px; color: #93c5fd; margin: 1rem 0; }
+    </style>
+""", unsafe_allow_html=True)
+
+# ============================================
+# DATABASE
+# ============================================
+class DatabaseLayer:
+    def __init__(self):
+        self.db_path = 'complete_banking.db'
+    
+    def _ensure_column(self, c, table, col_name, col_type):
         try:
-            conn = sqlite3.connect(DB_FILE, timeout=60.0, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=60000")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA cache_size=10000")
-            return conn
-        except Exception:
-            return None
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def get_safe_float(value, default=0.0):
-    try:
-        if value is None: return default
-        if isinstance(value, str):
-            if value.strip() == '': return default
-            return float(value)
-        return float(value)
-    except (ValueError, TypeError):
-        return default
-
-def generate_uid(prefix="TXN"):
-    return f"{prefix}-{datetime.now().strftime('%Y')}-{str(int(time.time()))[-7:]}"
-
-# ============== SYSTEM DB INITIALIZATION MATRIX ==============
-def ensure_ledger_heads_exist(cursor, current_date):
-    required_accounts = [
-        # ===== ASSETS (1xxx) =====
-        ('1000', 'CASH_ON_HAND', 'ASSET', 5000000.0, 'system'),
-        ('1100', 'CLEARING_ACCOUNT', 'ASSET', 0.0, 'system'),
-        ('1600', 'LOANS_AND_ADVANCES', 'ASSET', 0.0, 'system'),
-        
-        # ===== LIABILITIES (2xxx) =====
-        ('2100', 'SAVINGS_BANK_DEPOSITS', 'LIABILITY', 0.0, 'system'),
-        ('2200', 'FIXED_DEPOSIT_HOLDINGS', 'LIABILITY', 0.0, 'system'),
-        ('2250', 'RECURRING_DEPOSIT_HOLDINGS', 'LIABILITY', 0.0, 'system'),
-        ('2500', 'INTEREST_PAYABLE_ACCRUALS', 'LIABILITY', 0.0, 'system'),
-        
-        # ===== EQUITY (3xxx) =====
-        ('3100', 'SHARE_CAPITAL_INJECTED', 'EQUITY', 5000000.0, 'system'),
-        ('3200', 'RETAINED_EARNINGS', 'EQUITY', 0.0, 'system'),
-        
-        # ===== INCOME (4xxx) =====
-        ('4100', 'INTEREST_INCOME_LOANS', 'INCOME', 0.0, 'system'),
-        ('4200', 'PROCESSING_FEES_INCOME', 'INCOME', 0.0, 'system'),
-        
-        # ===== EXPENSES (5xxx) =====
-        ('5100', 'OFFICE_ADMINISTRATION_EXPENSE', 'EXPENSE', 0.0, 'system'),
-        ('5999', 'DEPOSIT_INTEREST_EXPENSE', 'EXPENSE', 0.0, 'system'),
-    ]
+            c.execute(f"SELECT {col_name} FROM {table} LIMIT 1")
+        except:
+            try:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+            except:
+                pass
     
-    for acc in required_accounts:
-        cursor.execute('SELECT COUNT(*) FROM accounts WHERE account_code = ?', (acc[0],))
-        if cursor.fetchone()[0] == 0:
-            cursor.execute('''
-                INSERT INTO accounts (account_code, account_name, account_type, balance, created_date, is_active, created_by)
-                VALUES (?, ?, ?, ?, ?, 1, ?)
-            ''', (acc[0], acc[1], acc[2], acc[3], current_date, acc[4]))
-
-def init_database():
-    try:
-        conn = get_db_connection()
-        if conn is None: return
-        cursor = conn.cursor()
-        current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    def initialize_database(self):
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        c = conn.cursor()
+        c.execute("PRAGMA foreign_keys=ON")
         
-        # 1. Base Users Table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                full_name TEXT NOT NULL,
-                role TEXT DEFAULT 'user'
-            )
-        ''')
+        # Users
+        c.execute('''CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL, full_name TEXT NOT NULL, email TEXT,
+            role TEXT NOT NULL, is_active INTEGER DEFAULT 1,
+            last_login TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-        # 2. General Ledger Chart of Accounts Table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_code TEXT UNIQUE NOT NULL,
-                account_name TEXT NOT NULL,
-                account_type TEXT NOT NULL,
-                balance REAL DEFAULT 0.0,
-                created_date TEXT NOT NULL,
-                is_active INTEGER DEFAULT 1,
-                created_by TEXT
-            )
-        ''')
+        c.execute('''CREATE TABLE IF NOT EXISTS user_sessions (
+            session_id TEXT PRIMARY KEY, user_id INTEGER,
+            login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, logout_time TIMESTAMP
+        )''')
         
-        # 3. Balanced Journal Transactions Engine
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS journal_entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                account_code TEXT NOT NULL,
-                account_name TEXT NOT NULL,
-                entry_type TEXT NOT NULL,
-                amount REAL NOT NULL,
-                description TEXT,
-                voucher_number TEXT,
-                username TEXT
-            )
-        ''')
+        # Customers
+        c.execute('''CREATE TABLE IF NOT EXISTS customers (
+            customer_id TEXT PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
+            date_of_birth DATE, phone TEXT, email TEXT, address TEXT, city TEXT, state TEXT,
+            kyc_status TEXT DEFAULT 'Pending', created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-        # 4. Savings Bank (SB) Sub-Ledger Registry
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sb_accounts (
-                account_number TEXT PRIMARY KEY,
-                customer_name TEXT NOT NULL,
-                phone TEXT,
-                current_balance REAL DEFAULT 0.0,
-                interest_rate REAL DEFAULT 3.5,
-                opening_date TEXT NOT NULL,
-                status TEXT DEFAULT 'ACTIVE'
-            )
-        ''')
+        # SB Accounts
+        c.execute('''CREATE TABLE IF NOT EXISTS sb_accounts (
+            account_number TEXT PRIMARY KEY, customer_id TEXT,
+            balance REAL DEFAULT 0, interest_rate REAL DEFAULT 4.0,
+            opened_date DATE, status TEXT DEFAULT 'Active',
+            created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-        # 5. Fixed Deposit / Recurring Deposit Sub-Ledger Registry
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS fdrd_accounts (
-                account_number TEXT PRIMARY KEY,
-                customer_name TEXT NOT NULL,
-                product_type TEXT NOT NULL, -- 'FD' or 'RD'
-                principal_amount REAL NOT NULL,
-                monthly_installment REAL DEFAULT 0.0, -- Relevant for RD portfolios
-                interest_rate REAL NOT NULL,
-                tenure_months INTEGER NOT NULL,
-                maturity_amount REAL NOT NULL,
-                current_balance REAL DEFAULT 0.0,
-                opening_date TEXT NOT NULL,
-                maturity_date TEXT NOT NULL,
-                status TEXT DEFAULT 'ACTIVE'
-            )
-        ''')
+        # FD Accounts
+        c.execute('''CREATE TABLE IF NOT EXISTS fd_accounts (
+            fd_id TEXT PRIMARY KEY, customer_id TEXT, sb_account TEXT,
+            principal_amount REAL, interest_rate REAL, tenure_months INTEGER,
+            start_date DATE, maturity_date DATE, maturity_amount REAL,
+            status TEXT DEFAULT 'Active', created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-        # Seed core infrastructure baseline parameters safely
-        ensure_ledger_heads_exist(cursor, current_date)
+        # RD Accounts
+        c.execute('''CREATE TABLE IF NOT EXISTS rd_accounts (
+            rd_id TEXT PRIMARY KEY, customer_id TEXT, sb_account TEXT,
+            monthly_amount REAL, interest_rate REAL, tenure_months INTEGER,
+            start_date DATE, maturity_date DATE, maturity_amount REAL,
+            installments_paid INTEGER DEFAULT 0, total_installments INTEGER,
+            status TEXT DEFAULT 'Active', created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute('INSERT INTO users (username, password_hash, full_name, role) VALUES (?, ?, ?, ?)',
-                          ("admin", hash_password("admin123"), "Head Administrator", "admin"))
-            
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Critical error initializes local DB infrastructure context: {str(e)}")
-
-# ============== LEDGER CORE DYNAMICS MECHANISMS ==============
-def get_all_accounts():
-    try:
-        conn = get_db_connection()
-        if conn is None: return {}
-        cursor = conn.cursor()
-        cursor.execute('SELECT account_code, account_name, account_type, balance FROM accounts WHERE is_active = 1 ORDER BY account_code')
-        rows = cursor.fetchall()
-        conn.close()
-        return {r[0]: {'code': r[0], 'name': r[1], 'type': r[2], 'balance': r[3]} for r in rows}
-    except Exception:
-        return {}
-
-def update_ledger_head_balance(cursor, account_code, amount, is_debit=True):
-    cursor.execute('SELECT account_type, balance FROM accounts WHERE account_code = ?', (account_code,))
-    row = cursor.fetchone()
-    if not row:
-        raise ValueError(f"Ledger account code {account_code} does not exist in COA mapping.")
-    
-    acc_type, current_bal = row
-    if acc_type in ['ASSET', 'EXPENSE']:
-        new_balance = (current_bal + amount) if is_debit else (current_bal - amount)
-    else:
-        new_balance = (current_bal - amount) if is_debit else (current_bal + amount)
+        # RD Installments
+        c.execute('''CREATE TABLE IF NOT EXISTS rd_installments (
+            installment_id INTEGER PRIMARY KEY AUTOINCREMENT, rd_id TEXT,
+            installment_number INTEGER, due_date DATE, paid_date DATE,
+            amount REAL, status TEXT DEFAULT 'Pending'
+        )''')
         
-    cursor.execute('UPDATE accounts SET balance = ? WHERE account_code = ?', (new_balance, account_code))
-
-def execute_double_entry_voucher(v_type, v_date, description, line_items, username):
-    total_debits = sum(get_safe_float(item['amount']) for item in line_items if item['entry_type'] == 'DEBIT')
-    total_credits = sum(get_safe_float(item['amount']) for item in line_items if item['entry_type'] == 'CREDIT')
-    
-    if abs(total_debits - total_credits) > 0.001:
-        return False, f"Imbalanced double-entry stack parameters: Total Debits (₹{total_debits:,.2f}) must equate Total Credits (₹{total_credits:,.2f})"
+        # Journal Vouchers
+        c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (
+            voucher_id TEXT PRIMARY KEY, voucher_type TEXT, voucher_date DATE,
+            narration TEXT, total_amount REAL, status TEXT DEFAULT 'Approved',
+            created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-    try:
-        conn = get_db_connection()
-        if conn is None: return False, "Database operational connection pool fault."
-        cursor = conn.cursor()
+        # Journal Entries
+        c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
+            entry_id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_id TEXT,
+            account_head TEXT, debit_amount REAL DEFAULT 0, credit_amount REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-        v_num = generate_uid(prefix=v_type[:3].upper())
+        # Chart of Accounts
+        c.execute('''CREATE TABLE IF NOT EXISTS chart_of_accounts (
+            account_head TEXT PRIMARY KEY, account_name TEXT, account_type TEXT,
+            category TEXT, is_active INTEGER DEFAULT 1
+        )''')
         
-        for item in line_items:
-            amt = get_safe_float(item['amount'])
-            code = item['account_code']
-            is_deb = (item['entry_type'] == 'DEBIT')
-            
-            cursor.execute('SELECT account_name FROM accounts WHERE account_code = ?', (code,))
-            name_row = cursor.fetchone()
-            acc_name = name_row[0] if name_row else "UNKNOWN HEAD"
-            
-            cursor.execute('''
-                INSERT INTO journal_entries (date, account_code, account_name, entry_type, amount, description, voucher_number, username)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (v_date, code, acc_name, item['entry_type'], amt, item.get('narration', description), v_num, username))
-            
-            update_ledger_head_balance(cursor, code, amt, is_debit=is_deb)
-            
-        conn.commit()
-        conn.close()
-        return True, f"Voucher transaction booked effectively under entry trace identifier: {v_num}"
-    except Exception as e:
-        return False, f"Internal Transaction Rollback Exception: {str(e)}"
-
-# ============== SUB-LEDGER CUSTOM SYSTEM ACTIONS ==============
-def open_sb_portfolio(cust_name, phone, initial_dep, rate, opening_date, username):
-    if initial_dep < 0: return False, "Initial deposit balances cannot register dynamically negative numbers."
-    
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        acc_num = f"SB{datetime.now().strftime('%Y%m')}{str(int(time.time()))[-5:]}"
+        # SB Transactions
+        c.execute('''CREATE TABLE IF NOT EXISTS sb_transactions (
+            transaction_id TEXT PRIMARY KEY, account_number TEXT,
+            transaction_type TEXT, amount REAL, balance_before REAL, balance_after REAL,
+            description TEXT, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-        cursor.execute('''
-            INSERT INTO sb_accounts (account_number, customer_name, phone, current_balance, interest_rate, opening_date)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (acc_num, cust_name, phone, initial_dep, rate, opening_date))
+        # Interest Calculations
+        c.execute('''CREATE TABLE IF NOT EXISTS interest_calculations (
+            calc_id INTEGER PRIMARY KEY AUTOINCREMENT, account_number TEXT,
+            interest_period_start DATE, interest_period_end DATE,
+            minimum_balance REAL, interest_rate REAL, interest_amount REAL,
+            is_credited INTEGER DEFAULT 0, calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
-        conn.commit()
-        conn.close()
-        
-        if initial_dep > 0:
-            items = [
-                {'account_code': '1000', 'entry_type': 'DEBIT', 'amount': initial_dep, 'narration': f"Opening portfolio allocation cash deposit for {acc_num}"},
-                {'account_code': '2100', 'entry_type': 'CREDIT', 'amount': initial_dep, 'narration': f"Opening dynamic portfolio allocation for {acc_num}"}
+        # Default Users
+        c.execute("SELECT COUNT(*) FROM users")
+        if c.fetchone()[0] == 0:
+            users = [
+                ('admin', 'admin123', 'System Administrator', 'admin@bank.com', 'Admin'),
+                ('manager', 'manager123', 'Branch Manager', 'manager@bank.com', 'Manager'),
+                ('user1', 'user123', 'Bank User', 'user@bank.com', 'User'),
             ]
-            execute_double_entry_voucher("RECEIPT", opening_date, f"SB Portfolio Allocation: {acc_num}", items, username)
-            
-        return True, f"Savings Bank account initialized effectively: {acc_num}"
-    except Exception as e:
-        return False, f"Exception caught provisioning account parameters: {str(e)}"
-
-def post_sb_transaction(acc_no, txn_type, amount, val_date, username):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT current_balance, customer_name FROM sb_accounts WHERE account_number = ?', (acc_no,))
-        row = cursor.fetchone()
+            for username, password, full_name, email, role in users:
+                password_hash = hashlib.sha256(password.encode()).hexdigest()
+                c.execute("INSERT INTO users (username, password_hash, full_name, email, role) VALUES (?, ?, ?, ?, ?)",
+                         (username, password_hash, full_name, email, role))
         
-        if not row:
-            conn.close()
-            return False, "Target profile portfolio parameters not active."
-            
-        cur_bal, name = row
-        if txn_type == "WITHDRAWAL" and cur_bal < amount:
-            conn.close()
-            return False, "Execution halted: Insufficient balance."
-            
-        new_bal = (cur_bal + amount) if txn_type == "DEPOSIT" else (cur_bal - amount)
-        cursor.execute('UPDATE sb_accounts SET current_balance = ? WHERE account_number = ?', (new_bal, acc_no))
-        conn.commit()
-        conn.close()
-        
-        if txn_type == "DEPOSIT":
-            items = [
-                {'account_code': '1000', 'entry_type': 'DEBIT', 'amount': amount, 'narration': f"Cash counter deposit into portfolio tracking ledger: {acc_no}"},
-                {'account_code': '2100', 'entry_type': 'CREDIT', 'amount': amount, 'narration': f"Savings balance growth index credit allocation: {acc_no}"}
+        # Default Chart of Accounts
+        c.execute("SELECT COUNT(*) FROM chart_of_accounts")
+        if c.fetchone()[0] == 0:
+            accounts = [
+                ('CASH_IN_HAND', 'Cash in Hand', 'Asset', 'Current Asset'),
+                ('FD_INVESTMENTS', 'FD Investments', 'Asset', 'Investment'),
+                ('RD_INVESTMENTS', 'RD Investments', 'Asset', 'Investment'),
+                ('SB_ACCOUNTS', 'Savings Bank Accounts', 'Liability', 'Deposits'),
+                ('FD_ACCOUNTS', 'Fixed Deposit Accounts', 'Liability', 'Deposits'),
+                ('RD_ACCOUNTS', 'Recurring Deposit Accounts', 'Liability', 'Deposits'),
+                ('SHARE_CAPITAL', 'Share Capital', 'Equity', 'Capital'),
+                ('RESERVES', 'Reserves & Surplus', 'Equity', 'Reserves'),
+                ('INTEREST_ON_SB', 'Interest on SB', 'Expense', 'Interest'),
+                ('INTEREST_ON_FD', 'Interest on FD', 'Expense', 'Interest'),
+                ('INTEREST_ON_RD', 'Interest on RD', 'Expense', 'Interest'),
+                ('SALARY', 'Salary', 'Expense', 'Staff'),
+                ('RENT', 'Rent', 'Expense', 'Office'),
+                ('COMMISSION', 'Commission Income', 'Income', 'Fees'),
             ]
-        else:
-            items = [
-                {'account_code': '2100', 'entry_type': 'DEBIT', 'amount': amount, 'narration': f"Portfolio validation ledger debit balance check: {acc_no}"},
-                {'account_code': '1000', 'entry_type': 'CREDIT', 'amount': amount, 'narration': f"Cash drawer physical disbursement matching: {acc_no}"}
-            ]
-            
-        execute_double_entry_voucher("JOURNAL", val_date, f"SB Txn: {txn_type} | {acc_no}", items, username)
-        return True, f"Transaction successfully posted to portfolio index tracking path. Balance updated to ₹{new_bal:,.2f}"
-    except Exception as e:
-        return False, f"Failure writing execution row: {str(e)}"
-
-def provision_fdrd_portfolio(cust_name, prod_type, principal, installment, rate, tenure, opening_date, username):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        acc_num = f"{prod_type}{datetime.now().strftime('%Y%m')}{str(int(time.time()))[-5:]}"
-        
-        t_years = tenure / 12.0
-        if prod_type == "FD":
-            mat_amt = principal * ((1.0 + (rate / 100.0)) ** t_years)
-            cur_bal = principal
-        else:
-            n = tenure
-            i = (rate / 100.0) / 12.0
-            mat_amt = installment * (((1.0 + i)**n - 1.0) / i) * (1.0 + i)
-            cur_bal = installment
-            principal = installment
-            
-        op_d = datetime.strptime(opening_date, '%Y-%m-%d')
-        mat_d = (op_d + timedelta(days=int(tenure * 30.4375))).strftime('%Y-%m-%d')
-        
-        cursor.execute('''
-            INSERT INTO fdrd_accounts (account_number, customer_name, product_type, principal_amount, monthly_installment,
-                                      interest_rate, tenure_months, maturity_amount, current_balance, opening_date, maturity_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (acc_num, cust_name, prod_type, principal, installment, rate, tenure, mat_amt, cur_bal, opening_date, mat_d))
+            for acc in accounts:
+                c.execute("INSERT OR IGNORE INTO chart_of_accounts (account_head, account_name, account_type, category) VALUES (?, ?, ?, ?)", acc)
         
         conn.commit()
+        return conn
+    
+    def get_connection(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+db = DatabaseLayer()
+
+# ============================================
+# AUTH
+# ============================================
+class AuthModule:
+    @staticmethod
+    def authenticate(username, password):
+        conn = db.get_connection(); c = conn.cursor()
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        c.execute("SELECT * FROM users WHERE username = ? AND password_hash = ? AND is_active = 1", (username, password_hash))
+        user = c.fetchone()
+        if user:
+            session_id = str(uuid.uuid4())
+            c.execute("INSERT INTO user_sessions (session_id, user_id) VALUES (?, ?)", (session_id, user[0]))
+            conn.commit(); conn.close()
+            return {'user_id': user[0], 'username': user[1], 'full_name': user[3], 'role': user[5], 'email': user[4]}
         conn.close()
-        
-        target_coa = '2200' if prod_type == "FD" else '2250'
-        book_amt = principal if prod_type == "FD" else installment
-        
-        items = [
-            {'account_code': '1000', 'entry_type': 'DEBIT', 'amount': book_amt, 'narration': f"Cash intake transaction booking verification for {acc_num}"},
-            {'account_code': target_coa, 'entry_type': 'CREDIT', 'amount': book_amt, 'narration': f"Liability account allocation structure entry for {acc_num}"}
-        ]
-        execute_double_entry_voucher("RECEIPT", opening_date, f"Open Term Deposit Portfolio: {acc_num}", items, username)
-        
-        return True, f"Term ledger entry processed efficiently: {acc_num} | Maturity Estimation: ₹{mat_amt:,.2f}"
-    except Exception as e:
-        return False, f"Exception inside provisioning pathways sequence: {str(e)}"
+        return None
 
-# ============== FINANCIAL REVENUE REPORT GENERATORS ==============
-def get_trial_balance_matrix():
-    accounts = get_all_accounts()
-    tb_rows = []
-    tot_debits, tot_credits = 0.0, 0.0
+# ============================================
+# SB ACCOUNT MODULE
+# ============================================
+class SBAccountModule:
+    @staticmethod
+    def generate_account_number():
+        return f"SB{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:6].upper()}"
     
-    for code, data in accounts.items():
-        bal = get_safe_float(data['balance'])
-        if bal == 0: continue
-        
-        deb, cred = 0.0, 0.0
-        if data['type'] in ['ASSET', 'EXPENSE']:
-            if bal >= 0: deb = bal
-            else: cred = abs(bal)
-        else:
-            if bal >= 0: cred = bal
-            else: deb = abs(bal)
+    @staticmethod
+    def open_account(customer_id, initial_deposit=0.0, interest_rate=4.0, created_by=None):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            c.execute("SELECT kyc_status FROM customers WHERE customer_id = ?", (customer_id,))
+            cust = c.fetchone()
+            if not cust: conn.close(); return False, "Customer not found"
+            if cust[0] != 'Verified': conn.close(); return False, "KYC not verified"
             
-        tb_rows.append({
-            'Code': code,
-            'Ledger Account Head': data['name'],
-            'Classification Category': data['type'],
-            'Debit (₹)': deb,
-            'Credit (₹)': cred
-        })
-        tot_debits += deb
-        tot_credits += cred
-        
-    return pd.DataFrame(tb_rows), tot_debits, tot_credits
-
-def get_profit_loss_matrix():
-    accounts = get_all_accounts()
-    inc_items, exp_items = {}, {}
-    
-    for code, data in accounts.items():
-        bal = get_safe_float(data['balance'])
-        if data['type'] == 'INCOME':
-            inc_items[data['name']] = bal
-        elif data['type'] == 'EXPENSE':
-            exp_items[data['name']] = bal
+            acc_num = SBAccountModule.generate_account_number()
+            today = datetime.now().date()
+            c.execute("INSERT INTO sb_accounts (account_number, customer_id, balance, interest_rate, opened_date, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+                     (acc_num, customer_id, initial_deposit, interest_rate, today, created_by))
             
-    sum_inc = sum(inc_items.values())
-    sum_exp = sum(exp_items.values())
-    return {'revenues': inc_items, 'expenses': exp_items, 'total_revenue': sum_inc, 'total_expense': sum_exp, 'net_profit': (sum_inc - sum_exp)}
-
-# ============== RENDER INTERFACES AND ENGINE GRAPHICS ==============
-def login_page():
-    st.markdown("""
-        <style>
-        .auth-container { max-width: 450px; margin: 80px auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); background-color: #ffffff; }
-        .branding-title { text-align: center; font-weight: 700; color: #1e293b; margin-bottom: 5px; }
-        .branding-sub { text-align: center; font-size: 0.9em; color: #64748b; margin-bottom: 25px; }
-        </style>
-    """, unsafe_allow_html=True)
+            if initial_deposit > 0:
+                txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
+                c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'Deposit', ?, 0, ?, 'Initial Deposit', ?)",
+                         (txn_id, acc_num, initial_deposit, initial_deposit, created_by))
+                # Accounting: Cash IN (Debit), SB Liability UP (Credit)
+                JournalVoucherModule.create_auto_voucher('Receipt', today, f'Initial deposit SB {acc_num}', created_by,
+                    [('CASH_IN_HAND', initial_deposit, 0), ('SB_ACCOUNTS', 0, initial_deposit)])
+            
+            conn.commit(); conn.close()
+            return True, acc_num
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
     
-    st.markdown('<div class="auth-container">', unsafe_allow_html=True)
-    st.markdown('<h2 class="branding-title">🏦 NEXUS CORE</h2>', unsafe_allow_html=True)
-    st.markdown('<p class="branding-sub">Enterprise General Ledger & Sub-Ledger Banking Suite</p>', unsafe_allow_html=True)
+    @staticmethod
+    def deposit(account_number, amount, description, created_by):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            c.execute("SELECT balance FROM sb_accounts WHERE account_number = ? AND status = 'Active'", (account_number,))
+            acc = c.fetchone()
+            if not acc: conn.close(); return False, "Account not found"
+            
+            old_bal, new_bal = acc[0], acc[0] + amount
+            c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_bal, account_number))
+            
+            txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
+            c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'Deposit', ?, ?, ?, ?, ?)",
+                     (txn_id, account_number, amount, old_bal, new_bal, description, created_by))
+            # Accounting: Cash IN (Debit), SB Liability UP (Credit)
+            JournalVoucherModule.create_auto_voucher('Receipt', datetime.now().date(), f'Deposit {account_number}', created_by,
+                [('CASH_IN_HAND', amount, 0), ('SB_ACCOUNTS', 0, amount)])
+            
+            conn.commit(); conn.close()
+            return True, f"Deposited ₹{amount:,.2f}. Balance: ₹{new_bal:,.2f}"
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
     
-    with st.form("auth_form"):
-        user_input = st.text_input("Operator Username Identity")
-        pass_input = st.text_input("Secure Authorization Token / Password", type="password")
-        submit = st.form_submit_button("Authenticate Access Path")
-        
-        if submit:
-            conn = get_db_connection()
-            if conn:
-                cursor = conn.cursor()
-                hashed = hash_password(pass_input)
-                cursor.execute('SELECT username, full_name, role FROM users WHERE username = ? AND password_hash = ?', (user_input, hashed))
-                res = cursor.fetchone()
-                conn.close()
+    @staticmethod
+    def withdraw(account_number, amount, description, created_by):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            c.execute("SELECT balance FROM sb_accounts WHERE account_number = ? AND status = 'Active'", (account_number,))
+            acc = c.fetchone()
+            if not acc: conn.close(); return False, "Account not found"
+            if acc[0] < amount: conn.close(); return False, f"Insufficient balance. Available: ₹{acc[0]:,.2f}"
+            
+            old_bal, new_bal = acc[0], acc[0] - amount
+            c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_bal, account_number))
+            
+            txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
+            c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'Withdrawal', ?, ?, ?, ?, ?)",
+                     (txn_id, account_number, amount, old_bal, new_bal, description, created_by))
+            # Accounting: SB Liability DOWN (Debit), Cash OUT (Credit)
+            JournalVoucherModule.create_auto_voucher('Payment', datetime.now().date(), f'Withdrawal {account_number}', created_by,
+                [('SB_ACCOUNTS', amount, 0), ('CASH_IN_HAND', 0, amount)])
+            
+            conn.commit(); conn.close()
+            return True, f"Withdrew ₹{amount:,.2f}. Balance: ₹{new_bal:,.2f}"
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+    
+    @staticmethod
+    def calculate_quarterly_interest(created_by=None):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            today = datetime.now().date()
+            quarter_start = today - relativedelta(months=3)
+            
+            c.execute("""SELECT account_number, balance, interest_rate FROM sb_accounts 
+                WHERE status = 'Active' AND account_number NOT IN (
+                    SELECT DISTINCT account_number FROM interest_calculations 
+                    WHERE interest_period_start = ? AND is_credited = 1)""", (quarter_start,))
+            accounts = c.fetchall()
+            if not accounts: conn.close(); return False, "No eligible accounts"
+            
+            results = []
+            for acc in accounts:
+                acc_num, balance, rate = acc
+                c.execute("SELECT COALESCE(MIN(balance_after), ?) FROM sb_transactions WHERE account_number = ? AND created_at >= ? AND created_at <= ?",
+                         (balance, acc_num, quarter_start, today))
+                min_bal = c.fetchone()[0]
                 
-                if res:
-                    st.session_state.logged_in = True
-                    # Fixed: Explicitly mapping to 'full_name' key structure to prevent mapping anomalies
-                    st.session_state.user = {'username': res[0], 'full_name': res[1], 'role': res[2]}
-                    st.success("Authorization confirmed. Loading engine dashboard environment...")
-                    st.rerun()
-                else:
-                    st.error("Authentication rejected: Invalid credential pairing signature matching.")
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.caption("<center>System Initialization Default Verification Tokens: admin / admin123</center>", unsafe_allow_html=True)
-
-# ============== MAIN CONTROLLER ROOT CONTEXT ==============
-def main():
-    st.set_page_config(page_title="Nexus Core Banking Suite", page_icon="🏦", layout="wide")
-    
-    if not os.path.exists(DB_FILE):
-        init_database()
-        
-    if "db_initialized" not in st.session_state:
-        init_database()
-        st.session_state.db_initialized = True
-        
-    if 'logged_in' not in st.session_state or not st.session_state.logged_in:
-        login_page()
-        return
-        
-    user = st.session_state.user
-    
-    col_h1, col_h2 = st.columns([3, 1])
-    with col_h1:
-        st.markdown("<h1 style='margin:0; padding:0; color:#0f172a;'>🏦 NEXUS CORE BANKING ENGINE</h1>", unsafe_allow_html=True)
-        st.caption(f"Operated Session Context Authenticated Module Node Active | System Terminal ID: 2026-NEXUS")
-    with col_h2:
-        # Fixed: Querying user['full_name'] safely to avoid KeyError crashes
-        st.markdown(f"<div style='text-align:right; margin-top:5px;'><b>{user['full_name']}</b> ({user['role'].upper()})</div>", unsafe_allow_html=True)
-        if st.button("Terminate Session Sequence", use_container_width=True):
-            st.session_state.logged_in = False
-            st.session_state.user = None
-            st.rerun()
-            
-    st.divider()
-    
-    t_sb, t_fdrd, t_voucher, t_journal, t_trial, t_pl, t_audit = st.tabs([
-        "💰 Savings Bank Module",
-        "⏳ Term Deposits (FD/RD)",
-        "📝 Double-Entry Voucher Posting",
-        "📖 General Journal Log",
-        "⚖️ Unadjusted Trial Balance",
-        "📊 Profit & Loss Statements",
-        "🔍 Real-time Internal System Verification"
-    ])
-    
-    # ==================== MODULE 1: SAVINGS BANK (SB) PORTFOLIOS ====================
-    with t_sb:
-        st.subheader("Savings Bank Sub-Ledger Processing Environment")
-        sb_action = st.radio("Select Processing Target Sequence Operations Strategy", ["Open New Account", "Post Cash Deposit / Withdrawal Transaction", "View Active Sub-Ledger Portfolios Table Matrix"], horizontal=True)
-        
-        if sb_action == "Open New Account":
-            with st.form("sb_open_form"):
-                c_name = st.text_input("Legal Full Name of Primary Account Holder")
-                c_phone = st.text_input("Contact Mobile Phone Number Address")
-                init_dep = st.number_input("Opening Counter Cash Deposit Amount (₹)", min_value=0.0, value=1000.0, step=500.0)
-                int_rate = st.number_input("Yield Interest Matrix Target Rate Assignment (% P.A.)", min_value=0.0, max_value=12.0, value=3.5, step=0.25)
-                op_date = st.date_input("Value Date Asset Creation Effective Alignment", value=datetime.now().date())
+                interest = round(min_bal * (rate / 100 / 365) * (today - quarter_start).days, 2)
                 
-                if st.form_submit_button("Commit SB Activation Parameters Request"):
-                    if not c_name:
-                        st.error("Missing processing attribute requirement: Customer validation credentials.")
-                    else:
-                        success, message = open_sb_portfolio(c_name, c_phone, init_dep, int_rate, op_date.strftime('%Y-%m-%d'), user['username'])
-                        if success: st.success(message)
-                        else: st.error(message)
-                        
-        elif sb_action == "Post Cash Deposit / Withdrawal Transaction":
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT account_number, customer_name, current_balance FROM sb_accounts WHERE status = "ACTIVE"')
-            sb_rows = cursor.fetchall()
-            conn.close()
+                if interest > 0:
+                    new_bal = balance + interest
+                    c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_bal, acc_num))
+                    
+                    txn_id = f"INT{uuid.uuid4().hex[:8].upper()}"
+                    c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'Interest_Credit', ?, ?, ?, 'Quarterly Interest', ?)",
+                             (txn_id, acc_num, interest, balance, new_bal, created_by))
+                    # Accounting: Interest Expense UP (Debit), SB Liability UP (Credit)
+                    JournalVoucherModule.create_auto_voucher('Interest', today, f'Interest {acc_num}', created_by,
+                        [('INTEREST_ON_SB', interest, 0), ('SB_ACCOUNTS', 0, interest)])
+                    
+                    c.execute("INSERT INTO interest_calculations (account_number, interest_period_start, interest_period_end, minimum_balance, interest_rate, interest_amount, is_credited) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                             (acc_num, quarter_start, today, min_bal, rate, interest))
+                    
+                    results.append({'Account': acc_num, 'Interest': f"₹{interest:,.2f}", 'New Balance': f"₹{new_bal:,.2f}"})
             
-            if not sb_rows:
-                st.info("No active portfolios detected inside sub-ledger tables.")
+            conn.commit(); conn.close()
+            return True, results
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+
+# ============================================
+# FD ACCOUNT MODULE
+# ============================================
+class FDAccountModule:
+    @staticmethod
+    def generate_fd_id():
+        return f"FD{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:4].upper()}"
+    
+    @staticmethod
+    def open_fd(customer_id, sb_account, principal, interest_rate, tenure_months, created_by=None):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            c.execute("SELECT balance FROM sb_accounts WHERE account_number = ? AND customer_id = ? AND status = 'Active'", (sb_account, customer_id))
+            sb = c.fetchone()
+            if not sb: conn.close(); return False, "SB Account not found"
+            if sb[0] < principal: conn.close(); return False, f"Insufficient balance. Available: ₹{sb[0]:,.2f}"
+            
+            fd_id = FDAccountModule.generate_fd_id()
+            start_date = datetime.now().date()
+            maturity_date = start_date + relativedelta(months=tenure_months)
+            maturity_amount = round(principal * (1 + (interest_rate/1200) * tenure_months), 2)
+            
+            c.execute("INSERT INTO fd_accounts (fd_id, customer_id, sb_account, principal_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (fd_id, customer_id, sb_account, principal, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, created_by))
+            
+            old_bal, new_bal = sb[0], sb[0] - principal
+            c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_bal, sb_account))
+            
+            txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
+            c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'FD_Transfer', ?, ?, ?, ?, ?)",
+                     (txn_id, sb_account, principal, old_bal, new_bal, f'FD Creation - {fd_id}', created_by))
+            # Accounting: FD Asset UP (Debit), SB Liability DOWN (Debit)
+            JournalVoucherModule.create_auto_voucher('FD', start_date, f'FD Creation {fd_id}', created_by,
+                [('FD_INVESTMENTS', principal, 0), ('SB_ACCOUNTS', principal, 0)])
+            
+            conn.commit(); conn.close()
+            return True, fd_id
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+    
+    @staticmethod
+    def mature_fd(fd_id, created_by=None):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            c.execute("SELECT * FROM fd_accounts WHERE fd_id = ? AND status = 'Active'", (fd_id,))
+            fd = c.fetchone()
+            if not fd: conn.close(); return False, "FD not found"
+            
+            maturity_amount, sb_account, principal = fd[8], fd[2], fd[3]
+            interest_earned = maturity_amount - principal
+            
+            c.execute("UPDATE fd_accounts SET status = 'Matured' WHERE fd_id = ?", (fd_id,))
+            
+            c.execute("SELECT balance FROM sb_accounts WHERE account_number = ?", (sb_account,))
+            old_bal = c.fetchone()[0]
+            new_bal = old_bal + maturity_amount
+            c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_bal, sb_account))
+            
+            txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
+            c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'FD_Transfer', ?, ?, ?, ?, ?)",
+                     (txn_id, sb_account, maturity_amount, old_bal, new_bal, f'FD Maturity - {fd_id}', created_by))
+            # Accounting: FD Asset DOWN (Credit), SB Liability UP (Credit) + Interest expense
+            JournalVoucherModule.create_auto_voucher('FD', datetime.now().date(), f'FD Maturity {fd_id}', created_by,
+                [('FD_INVESTMENTS', 0, principal), ('SB_ACCOUNTS', 0, principal),
+                 ('INTEREST_ON_FD', interest_earned, 0), ('SB_ACCOUNTS', 0, interest_earned)])
+            
+            conn.commit(); conn.close()
+            return True, f"FD matured. ₹{maturity_amount:,.2f} credited"
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+
+# ============================================
+# RD ACCOUNT MODULE
+# ============================================
+class RDAccountModule:
+    @staticmethod
+    def generate_rd_id():
+        return f"RD{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:4].upper()}"
+    
+    @staticmethod
+    def open_rd(customer_id, sb_account, monthly_amount, interest_rate, tenure_months, created_by=None):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            c.execute("SELECT balance FROM sb_accounts WHERE account_number = ? AND customer_id = ? AND status = 'Active'", (sb_account, customer_id))
+            sb = c.fetchone()
+            if not sb: conn.close(); return False, "SB Account not found"
+            
+            rd_id = RDAccountModule.generate_rd_id()
+            start_date = datetime.now().date()
+            
+            r = interest_rate / 400; n = tenure_months / 3
+            maturity_amount = round(monthly_amount * (((1 + r) ** n - 1) / r) * (1 + r), 2)
+            
+            c.execute("INSERT INTO rd_accounts (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, maturity_date, maturity_amount, total_installments, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (rd_id, customer_id, sb_account, monthly_amount, interest_rate, tenure_months, start_date, start_date + relativedelta(months=tenure_months), maturity_amount, tenure_months, created_by))
+            
+            for i in range(tenure_months):
+                c.execute("INSERT INTO rd_installments (rd_id, installment_number, due_date, amount) VALUES (?, ?, ?, ?)",
+                         (rd_id, i+1, start_date + relativedelta(months=i+1), monthly_amount))
+            
+            if sb[0] >= monthly_amount:
+                old_bal, new_bal = sb[0], sb[0] - monthly_amount
+                c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_bal, sb_account))
+                c.execute("UPDATE rd_installments SET status = 'Paid', paid_date = ? WHERE rd_id = ? AND installment_number = 1", (start_date, rd_id))
+                c.execute("UPDATE rd_accounts SET installments_paid = 1 WHERE rd_id = ?", (rd_id,))
+                
+                txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
+                c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'RD_Transfer', ?, ?, ?, ?, ?)",
+                         (txn_id, sb_account, monthly_amount, old_bal, new_bal, f'RD Installment 1/{tenure_months} - {rd_id}', created_by))
+                # Accounting: RD Asset UP (Debit), SB Liability DOWN (Debit)
+                JournalVoucherModule.create_auto_voucher('RD', start_date, f'RD {rd_id} Installment 1', created_by,
+                    [('RD_INVESTMENTS', monthly_amount, 0), ('SB_ACCOUNTS', monthly_amount, 0)])
+            
+            conn.commit(); conn.close()
+            return True, rd_id
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+    
+    @staticmethod
+    def pay_installment(rd_id, created_by=None):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            c.execute("SELECT * FROM rd_accounts WHERE rd_id = ? AND status = 'Active'", (rd_id,))
+            rd = c.fetchone()
+            if not rd: conn.close(); return False, "RD not found"
+            
+            c.execute("SELECT * FROM rd_installments WHERE rd_id = ? AND status = 'Pending' ORDER BY installment_number LIMIT 1", (rd_id,))
+            inst = c.fetchone()
+            if not inst: conn.close(); return False, "All installments paid"
+            
+            c.execute("SELECT balance FROM sb_accounts WHERE account_number = ?", (rd[2],))
+            sb_bal = c.fetchone()[0]
+            if sb_bal < rd[3]: conn.close(); return False, "Insufficient balance"
+            
+            new_bal = sb_bal - rd[3]
+            c.execute("UPDATE sb_accounts SET balance = ? WHERE account_number = ?", (new_bal, rd[2]))
+            c.execute("UPDATE rd_installments SET status = 'Paid', paid_date = ? WHERE rd_id = ? AND installment_number = ?", (datetime.now().date(), rd_id, inst[1]))
+            c.execute("UPDATE rd_accounts SET installments_paid = installments_paid + 1 WHERE rd_id = ?", (rd_id,))
+            
+            txn_id = f"TXN{uuid.uuid4().hex[:8].upper()}"
+            c.execute("INSERT INTO sb_transactions (transaction_id, account_number, transaction_type, amount, balance_before, balance_after, description, created_by) VALUES (?, ?, 'RD_Transfer', ?, ?, ?, ?, ?)",
+                     (txn_id, rd[2], rd[3], sb_bal, new_bal, f'RD Installment {inst[1]}/{rd[9]} - {rd_id}', created_by))
+            # Accounting
+            JournalVoucherModule.create_auto_voucher('RD', datetime.now().date(), f'RD {rd_id} Installment {inst[1]}', created_by,
+                [('RD_INVESTMENTS', rd[3], 0), ('SB_ACCOUNTS', rd[3], 0)])
+            
+            conn.commit(); conn.close()
+            return True, f"Installment {inst[1]}/{rd[9]} paid"
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+
+# ============================================
+# JOURNAL VOUCHER MODULE
+# ============================================
+class JournalVoucherModule:
+    @staticmethod
+    def generate_voucher_id(vt):
+        prefix = {'Payment': 'PMT', 'Receipt': 'RCP', 'Journal': 'JNL', 'Interest': 'INT', 'FD': 'FDV', 'RD': 'RDV'}
+        return f"{prefix.get(vt, 'JNL')}{datetime.now().strftime('%Y%m%d')}{uuid.uuid4().hex[:4].upper()}"
+    
+    @staticmethod
+    def create_voucher(voucher_type, voucher_date, narration, entries, created_by):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            total_dr = sum(e[1] for e in entries)
+            total_cr = sum(e[2] for e in entries)
+            if abs(total_dr - total_cr) > 0.01: conn.close(); return False, "Debit and Credit must be equal"
+            if total_dr == 0: conn.close(); return False, "Amount cannot be zero"
+            
+            vid = JournalVoucherModule.generate_voucher_id(voucher_type)
+            c.execute("INSERT INTO journal_vouchers (voucher_id, voucher_type, voucher_date, narration, total_amount, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+                     (vid, voucher_type, voucher_date, narration, total_dr, created_by))
+            for acc, dr, cr in entries:
+                c.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount) VALUES (?, ?, ?, ?)",
+                         (vid, acc, dr, cr))
+            conn.commit(); conn.close()
+            return True, vid
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+    
+    @staticmethod
+    def create_auto_voucher(vt, dt, nar, created_by, entries):
+        success, result = JournalVoucherModule.create_voucher(vt, dt, nar, entries, created_by)
+        return result if success else None
+
+# ============================================
+# CUSTOMER MODULE
+# ============================================
+class CustomerModule:
+    @staticmethod
+    def generate_customer_id():
+        return f"CUST{uuid.uuid4().hex[:8].upper()}"
+    
+    @staticmethod
+    def register_customer(data, created_by):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            cid = CustomerModule.generate_customer_id()
+            c.execute("INSERT INTO customers (customer_id, first_name, last_name, date_of_birth, phone, email, address, city, state, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (cid, data['first_name'], data['last_name'], data.get('date_of_birth'), data['phone'], data.get('email'), data.get('address'), data.get('city'), data.get('state'), created_by))
+            conn.commit(); conn.close()
+            return True, cid
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+    
+    @staticmethod
+    def verify_kyc(customer_id, verified_by):
+        conn = db.get_connection(); c = conn.cursor()
+        try:
+            c.execute("UPDATE customers SET kyc_status = 'Verified' WHERE customer_id = ?", (customer_id,))
+            conn.commit(); conn.close()
+            return True, "KYC Verified"
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return False, str(e)
+
+# ============================================
+# FINANCIAL REPORTING
+# ============================================
+class FinancialReportingModule:
+    @staticmethod
+    def get_trial_balance(as_of_date=None):
+        if as_of_date is None: as_of_date = datetime.now().date()
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("""SELECT coa.account_head, coa.account_name, coa.account_type,
+            COALESCE(SUM(je.debit_amount), 0) as total_debit, COALESCE(SUM(je.credit_amount), 0) as total_credit
+            FROM chart_of_accounts coa
+            LEFT JOIN journal_entries je ON coa.account_head = je.account_head
+            LEFT JOIN journal_vouchers jv ON je.voucher_id = jv.voucher_id AND jv.voucher_date <= ? AND jv.status = 'Approved'
+            WHERE coa.is_active = 1
+            GROUP BY coa.account_head, coa.account_name, coa.account_type
+            ORDER BY coa.account_type, coa.account_head""", (as_of_date,))
+        data = c.fetchall(); conn.close()
+        
+        result, td, tc = [], 0, 0
+        for row in data:
+            if row[2] in ('Asset', 'Expense'):
+                net = row[3] - row[4]
+                dr, cr = (net, 0) if net > 0 else (0, abs(net))
             else:
-                sb_opts = {f"{r[0]} - {r[1]} (Bal: ₹{r[2]:,.2f})": r[0] for r in sb_rows}
-                selected_sb = st.selectbox("Select Target Portfolio Target Index Assignment", list(sb_opts.keys()))
-                target_acc = sb_opts[selected_sb]
-                
-                with st.form("sb_transaction_posting"):
-                    t_mode = st.selectbox("Transaction Processing Operational Intent Category", ["DEPOSIT", "WITHDRAWAL"])
-                    t_amt = st.number_input("Counter Liquid Asset Valuation Amount (₹)", min_value=1.0, value=500.0, step=100.0)
-                    t_date = st.date_input("Processing Target Value Date Alignment Reference", value=datetime.now().date())
-                    
-                    if st.form_submit_button("Book Sub-Ledger Entry Stack"):
-                        success, message = post_sb_transaction(target_acc, t_mode, t_amt, t_date.strftime('%Y-%m-%d'), user['username'])
-                        if success:
-                            st.success(message)
-                            st.rerun()
-                        else: st.error(message)
-                        
-        elif sb_action == "View Active Sub-Ledger Portfolios Table Matrix":
-            conn = get_db_connection()
-            df = pd.read_sql_query('SELECT * FROM sb_accounts', conn)
-            conn.close()
-            if not df.empty:
-                df.columns = ['Account Number Identifier', 'Customer Profile Legal Entity Name', 'Phone Target Line Contact', 'Current Net Balance (₹)', 'Contractual Yield Rate (%)', 'Account Initialization Timestamp Reference', 'Current State Lifecycle Designation']
-                st.dataframe(df, use_container_width=True, hide_index=True)
-            else: st.info("No records match target trace query indices parameter scopes.")
-            
-    # ==================== MODULE 2: FIXED DEPOSIT / RECURRING DEPOSIT (FD/RD) ====================
-    with t_fdrd:
-        st.subheader("Term Deposit Assets Ledger Strategy Processing Matrix")
-        fdrd_action = st.radio("Operational Objective Term Actions Task", ["Issue New Term Asset Contract Structure Entry", "Active Maturing Asset Portfolio Tables"], horizontal=True)
+                net = row[4] - row[3]
+                dr, cr = (0, net) if net > 0 else (abs(net), 0)
+            td += dr; tc += cr
+            result.append({'account_head': row[0], 'account_name': row[1], 'account_type': row[2], 'debit': dr, 'credit': cr})
+        return result, td, tc
+    
+    @staticmethod
+    def get_balance_sheet(as_of_date=None):
+        tb, _, _ = FinancialReportingModule.get_trial_balance(as_of_date)
+        assets = [i for i in tb if i['account_type'] == 'Asset']
+        liabilities = [i for i in tb if i['account_type'] == 'Liability']
+        equity = [i for i in tb if i['account_type'] == 'Equity']
         
-        if fdrd_action == "Issue New Term Asset Contract Structure Entry":
-            with st.form("fdrd_issue_form"):
-                f_name = st.text_input("Legal Holder Primary Entity Counterparty Name")
-                p_type = st.selectbox("Product Line Segment Classification Portfolio", ["FD", "RD"])
-                
-                col_f1, col_f2 = st.columns(2)
-                with col_f1:
-                    p_amt = st.number_input("Principal Term Injection Valuation (Lump-Sum for FD) (₹)", min_value=0.0, value=10000.0, step=1000.0)
-                with col_f2:
-                    r_inst = st.number_input("Monthly Portfolio Recurrent Installment Commitment (For RD only) (₹)", min_value=0.0, value=0.0, step=500.0)
-                    
-                col_f3, col_f4 = st.columns(2)
-                with col_f3:
-                    f_rate = st.number_input("Contractual Component Interest Percentage Target Scale Fixed (% P.A.)", min_value=1.0, max_value=15.0, value=7.0, step=0.1)
-                with col_f4:
-                    f_tenure = st.number_input("Contract Lifespan Operational Duration Constraint (Months)", min_value=1, max_value=360, value=12, step=1)
-                    
-                f_date = st.date_input("Value Effective Opening Booking Sequence Timestamp", value=datetime.now().date())
-                
-                if st.form_submit_button("Provision Term Asset Contract Ledger Line Item"):
-                    if p_type == "RD" and r_inst <= 0:
-                        st.error("Validation reject: Recurring Deposit instruments mandate a regular monthly contribution valuation sequence definition input.")
-                    elif p_type == "FD" and p_amt <= 0:
-                        st.error("Validation reject: Fixed Deposit instruments require a non-zero principal capital asset injection benchmark designation value.")
-                    else:
-                        success, message = provision_fdrd_portfolio(f_name, p_type, p_amt, r_inst, f_rate, f_tenure, f_date.strftime('%Y-%m-%d'), user['username'])
-                        if success: st.success(message)
-                        else: st.error(message)
-                        
-        elif fdrd_action == "Active Maturing Asset Portfolio Tables":
-            conn = get_db_connection()
-            df = pd.read_sql_query('SELECT * FROM fdrd_accounts', conn)
-            conn.close()
-            if not df.empty:
-                df.columns = ['Contract ID Trace', 'Customer Entity Counterparty Identity', 'Classification Type Portfolio', 'Initial Principal Injected Base (₹)', 'Monthly Commitment Index Rate Asset (₹)', 'Annualized Return Metric Yield Scale (%)', 'Contract Duration Footprint (Months)', 'Projected Valuation Horizon Maturity Target (₹)', 'Current State Running Book Accumulation Valuation (₹)', 'Lifecycle Inception Timestamp Target', 'Projected Maturity Value Settlement Timestamp Target', 'Asset Status Engine Execution Flag']
-                st.dataframe(df, use_container_width=True, hide_index=True)
-            else: st.info("No record structures allocated within dynamic cache databases currently.")
-            
-    # ==================== MODULE 3: BALANCED VOUCHER LEDGER INTERFACE ====================
-    with t_voucher:
-        st.subheader("Manual Ledger Adjustment Posting Engine Terminal Node")
-        accounts = get_all_accounts()
+        ta = sum(i['debit'] - i['credit'] for i in assets)
+        tl = sum(i['credit'] - i['debit'] for i in liabilities)
+        te = sum(i['credit'] - i['debit'] for i in equity)
         
-        if 'v_items' not in st.session_state:
-            st.session_state.v_items = []
-            
-        with st.expander("🛠️ Configuration Context Global Meta Parameters Descriptor Reference Form Layer", expanded=True):
-            col_v1, col_v2 = st.columns(2)
-            with col_v1:
-                mst_type = st.selectbox("Master Document Classification Flag Type Category", ["JOURNAL", "RECEIPT", "PAYMENT", "CONTRA"])
-            with col_v2:
-                mst_date = st.date_input("Master Processing Ledger Book Target Entry Value Date Reference", value=datetime.now().date())
-            mst_desc = st.text_input("Global Transaction Objective Narrative Summary Meta String Reference", value="Manual Adjustment Allocation Entry Sequence Execution")
-            
-        st.markdown("#### 🗂️ Staging Workspace Row Row Entry Item Grid Definition Node Form")
-        col_r1, col_r2, col_r3 = st.columns([2, 1, 1])
-        with col_r1:
-            coa_opts = {f"{k} - {v['name']} [{v['type']}] (Bal: ₹{v['balance']:,.2f})": k for k, v in accounts.items()}
-            selected_coa = st.selectbox("Target Ledger Core Head Account Allocation Link mapping Selection", list(coa_opts.keys()))
-        with col_r2:
-            row_dc = st.selectbox("Ledger Account Mutation Intended Signal Vector Instruction", ["DEBIT", "CREDIT"])
-        with col_r3:
-            row_amt = st.number_input("Valuation Metric Multiplier Quantum Currency Units (₹)", min_value=0.01, value=0.0, step=100.0)
-            
-        row_narr = st.text_input("Line Item Level Detailed Micro Granular Explanation Row Context Specific Commentary Description String", value="")
+        income_items = [i for i in tb if i['account_type'] == 'Income']
+        expense_items = [i for i in tb if i['account_type'] == 'Expense']
+        net_profit = sum(i['credit'] - i['debit'] for i in income_items) - sum(i['debit'] - i['credit'] for i in expense_items)
         
-        if st.button("➕ Inject Staged Line Row Data Structure Into Runtime Working Variable Workspace Stack"):
-            st.session_state.v_items.append({
-                'account_code': coa_opts[selected_coa],
-                'entry_type': row_dc,
-                'amount': row_amt,
-                'narration': row_narr if row_narr else mst_desc
-            })
-            st.toast("Line record item injected successfully into execution memory stack storage allocation arrays.")
-            
-        if st.session_state.v_items:
-            st.markdown("---")
-            st.markdown("### 📊 Active Work Area Queue Framework Verification Data Frame Grid")
-            v_df = pd.DataFrame(st.session_state.v_items)
-            st.dataframe(v_df, use_container_width=True)
-            
-            deb_sum = sum(x['amount'] for x in st.session_state.v_items if x['entry_type'] == 'DEBIT')
-            cred_sum = sum(x['amount'] for x in st.session_state.v_items if x['entry_type'] == 'CREDIT')
-            
-            col_m1, col_m2, col_m3 = st.columns(3)
-            col_m1.metric("Current Cumulative Debits Allocation Scale Summation Metric", f"₹{deb_sum:,.2f}")
-            col_m2.metric("Current Cumulative Credits Allocation Scale Summation Metric", f"₹{cred_sum:,.2f}")
-            
-            variance = abs(deb_sum - cred_sum)
-            col_m3.metric("Double-Entry System Out Of Alignment Discrepancy Variance Residual Margin", f"₹{variance:,.2f}", 
-                          delta=f"-₹{variance:,.2f}" if variance == 0 else f"+₹{variance:,.2f}", delta_color="inverse" if variance > 0 else "normal")
-            
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                if st.button("🗑️ Purge Working Workspace Allocation Registries Instantly", use_container_width=True):
-                    st.session_state.v_items = []
-                    st.rerun()
-            with col_btn2:
-                if variance < 0.001 and deb_sum > 0:
-                    if st.button("💾 Commit Balanced Master Voucher Transaction Structure Block Elements Directly to General Ledger Records Store", use_container_width=True, type="primary"):
-                        success, message = execute_double_entry_voucher(mst_type, mst_date.strftime('%Y-%m-%d'), mst_desc, st.session_state.v_items, user['username'])
-                        if success:
-                            st.success(message)
-                            st.session_state.v_items = []
-                            st.rerun()
-                        else: st.error(message)
+        if net_profit > 0:
+            equity.append({'account_head': 'PROFIT_LOSS', 'account_name': 'P&L', 'account_type': 'Equity', 'debit': 0, 'credit': net_profit})
+            te += net_profit
+        
+        return assets, liabilities, equity, ta, tl, te
+
+# ============================================
+# SESSION STATE
+# ============================================
+def init_session_state():
+    if 'logged_in' not in st.session_state: st.session_state.logged_in = False
+    if 'user' not in st.session_state: st.session_state.user = None
+    if 'current_tab' not in st.session_state: st.session_state.current_tab = 'SB Accounts'
+
+# ============================================
+# UI
+# ============================================
+def login_ui():
+    st.markdown('<h1 class="main-header">🏦 Complete Banking System</h1>', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("login"):
+            st.markdown('<h3 style="color: #a78bfa; text-align: center;">Login</h3>', unsafe_allow_html=True)
+            u = st.text_input("Username")
+            p = st.text_input("Password", type="password")
+            if st.form_submit_button("Login", use_container_width=True):
+                user = AuthModule.authenticate(u, p)
+                if user:
+                    st.session_state.logged_in = True; st.session_state.user = user
+                    st.success(f"Welcome, {user['full_name']}!"); st.rerun()
                 else:
-                    st.warning("⚠️ Submission blocked: Double-entry consistency protocol violation rules apply. The processing system cannot post asymmetric currency balancing elements safely.")
-                    
-    # ==================== MODULE 4: ARCHIVAL HISTORICAL GENERAL JOURNAL LOG ====================
-    with t_journal:
-        st.subheader("General Journal Historical Line Item Record Entry Audit Log Matrix Registry")
-        
-        col_j1, col_j2 = st.columns(2)
-        with col_j1:
-            j_start = st.date_input("Filter Date Matrix Baseline Range Starting Boundaries Viewpoint", value=datetime.now().date() - timedelta(days=60))
-        with col_j2:
-            j_end = st.date_input("Filter Date Matrix Baseline Range Ending Boundaries Viewpoint", value=datetime.now().date())
-            
-        conn = get_db_connection()
-        query = '''
-            SELECT date AS [Value Date], voucher_number AS [Document Key Reference ID], account_code AS [GL Code Link], 
-                   account_name AS [Core Ledger Title Mapping Account Head], entry_type AS [Debit / Credit Allocation Indicator Signal Vector Type], 
-                   amount AS [Valuation Quantum Currency Matrix Units (₹)], description AS [Global Event Meta Description Narrative Record Trace Context String], 
-                   username AS [System Authenticated Operator Identity Trace ID Reference]
-            FROM journal_entries
-            WHERE date >= ? AND date <= ?
-            ORDER BY id DESC LIMIT 500
-        '''
-        df = pd.read_sql_query(query, conn, params=(j_start.strftime('%Y-%m-%d'), j_end.strftime('%Y-%m-%d')))
-        conn.close()
-        
-        if not df.empty:
-            df['Valuation Quantum Currency Matrix Units (₹)'] = df['Valuation Quantum Currency Matrix Units (₹)'].apply(lambda x: f"₹{x:,.2f}")
+                    st.error("Invalid credentials")
+        st.markdown("""<div class="info-box">Demo: admin/admin123 | manager/manager123 | user1/user123</div>""", unsafe_allow_html=True)
+
+def sb_account_ui():
+    st.markdown('<h2 class="sub-header">💰 Savings Bank Account</h2>', unsafe_allow_html=True)
+    tab1, tab2, tab3, tab4 = st.tabs(["Open Account", "Deposit/Withdraw", "Interest", "List"])
+    
+    with tab1:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT customer_id, first_name, last_name FROM customers WHERE kyc_status = 'Verified'")
+        customers = c.fetchall(); conn.close()
+        if customers:
+            with st.form("open_sb"):
+                opts = {f"{c[1]} {c[2]} ({c[0]})": c[0] for c in customers}
+                sel = st.selectbox("Customer", list(opts.keys()))
+                c1, c2 = st.columns(2)
+                with c1: dep = st.number_input("Initial Deposit", min_value=0.0, value=0.0, step=500.0)
+                with c2: rate = st.number_input("Interest Rate %", min_value=0.0, max_value=10.0, value=4.0, step=0.25)
+                if st.form_submit_button("Open Account", use_container_width=True):
+                    success, result = SBAccountModule.open_account(opts[sel], dep, rate, created_by=st.session_state.user['user_id'])
+                    if success: st.success(f"Account: {result}"); st.balloons()
+                    else: st.error(result)
+        else: st.warning("No verified customers")
+    
+    with tab2:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT sa.account_number, c.first_name || ' ' || c.last_name, sa.balance FROM sb_accounts sa JOIN customers c ON sa.customer_id = c.customer_id WHERE sa.status = 'Active'")
+        accounts = c.fetchall(); conn.close()
+        if accounts:
+            c1, c2 = st.columns(2)
+            with c1:
+                with st.form("dep"):
+                    opts = {f"{a[1]} - {a[0]} (₹{a[2]:,.2f})": a for a in accounts}
+                    acc = st.selectbox("Account", list(opts.keys()), key="dep")
+                    amt = st.number_input("Amount", min_value=1.0, value=100.0, step=100.0, key="da")
+                    desc = st.text_input("Description", key="dd")
+                    if st.form_submit_button("Deposit"):
+                        success, msg = SBAccountModule.deposit(opts[acc][0], amt, desc, st.session_state.user['user_id'])
+                        st.success(msg) if success else st.error(msg)
+            with c2:
+                with st.form("wit"):
+                    opts = {f"{a[1]} - {a[0]} (₹{a[2]:,.2f})": a for a in accounts}
+                    acc = st.selectbox("Account", list(opts.keys()), key="wit")
+                    a = opts[acc]
+                    amt = st.number_input("Amount", min_value=0.0, max_value=float(a[2]), value=0.0, step=100.0, key="wa")
+                    desc = st.text_input("Description", key="wd")
+                    if st.form_submit_button("Withdraw"):
+                        success, msg = SBAccountModule.withdraw(a[0], amt, desc, st.session_state.user['user_id'])
+                        st.success(msg) if success else st.error(msg)
+    
+    with tab3:
+        if st.button("Calculate Interest", use_container_width=True):
+            with st.spinner("Calculating..."):
+                success, results = SBAccountModule.calculate_quarterly_interest(st.session_state.user['user_id'])
+                if success:
+                    st.success("Done!")
+                    if results: st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+                else: st.warning(results)
+    
+    with tab4:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT sa.account_number, c.first_name || ' ' || c.last_name, sa.balance, sa.status FROM sb_accounts sa JOIN customers c ON sa.customer_id = c.customer_id ORDER BY sa.created_at DESC")
+        accounts = c.fetchall(); conn.close()
+        if accounts:
+            df = pd.DataFrame(accounts, columns=['Account', 'Customer', 'Balance', 'Status'])
+            df['Balance'] = df['Balance'].apply(lambda x: f"₹{x:,.2f}")
             st.dataframe(df, use_container_width=True, hide_index=True)
-        else: st.info("Zero operational transaction structural traces discovered matching input parameter date filtering frames.")
+
+def fd_account_ui():
+    st.markdown('<h2 class="sub-header">🏦 Fixed Deposit</h2>', unsafe_allow_html=True)
+    tab1, tab2, tab3 = st.tabs(["Open FD", "Mature", "List"])
+    
+    with tab1:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT sa.account_number, sa.customer_id, c.first_name, c.last_name, sa.balance FROM sb_accounts sa JOIN customers c ON sa.customer_id = c.customer_id WHERE sa.status = 'Active'")
+        accounts = c.fetchall(); conn.close()
+        if accounts:
+            with st.form("open_fd"):
+                opts = {f"{a[2]} {a[3]} - {a[0]} (₹{a[4]:,.2f})": a for a in accounts}
+                acc = opts[st.selectbox("SB Account", list(opts.keys()))]
+                c1, c2, c3 = st.columns(3)
+                with c1: principal = st.number_input("Principal", min_value=100.0, max_value=float(acc[4]), value=min(1000.0, float(acc[4])), step=1000.0)
+                with c2: rate = st.number_input("Rate %", min_value=1.0, max_value=15.0, value=7.0, step=0.5)
+                with c3: tenure = st.selectbox("Tenure", [3, 6, 12, 24, 36, 48, 60])
+                if st.form_submit_button("Open FD", use_container_width=True):
+                    success, result = FDAccountModule.open_fd(acc[1], acc[0], principal, rate, tenure, created_by=st.session_state.user['user_id'])
+                    if success: st.success(f"FD: {result}"); st.balloons()
+                    else: st.error(result)
+    
+    with tab2:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT fd.*, c.first_name, c.last_name FROM fd_accounts fd JOIN customers c ON fd.customer_id = c.customer_id WHERE fd.status = 'Active' AND fd.maturity_date <= ?", (datetime.now().date(),))
+        fds = c.fetchall(); conn.close()
+        if fds:
+            for fd in fds:
+                with st.expander(f"{fd[0]} | Principal: ₹{fd[3]:,.2f} | Maturity: ₹{fd[8]:,.2f}"):
+                    if st.button("Mature", key=f"m_{fd[0]}"):
+                        success, msg = FDAccountModule.mature_fd(fd[0], st.session_state.user['user_id'])
+                        st.success(msg) if success else st.error(msg)
+                        if success: st.rerun()
+        else: st.info("No FDs ready")
+    
+    with tab3:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT fd.*, c.first_name, c.last_name FROM fd_accounts fd JOIN customers c ON fd.customer_id = c.customer_id ORDER BY fd.created_at DESC")
+        fds = c.fetchall(); conn.close()
+        if fds:
+            data = [{'FD ID': f[0], 'Customer': f"{f[10]} {f[11]}", 'Principal': f"₹{f[3]:,.2f}", 'Rate': f"{f[4]}%", 'Maturity': f"₹{f[8]:,.2f}", 'Status': f[9]} for f in fds]
+            st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
+
+def rd_account_ui():
+    st.markdown('<h2 class="sub-header">📅 Recurring Deposit</h2>', unsafe_allow_html=True)
+    tab1, tab2, tab3 = st.tabs(["Open RD", "Pay", "List"])
+    
+    with tab1:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT sa.account_number, sa.customer_id, c.first_name, c.last_name, sa.balance FROM sb_accounts sa JOIN customers c ON sa.customer_id = c.customer_id WHERE sa.status = 'Active'")
+        accounts = c.fetchall(); conn.close()
+        if accounts:
+            with st.form("open_rd"):
+                opts = {f"{a[2]} {a[3]} - {a[0]} (₹{a[4]:,.2f})": a for a in accounts}
+                acc = opts[st.selectbox("SB Account", list(opts.keys()))]
+                c1, c2, c3 = st.columns(3)
+                with c1: monthly = st.number_input("Monthly", min_value=100.0, value=500.0, step=100.0)
+                with c2: rate = st.number_input("Rate %", min_value=1.0, max_value=15.0, value=6.5, step=0.5)
+                with c3: tenure = st.selectbox("Tenure", [12, 24, 36, 48, 60])
+                if st.form_submit_button("Open RD", use_container_width=True):
+                    success, result = RDAccountModule.open_rd(acc[1], acc[0], monthly, rate, tenure, created_by=st.session_state.user['user_id'])
+                    if success: st.success(f"RD: {result}"); st.balloons()
+                    else: st.error(result)
+    
+    with tab2:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT rd.*, c.first_name, c.last_name FROM rd_accounts rd JOIN customers c ON rd.customer_id = c.customer_id WHERE rd.status = 'Active'")
+        rds = c.fetchall(); conn.close()
+        if rds:
+            for rd in rds:
+                with st.expander(f"{rd[0]} | Monthly: ₹{rd[3]:,.2f} | Paid: {rd[9]}/{rd[10]}"):
+                    c2 = db.get_connection().cursor()
+                    c2.execute("SELECT * FROM rd_installments WHERE rd_id = ? AND status = 'Pending' ORDER BY installment_number LIMIT 1", (rd[0],))
+                    inst = c2.fetchone(); c2.connection.close()
+                    if inst:
+                        st.info(f"Next: #{inst[1]} - ₹{inst[4]:,.2f}")
+                        if st.button("Pay", key=f"p_{rd[0]}"):
+                            success, msg = RDAccountModule.pay_installment(rd[0], st.session_state.user['user_id'])
+                            st.success(msg) if success else st.error(msg)
+                            if success: st.rerun()
+                    else: st.success("All paid!")
+    
+    with tab3:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT rd.*, c.first_name, c.last_name FROM rd_accounts rd JOIN customers c ON rd.customer_id = c.customer_id ORDER BY rd.created_at DESC")
+        rds = c.fetchall(); conn.close()
+        if rds:
+            data = [{'RD ID': r[0], 'Customer': f"{r[12]} {r[13]}", 'Monthly': f"₹{r[3]:,.2f}", 'Paid': f"{r[9]}/{r[10]}", 'Maturity': f"₹{r[8]:,.2f}", 'Status': r[11]} for r in rds]
+            st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
+
+def customer_ui():
+    st.markdown('<h2 class="sub-header">👤 Customers</h2>', unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["Register", "List"])
+    
+    with tab1:
+        with st.form("reg"):
+            c1, c2 = st.columns(2)
+            with c1: fn = st.text_input("First Name *"); dob = st.date_input("DOB", datetime.now()-timedelta(days=365*18)); email = st.text_input("Email")
+            with c2: ln = st.text_input("Last Name *"); phone = st.text_input("Phone *"); addr = st.text_input("Address")
+            if st.form_submit_button("Register", use_container_width=True):
+                if fn and ln and phone:
+                    data = {'first_name': fn, 'last_name': ln, 'date_of_birth': dob, 'phone': phone, 'email': email, 'address': addr}
+                    success, result = CustomerModule.register_customer(data, st.session_state.user['user_id'])
+                    st.success(f"ID: {result}") if success else st.error(result)
+                else: st.error("Required fields missing!")
+    
+    with tab2:
+        conn = db.get_connection(); c = conn.cursor()
+        c.execute("SELECT customer_id, first_name, last_name, phone, kyc_status FROM customers ORDER BY created_at DESC")
+        customers = c.fetchall(); conn.close()
+        if customers:
+            for row in customers:
+                c1, c2, c3 = st.columns([3, 2, 1])
+                c1.markdown(f"**{row[1]} {row[2]}** ({row[0]})")
+                if row[4] == 'Verified': c2.markdown('<span class="badge badge-success">✅ Verified</span>', unsafe_allow_html=True)
+                else:
+                    c2.markdown(f'<span class="badge badge-warning">⏳ {row[4]}</span>', unsafe_allow_html=True)
+                    if c3.button("Verify", key=f"v_{row[0]}"):
+                        CustomerModule.verify_kyc(row[0], st.session_state.user['user_id']); st.rerun()
+                st.divider()
+
+def reports_ui():
+    st.markdown('<h2 class="sub-header">📈 Reports</h2>', unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["Trial Balance", "Balance Sheet"])
+    
+    with tab1:
+        if st.button("Generate Trial Balance", use_container_width=True):
+            data, td, tc = FinancialReportingModule.get_trial_balance()
+            if data:
+                df_data = [{'Account': i['account_head'], 'Name': i['account_name'], 'Type': i['account_type'], 'Debit': f"₹{i['debit']:,.2f}" if i['debit'] > 0 else "-", 'Credit': f"₹{i['credit']:,.2f}" if i['credit'] > 0 else "-"} for i in data if i['debit'] > 0 or i['credit'] > 0]
+                df_data.append({'Account': 'TOTAL', 'Name': '', 'Type': '', 'Debit': f"₹{td:,.2f}", 'Credit': f"₹{tc:,.2f}"})
+                st.dataframe(pd.DataFrame(df_data), use_container_width=True, hide_index=True)
+                if abs(td - tc) < 0.01: st.success(f"✅ Balanced! ₹{td:,.2f}")
+                else: st.error(f"❌ Difference: ₹{abs(td-tc):,.2f}")
+    
+    with tab2:
+        if st.button("Generate Balance Sheet", use_container_width=True):
+            assets, liab, equity, ta, tl, te = FinancialReportingModule.get_balance_sheet()
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write("**ASSETS**")
+                for i in assets:
+                    amt = i['debit'] - i['credit']
+                    if amt != 0: st.write(f"- {i['account_name']}: ₹{amt:,.2f}")
+                st.write(f"**Total: ₹{ta:,.2f}**")
+            with c2:
+                st.write("**LIABILITIES & EQUITY**")
+                for i in liab:
+                    amt = i['credit'] - i['debit']
+                    if amt != 0: st.write(f"- {i['account_name']}: ₹{amt:,.2f}")
+                for i in equity:
+                    amt = i['credit'] - i['debit']
+                    if amt != 0: st.write(f"- {i['account_name']}: ₹{amt:,.2f}")
+                st.write(f"**Total: ₹{tl+te:,.2f}**")
+
+def head_management_ui():
+    st.markdown('<h2 class="sub-header">📋 Chart of Accounts</h2>', unsafe_allow_html=True)
+    conn = db.get_connection(); c = conn.cursor()
+    c.execute("SELECT * FROM chart_of_accounts WHERE is_active = 1 ORDER BY account_type, account_head")
+    accounts = c.fetchall(); conn.close()
+    if accounts:
+        df = pd.DataFrame(accounts, columns=['Head', 'Name', 'Type', 'Category', 'Active'])
+        st.dataframe(df[['Head', 'Name', 'Type', 'Category']], use_container_width=True, hide_index=True)
+
+# ============================================
+# MAIN
+# ============================================
+def main():
+    init_session_state()
+    
+    try:
+        db.initialize_database()
+    except Exception as e:
+        st.error(f"DB Error: {e}")
+        if st.button("Reset DB"):
+            if os.path.exists('complete_banking.db'): os.remove('complete_banking.db')
+            st.rerun()
+        return
+    
+    if not st.session_state.logged_in:
+        login_ui()
+        return
+    
+    with st.sidebar:
+        st.markdown(f"""<div style='text-align:center;padding:1rem 0;'><h3 style='color:#a78bfa;'>🏦 Banking</h3><p style='color:#94a3b8;'>{st.session_state.user['full_name']}</p></div>""", unsafe_allow_html=True)
+        st.markdown("---")
         
-    # ==================== MODULE 5: EXPERT BALANCED TRIAL BALANCE SHEET ====================
-    with t_trial:
-        st.subheader("Dynamic Real-time Core Unadjusted Trial Balance Matrix Representation Model Engine View")
-        tb_data, tot_d, tot_c = get_trial_balance_matrix()
+        tabs = {'SB Accounts': '💰 SB', 'FD Accounts': '🏦 FD', 'RD Accounts': '📅 RD', 'Customers': '👤 Customers', 'Reports': '📈 Reports', 'Head Management': '🔧 Accounts'}
+        selected = st.radio("Menu", list(tabs.keys()), format_func=lambda x: tabs[x], label_visibility="collapsed")
+        st.session_state.current_tab = selected
         
-        if not tb_data.empty:
-            st.dataframe(tb_data.style.format({'Debit (₹)': '₹{:,.2f}', 'Credit (₹)': '₹{:,.2f}'}), use_container_width=True, hide_index=True)
-            st.markdown("---")
-            col_t1, col_t2, col_t3 = st.columns(3)
-            col_t1.metric("Cumulative Trial Balance Structural Matrix Combined System Debits Summation", f"₹{tot_d:,.2f}")
-            col_t2.metric("Cumulative Trial Balance Structural Matrix Combined System Credits Summation", f"₹{tot_c:,.2f}")
-            
-            diff = abs(tot_d - tot_c)
-            if diff < 0.01:
-                col_t3.success("📊 System State Status Check Confirmation: Balanced Ledger Integrity Confirmed.")
-            else:
-                col_t3.error(f"❌ Internal Accounting Core Structural Error Variance: ₹{diff:,.2f}")
-        else: st.info("Zero asset data mappings exist on global core accounts registers layout grids currently.")
-        
-    # ==================== MODULE 6: COMPREHENSIVE INCOME STATEMENT (PROFIT & LOSS) ====================
-    with t_pl:
-        st.subheader("Enterprise Accrual Operational Income & Expenditure Performance Statement Metric Portfolio")
-        pl_dict = get_profit_loss_matrix()
-        
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
-            st.markdown("#### 📈 Dynamic Operational Inflow System Revenue Stream Allocation Structures")
-            if pl_dict['revenues']:
-                for k, v in pl_dict['revenues'].items():
-                    st.markdown(f"**{k}**: `₹{v:,.2f}`")
-            else: st.caption("No positive dynamic income booking profiles recorded currently.")
-            st.markdown(f"**Gross Sum Aggregated Operational Turnover Revenues Baseline:** `₹{pl_dict['total_revenue']:,.2f}`")
-            
-        with col_p2:
-            st.markdown("#### 📉 Cumulative Structural Corporate Overhead Cost Outflows Expenditure Matrix")
-            if pl_dict['expenses']:
-                for k, v in pl_dict['expenses'].items():
-                    st.markdown(f"**{k}**: `₹{v:,.2f}`")
-            else: st.caption("No overhead production structural losses recorded under variable operational codes fields currently.")
-            st.markdown(f"**Gross Sum Aggregated Direct Maintenance Expenses Overhead Liability Total:** `₹{pl_dict['total_expense']:,.2f}`")
-            
-        st.divider()
-        st.markdown("### 🏆 Comprehensive Net System Yield Performance Factor Summary Metrics Analysis")
-        net = pl_dict['net_profit']
-        if net >= 0:
-            st.success(f"### 🎉 NET FISCAL PERIOD SURPLUS ECO-SYSTEM EARNINGS NET CASH RETAINED PROVISIONS PROFIT GAIN ACCUMULATION GENERATION: ₹{net:,.2f}")
-        else:
-            st.error(f"### ⚠️ DEFICIT OPERATIONAL NET FINANCIAL OUTFLOW LIABILITY DRAWN OVERHEAD EXPENDITURE NET SURPLUS RETENTION LOSS DEPRECIATION VALUE: ₹{abs(net):,.2f}")
-            
-    # ==================== MODULE 7: CONTINUOUS AUDITING ENGINE PROTOCOLS ====================
-    with t_audit:
-        st.subheader("Automated Cross-Reference Reconciliation Internal Audit Dashboard Engine")
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT account_code, account_name, account_type, balance FROM accounts")
-            db_accounts = cursor.fetchall()
-            
-            audit_records = []
-            for code, name, acc_type, ledger_bal in db_accounts:
-                cursor.execute("SELECT entry_type, amount FROM journal_entries WHERE account_code = ?", (code,))
-                entries = cursor.fetchall()
-                
-                calculated_balance = 0.0
-                if code == '1000': calculated_balance += 5000000.0
-                if code == '3100': calculated_balance += 5000000.0
-                
-                for entry_type, amount in entries:
-                    if acc_type in ['ASSET', 'EXPENSE']:
-                        calculated_balance = (calculated_balance + amount) if entry_type == 'DEBIT' else (calculated_balance - amount)
-                    else:
-                        calculated_balance = (calculated_balance - amount) if entry_type == 'DEBIT' else (calculated_balance + amount)
-                        
-                diff = abs(ledger_bal - calculated_balance)
-                audit_records.append({
-                    "GL Code Element": code,
-                    "Core Account Label Descriptor Head": name,
-                    "Classification Tier": acc_type,
-                    "Dynamic Ledger Index Balance Matrix Parameter Value": f"₹{ledger_bal:,.2f}",
-                    "Archival Historical Journal Reconstruction Ledger Sum Calculation Value": f"₹{calculated_balance:,.2f}",
-                    "System Integrity Validation Reconciliation Metric Status State Code": "🟢 Match Verified" if diff < 0.01 else f"🔴 Mismatch (Δ: ₹{diff:,.2f})"
-                })
-                
-            st.dataframe(pd.DataFrame(audit_records), use_container_width=True, hide_index=True)
-            conn.close()
-        except Exception as ex:
-            st.error(f"Audit analysis run routine aborted mid-execution loop pass criteria steps framework context fault: {str(ex)}")
-            st.code(traceback.format_exc())
+        st.markdown("---")
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.logged_in = False; st.session_state.user = None; st.rerun()
+    
+    if st.session_state.current_tab == 'SB Accounts': sb_account_ui()
+    elif st.session_state.current_tab == 'FD Accounts': fd_account_ui()
+    elif st.session_state.current_tab == 'RD Accounts': rd_account_ui()
+    elif st.session_state.current_tab == 'Customers': customer_ui()
+    elif st.session_state.current_tab == 'Reports': reports_ui()
+    elif st.session_state.current_tab == 'Head Management': head_management_ui()
 
 if __name__ == "__main__":
     main()

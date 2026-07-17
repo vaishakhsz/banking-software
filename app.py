@@ -525,20 +525,20 @@ def show_dashboard():
         ''', unsafe_allow_html=True)
     
     with col2:
-        accounts = conn.execute("SELECT COUNT(*) FROM accounts WHERE status='ACTIVE'").fetchone()[0]
+        accounts = conn.execute("SELECT COUNT(*) FROM accounts WHERE status='ACTIVE' AND account_type='SB'").fetchone()[0]
         st.markdown(f'''
         <div class="metric-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
             <h3>{accounts}</h3>
-            <p>Active Accounts</p>
+            <p>Active SB Accounts</p>
         </div>
         ''', unsafe_allow_html=True)
     
     with col3:
-        total_balance = conn.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE status='ACTIVE'").fetchone()[0]
+        total_balance = conn.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE status='ACTIVE' AND account_type='SB'").fetchone()[0]
         st.markdown(f'''
         <div class="metric-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
             <h3>₹{total_balance:,.2f}</h3>
-            <p>Total Deposits</p>
+            <p>Total SB Deposits</p>
         </div>
         ''', unsafe_allow_html=True)
     
@@ -734,16 +734,16 @@ def show_customer_management():
                         accounts = conn.execute("""
                             SELECT account_number, account_type, balance, status
                             FROM accounts
-                            WHERE customer_id=?
+                            WHERE customer_id=? AND account_type='SB'
                         """, (cust[0],)).fetchall()
                         
                         if accounts:
-                            st.write("**Linked Accounts:**")
+                            st.write("**SB Accounts:**")
                             for acc in accounts:
-                                st.write(f"• {acc[1]}: {acc[0]}")
+                                st.write(f"• {acc[0]}")
                                 st.write(f"  Balance: ₹{acc[2]:,.2f} | {acc[3]}")
                         else:
-                            st.write("No accounts linked yet")
+                            st.write("No SB accounts linked yet")
                     
                     # Show documents if available
                     st.divider()
@@ -910,7 +910,7 @@ def show_my_details():
         accounts = conn.execute("""
             SELECT account_number, account_type, balance, interest_rate, status, created_at
             FROM accounts
-            WHERE customer_id=?
+            WHERE customer_id=? AND account_type='SB'
             ORDER BY created_at DESC
         """, (customer[0],)).fetchall()
         
@@ -924,7 +924,7 @@ def show_my_details():
                     st.write(f"**Status:** {acc[4]}")
                     st.write(f"**Opened:** {acc[5][:10]}")
         else:
-            st.info("No accounts found")
+            st.info("No SB accounts found")
     else:
         st.warning("Customer profile not found. Please contact admin.")
     
@@ -996,24 +996,42 @@ def show_kyc_verification():
                     
                     with col1:
                         if st.button(f"✅ Approve KYC", key=f"approve_{cust[0]}", use_container_width=True):
-                            conn.execute("""
-                                UPDATE customers 
-                                SET kyc_status='VERIFIED', 
-                                    kyc_verified_by=?,
-                                    kyc_verified_at=CURRENT_TIMESTAMP
-                                WHERE id=?
-                            """, (st.session_state.user['id'], cust[0]))
+                            # Check if customer already has an SB account
+                            existing_account = conn.execute("""
+                                SELECT id FROM accounts 
+                                WHERE customer_id=? AND account_type='SB' AND status='ACTIVE'
+                            """, (cust[0],)).fetchone()
                             
-                            # Create SB account with 0 balance automatically
-                            account_number = generate_account_number('SB')
-                            conn.execute("""
-                                INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, last_interest_calculation)
-                                VALUES (?, ?, 'SB', 0.00, 3.50, DATE('now'))
-                            """, (account_number, cust[0]))
-                            
-                            conn.commit()
-                            st.success(f"✅ KYC approved! SB Account created with 0 balance.")
-                            st.info(f"SB Account Number: **{account_number}**")
+                            if existing_account:
+                                st.warning("Customer already has an SB account. Updating KYC status only.")
+                                conn.execute("""
+                                    UPDATE customers 
+                                    SET kyc_status='VERIFIED', 
+                                        kyc_verified_by=?,
+                                        kyc_verified_at=CURRENT_TIMESTAMP
+                                    WHERE id=?
+                                """, (st.session_state.user['id'], cust[0]))
+                                conn.commit()
+                                st.success("✅ KYC approved! Customer already has an SB account.")
+                            else:
+                                conn.execute("""
+                                    UPDATE customers 
+                                    SET kyc_status='VERIFIED', 
+                                        kyc_verified_by=?,
+                                        kyc_verified_at=CURRENT_TIMESTAMP
+                                    WHERE id=?
+                                """, (st.session_state.user['id'], cust[0]))
+                                
+                                # Create SB account with 0 balance automatically
+                                account_number = generate_account_number('SB')
+                                conn.execute("""
+                                    INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, last_interest_calculation)
+                                    VALUES (?, ?, 'SB', 0.00, 3.50, DATE('now'))
+                                """, (account_number, cust[0]))
+                                
+                                conn.commit()
+                                st.success(f"✅ KYC approved! SB Account created with 0 balance.")
+                                st.info(f"SB Account Number: **{account_number}**")
                             st.rerun()
                     
                     with col2:
@@ -1316,13 +1334,22 @@ def show_interest_calculation():
                 results = []
                 
                 for acc in selected_accounts:
-                    # Get minimum balance in period
+                    # Get minimum balance in period - FIXED
                     min_balance = get_minimum_balance(conn, acc[0], calc_from, calc_to)
+                    
+                    # If min_balance is 0 but account has balance, use the current balance
+                    if min_balance == 0 and acc[3] > 0:
+                        min_balance = acc[3]
+                    
                     days = (calc_to - calc_from).days + 1
                     
                     # Get interest rate (default 3.5%)
                     rate = conn.execute("SELECT interest_rate FROM accounts WHERE id=?", 
-                                      (acc[0],)).fetchone()[0] or 3.5
+                                      (acc[0],)).fetchone()
+                    if rate and rate[0]:
+                        rate = rate[0]
+                    else:
+                        rate = 3.5
                     
                     interest = calculate_sb_interest(min_balance, rate, days)
                     total_interest += interest
@@ -1337,6 +1364,7 @@ def show_interest_calculation():
                     results.append({
                         'Account': acc[1],
                         'Customer': acc[2],
+                        'Current Balance': acc[3],
                         'Min Balance': min_balance,
                         'Rate': rate,
                         'Days': days,
@@ -1349,6 +1377,7 @@ def show_interest_calculation():
                 st.subheader("Interest Calculation Results")
                 df = pd.DataFrame(results)
                 st.dataframe(df.style.format({
+                    'Current Balance': '₹{:,.2f}',
                     'Min Balance': '₹{:,.2f}',
                     'Rate': '{:.2f}%',
                     'Interest': '₹{:,.2f}'
@@ -1357,36 +1386,39 @@ def show_interest_calculation():
                 st.success(f"Total Interest for period: **₹{total_interest:,.2f}**")
                 
                 # Option to credit interest
-                if st.button("💰 Credit Interest to Accounts", use_container_width=True):
-                    for res in results:
-                        acc_id = [a[0] for a in accounts if a[1] == res['Account']][0]
+                if total_interest > 0:
+                    if st.button("💰 Credit Interest to Accounts", use_container_width=True):
+                        for res in results:
+                            acc_id = [a[0] for a in accounts if a[1] == res['Account']][0]
+                            
+                            # Get current balance
+                            current_balance = conn.execute("SELECT balance FROM accounts WHERE id=?", 
+                                                           (acc_id,)).fetchone()[0]
+                            new_balance = current_balance + res['Interest']
+                            
+                            # Create interest credit transaction
+                            txn_id = generate_id('TXN')
+                            voucher_num = generate_voucher_number('RECEIPT')
+                            
+                            conn.execute("""
+                                INSERT INTO transactions 
+                                (transaction_id, account_id, transaction_type, amount, 
+                                 balance_after, description, reference_type, voucher_type, 
+                                 voucher_number, created_by)
+                                VALUES (?, ?, 'CREDIT', ?, ?, 'SB Interest Credited', 'INTEREST', 'RECEIPT', ?, ?)
+                            """, (txn_id, acc_id, res['Interest'], new_balance, voucher_num,
+                                  st.session_state.user['id']))
+                            
+                            # Update balance
+                            conn.execute("UPDATE accounts SET balance=?, last_interest_calculation=DATE('now') WHERE id=?", 
+                                       (new_balance, acc_id))
                         
-                        # Get current balance
-                        current_balance = conn.execute("SELECT balance FROM accounts WHERE id=?", 
-                                                       (acc_id,)).fetchone()[0]
-                        new_balance = current_balance + res['Interest']
-                        
-                        # Create interest credit transaction
-                        txn_id = generate_id('TXN')
-                        voucher_num = generate_voucher_number('RECEIPT')
-                        
-                        conn.execute("""
-                            INSERT INTO transactions 
-                            (transaction_id, account_id, transaction_type, amount, 
-                             balance_after, description, reference_type, voucher_type, 
-                             voucher_number, created_by)
-                            VALUES (?, ?, 'CREDIT', ?, ?, 'SB Interest Credited', 'INTEREST', 'RECEIPT', ?, ?)
-                        """, (txn_id, acc_id, res['Interest'], new_balance, voucher_num,
-                              st.session_state.user['id']))
-                        
-                        # Update balance
-                        conn.execute("UPDATE accounts SET balance=?, last_interest_calculation=DATE('now') WHERE id=?", 
-                                   (new_balance, acc_id))
-                    
-                    conn.commit()
-                    st.success("✅ Interest credited to all accounts successfully!")
-                    st.balloons()
-                    st.rerun()
+                        conn.commit()
+                        st.success("✅ Interest credited to all accounts successfully!")
+                        st.balloons()
+                        st.rerun()
+                else:
+                    st.info("No interest to credit. Minimum balance is 0 for all accounts.")
         else:
             st.warning("No active SB accounts found")
     
@@ -1424,22 +1456,55 @@ def show_interest_calculation():
 
 def get_minimum_balance(conn, account_id, from_date, to_date):
     """Get minimum balance for an account during a period"""
-    # Get all balances during period
-    balances = conn.execute("""
-        SELECT balance_after, created_at
-        FROM transactions
-        WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ?
-        ORDER BY created_at
-    """, (account_id, from_date, to_date)).fetchall()
-    
-    if not balances:
-        # If no transactions, return current balance
+    try:
+        # First check if there are any transactions in the period
+        transactions = conn.execute("""
+            SELECT balance_after
+            FROM transactions
+            WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ?
+            ORDER BY created_at
+        """, (account_id, from_date, to_date)).fetchall()
+        
+        if transactions:
+            # Get the starting balance before the period
+            start_balance = conn.execute("""
+                SELECT balance_after
+                FROM transactions
+                WHERE account_id=? AND DATE(created_at) < ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (account_id, from_date)).fetchone()
+            
+            # If no balance before period, get current balance
+            if not start_balance:
+                current = conn.execute("SELECT balance FROM accounts WHERE id=?", 
+                                      (account_id,)).fetchone()[0]
+                return current
+            
+            start_balance = start_balance[0]
+            all_balances = [start_balance] + [t[0] for t in transactions]
+            
+            # Return minimum balance
+            min_bal = min(all_balances)
+            
+            # If min_balance is 0 but account has positive balance, use current balance
+            if min_bal == 0:
+                current_balance = conn.execute("SELECT balance FROM accounts WHERE id=?", 
+                                              (account_id,)).fetchone()[0]
+                if current_balance > 0:
+                    return current_balance
+            
+            return min_bal
+        else:
+            # No transactions in period, return current balance
+            current = conn.execute("SELECT balance FROM accounts WHERE id=?", 
+                                  (account_id,)).fetchone()[0]
+            return current
+    except Exception as e:
+        # If any error, return current balance
         current = conn.execute("SELECT balance FROM accounts WHERE id=?", 
                               (account_id,)).fetchone()[0]
         return current
-    
-    # Return minimum balance from transactions
-    return min(b[0] for b in balances)
 
 def show_fixed_deposits():
     st.markdown('<h1 class="main-header">💎 Fixed Deposits</h1>', unsafe_allow_html=True)
@@ -2432,5 +2497,4 @@ def show_reports():
 
 if __name__ == "__main__":
     main()
-
 

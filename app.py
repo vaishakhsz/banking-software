@@ -1,4 +1,4 @@
-# banking_system.py - Complete Banking System with Streamlit
+# 🏦 COMPLETE BANKING SYSTEM - Enterprise Edition
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -77,6 +77,7 @@ def init_database():
         status TEXT DEFAULT 'ACTIVE',
         interest_rate DECIMAL(5,2),
         last_interest_calculation DATE,
+        total_interest_earned DECIMAL(15,2) DEFAULT 0.00,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (customer_id) REFERENCES customers (id)
     )''')
@@ -341,7 +342,7 @@ def init_session_state():
 
 def main():
     st.set_page_config(
-        page_title="Complete Banking System",
+        page_title="🏦 Complete Banking System",
         page_icon="🏦",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -354,15 +355,27 @@ def main():
     # Custom CSS with better UI
     st.markdown("""
     <style>
+    /* Main Header */
     .main-header {
-        font-size: 2.5rem;
+        font-size: 2.8rem;
         font-weight: bold;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 0.5rem;
+        padding: 1rem;
     }
+    .sub-header {
+        text-align: center;
+        color: #666;
+        font-size: 1.1rem;
+        margin-bottom: 2rem;
+        border-bottom: 2px solid #e0e0e0;
+        padding-bottom: 1rem;
+    }
+    
+    /* Cards */
     .card {
         background-color: white;
         padding: 1.5rem;
@@ -370,7 +383,14 @@ def main():
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
         margin-bottom: 1rem;
         border: 1px solid #e0e0e0;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
     }
+    .card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* Metric Cards */
     .metric-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -378,20 +398,28 @@ def main():
         border-radius: 15px;
         text-align: center;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-        transition: transform 0.3s;
+        transition: transform 0.3s ease;
     }
     .metric-card:hover {
         transform: translateY(-5px);
     }
     .metric-card h3 {
-        font-size: 2rem;
+        font-size: 2.2rem;
         margin: 0;
+        font-weight: bold;
     }
     .metric-card p {
         margin: 0.5rem 0 0 0;
         font-size: 0.9rem;
         opacity: 0.9;
     }
+    .metric-card .icon {
+        font-size: 2.5rem;
+        display: block;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Customer Card */
     .customer-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -399,68 +427,133 @@ def main():
         border-radius: 15px;
         margin-bottom: 1rem;
     }
+    
+    /* Buttons */
     .stButton > button {
         width: 100%;
         border-radius: 10px;
-        font-weight: bold;
-        transition: all 0.3s;
+        font-weight: 600;
+        transition: all 0.3s ease;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         border: none;
-        padding: 0.5rem 1rem;
+        padding: 0.6rem 1.2rem;
+        font-size: 1rem;
     }
     .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
     }
+    .stButton > button:active {
+        transform: translateY(0px);
+    }
+    
+    /* Info Boxes */
     .info-box {
-        background-color: #f0f8ff;
+        background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%);
         padding: 1rem;
         border-radius: 10px;
         border-left: 4px solid #667eea;
         margin: 1rem 0;
     }
     .success-box {
-        background-color: #d4edda;
+        background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
         padding: 1rem;
         border-radius: 10px;
-        border-left: 4px solid #28a745;
+        border-left: 4px solid #10b981;
         margin: 1rem 0;
     }
     .warning-box {
-        background-color: #fff3cd;
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
         padding: 1rem;
         border-radius: 10px;
-        border-left: 4px solid #ffc107;
+        border-left: 4px solid #f59e0b;
         margin: 1rem 0;
     }
     .danger-box {
-        background-color: #f8d7da;
+        background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
         padding: 1rem;
         border-radius: 10px;
-        border-left: 4px solid #dc3545;
+        border-left: 4px solid #ef4444;
         margin: 1rem 0;
     }
+    
+    /* Tables */
     .trial-balance-table {
         background: white;
-        padding: 1rem;
-        border-radius: 10px;
+        padding: 1.5rem;
+        border-radius: 15px;
         box-shadow: 0 2px 10px rgba(0,0,0,0.05);
     }
     .balance-sheet-card {
         background: white;
         padding: 1.5rem;
-        border-radius: 10px;
+        border-radius: 15px;
         box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         margin-bottom: 1rem;
     }
     .section-header {
-        font-size: 1.2rem;
+        font-size: 1.3rem;
         font-weight: bold;
         color: #667eea;
-        border-bottom: 2px solid #667eea;
+        border-bottom: 3px solid #667eea;
         padding-bottom: 0.5rem;
         margin-bottom: 1rem;
+    }
+    
+    /* Sidebar */
+    .css-1d391kg {
+        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px 10px 0 0;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: #f0f0f0;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white !important;
+    }
+    
+    /* Login Page */
+    .login-container {
+        max-width: 450px;
+        margin: 0 auto;
+        padding: 2rem;
+        background: white;
+        border-radius: 20px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+    }
+    .login-title {
+        text-align: center;
+        font-size: 2rem;
+        font-weight: bold;
+        color: #667eea;
+        margin-bottom: 0.5rem;
+    }
+    .login-subtitle {
+        text-align: center;
+        color: #666;
+        margin-bottom: 2rem;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .main-header {
+            font-size: 2rem;
+        }
+        .metric-card h3 {
+            font-size: 1.5rem;
+        }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -474,17 +567,25 @@ def show_login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.markdown('<h1 class="main-header">🏦 Banking System</h1>', unsafe_allow_html=True)
+        st.markdown("""
+        <div style="text-align: center; padding: 2rem 0 1rem 0;">
+            <h1 style="font-size: 3.5rem; margin: 0;">🏦</h1>
+            <h1 class="main-header">Complete Banking System</h1>
+            <p class="sub-header">Enterprise Banking Management Platform</p>
+        </div>
+        """, unsafe_allow_html=True)
         
         with st.container():
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("🔐 Login")
-            username = st.text_input("Username", placeholder="Enter username")
-            password = st.text_input("Password", type="password", placeholder="Enter password")
+            st.markdown('<div class="login-container">', unsafe_allow_html=True)
+            st.markdown('<h2 style="text-align: center; color: #667eea;">🔐 Welcome Back</h2>', unsafe_allow_html=True)
+            st.markdown('<p style="text-align: center; color: #666; margin-bottom: 1.5rem;">Sign in to access your banking dashboard</p>', unsafe_allow_html=True)
             
-            col_a, col_b = st.columns(2)
+            username = st.text_input("Username", placeholder="Enter your username", key="login_username")
+            password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_password")
+            
+            col_a, col_b = st.columns([1, 1])
             with col_a:
-                if st.button("🔑 Login", use_container_width=True):
+                if st.button("🔑 Sign In", use_container_width=True):
                     user = login_user(username, password)
                     if user:
                         st.session_state.user = {
@@ -492,28 +593,48 @@ def show_login_page():
                             'username': user[1],
                             'role': user[3]
                         }
-                        st.success("Login successful!")
+                        st.success("✅ Login successful! Redirecting...")
                         st.rerun()
                     else:
-                        st.error("Invalid credentials!")
+                        st.error("❌ Invalid credentials! Please try again.")
             
             with col_b:
                 if st.button("📝 Register", use_container_width=True):
                     st.session_state.page = 'register'
                     st.rerun()
             
-            st.info("Default admin credentials: **admin** / **admin123**")
+            st.divider()
+            st.markdown("""
+            <div style="text-align: center; color: #666; font-size: 0.9rem;">
+                <p>Default Admin Credentials:</p>
+                <p><strong>Username:</strong> admin<br><strong>Password:</strong> admin123</p>
+            </div>
+            """, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
 def show_main_app():
     with st.sidebar:
-        st.markdown(f"## 👤 {st.session_state.user['username']}")
+        st.markdown("""
+        <div style="text-align: center; padding: 0.5rem 0 1rem 0;">
+            <h1 style="font-size: 2.5rem; margin: 0;">🏦</h1>
+            <h3 style="margin: 0; color: #667eea;">Banking System</h3>
+            <p style="color: #666; font-size: 0.8rem;">Enterprise Edition</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.divider()
+        st.markdown(f"""
+        <div style="text-align: center;">
+            <p style="font-size: 1.1rem; font-weight: bold;">👤 {st.session_state.user['username']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
         role_badge = {
-            'admin': '<span style="background-color: #10b981; color: white; padding: 5px 10px; border-radius: 20px;">ADMIN</span>',
-            'staff': '<span style="background-color: #f59e0b; color: white; padding: 5px 10px; border-radius: 20px;">STAFF</span>',
-            'customer': '<span style="background-color: #ef4444; color: white; padding: 5px 10px; border-radius: 20px;">CUSTOMER</span>'
+            'admin': '<span style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">ADMIN</span>',
+            'staff': '<span style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">STAFF</span>',
+            'customer': '<span style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">CUSTOMER</span>'
         }
-        st.markdown(role_badge.get(st.session_state.user['role'], 'USER'), unsafe_allow_html=True)
+        st.markdown(f'<div style="text-align: center; margin: 0.5rem 0;">{role_badge.get(st.session_state.user["role"], "USER")}</div>', unsafe_allow_html=True)
         st.divider()
         
         # Menu based on role
@@ -589,6 +710,7 @@ def show_main_app():
 
 def show_dashboard():
     st.markdown('<h1 class="main-header">📊 Dashboard</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Real-time overview of your banking operations</p>', unsafe_allow_html=True)
     
     conn = get_db()
     
@@ -599,6 +721,7 @@ def show_dashboard():
         customers = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
         st.markdown(f'''
         <div class="metric-card">
+            <span class="icon">👥</span>
             <h3>{customers}</h3>
             <p>Total Customers</p>
         </div>
@@ -608,6 +731,7 @@ def show_dashboard():
         accounts = conn.execute("SELECT COUNT(*) FROM accounts WHERE status='ACTIVE' AND account_type='SB'").fetchone()[0]
         st.markdown(f'''
         <div class="metric-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+            <span class="icon">💰</span>
             <h3>{accounts}</h3>
             <p>Active SB Accounts</p>
         </div>
@@ -617,6 +741,7 @@ def show_dashboard():
         total_balance = conn.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE status='ACTIVE' AND account_type='SB'").fetchone()[0]
         st.markdown(f'''
         <div class="metric-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+            <span class="icon">🏦</span>
             <h3>₹{total_balance:,.2f}</h3>
             <p>Total SB Deposits</p>
         </div>
@@ -626,10 +751,13 @@ def show_dashboard():
         pending_kyc = conn.execute("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'").fetchone()[0]
         st.markdown(f'''
         <div class="metric-card" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+            <span class="icon">🔍</span>
             <h3>{pending_kyc}</h3>
             <p>Pending KYC</p>
         </div>
         ''', unsafe_allow_html=True)
+    
+    st.divider()
     
     # Recent Transactions
     st.subheader("📌 Recent Transactions")
@@ -663,7 +791,9 @@ def show_dashboard():
         
         if account_types:
             df = pd.DataFrame(account_types, columns=['Type', 'Count'])
-            fig = px.pie(df, values='Count', names='Type', title='Account Types')
+            fig = px.pie(df, values='Count', names='Type', title='Account Types', 
+                         color_discrete_sequence=px.colors.qualitative.Set3)
+            fig.update_layout(showlegend=True, height=350)
             st.plotly_chart(fig, use_container_width=True)
     
     with col2:
@@ -682,15 +812,19 @@ def show_dashboard():
         if monthly:
             df = pd.DataFrame(monthly, columns=['Month', 'Count', 'Credits', 'Debits'])
             fig = go.Figure()
-            fig.add_trace(go.Bar(name='Credits', x=df['Month'], y=df['Credits']))
-            fig.add_trace(go.Bar(name='Debits', x=df['Month'], y=df['Debits']))
-            fig.update_layout(barmode='group', title='Monthly Credit/Debit Analysis')
+            fig.add_trace(go.Bar(name='Credits', x=df['Month'], y=df['Credits'], 
+                                 marker_color='#10b981'))
+            fig.add_trace(go.Bar(name='Debits', x=df['Month'], y=df['Debits'], 
+                                 marker_color='#ef4444'))
+            fig.update_layout(barmode='group', title='Monthly Credit/Debit Analysis',
+                            height=350, showlegend=True)
             st.plotly_chart(fig, use_container_width=True)
     
     conn.close()
 
 def show_customer_management():
     st.markdown('<h1 class="main-header">👥 Customer Management</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Register, view and manage customer profiles</p>', unsafe_allow_html=True)
     
     tab1, tab2, tab3, tab4 = st.tabs(["📝 Register Customer", "👥 View Customers", "🔍 Search Customer", "📊 Customer Analytics"])
     
@@ -916,7 +1050,8 @@ def show_customer_management():
         
         if kyc_stats:
             df = pd.DataFrame(kyc_stats, columns=['Status', 'Count'])
-            fig = px.pie(df, values='Count', names='Status', title='KYC Status Distribution')
+            fig = px.pie(df, values='Count', names='Status', title='KYC Status Distribution',
+                         color_discrete_sequence=px.colors.qualitative.Set3)
             st.plotly_chart(fig, use_container_width=True)
         
         # City-wise distribution
@@ -930,7 +1065,8 @@ def show_customer_management():
         
         if city_stats:
             df = pd.DataFrame(city_stats, columns=['City', 'Customers'])
-            fig = px.bar(df, x='City', y='Customers', title='Top 10 Cities by Customers')
+            fig = px.bar(df, x='City', y='Customers', title='Top 10 Cities by Customers',
+                        color_discrete_sequence=['#667eea'])
             st.plotly_chart(fig, use_container_width=True)
         
         conn.close()
@@ -949,6 +1085,7 @@ def calculate_age(dob_str):
 
 def show_my_details():
     st.markdown('<h1 class="main-header">👤 My Details</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">View your personal information and accounts</p>', unsafe_allow_html=True)
     
     conn = get_db()
     
@@ -988,7 +1125,8 @@ def show_my_details():
         # Show accounts
         st.subheader("💰 My Accounts")
         accounts = conn.execute("""
-            SELECT account_number, account_type, balance, interest_rate, status, created_at
+            SELECT account_number, account_type, balance, interest_rate, status, 
+                   total_interest_earned, created_at
             FROM accounts
             WHERE customer_id=? AND account_type='SB'
             ORDER BY created_at DESC
@@ -1001,8 +1139,9 @@ def show_my_details():
                     st.write(f"**Type:** {acc[1]}")
                     st.write(f"**Balance:** ₹{acc[2]:,.2f}")
                     st.write(f"**Interest Rate:** {acc[3]}%")
+                    st.write(f"**Total Interest Earned:** ₹{acc[5]:,.2f}")
                     st.write(f"**Status:** {acc[4]}")
-                    st.write(f"**Opened:** {acc[5][:10]}")
+                    st.write(f"**Opened:** {acc[6][:10]}")
         else:
             st.info("No SB accounts found")
     else:
@@ -1012,6 +1151,7 @@ def show_my_details():
 
 def show_kyc_verification():
     st.markdown('<h1 class="main-header">🔍 KYC Verification</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Verify customer documents and approve accounts</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")
@@ -1105,8 +1245,10 @@ def show_kyc_verification():
                                 # Create SB account with 0 balance automatically
                                 account_number = generate_account_number('SB')
                                 conn.execute("""
-                                    INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, last_interest_calculation)
-                                    VALUES (?, ?, 'SB', 0.00, 3.50, DATE('now'))
+                                    INSERT INTO accounts (account_number, customer_id, account_type, 
+                                                         balance, interest_rate, last_interest_calculation,
+                                                         total_interest_earned)
+                                    VALUES (?, ?, 'SB', 0.00, 3.50, DATE('now'), 0.00)
                                 """, (account_number, cust[0]))
                                 
                                 conn.commit()
@@ -1148,6 +1290,7 @@ def show_kyc_verification():
 
 def show_sb_accounts():
     st.markdown('<h1 class="main-header">💰 Savings Bank Accounts</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Manage savings accounts, deposits and withdrawals</p>', unsafe_allow_html=True)
     
     conn = get_db()
     
@@ -1160,7 +1303,7 @@ def show_sb_accounts():
         if st.session_state.user['role'] == 'customer':
             accounts = conn.execute("""
                 SELECT a.account_number, c.first_name || ' ' || c.last_name as name,
-                       a.balance, a.interest_rate, a.status, a.created_at
+                       a.balance, a.interest_rate, a.status, a.total_interest_earned, a.created_at
                 FROM accounts a
                 JOIN customers c ON a.customer_id = c.id
                 WHERE a.account_type='SB' AND c.user_id=?
@@ -1169,7 +1312,7 @@ def show_sb_accounts():
         else:
             accounts = conn.execute("""
                 SELECT a.account_number, c.first_name || ' ' || c.last_name as name,
-                       a.balance, a.interest_rate, a.status, a.created_at
+                       a.balance, a.interest_rate, a.status, a.total_interest_earned, a.created_at
                 FROM accounts a
                 JOIN customers c ON a.customer_id = c.id
                 WHERE a.account_type='SB' AND c.kyc_status='VERIFIED'
@@ -1178,15 +1321,22 @@ def show_sb_accounts():
         
         if accounts:
             df = pd.DataFrame(accounts, columns=['Account Number', 'Customer Name', 'Balance', 
-                                                 'Interest Rate', 'Status', 'Opening Date'])
-            st.dataframe(df.style.format({'Balance': '₹{:,.2f}', 'Interest Rate': '{:.2f}%'}), 
+                                                 'Interest Rate', 'Status', 'Total Interest', 'Opening Date'])
+            st.dataframe(df.style.format({'Balance': '₹{:,.2f}', 'Interest Rate': '{:.2f}%',
+                                          'Total Interest': '₹{:,.2f}'}), 
                         use_container_width=True)
             
             total_sb = sum(acc[2] for acc in accounts)
-            st.info(f"**Total SB Deposits: ₹{total_sb:,.2f}**")
+            total_interest = sum(acc[5] for acc in accounts)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.info(f"**Total SB Deposits: ₹{total_sb:,.2f}**")
+            with col2:
+                st.info(f"**Total Interest Earned: ₹{total_interest:,.2f}**")
             
             # Important notice about opening balance
-            st.markdown('<div class="info-box">⚠️ <strong>Note:</strong> All SB accounts are opened with ₹0.00 balance. Interest is calculated quarterly on the minimum monthly balance.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="info-box">⚠️ <strong>Note:</strong> All SB accounts are opened with ₹0.00 balance. Interest is calculated quarterly on the minimum monthly balance and added to total interest earned.</div>', unsafe_allow_html=True)
         else:
             st.info("No SB accounts found")
     
@@ -1332,6 +1482,7 @@ def show_sb_accounts():
         3. **Calculation Frequency:** Quarterly (March, June, September, December)
         4. **Minimum Balance:** No minimum balance required
         5. **Opening Balance:** Always ₹0.00
+        6. **Total Interest Earned:** Tracked in each account
         
         **Formula:** Interest = (Minimum Balance × Rate × Number of Days) / (100 × 365)
         
@@ -1371,6 +1522,7 @@ def show_sb_accounts():
 
 def show_income_expenses():
     st.markdown('<h1 class="main-header">📈 Income & Expenses</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Record and track all income and expenses</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")
@@ -1447,7 +1599,8 @@ def show_income_expenses():
     conn.close()
 
 def show_interest_calculation():
-    st.markdown('<h1 class="main-header">📈 Interest Calculation</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 Interest Calculation</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Calculate and credit interest to SB accounts</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")
@@ -1548,10 +1701,16 @@ def show_interest_calculation():
                         for res in results:
                             acc_id = [a[0] for a in accounts if a[1] == res['Account']][0]
                             
-                            # Get current balance
-                            current_balance = conn.execute("SELECT balance FROM accounts WHERE id=?", 
-                                                           (acc_id,)).fetchone()[0]
+                            # Get current balance and total interest
+                            account_data = conn.execute("""
+                                SELECT balance, total_interest_earned FROM accounts WHERE id=?
+                            """, (acc_id,)).fetchone()
+                            
+                            current_balance = account_data[0]
+                            total_interest_earned = account_data[1] if account_data[1] else 0
+                            
                             new_balance = current_balance + res['Interest']
+                            new_total_interest = total_interest_earned + res['Interest']
                             
                             # Create interest credit transaction
                             txn_id = generate_id('TXN')
@@ -1566,12 +1725,43 @@ def show_interest_calculation():
                             """, (txn_id, acc_id, res['Interest'], new_balance, voucher_num,
                                   st.session_state.user['id']))
                             
-                            # Update balance
-                            conn.execute("UPDATE accounts SET balance=?, last_interest_calculation=DATE('now') WHERE id=?", 
-                                       (new_balance, acc_id))
+                            # Update balance and total interest earned
+                            conn.execute("""
+                                UPDATE accounts 
+                                SET balance=?, total_interest_earned=?, last_interest_calculation=DATE('now') 
+                                WHERE id=?
+                            """, (new_balance, new_total_interest, acc_id))
+                            
+                            # Create journal entry for interest
+                            voucher_id = conn.execute("SELECT last_insert_rowid() FROM journal_vouchers").fetchone()
+                            if voucher_id:
+                                journal_voucher_num = generate_voucher_number('JOURNAL')
+                                conn.execute("""
+                                    INSERT INTO journal_vouchers 
+                                    (voucher_number, voucher_date, description, total_amount, status, created_by)
+                                    VALUES (?, DATE('now'), ?, ?, 'POSTED', ?)
+                                """, (journal_voucher_num, f"Interest credited to {res['Account']}", 
+                                      res['Interest'], st.session_state.user['id']))
+                                
+                                jv_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                                
+                                # Debit entry - Interest Expense
+                                conn.execute("""
+                                    INSERT INTO journal_entries 
+                                    (voucher_id, account_head, debit_amount, credit_amount)
+                                    VALUES (?, 'Interest Paid on SB', ?, 0)
+                                """, (jv_id, res['Interest']))
+                                
+                                # Credit entry - SB Account
+                                conn.execute("""
+                                    INSERT INTO journal_entries 
+                                    (voucher_id, account_head, debit_amount, credit_amount)
+                                    VALUES (?, 'SB Account - ' || ?, 0, ?)
+                                """, (jv_id, res['Account'], res['Interest']))
                         
                         conn.commit()
                         st.success("✅ Interest credited to all accounts successfully!")
+                        st.info("Journal entries have been created for the interest transaction.")
                         st.balloons()
                         st.rerun()
                 else:
@@ -1665,6 +1855,7 @@ def get_minimum_balance(conn, account_id, from_date, to_date):
 
 def show_fixed_deposits():
     st.markdown('<h1 class="main-header">💎 Fixed Deposits</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Open and manage fixed deposit accounts</p>', unsafe_allow_html=True)
     
     conn = get_db()
     
@@ -1819,6 +2010,7 @@ def show_fixed_deposits():
 
 def show_recurring_deposits():
     st.markdown('<h1 class="main-header">🔄 Recurring Deposits</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Open and manage recurring deposit accounts</p>', unsafe_allow_html=True)
     
     conn = get_db()
     
@@ -2007,6 +2199,7 @@ def show_recurring_deposits():
 
 def show_transactions():
     st.markdown('<h1 class="main-header">💳 Transactions</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">View and filter all transactions</p>', unsafe_allow_html=True)
     
     conn = get_db()
     
@@ -2080,6 +2273,7 @@ def show_transactions():
 
 def show_journal_vouchers():
     st.markdown('<h1 class="main-header">📝 Journal Vouchers</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Create and manage journal voucher entries</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")
@@ -2227,6 +2421,7 @@ def show_journal_vouchers():
 
 def show_trial_balance():
     st.markdown('<h1 class="main-header">⚖️ Trial Balance</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Complete trial balance with all accounts categorized</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")
@@ -2280,7 +2475,7 @@ def show_trial_balance():
                 'credit': rd_total
             })
         
-        # 4. Interest Payable
+        # 4. Interest Payable on FD
         interest_payable = conn.execute("""
             SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
             FROM fixed_deposits WHERE status='ACTIVE'
@@ -2293,8 +2488,20 @@ def show_trial_balance():
                 'credit': interest_payable
             })
         
-        # 5. Loans Payable (if any)
-        # Add logic here if you have loans
+        # 5. Interest Payable on SB (from journal entries)
+        interest_payable_sb = conn.execute("""
+            SELECT COALESCE(SUM(credit_amount), 0) 
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE je.account_head LIKE '%SB Account%' AND jv.status='POSTED'
+        """).fetchone()[0]
+        if interest_payable_sb > 0:
+            trial_data.append({
+                'account_head': 'Interest Payable on SB',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': interest_payable_sb
+            })
         
         # ==================== ASSETS (Debit Balance) ====================
         
@@ -2313,15 +2520,14 @@ def show_trial_balance():
                 'credit': max(-cash_balance, 0)
             })
         
-        # 7. Bank Balance (if any)
-        # Add logic here if you have separate bank accounts
-        
         # ==================== EXPENSES (Debit Balance) ====================
         
         # 8. Interest Paid on SB
         interest_paid_sb = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE reference_type='INTEREST' AND transaction_type='CREDIT'
+            SELECT COALESCE(SUM(debit_amount), 0) 
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE je.account_head = 'Interest Paid on SB' AND jv.status='POSTED'
         """).fetchone()[0]
         if interest_paid_sb > 0:
             trial_data.append({
@@ -2331,10 +2537,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 9. Interest Paid on FD (from journal entries)
-        # 10. Interest Paid on RD (from journal entries)
-        
-        # 11. Salary & Wages
+        # 9. Salary & Wages
         salary_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Salary & Wages'
@@ -2347,7 +2550,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 12. Rent & Utilities
+        # 10. Rent & Utilities
         rent_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Rent & Utilities'
@@ -2360,7 +2563,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 13. Operating Expenses
+        # 11. Operating Expenses
         operating_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Operating Expenses'
@@ -2373,7 +2576,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 14. Administrative Expenses
+        # 12. Administrative Expenses
         admin_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Administrative Expenses'
@@ -2386,7 +2589,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 15. Other Expenses
+        # 13. Other Expenses
         other_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Other Expenses'
@@ -2401,7 +2604,7 @@ def show_trial_balance():
         
         # ==================== INCOME (Credit Balance) ====================
         
-        # 16. Interest Earned
+        # 14. Interest Earned
         interest_earned = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM income
             WHERE income_type='Interest Earned'
@@ -2414,7 +2617,7 @@ def show_trial_balance():
                 'credit': interest_earned
             })
         
-        # 17. Fees & Charges
+        # 15. Fees & Charges
         fees_income = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM income
             WHERE income_type='Fees & Charges'
@@ -2427,7 +2630,7 @@ def show_trial_balance():
                 'credit': fees_income
             })
         
-        # 18. Commission Income
+        # 16. Commission Income
         commission_income = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM income
             WHERE income_type='Commission Income'
@@ -2440,7 +2643,7 @@ def show_trial_balance():
                 'credit': commission_income
             })
         
-        # 19. Other Income
+        # 17. Other Income
         other_income = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM income
             WHERE income_type='Other Income'
@@ -2455,7 +2658,7 @@ def show_trial_balance():
         
         # ==================== CAPITAL ====================
         
-        # 20. Capital/Reserves (Balancing figure)
+        # 18. Capital/Reserves (Balancing figure)
         total_debits = sum(item['debit'] for item in trial_data)
         total_credits = sum(item['credit'] for item in trial_data)
         
@@ -2556,6 +2759,7 @@ def show_trial_balance():
 
 def show_balance_sheet():
     st.markdown('<h1 class="main-header">📊 Balance Sheet</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Complete balance sheet with assets, liabilities and capital</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")
@@ -2652,6 +2856,7 @@ def show_balance_sheet():
 
 def show_profit_loss():
     st.markdown('<h1 class="main-header">💵 Profit & Loss Account</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Complete profit and loss statement with income and expenses</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")
@@ -2718,14 +2923,16 @@ def show_profit_loss():
         
         expense_items = []
         
-        # Interest Paid
-        interest_paid = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE (description LIKE '%interest%' OR reference_type='INTEREST') 
-            AND transaction_type='DEBIT'
-            AND DATE(created_at) BETWEEN ? AND ?
+        # Interest Paid on SB
+        interest_paid_sb = conn.execute("""
+            SELECT COALESCE(SUM(debit_amount), 0) 
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE je.account_head = 'Interest Paid on SB' AND jv.status='POSTED'
+            AND DATE(jv.voucher_date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()[0]
-        expense_items.append(('Interest Paid', interest_paid))
+        if interest_paid_sb > 0:
+            expense_items.append(('Interest Paid on SB', interest_paid_sb))
         
         # Salary & Wages
         salary = conn.execute("""
@@ -2785,22 +2992,26 @@ def show_profit_loss():
         col1, col2 = st.columns(2)
         
         with col1:
-            if income_items:
-                df_income = pd.DataFrame(income_items, columns=['Source', 'Amount'])
-                fig = px.pie(df_income, values='Amount', names='Source', title='Income Breakdown')
+            income_items_filtered = [(item, amt) for item, amt in income_items if amt > 0]
+            if income_items_filtered:
+                df_income = pd.DataFrame(income_items_filtered, columns=['Source', 'Amount'])
+                fig = px.pie(df_income, values='Amount', names='Source', title='Income Breakdown',
+                             color_discrete_sequence=px.colors.qualitative.Set3)
                 st.plotly_chart(fig, use_container_width=True)
         
         with col2:
             expense_items_filtered = [(item, amt) for item, amt in expense_items if amt > 0]
             if expense_items_filtered:
                 df_expense = pd.DataFrame(expense_items_filtered, columns=['Category', 'Amount'])
-                fig = px.pie(df_expense, values='Amount', names='Category', title='Expense Breakdown')
+                fig = px.pie(df_expense, values='Amount', names='Category', title='Expense Breakdown',
+                             color_discrete_sequence=px.colors.qualitative.Set3)
                 st.plotly_chart(fig, use_container_width=True)
     
     conn.close()
 
 def show_reports():
     st.markdown('<h1 class="main-header">📋 Reports</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Generate and download various reports</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")

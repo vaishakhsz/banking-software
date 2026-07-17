@@ -178,6 +178,32 @@ def init_database():
         FOREIGN KEY (account_id) REFERENCES accounts (id)
     )''')
     
+    # Expenses table
+    c.execute('''CREATE TABLE IF NOT EXISTS expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        expense_id TEXT UNIQUE NOT NULL,
+        expense_type TEXT NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        description TEXT,
+        date DATE NOT NULL,
+        created_by INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (created_by) REFERENCES users (id)
+    )''')
+    
+    # Income table
+    c.execute('''CREATE TABLE IF NOT EXISTS income (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        income_id TEXT UNIQUE NOT NULL,
+        income_type TEXT NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        description TEXT,
+        date DATE NOT NULL,
+        created_by INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (created_by) REFERENCES users (id)
+    )''')
+    
     conn.commit()
     conn.close()
 
@@ -325,7 +351,7 @@ def main():
     create_default_admin()
     init_session_state()
     
-    # Custom CSS
+    # Custom CSS with better UI
     st.markdown("""
     <style>
     .main-header {
@@ -340,17 +366,22 @@ def main():
     .card {
         background-color: white;
         padding: 1.5rem;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border-radius: 15px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
         margin-bottom: 1rem;
+        border: 1px solid #e0e0e0;
     }
     .metric-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         padding: 1.5rem;
-        border-radius: 10px;
+        border-radius: 15px;
         text-align: center;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        transition: transform 0.3s;
+    }
+    .metric-card:hover {
+        transform: translateY(-5px);
     }
     .metric-card h3 {
         font-size: 2rem;
@@ -365,25 +396,71 @@ def main():
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         padding: 1.5rem;
-        border-radius: 10px;
+        border-radius: 15px;
         margin-bottom: 1rem;
     }
     .stButton > button {
         width: 100%;
-        border-radius: 5px;
+        border-radius: 10px;
         font-weight: bold;
         transition: all 0.3s;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
     }
     .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     }
     .info-box {
         background-color: #f0f8ff;
         padding: 1rem;
-        border-radius: 5px;
+        border-radius: 10px;
         border-left: 4px solid #667eea;
         margin: 1rem 0;
+    }
+    .success-box {
+        background-color: #d4edda;
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid #28a745;
+        margin: 1rem 0;
+    }
+    .warning-box {
+        background-color: #fff3cd;
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid #ffc107;
+        margin: 1rem 0;
+    }
+    .danger-box {
+        background-color: #f8d7da;
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid #dc3545;
+        margin: 1rem 0;
+    }
+    .trial-balance-table {
+        background: white;
+        padding: 1rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+    .balance-sheet-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        margin-bottom: 1rem;
+    }
+    .section-header {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #667eea;
+        border-bottom: 2px solid #667eea;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -450,7 +527,8 @@ def show_main_app():
                 'recurring_deposits': '🔄 Recurring Deposits',
                 'transactions': '💳 All Transactions',
                 'journal_vouchers': '📝 Journal Vouchers',
-                'interest_calculation': '📈 Interest Calculation',
+                'income_expenses': '📈 Income & Expenses',
+                'interest_calculation': '📊 Interest Calculation',
                 'trial_balance': '⚖️ Trial Balance',
                 'balance_sheet': '📊 Balance Sheet',
                 'profit_loss': '💵 Profit & Loss',
@@ -494,6 +572,8 @@ def show_main_app():
         show_transactions()
     elif page == 'journal_vouchers':
         show_journal_vouchers()
+    elif page == 'income_expenses':
+        show_income_expenses()
     elif page == 'interest_calculation':
         show_interest_calculation()
     elif page == 'trial_balance':
@@ -1289,6 +1369,83 @@ def show_sb_accounts():
     
     conn.close()
 
+def show_income_expenses():
+    st.markdown('<h1 class="main-header">📈 Income & Expenses</h1>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
+    
+    conn = get_db()
+    
+    tab1, tab2 = st.tabs(["💰 Record Income", "💸 Record Expense"])
+    
+    with tab1:
+        st.subheader("Record Income")
+        
+        with st.form("income_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                income_type = st.selectbox("Income Type", [
+                    "Interest Earned",
+                    "Fees & Charges",
+                    "Commission Income",
+                    "Other Income"
+                ])
+                amount = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
+            
+            with col2:
+                income_date = st.date_input("Date", date.today())
+                description = st.text_area("Description", placeholder="Enter income details")
+            
+            if st.form_submit_button("💰 Record Income", use_container_width=True):
+                try:
+                    income_id = generate_id('INC')
+                    conn.execute("""
+                        INSERT INTO income (income_id, income_type, amount, description, date, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (income_id, income_type, amount, description, income_date, st.session_state.user['id']))
+                    conn.commit()
+                    st.success(f"✅ Income recorded successfully! ₹{amount:,.2f}")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    
+    with tab2:
+        st.subheader("Record Expense")
+        
+        with st.form("expense_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                expense_type = st.selectbox("Expense Type", [
+                    "Salary & Wages",
+                    "Rent & Utilities",
+                    "Operating Expenses",
+                    "Administrative Expenses",
+                    "Other Expenses"
+                ])
+                amount = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
+            
+            with col2:
+                expense_date = st.date_input("Date", date.today())
+                description = st.text_area("Description", placeholder="Enter expense details")
+            
+            if st.form_submit_button("💸 Record Expense", use_container_width=True):
+                try:
+                    expense_id = generate_id('EXP')
+                    conn.execute("""
+                        INSERT INTO expenses (expense_id, expense_type, amount, description, date, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (expense_id, expense_type, amount, description, expense_date, st.session_state.user['id']))
+                    conn.commit()
+                    st.success(f"✅ Expense recorded successfully! ₹{amount:,.2f}")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    
+    conn.close()
+
 def show_interest_calculation():
     st.markdown('<h1 class="main-header">📈 Interest Calculation</h1>', unsafe_allow_html=True)
     
@@ -1334,7 +1491,7 @@ def show_interest_calculation():
                 results = []
                 
                 for acc in selected_accounts:
-                    # Get minimum balance in period - FIXED
+                    # Get minimum balance in period
                     min_balance = get_minimum_balance(conn, acc[0], calc_from, calc_to)
                     
                     # If min_balance is 0 but account has balance, use the current balance
@@ -2071,6 +2228,10 @@ def show_journal_vouchers():
 def show_trial_balance():
     st.markdown('<h1 class="main-header">⚖️ Trial Balance</h1>', unsafe_allow_html=True)
     
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
+    
     conn = get_db()
     
     st.subheader("Generate Trial Balance")
@@ -2079,105 +2240,286 @@ def show_trial_balance():
     if st.button("📊 Generate Trial Balance", use_container_width=True):
         trial_data = []
         
-        sb_accounts = conn.execute("""
-            SELECT a.account_number, c.first_name || ' ' || c.last_name as name, a.balance
-            FROM accounts a
-            JOIN customers c ON a.customer_id = c.id
-            WHERE a.account_type='SB' AND a.status='ACTIVE'
-        """).fetchall()
+        # ==================== LIABILITIES (Credit Balance) ====================
         
-        total_sb = sum(acc[2] for acc in sb_accounts)
-        if total_sb > 0:
+        # 1. Savings Bank Deposits
+        sb_total = conn.execute("""
+            SELECT COALESCE(SUM(balance), 0) FROM accounts 
+            WHERE account_type='SB' AND status='ACTIVE'
+        """).fetchone()[0]
+        if sb_total > 0:
             trial_data.append({
                 'account_head': 'Savings Bank Deposits',
+                'category': 'Liability',
                 'debit': 0,
-                'credit': total_sb
+                'credit': sb_total
             })
         
+        # 2. Fixed Deposits
         fd_total = conn.execute("""
             SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'
         """).fetchone()[0]
-        
         if fd_total > 0:
             trial_data.append({
                 'account_head': 'Fixed Deposits',
+                'category': 'Liability',
                 'debit': 0,
                 'credit': fd_total
             })
         
+        # 3. Recurring Deposits
         rd_total = conn.execute("""
             SELECT COALESCE(SUM(monthly_amount * installments_paid), 0) 
             FROM recurring_deposits WHERE status='ACTIVE'
         """).fetchone()[0]
-        
         if rd_total > 0:
             trial_data.append({
                 'account_head': 'Recurring Deposits',
+                'category': 'Liability',
                 'debit': 0,
                 'credit': rd_total
             })
         
+        # 4. Interest Payable
+        interest_payable = conn.execute("""
+            SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
+            FROM fixed_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if interest_payable > 0:
+            trial_data.append({
+                'account_head': 'Interest Payable on FD',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': interest_payable
+            })
+        
+        # 5. Loans Payable (if any)
+        # Add logic here if you have loans
+        
+        # ==================== ASSETS (Debit Balance) ====================
+        
+        # 6. Cash in Hand
         cash_balance = conn.execute("""
             SELECT 
                 COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
             FROM transactions
             WHERE reference_type='CASH'
         """).fetchone()[0]
-        
         if cash_balance != 0:
             trial_data.append({
                 'account_head': 'Cash in Hand',
+                'category': 'Asset',
                 'debit': max(cash_balance, 0),
                 'credit': max(-cash_balance, 0)
             })
         
-        interest_payable = conn.execute("""
-            SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
-            FROM fixed_deposits WHERE status='ACTIVE'
-        """).fetchone()[0]
+        # 7. Bank Balance (if any)
+        # Add logic here if you have separate bank accounts
         
-        if interest_payable > 0:
-            trial_data.append({
-                'account_head': 'Interest Payable on FD',
-                'debit': 0,
-                'credit': interest_payable
-            })
+        # ==================== EXPENSES (Debit Balance) ====================
         
-        # Add interest credited to SB accounts
-        interest_credited = conn.execute("""
+        # 8. Interest Paid on SB
+        interest_paid_sb = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM transactions
             WHERE reference_type='INTEREST' AND transaction_type='CREDIT'
         """).fetchone()[0]
-        
-        if interest_credited > 0:
+        if interest_paid_sb > 0:
             trial_data.append({
-                'account_head': 'Interest Paid on SB',
-                'debit': interest_credited,
+                'account_head': 'Interest Paid on SB Accounts',
+                'category': 'Expense',
+                'debit': interest_paid_sb,
                 'credit': 0
             })
         
+        # 9. Interest Paid on FD (from journal entries)
+        # 10. Interest Paid on RD (from journal entries)
+        
+        # 11. Salary & Wages
+        salary_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Salary & Wages'
+        """).fetchone()[0]
+        if salary_expense > 0:
+            trial_data.append({
+                'account_head': 'Salary & Wages',
+                'category': 'Expense',
+                'debit': salary_expense,
+                'credit': 0
+            })
+        
+        # 12. Rent & Utilities
+        rent_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Rent & Utilities'
+        """).fetchone()[0]
+        if rent_expense > 0:
+            trial_data.append({
+                'account_head': 'Rent & Utilities',
+                'category': 'Expense',
+                'debit': rent_expense,
+                'credit': 0
+            })
+        
+        # 13. Operating Expenses
+        operating_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Operating Expenses'
+        """).fetchone()[0]
+        if operating_expense > 0:
+            trial_data.append({
+                'account_head': 'Operating Expenses',
+                'category': 'Expense',
+                'debit': operating_expense,
+                'credit': 0
+            })
+        
+        # 14. Administrative Expenses
+        admin_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Administrative Expenses'
+        """).fetchone()[0]
+        if admin_expense > 0:
+            trial_data.append({
+                'account_head': 'Administrative Expenses',
+                'category': 'Expense',
+                'debit': admin_expense,
+                'credit': 0
+            })
+        
+        # 15. Other Expenses
+        other_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Other Expenses'
+        """).fetchone()[0]
+        if other_expense > 0:
+            trial_data.append({
+                'account_head': 'Other Expenses',
+                'category': 'Expense',
+                'debit': other_expense,
+                'credit': 0
+            })
+        
+        # ==================== INCOME (Credit Balance) ====================
+        
+        # 16. Interest Earned
+        interest_earned = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Interest Earned'
+        """).fetchone()[0]
+        if interest_earned > 0:
+            trial_data.append({
+                'account_head': 'Interest Earned',
+                'category': 'Income',
+                'debit': 0,
+                'credit': interest_earned
+            })
+        
+        # 17. Fees & Charges
+        fees_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Fees & Charges'
+        """).fetchone()[0]
+        if fees_income > 0:
+            trial_data.append({
+                'account_head': 'Fees & Charges Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': fees_income
+            })
+        
+        # 18. Commission Income
+        commission_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Commission Income'
+        """).fetchone()[0]
+        if commission_income > 0:
+            trial_data.append({
+                'account_head': 'Commission Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': commission_income
+            })
+        
+        # 19. Other Income
+        other_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Other Income'
+        """).fetchone()[0]
+        if other_income > 0:
+            trial_data.append({
+                'account_head': 'Other Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': other_income
+            })
+        
+        # ==================== CAPITAL ====================
+        
+        # 20. Capital/Reserves (Balancing figure)
         total_debits = sum(item['debit'] for item in trial_data)
         total_credits = sum(item['credit'] for item in trial_data)
         
         if abs(total_debits - total_credits) > 0.01:
             diff = total_credits - total_debits
-            trial_data.append({
-                'account_head': 'Capital/Reserves (Balancing)',
-                'debit': max(-diff, 0),
-                'credit': max(diff, 0)
-            })
+            if diff > 0:
+                trial_data.append({
+                    'account_head': 'Capital/Reserves',
+                    'category': 'Capital',
+                    'debit': diff,
+                    'credit': 0
+                })
+            else:
+                trial_data.append({
+                    'account_head': 'Capital/Reserves',
+                    'category': 'Capital',
+                    'debit': 0,
+                    'credit': abs(diff)
+                })
         
         if trial_data:
             df = pd.DataFrame(trial_data)
             
+            # Display with category grouping
+            st.markdown('<div class="trial-balance-table">', unsafe_allow_html=True)
+            
+            # Show summary cards
+            col1, col2, col3, col4 = st.columns(4)
+            
+            liabilities = sum(item['credit'] for item in trial_data if item['category'] == 'Liability')
+            assets = sum(item['debit'] for item in trial_data if item['category'] == 'Asset')
+            expenses = sum(item['debit'] for item in trial_data if item['category'] == 'Expense')
+            income = sum(item['credit'] for item in trial_data if item['category'] == 'Income')
+            
+            with col1:
+                st.metric("Total Assets", f"₹{assets:,.2f}", delta="Assets")
+            with col2:
+                st.metric("Total Liabilities", f"₹{liabilities:,.2f}", delta="Liabilities")
+            with col3:
+                st.metric("Total Income", f"₹{income:,.2f}", delta="Income")
+            with col4:
+                st.metric("Total Expenses", f"₹{expenses:,.2f}", delta="Expenses")
+            
+            st.divider()
+            
+            # Display full trial balance
+            st.subheader("📋 Full Trial Balance")
+            
+            # Group by category
+            for category in ['Asset', 'Liability', 'Income', 'Expense', 'Capital']:
+                cat_data = [item for item in trial_data if item['category'] == category]
+                if cat_data:
+                    st.markdown(f"**{category}s**")
+                    cat_df = pd.DataFrame(cat_data)
+                    st.dataframe(cat_df.style.format({
+                        'debit': '₹{:,.2f}',
+                        'credit': '₹{:,.2f}'
+                    }), use_container_width=True)
+            
+            # Overall totals
             total_debit = df['debit'].sum()
             total_credit = df['credit'].sum()
             
-            st.dataframe(df.style.format({
-                'debit': '₹{:,.2f}',
-                'credit': '₹{:,.2f}'
-            }), use_container_width=True)
-            
+            st.divider()
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Debit", f"₹{total_debit:,.2f}")
@@ -2185,22 +2527,28 @@ def show_trial_balance():
                 st.metric("Total Credit", f"₹{total_credit:,.2f}")
             with col3:
                 if abs(total_debit - total_credit) < 0.01:
-                    st.success("✅ Balanced!")
+                    st.success("✅ BALANCED!")
                 else:
                     st.error(f"❌ Difference: ₹{abs(total_debit - total_credit):,.2f}")
             
-            csv = df.to_csv(index=False)
-            st.download_button("📥 Download CSV", csv, "trial_balance.csv", "text/csv")
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            if st.button("📄 Generate PDF Report"):
-                pdf_data = {
-                    'date': as_on_date.strftime('%d-%m-%Y'),
-                    'entries': trial_data
-                }
-                pdf_file = generate_report_pdf('trial_balance', pdf_data, 'trial_balance.pdf')
-                if pdf_file:
-                    with open(pdf_file, 'rb') as f:
-                        st.download_button("📥 Download PDF", f, "trial_balance.pdf", "application/pdf")
+            # Export options
+            col1, col2 = st.columns(2)
+            with col1:
+                csv = df.to_csv(index=False)
+                st.download_button("📥 Download CSV", csv, "trial_balance.csv", "text/csv")
+            
+            with col2:
+                if st.button("📄 Generate PDF Report"):
+                    pdf_data = {
+                        'date': as_on_date.strftime('%d-%m-%Y'),
+                        'entries': trial_data
+                    }
+                    pdf_file = generate_report_pdf('trial_balance', pdf_data, 'trial_balance.pdf')
+                    if pdf_file:
+                        with open(pdf_file, 'rb') as f:
+                            st.download_button("📥 Download PDF", f, "trial_balance.pdf", "application/pdf")
         else:
             st.info("No data available for trial balance")
     
@@ -2209,13 +2557,19 @@ def show_trial_balance():
 def show_balance_sheet():
     st.markdown('<h1 class="main-header">📊 Balance Sheet</h1>', unsafe_allow_html=True)
     
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
+    
     conn = get_db()
     as_on_date = st.date_input("As on Date", date.today())
     
     if st.button("📊 Generate Balance Sheet", use_container_width=True):
-        st.subheader(f"Balance Sheet as on {as_on_date.strftime('%d-%m-%Y')}")
+        st.markdown(f"## Balance Sheet as on {as_on_date.strftime('%d-%m-%Y')}")
         
-        st.markdown("### 📊 ASSETS")
+        # ==================== ASSETS ====================
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">📊 ASSETS</h3>', unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
         
@@ -2231,7 +2585,7 @@ def show_balance_sheet():
             total_sb = conn.execute("""
                 SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'
             """).fetchone()[0]
-            st.write(f"🏦 Bank Deposits: **₹{total_sb:,.2f}**")
+            st.write(f"🏦 Savings Bank Deposits: **₹{total_sb:,.2f}**")
         
         with col2:
             st.markdown("**Investments**")
@@ -2249,10 +2603,13 @@ def show_balance_sheet():
         
         total_assets = cash + total_sb + fd_total + rd_total
         st.markdown(f"### **Total Assets: ₹{total_assets:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
         
         st.divider()
         
-        st.markdown("### 📋 LIABILITIES")
+        # ==================== LIABILITIES ====================
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">📋 LIABILITIES</h3>', unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
         
@@ -2272,15 +2629,20 @@ def show_balance_sheet():
         
         total_liabilities = interest + fd_total + rd_total
         st.markdown(f"### **Total Liabilities: ₹{total_liabilities:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
         
         st.divider()
         
+        # ==================== CAPITAL ====================
         capital = total_assets - total_liabilities
-        st.markdown("### 💰 CAPITAL")
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">💰 CAPITAL</h3>', unsafe_allow_html=True)
         st.write(f"**Capital/Net Worth: ₹{capital:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
         
         st.divider()
         
+        # ==================== VERIFICATION ====================
         if abs(total_assets - (total_liabilities + capital)) < 0.01:
             st.success(f"✅ Balance Sheet Balanced! Assets (₹{total_assets:,.2f}) = Liabilities (₹{total_liabilities:,.2f}) + Capital (₹{capital:,.2f})")
         else:
@@ -2290,6 +2652,10 @@ def show_balance_sheet():
 
 def show_profit_loss():
     st.markdown('<h1 class="main-header">💵 Profit & Loss Account</h1>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
     
     conn = get_db()
     
@@ -2302,48 +2668,57 @@ def show_profit_loss():
     if st.button("📊 Generate P&L Statement", use_container_width=True):
         st.subheader(f"Profit & Loss Account ({from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')})")
         
-        st.markdown("### 📈 INCOME")
+        # ==================== INCOME ====================
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">📈 INCOME</h3>', unsafe_allow_html=True)
         
         income_items = []
         
+        # Interest Earned
         interest_earned = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE description LIKE '%interest%' AND transaction_type='CREDIT'
-            AND DATE(created_at) BETWEEN ? AND ?
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Interest Earned' AND DATE(date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()[0]
         income_items.append(('Interest Earned', interest_earned))
         
+        # Fees & Charges
         fees = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE (description LIKE '%fee%' OR description LIKE '%charge%') 
-            AND transaction_type='CREDIT'
-            AND DATE(created_at) BETWEEN ? AND ?
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Fees & Charges' AND DATE(date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()[0]
         income_items.append(('Fees & Charges', fees))
         
+        # Commission Income
+        commission = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Commission Income' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        income_items.append(('Commission Income', commission))
+        
+        # Other Income
         other_income = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE transaction_type='CREDIT' 
-            AND description NOT LIKE '%interest%'
-            AND description NOT LIKE '%fee%'
-            AND description NOT LIKE '%charge%'
-            AND description NOT LIKE '%deposit%'
-            AND DATE(created_at) BETWEEN ? AND ?
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Other Income' AND DATE(date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()[0]
         income_items.append(('Other Income', other_income))
         
+        total_income = 0
         for item, amount in income_items:
             st.write(f"• {item}: **₹{amount:,.2f}**")
+            total_income += amount
         
-        total_income = sum(item[1] for item in income_items)
         st.markdown(f"### **Total Income: ₹{total_income:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
         
         st.divider()
         
-        st.markdown("### 📉 EXPENSES")
+        # ==================== EXPENSES ====================
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">📉 EXPENSES</h3>', unsafe_allow_html=True)
         
         expense_items = []
         
+        # Interest Paid
         interest_paid = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM transactions
             WHERE (description LIKE '%interest%' OR reference_type='INTEREST') 
@@ -2352,37 +2727,53 @@ def show_profit_loss():
         """, (from_date, to_date)).fetchone()[0]
         expense_items.append(('Interest Paid', interest_paid))
         
+        # Salary & Wages
+        salary = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Salary & Wages' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        expense_items.append(('Salary & Wages', salary))
+        
+        # Rent & Utilities
+        rent = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Rent & Utilities' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        expense_items.append(('Rent & Utilities', rent))
+        
+        # Operating Expenses
         operating = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE (description LIKE '%expense%' OR description LIKE '%salary%' 
-                   OR description LIKE '%rent%' OR description LIKE '%utility%')
-            AND transaction_type='DEBIT'
-            AND DATE(created_at) BETWEEN ? AND ?
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Operating Expenses' AND DATE(date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()[0]
         expense_items.append(('Operating Expenses', operating))
         
-        other_expenses = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM transactions
-            WHERE transaction_type='DEBIT'
-            AND description NOT LIKE '%interest%'
-            AND description NOT LIKE '%expense%'
-            AND description NOT LIKE '%salary%'
-            AND description NOT LIKE '%rent%'
-            AND description NOT LIKE '%utility%'
-            AND description NOT LIKE '%withdrawal%'
-            AND reference_type != 'INTEREST'
-            AND DATE(created_at) BETWEEN ? AND ?
+        # Administrative Expenses
+        admin = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Administrative Expenses' AND DATE(date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()[0]
-        expense_items.append(('Other Expenses', other_expenses))
+        expense_items.append(('Administrative Expenses', admin))
         
+        # Other Expenses
+        other_exp = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Other Expenses' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        expense_items.append(('Other Expenses', other_exp))
+        
+        total_expenses = 0
         for item, amount in expense_items:
-            st.write(f"• {item}: **₹{amount:,.2f}**")
+            if amount > 0:
+                st.write(f"• {item}: **₹{amount:,.2f}**")
+                total_expenses += amount
         
-        total_expenses = sum(item[1] for item in expense_items)
         st.markdown(f"### **Total Expenses: ₹{total_expenses:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
         
         st.divider()
         
+        # ==================== NET PROFIT/LOSS ====================
         net_profit = total_income - total_expenses
         
         if net_profit >= 0:
@@ -2390,16 +2781,30 @@ def show_profit_loss():
         else:
             st.error(f"## 📉 Net Loss: ₹{abs(net_profit):,.2f}")
         
-        fig = go.Figure(data=[go.Pie(labels=['Income', 'Expenses'], 
-                                     values=[total_income, total_expenses],
-                                     hole=.3)])
-        fig.update_layout(title='Income vs Expenses')
-        st.plotly_chart(fig, use_container_width=True)
+        # ==================== CHARTS ====================
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if income_items:
+                df_income = pd.DataFrame(income_items, columns=['Source', 'Amount'])
+                fig = px.pie(df_income, values='Amount', names='Source', title='Income Breakdown')
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            expense_items_filtered = [(item, amt) for item, amt in expense_items if amt > 0]
+            if expense_items_filtered:
+                df_expense = pd.DataFrame(expense_items_filtered, columns=['Category', 'Amount'])
+                fig = px.pie(df_expense, values='Amount', names='Category', title='Expense Breakdown')
+                st.plotly_chart(fig, use_container_width=True)
     
     conn.close()
 
 def show_reports():
     st.markdown('<h1 class="main-header">📋 Reports</h1>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
     
     report_type = st.selectbox("Select Report Type", [
         "Customer Master List",
@@ -2409,7 +2814,8 @@ def show_reports():
         "Transaction Summary",
         "KYC Status Report",
         "Daily Transaction Report",
-        "Interest Calculation Report"
+        "Interest Calculation Report",
+        "Income & Expense Report"
     ])
     
     conn = get_db()
@@ -2491,10 +2897,44 @@ def show_reports():
         else:
             st.info(f"No transactions on {report_date}")
     
+    elif report_type == "Income & Expense Report":
+        st.subheader("Income & Expense Report")
+        col1, col2 = st.columns(2)
+        with col1:
+            from_date = st.date_input("From Date", date.today().replace(day=1))
+        with col2:
+            to_date = st.date_input("To Date", date.today())
+        
+        if st.button("Generate Report"):
+            # Income
+            income_data = conn.execute("""
+                SELECT income_type, SUM(amount) as total
+                FROM income
+                WHERE DATE(date) BETWEEN ? AND ?
+                GROUP BY income_type
+            """, (from_date, to_date)).fetchall()
+            
+            if income_data:
+                st.markdown("### Income")
+                df_income = pd.DataFrame(income_data, columns=['Type', 'Amount'])
+                st.dataframe(df_income.style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
+            
+            # Expenses
+            expense_data = conn.execute("""
+                SELECT expense_type, SUM(amount) as total
+                FROM expenses
+                WHERE DATE(date) BETWEEN ? AND ?
+                GROUP BY expense_type
+            """, (from_date, to_date)).fetchall()
+            
+            if expense_data:
+                st.markdown("### Expenses")
+                df_expense = pd.DataFrame(expense_data, columns=['Type', 'Amount'])
+                st.dataframe(df_expense.style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
+    
     conn.close()
 
 # ==================== MAIN ====================
 
 if __name__ == "__main__":
     main()
-

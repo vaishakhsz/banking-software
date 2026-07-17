@@ -77,10 +77,15 @@ def init_database():
         status TEXT DEFAULT 'ACTIVE',
         interest_rate DECIMAL(5,2),
         last_interest_calculation DATE,
-        total_interest_earned DECIMAL(15,2) DEFAULT 0.00,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (customer_id) REFERENCES customers (id)
     )''')
+    
+    # Check if total_interest_earned column exists, if not add it
+    try:
+        c.execute("SELECT total_interest_earned FROM accounts LIMIT 1")
+    except sqlite3.OperationalError:
+        c.execute("ALTER TABLE accounts ADD COLUMN total_interest_earned DECIMAL(15,2) DEFAULT 0.00")
     
     # Fixed Deposits
     c.execute('''CREATE TABLE IF NOT EXISTS fixed_deposits (
@@ -946,7 +951,8 @@ def show_customer_management():
                         
                         # Get accounts linked to this customer
                         accounts = conn.execute("""
-                            SELECT account_number, account_type, balance, status
+                            SELECT account_number, account_type, balance, status,
+                                   COALESCE(total_interest_earned, 0) as total_interest
                             FROM accounts
                             WHERE customer_id=? AND account_type='SB'
                         """, (cust[0],)).fetchall()
@@ -956,6 +962,7 @@ def show_customer_management():
                             for acc in accounts:
                                 st.write(f"• {acc[0]}")
                                 st.write(f"  Balance: ₹{acc[2]:,.2f} | {acc[3]}")
+                                st.write(f"  Total Interest: ₹{acc[4]:,.2f}")
                         else:
                             st.write("No SB accounts linked yet")
                     
@@ -1126,7 +1133,7 @@ def show_my_details():
         st.subheader("💰 My Accounts")
         accounts = conn.execute("""
             SELECT account_number, account_type, balance, interest_rate, status, 
-                   total_interest_earned, created_at
+                   COALESCE(total_interest_earned, 0) as total_interest, created_at
             FROM accounts
             WHERE customer_id=? AND account_type='SB'
             ORDER BY created_at DESC
@@ -1303,7 +1310,9 @@ def show_sb_accounts():
         if st.session_state.user['role'] == 'customer':
             accounts = conn.execute("""
                 SELECT a.account_number, c.first_name || ' ' || c.last_name as name,
-                       a.balance, a.interest_rate, a.status, a.total_interest_earned, a.created_at
+                       a.balance, a.interest_rate, a.status, 
+                       COALESCE(a.total_interest_earned, 0) as total_interest, 
+                       a.created_at
                 FROM accounts a
                 JOIN customers c ON a.customer_id = c.id
                 WHERE a.account_type='SB' AND c.user_id=?
@@ -1312,7 +1321,9 @@ def show_sb_accounts():
         else:
             accounts = conn.execute("""
                 SELECT a.account_number, c.first_name || ' ' || c.last_name as name,
-                       a.balance, a.interest_rate, a.status, a.total_interest_earned, a.created_at
+                       a.balance, a.interest_rate, a.status, 
+                       COALESCE(a.total_interest_earned, 0) as total_interest,
+                       a.created_at
                 FROM accounts a
                 JOIN customers c ON a.customer_id = c.id
                 WHERE a.account_type='SB' AND c.kyc_status='VERIFIED'
@@ -1703,7 +1714,7 @@ def show_interest_calculation():
                             
                             # Get current balance and total interest
                             account_data = conn.execute("""
-                                SELECT balance, total_interest_earned FROM accounts WHERE id=?
+                                SELECT balance, COALESCE(total_interest_earned, 0) FROM accounts WHERE id=?
                             """, (acc_id,)).fetchone()
                             
                             current_balance = account_data[0]
@@ -1733,31 +1744,29 @@ def show_interest_calculation():
                             """, (new_balance, new_total_interest, acc_id))
                             
                             # Create journal entry for interest
-                            voucher_id = conn.execute("SELECT last_insert_rowid() FROM journal_vouchers").fetchone()
-                            if voucher_id:
-                                journal_voucher_num = generate_voucher_number('JOURNAL')
-                                conn.execute("""
-                                    INSERT INTO journal_vouchers 
-                                    (voucher_number, voucher_date, description, total_amount, status, created_by)
-                                    VALUES (?, DATE('now'), ?, ?, 'POSTED', ?)
-                                """, (journal_voucher_num, f"Interest credited to {res['Account']}", 
-                                      res['Interest'], st.session_state.user['id']))
-                                
-                                jv_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                                
-                                # Debit entry - Interest Expense
-                                conn.execute("""
-                                    INSERT INTO journal_entries 
-                                    (voucher_id, account_head, debit_amount, credit_amount)
-                                    VALUES (?, 'Interest Paid on SB', ?, 0)
-                                """, (jv_id, res['Interest']))
-                                
-                                # Credit entry - SB Account
-                                conn.execute("""
-                                    INSERT INTO journal_entries 
-                                    (voucher_id, account_head, debit_amount, credit_amount)
-                                    VALUES (?, 'SB Account - ' || ?, 0, ?)
-                                """, (jv_id, res['Account'], res['Interest']))
+                            journal_voucher_num = generate_voucher_number('JOURNAL')
+                            conn.execute("""
+                                INSERT INTO journal_vouchers 
+                                (voucher_number, voucher_date, description, total_amount, status, created_by)
+                                VALUES (?, DATE('now'), ?, ?, 'POSTED', ?)
+                            """, (journal_voucher_num, f"Interest credited to {res['Account']}", 
+                                  res['Interest'], st.session_state.user['id']))
+                            
+                            jv_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                            
+                            # Debit entry - Interest Expense
+                            conn.execute("""
+                                INSERT INTO journal_entries 
+                                (voucher_id, account_head, debit_amount, credit_amount)
+                                VALUES (?, 'Interest Paid on SB', ?, 0)
+                            """, (jv_id, res['Interest']))
+                            
+                            # Credit entry - SB Account
+                            conn.execute("""
+                                INSERT INTO journal_entries 
+                                (voucher_id, account_head, debit_amount, credit_amount)
+                                VALUES (?, 'SB Account - ' || ?, 0, ?)
+                            """, (jv_id, res['Account'], res['Interest']))
                         
                         conn.commit()
                         st.success("✅ Interest credited to all accounts successfully!")
@@ -3149,3 +3158,4 @@ def show_reports():
 
 if __name__ == "__main__":
     main()
+    

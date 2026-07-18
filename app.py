@@ -1148,9 +1148,10 @@ def show_my_details():
                 with st.expander(f"{acc[1]} - {acc[0]} (₹{acc[2]:,.2f})"):
                     st.write(f"**Account Number:** {acc[0]}")
                     st.write(f"**Type:** {acc[1]}")
-                    st.write(f"**Balance:** ₹{acc[2]:,.2f}")
-                    st.write(f"**Interest Rate:** {acc[3]}%")
+                    st.write(f"**Current Balance:** ₹{acc[2]:,.2f}")
                     st.write(f"**Total Interest Earned:** ₹{acc[5]:,.2f}")
+                    st.write(f"**Total Value (Balance + Interest):** ₹{acc[2] + acc[5]:,.2f}")
+                    st.write(f"**Interest Rate:** {acc[3]}%")
                     st.write(f"**Status:** {acc[4]}")
                     st.write(f"**Opened:** {acc[6][:10]}")
         else:
@@ -1408,20 +1409,39 @@ def show_sb_accounts():
             """).fetchall()
         
         if accounts:
-            df = pd.DataFrame(accounts, columns=['Account Number', 'Customer Name', 'Balance', 
-                                                 'Interest Rate', 'Status', 'Total Interest', 'Opening Date'])
-            st.dataframe(df.style.format({'Balance': '₹{:,.2f}', 'Interest Rate': '{:.2f}%',
-                                          'Total Interest': '₹{:,.2f}'}), 
-                        use_container_width=True)
+            # Calculate total value (balance + interest)
+            account_data = []
+            for acc in accounts:
+                account_data.append({
+                    'Account Number': acc[0],
+                    'Customer Name': acc[1],
+                    'Balance': acc[2],
+                    'Interest Rate': acc[3],
+                    'Status': acc[4],
+                    'Total Interest Earned': acc[5],
+                    'Total Value (Balance + Interest)': acc[2] + acc[5],
+                    'Opening Date': acc[6]
+                })
+            
+            df = pd.DataFrame(account_data)
+            st.dataframe(df.style.format({
+                'Balance': '₹{:,.2f}',
+                'Interest Rate': '{:.2f}%',
+                'Total Interest Earned': '₹{:,.2f}',
+                'Total Value (Balance + Interest)': '₹{:,.2f}'
+            }), use_container_width=True)
             
             total_sb = sum(acc[2] for acc in accounts)
             total_interest = sum(acc[5] for acc in accounts)
+            total_value = total_sb + total_interest
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
-                st.info(f"**Total SB Deposits: ₹{total_sb:,.2f}**")
+                st.info(f"**Total Deposits: ₹{total_sb:,.2f}**")
             with col2:
                 st.info(f"**Total Interest Earned: ₹{total_interest:,.2f}**")
+            with col3:
+                st.success(f"**Total Value: ₹{total_value:,.2f}**")
             
             # Important notice about opening balance
             st.markdown('<div class="info-box">⚠️ <strong>Note:</strong> All SB accounts are opened with ₹0.00 balance. Interest is calculated quarterly on the minimum monthly balance and added to total interest earned.</div>', unsafe_allow_html=True)
@@ -2051,7 +2071,13 @@ def show_fixed_deposits():
             }), use_container_width=True)
             
             total_fd = sum(fd[2] for fd in fds)
-            st.info(f"**Total FD Deposits: ₹{total_fd:,.2f}**")
+            total_fd_interest = sum(fd[6] - fd[2] for fd in fds)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.info(f"**Total FD Deposits: ₹{total_fd:,.2f}**")
+            with col2:
+                st.info(f"**Total Interest Payable: ₹{total_fd_interest:,.2f}**")
         else:
             st.info("No active FDs found")
     
@@ -2210,6 +2236,10 @@ def show_recurring_deposits():
                 'Rate (%)': '{:.2f}%',
                 'Maturity Amount': '₹{:,.2f}'
             }), use_container_width=True)
+            
+            total_rd = sum(rd[2] for rd in rds)
+            total_rd_interest = sum(rd[6] - (rd[2] * rd[8]) for rd in rds)
+            st.info(f"**Total RD Deposits: ₹{total_rd:,.2f}**")
         else:
             st.info("No active RDs found")
     
@@ -2517,77 +2547,9 @@ def show_trial_balance():
     if st.button("📊 Generate Trial Balance", use_container_width=True):
         trial_data = []
         
-        # ==================== LIABILITIES (Credit Balance) ====================
-        
-        # 1. Savings Bank Deposits
-        sb_total = conn.execute("""
-            SELECT COALESCE(SUM(balance), 0) FROM accounts 
-            WHERE account_type='SB' AND status='ACTIVE'
-        """).fetchone()[0]
-        if sb_total > 0:
-            trial_data.append({
-                'account_head': 'Savings Bank Deposits',
-                'category': 'Liability',
-                'debit': 0,
-                'credit': sb_total
-            })
-        
-        # 2. Fixed Deposits
-        fd_total = conn.execute("""
-            SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'
-        """).fetchone()[0]
-        if fd_total > 0:
-            trial_data.append({
-                'account_head': 'Fixed Deposits',
-                'category': 'Liability',
-                'debit': 0,
-                'credit': fd_total
-            })
-        
-        # 3. Recurring Deposits
-        rd_total = conn.execute("""
-            SELECT COALESCE(SUM(monthly_amount * installments_paid), 0) 
-            FROM recurring_deposits WHERE status='ACTIVE'
-        """).fetchone()[0]
-        if rd_total > 0:
-            trial_data.append({
-                'account_head': 'Recurring Deposits',
-                'category': 'Liability',
-                'debit': 0,
-                'credit': rd_total
-            })
-        
-        # 4. Interest Payable on FD
-        interest_payable = conn.execute("""
-            SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
-            FROM fixed_deposits WHERE status='ACTIVE'
-        """).fetchone()[0]
-        if interest_payable > 0:
-            trial_data.append({
-                'account_head': 'Interest Payable on FD',
-                'category': 'Liability',
-                'debit': 0,
-                'credit': interest_payable
-            })
-        
-        # 5. Interest Payable on SB (from journal entries)
-        interest_payable_sb = conn.execute("""
-            SELECT COALESCE(SUM(credit_amount), 0) 
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE je.account_head LIKE '%SB Account%' AND jv.status='POSTED'
-        """).fetchone()[0]
-        if interest_payable_sb > 0:
-            trial_data.append({
-                'account_head': 'Interest Payable on SB',
-                'category': 'Liability',
-                'debit': 0,
-                'credit': interest_payable_sb
-            })
-        
         # ==================== ASSETS (Debit Balance) ====================
         
-        # 6. Cash in Hand
+        # 1. Cash in Hand
         cash_balance = conn.execute("""
             SELECT 
                 COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
@@ -2602,9 +2564,143 @@ def show_trial_balance():
                 'credit': max(-cash_balance, 0)
             })
         
+        # ==================== LIABILITIES (Credit Balance) ====================
+        
+        # 2. Savings Bank Deposits
+        sb_total = conn.execute("""
+            SELECT COALESCE(SUM(balance), 0) FROM accounts 
+            WHERE account_type='SB' AND status='ACTIVE'
+        """).fetchone()[0]
+        if sb_total > 0:
+            trial_data.append({
+                'account_head': 'Savings Bank Deposits',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': sb_total
+            })
+        
+        # 3. Interest Payable on SB (Interest that has been calculated but not yet credited)
+        interest_payable_sb = conn.execute("""
+            SELECT COALESCE(SUM(total_interest_earned), 0) 
+            FROM accounts 
+            WHERE account_type='SB' AND status='ACTIVE'
+        """).fetchone()[0]
+        if interest_payable_sb > 0:
+            trial_data.append({
+                'account_head': 'Interest Payable on SB',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': interest_payable_sb
+            })
+        
+        # 4. Fixed Deposits
+        fd_total = conn.execute("""
+            SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if fd_total > 0:
+            trial_data.append({
+                'account_head': 'Fixed Deposits',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': fd_total
+            })
+        
+        # 5. Interest Payable on FD
+        interest_payable = conn.execute("""
+            SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
+            FROM fixed_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if interest_payable > 0:
+            trial_data.append({
+                'account_head': 'Interest Payable on FD',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': interest_payable
+            })
+        
+        # 6. Recurring Deposits
+        rd_total = conn.execute("""
+            SELECT COALESCE(SUM(monthly_amount * installments_paid), 0) 
+            FROM recurring_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if rd_total > 0:
+            trial_data.append({
+                'account_head': 'Recurring Deposits',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': rd_total
+            })
+        
+        # 7. Interest Payable on RD
+        interest_payable_rd = conn.execute("""
+            SELECT COALESCE(SUM(maturity_amount - (monthly_amount * installments_paid)), 0)
+            FROM recurring_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if interest_payable_rd > 0:
+            trial_data.append({
+                'account_head': 'Interest Payable on RD',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': interest_payable_rd
+            })
+        
+        # ==================== INCOME (Credit Balance) ====================
+        
+        # 8. Interest Earned
+        interest_earned = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Interest Earned'
+        """).fetchone()[0]
+        if interest_earned > 0:
+            trial_data.append({
+                'account_head': 'Interest Earned',
+                'category': 'Income',
+                'debit': 0,
+                'credit': interest_earned
+            })
+        
+        # 9. Fees & Charges
+        fees_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Fees & Charges'
+        """).fetchone()[0]
+        if fees_income > 0:
+            trial_data.append({
+                'account_head': 'Fees & Charges Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': fees_income
+            })
+        
+        # 10. Commission Income
+        commission_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Commission Income'
+        """).fetchone()[0]
+        if commission_income > 0:
+            trial_data.append({
+                'account_head': 'Commission Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': commission_income
+            })
+        
+        # 11. Other Income
+        other_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Other Income'
+        """).fetchone()[0]
+        if other_income > 0:
+            trial_data.append({
+                'account_head': 'Other Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': other_income
+            })
+        
         # ==================== EXPENSES (Debit Balance) ====================
         
-        # 7. Interest Paid on SB (from journal entries)
+        # 12. Interest Paid on SB (from journal entries)
         interest_paid_sb = conn.execute("""
             SELECT COALESCE(SUM(debit_amount), 0) 
             FROM journal_entries je
@@ -2619,7 +2715,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 8. Salary & Wages
+        # 13. Salary & Wages
         salary_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Salary & Wages'
@@ -2632,7 +2728,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 9. Rent & Utilities
+        # 14. Rent & Utilities
         rent_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Rent & Utilities'
@@ -2645,7 +2741,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 10. Operating Expenses
+        # 15. Operating Expenses
         operating_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Operating Expenses'
@@ -2658,7 +2754,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 11. Administrative Expenses
+        # 16. Administrative Expenses
         admin_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Administrative Expenses'
@@ -2671,7 +2767,7 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # 12. Other Expenses
+        # 17. Other Expenses
         other_expense = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM expenses
             WHERE expense_type='Other Expenses'
@@ -2684,81 +2780,31 @@ def show_trial_balance():
                 'credit': 0
             })
         
-        # ==================== INCOME (Credit Balance) ====================
+        # ==================== CAPITAL (Balancing Figure) ====================
         
-        # 13. Interest Earned
-        interest_earned = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM income
-            WHERE income_type='Interest Earned'
-        """).fetchone()[0]
-        if interest_earned > 0:
-            trial_data.append({
-                'account_head': 'Interest Earned',
-                'category': 'Income',
-                'debit': 0,
-                'credit': interest_earned
-            })
-        
-        # 14. Fees & Charges
-        fees_income = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM income
-            WHERE income_type='Fees & Charges'
-        """).fetchone()[0]
-        if fees_income > 0:
-            trial_data.append({
-                'account_head': 'Fees & Charges Income',
-                'category': 'Income',
-                'debit': 0,
-                'credit': fees_income
-            })
-        
-        # 15. Commission Income
-        commission_income = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM income
-            WHERE income_type='Commission Income'
-        """).fetchone()[0]
-        if commission_income > 0:
-            trial_data.append({
-                'account_head': 'Commission Income',
-                'category': 'Income',
-                'debit': 0,
-                'credit': commission_income
-            })
-        
-        # 16. Other Income
-        other_income = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM income
-            WHERE income_type='Other Income'
-        """).fetchone()[0]
-        if other_income > 0:
-            trial_data.append({
-                'account_head': 'Other Income',
-                'category': 'Income',
-                'debit': 0,
-                'credit': other_income
-            })
-        
-        # ==================== CAPITAL ====================
-        
-        # 17. Capital/Reserves (Balancing figure)
+        # Calculate totals
         total_debits = sum(item['debit'] for item in trial_data)
         total_credits = sum(item['credit'] for item in trial_data)
         
-        if abs(total_debits - total_credits) > 0.01:
-            diff = total_credits - total_debits
+        # Calculate Capital as the balancing figure
+        diff = total_credits - total_debits
+        
+        if abs(diff) > 0.01:
             if diff > 0:
-                trial_data.append({
-                    'account_head': 'Capital/Reserves',
-                    'category': 'Capital',
-                    'debit': diff,
-                    'credit': 0
-                })
-            else:
+                # More credits than debits, Capital is Credit
                 trial_data.append({
                     'account_head': 'Capital/Reserves',
                     'category': 'Capital',
                     'debit': 0,
-                    'credit': abs(diff)
+                    'credit': diff
+                })
+            else:
+                # More debits than credits, Capital is Debit (Accumulated Loss)
+                trial_data.append({
+                    'account_head': 'Capital/Reserves',
+                    'category': 'Capital',
+                    'debit': abs(diff),
+                    'credit': 0
                 })
         
         if trial_data:
@@ -2774,15 +2820,16 @@ def show_trial_balance():
             assets = sum(item['debit'] for item in trial_data if item['category'] == 'Asset')
             expenses = sum(item['debit'] for item in trial_data if item['category'] == 'Expense')
             income = sum(item['credit'] for item in trial_data if item['category'] == 'Income')
+            capital = sum(item['credit'] for item in trial_data if item['category'] == 'Capital') - sum(item['debit'] for item in trial_data if item['category'] == 'Capital')
             
             with col1:
-                st.metric("Total Assets", f"₹{assets:,.2f}", delta="Assets")
+                st.metric("Total Assets", f"₹{assets:,.2f}")
             with col2:
-                st.metric("Total Liabilities", f"₹{liabilities:,.2f}", delta="Liabilities")
+                st.metric("Total Liabilities", f"₹{liabilities:,.2f}")
             with col3:
-                st.metric("Total Income", f"₹{income:,.2f}", delta="Income")
+                st.metric("Total Income", f"₹{income:,.2f}")
             with col4:
-                st.metric("Total Expenses", f"₹{expenses:,.2f}", delta="Expenses")
+                st.metric("Total Expenses", f"₹{expenses:,.2f}")
             
             st.divider()
             
@@ -2813,6 +2860,7 @@ def show_trial_balance():
             with col3:
                 if abs(total_debit - total_credit) < 0.01:
                     st.success("✅ BALANCED!")
+                    st.info(f"Assets (₹{assets:,.2f}) = Liabilities (₹{liabilities:,.2f}) + Capital (₹{capital:,.2f})")
                 else:
                     st.error(f"❌ Difference: ₹{abs(total_debit - total_credit):,.2f}")
             
@@ -2902,18 +2950,25 @@ def show_balance_sheet():
         with col1:
             st.markdown("**Current Liabilities**")
             
-            interest = conn.execute("""
+            interest_sb = conn.execute("""
+                SELECT COALESCE(SUM(total_interest_earned), 0) 
+                FROM accounts WHERE account_type='SB' AND status='ACTIVE'
+            """).fetchone()[0]
+            st.write(f"📈 Interest Payable on SB: **₹{interest_sb:,.2f}**")
+            
+            interest_fd = conn.execute("""
                 SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
                 FROM fixed_deposits WHERE status='ACTIVE'
             """).fetchone()[0]
-            st.write(f"📈 Interest Payable: **₹{interest:,.2f}**")
+            st.write(f"📈 Interest Payable on FD: **₹{interest_fd:,.2f}**")
         
         with col2:
             st.markdown("**Deposits (Liabilities)**")
             st.write(f"💎 FD Deposits: **₹{fd_total:,.2f}**")
             st.write(f"🔄 RD Deposits: **₹{rd_total:,.2f}**")
+            st.write(f"🏦 SB Deposits: **₹{total_sb:,.2f}**")
         
-        total_liabilities = interest + fd_total + rd_total
+        total_liabilities = interest_sb + interest_fd + fd_total + rd_total + total_sb
         st.markdown(f"### **Total Liabilities: ₹{total_liabilities:,.2f}**")
         st.markdown('</div>', unsafe_allow_html=True)
         

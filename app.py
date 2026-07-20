@@ -1,4 +1,4 @@
-# 🏦 COMPLETE BANKING SYSTEM - Enterprise Edition (FULLY FIXED)
+# 🏦 COMPLETE BANKING SYSTEM - Enterprise Edition
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -253,61 +253,52 @@ def calculate_sb_interest(balance, rate, days):
     return round(interest, 2)
 
 def get_minimum_balance(conn, account_id, from_date, to_date):
-    """Get minimum balance for an account during a period - FIXED VERSION"""
+    """Get minimum balance for an account during a period"""
     try:
-        # Get account info
-        acc_info = conn.execute("""
-            SELECT balance, created_at FROM accounts WHERE id=?
-        """, (account_id,)).fetchone()
-        
-        if not acc_info:
-            return 0
-        
-        # Get all transactions during the period
-        transactions = conn.execute("""
-            SELECT balance_after, created_at
-            FROM transactions
-            WHERE account_id=? AND DATE(created_at) BETWEEN DATE(?) AND DATE(?)
-            ORDER BY created_at ASC
-        """, (account_id, from_date, to_date)).fetchall()
-        
-        # Start with the balance at the beginning of the period
-        # Get balance just before the from_date
-        prev_balance = conn.execute("""
+        # Get starting balance (last balance before period)
+        start_balance_result = conn.execute("""
             SELECT balance_after
             FROM transactions
-            WHERE account_id=? AND DATE(created_at) < DATE(?)
+            WHERE account_id=? AND DATE(created_at) < ?
             ORDER BY created_at DESC
             LIMIT 1
         """, (account_id, from_date)).fetchone()
         
-        if prev_balance:
-            current_min = prev_balance[0]
+        if start_balance_result:
+            start_balance = start_balance_result[0]
         else:
-            # If no previous transactions, use the account's opening balance
-            current_min = acc_info[0]
+            # If no transactions before period, get current balance
+            current_result = conn.execute("""
+                SELECT balance FROM accounts WHERE id=?
+            """, (account_id,)).fetchone()
+            if current_result:
+                start_balance = current_result[0]
+            else:
+                return 0
         
-        # Check all transactions during the period
-        for txn in transactions:
-            if txn[0] < current_min:
-                current_min = txn[0]
+        # Get all transactions during the period
+        transactions = conn.execute("""
+            SELECT balance_after
+            FROM transactions
+            WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ?
+            ORDER BY created_at
+        """, (account_id, from_date, to_date)).fetchall()
         
-        # If no transactions during period, return the starting balance
-        if not transactions:
-            return current_min
+        if transactions:
+            all_balances = [start_balance] + [t[0] for t in transactions]
+            return min(all_balances)
+        else:
+            return start_balance
             
-        return current_min
-        
     except Exception as e:
-        print(f"Error in get_minimum_balance: {str(e)}")
         # Return current balance as fallback
-        result = conn.execute("""
+        current_result = conn.execute("""
             SELECT balance FROM accounts WHERE id=?
         """, (account_id,)).fetchone()
-        return result[0] if result else 0
+        return current_result[0] if current_result else 0
 
 def calculate_and_post_sb_interest(created_by_user_id=1):
-    """Calculate interest for all SB accounts and post to accounts with journal entries - FIXED VERSION"""
+    """Calculate interest for all SB accounts and post to accounts with journal entries"""
     conn = get_db()
     try:
         # Get all active SB accounts
@@ -329,19 +320,19 @@ def calculate_and_post_sb_interest(created_by_user_id=1):
             account_id = acc[0]
             account_number = acc[1]
             balance = acc[2]
-            rate = acc[3] if acc[3] else 3.5
+            rate = acc[3] if acc[3] else 3.5  # Default 3.5% if not set
             existing_interest = acc[4]
             last_calc_date = acc[5]
             customer_id = acc[6]
             
-            # Determine the last calculation date
+            # Determine calculation period
             if last_calc_date:
                 try:
                     last_date = datetime.strptime(last_calc_date, '%Y-%m-%d').date()
                 except:
-                    last_date = current_date.replace(day=1)  # First of current month
+                    last_date = current_date.replace(day=1)
             else:
-                # If never calculated, use account creation date
+                # Get account creation date
                 acc_created = conn.execute("""
                     SELECT DATE(created_at) FROM accounts WHERE id=?
                 """, (account_id,)).fetchone()
@@ -353,26 +344,20 @@ def calculate_and_post_sb_interest(created_by_user_id=1):
                 else:
                     last_date = current_date.replace(day=1)
             
-            # Calculate days since last calculation
+            # Calculate days for interest
             days = (current_date - last_date).days
-            
-            # Only calculate if at least 1 day has passed
             if days <= 0:
                 continue
             
-            # Get the minimum balance during this period
+            # Calculate minimum balance for the period
             min_balance = get_minimum_balance(conn, account_id, last_date, current_date)
-            
-            # If min_balance is 0, use the current balance
             if min_balance <= 0:
                 min_balance = balance
             
-            # Calculate interest (simple interest formula)
-            interest = (min_balance * rate * days) / (100 * 365)
-            interest = round(interest, 2)
+            # Calculate interest
+            interest = calculate_sb_interest(min_balance, rate, days)
             
-            # Only post if interest is more than 0.01
-            if interest > 0.01:
+            if interest > 0:
                 # Update account with interest
                 new_balance = balance + interest
                 new_total_interest = existing_interest + interest
@@ -423,7 +408,7 @@ def calculate_and_post_sb_interest(created_by_user_id=1):
                     INSERT INTO journal_entries 
                     (voucher_id, account_head, debit_amount, credit_amount, description)
                     VALUES (?, 'Interest Paid on SB', ?, 0, ?)
-                """, (jv_id, interest, f"Interest for A/C {account_number} - {days} days @ {rate}%"))
+                """, (jv_id, interest, f"Interest for A/C {account_number} - {days} days @ {rate}% p.a. on min balance ₹{min_balance:,.2f}"))
                 
                 # Credit entry - SB Account (liability)
                 conn.execute("""
@@ -444,94 +429,15 @@ def calculate_and_post_sb_interest(created_by_user_id=1):
                     'days': days,
                     'journal_voucher': journal_voucher_num,
                     'total_interest_earned': new_total_interest,
-                    'maturity_value': new_balance + new_total_interest
+                    'maturity_value': new_balance  # For SB, maturity = balance + interest
                 })
-                print(f"Interest posted for {account_number}: ₹{interest}")  # Debug
-            else:
-                print(f"No interest for {account_number}: Interest = ₹{interest}")  # Debug
         
         conn.commit()
-        print(f"Total accounts with interest: {len(interest_posted)}")  # Debug
         return "SUCCESS", interest_posted
     
     except Exception as e:
         conn.rollback()
-        print(f"Error in interest calculation: {str(e)}")  # Debug
         return f"Error: {str(e)}", []
-    finally:
-        conn.close()
-
-def calculate_and_post_fd_interest(fd_id, created_by_user_id=1):
-    """Calculate and post FD interest to journal vouchers"""
-    conn = get_db()
-    try:
-        # Get FD details
-        fd = conn.execute("""
-            SELECT fd.id, fd.fd_number, fd.principal_amount, fd.interest_rate, 
-                   fd.maturity_amount, fd.start_date, fd.maturity_date, fd.status,
-                   a.id as account_id, a.account_number, c.id as customer_id
-            FROM fixed_deposits fd
-            JOIN accounts a ON fd.account_id = a.id
-            JOIN customers c ON a.customer_id = c.id
-            WHERE fd.id=? AND fd.status='ACTIVE'
-        """, (fd_id,)).fetchone()
-        
-        if not fd:
-            return "FD not found or not active", None
-        
-        # Calculate interest earned so far
-        start_date = datetime.strptime(fd[5], '%Y-%m-%d').date()
-        current_date = date.today()
-        days_elapsed = (current_date - start_date).days
-        total_days = (datetime.strptime(fd[6], '%Y-%m-%d').date() - start_date).days
-        
-        if days_elapsed <= 0:
-            return "No interest to calculate", None
-        
-        # Calculate proportional interest
-        total_interest = fd[3] - fd[2]  # maturity_amount - principal
-        interest_earned = (total_interest * days_elapsed) / total_days if total_days > 0 else 0
-        
-        if interest_earned <= 0:
-            return "No interest to calculate", None
-        
-        # Create journal voucher for FD interest
-        journal_voucher_num = generate_voucher_number('JOURNAL')
-        conn.execute("""
-            INSERT INTO journal_vouchers 
-            (voucher_number, voucher_date, description, total_amount, status, created_by)
-            VALUES (?, DATE('now'), ?, ?, 'POSTED', ?)
-        """, (journal_voucher_num, f"FD Interest Accrued - {fd[1]} (Customer: {fd[10]})", 
-              interest_earned, created_by_user_id))
-        
-        jv_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        
-        # Debit entry - Interest Expense
-        conn.execute("""
-            INSERT INTO journal_entries 
-            (voucher_id, account_head, debit_amount, credit_amount, description)
-            VALUES (?, 'Interest Paid on FD', ?, 0, ?)
-        """, (jv_id, interest_earned, f"Interest on FD {fd[1]} - {days_elapsed} days"))
-        
-        # Credit entry - FD Interest Payable (liability)
-        conn.execute("""
-            INSERT INTO journal_entries 
-            (voucher_id, account_head, debit_amount, credit_amount, description)
-            VALUES (?, 'Interest Payable on FD', 0, ?, ?)
-        """, (jv_id, interest_earned, f"Interest payable on FD {fd[1]}"))
-        
-        conn.commit()
-        return "SUCCESS", {
-            'fd_number': fd[1],
-            'principal': fd[2],
-            'interest_earned': interest_earned,
-            'journal_voucher': journal_voucher_num,
-            'days_elapsed': days_elapsed
-        }
-    
-    except Exception as e:
-        conn.rollback()
-        return f"Error: {str(e)}", None
     finally:
         conn.close()
 
@@ -627,7 +533,7 @@ def init_session_state():
     if 'page' not in st.session_state:
         st.session_state.page = 'login'
 
-# ==================== STREAMLIT UI FUNCTIONS ====================
+# ==================== STREAMLIT UI ====================
 
 def main():
     st.set_page_config(
@@ -775,6 +681,13 @@ def main():
         border-bottom: 3px solid #667eea;
         padding-bottom: 0.5rem;
         margin-bottom: 1rem;
+    }
+    .jv-card {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid #667eea;
+        margin: 0.5rem 0;
     }
     .css-1d391kg {
         background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
@@ -967,8 +880,6 @@ def show_main_app():
     elif page == 'my_details':
         show_my_details()
 
-# [Previous functions remain the same - show_dashboard, show_customer_management, show_kyc_verification, show_create_sb_account, show_sb_accounts]
-
 def show_dashboard():
     st.markdown('<h1 class="main-header">📊 Dashboard</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Real-time overview of your banking operations</p>', unsafe_allow_html=True)
@@ -1001,11 +912,11 @@ def show_dashboard():
     with col3:
         total_balance = conn.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE status='ACTIVE' AND account_type='SB'").fetchone()[0]
         total_interest = conn.execute("SELECT COALESCE(SUM(total_interest_earned), 0) FROM accounts WHERE status='ACTIVE' AND account_type='SB'").fetchone()[0]
-        total_maturity = total_balance + total_interest
+        maturity_value = total_balance + total_interest
         st.markdown(f'''
         <div class="metric-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
             <span class="icon">🏦</span>
-            <h3>₹{total_maturity:,.2f}</h3>
+            <h3>₹{maturity_value:,.2f}</h3>
             <p>Total SB Maturity Value</p>
         </div>
         ''', unsafe_allow_html=True)
@@ -1088,8 +999,6 @@ def show_dashboard():
 def show_customer_management():
     st.markdown('<h1 class="main-header">👥 Customer Management</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Register, view and manage customer profiles</p>', unsafe_allow_html=True)
-    
-    conn = get_db()
     
     tab1, tab2, tab3, tab4 = st.tabs(["📝 Register Customer", "👥 View Customers", "🔍 Search Customer", "📊 Customer Analytics"])
     
@@ -1220,11 +1129,11 @@ def show_customer_management():
                         if accounts:
                             st.write("**SB Accounts:**")
                             for acc in accounts:
-                                maturity_value = acc[2] + acc[4]
+                                maturity = acc[2] + acc[4]
                                 st.write(f"• {acc[0]}")
-                                st.write(f"  Balance: ₹{acc[2]:,.2f} | {acc[3]}")
-                                st.write(f"  Total Interest: ₹{acc[4]:,.2f}")
-                                st.write(f"  Maturity Value: ₹{maturity_value:,.2f}")
+                                st.write(f"  Balance: ₹{acc[2]:,.2f}")
+                                st.write(f"  Interest: ₹{acc[4]:,.2f}")
+                                st.write(f"  Maturity: ₹{maturity:,.2f} | {acc[3]}")
                         else:
                             st.write("No SB accounts linked yet")
                     
@@ -1404,12 +1313,12 @@ def show_my_details():
         if accounts:
             for acc in accounts:
                 maturity_value = acc[2] + acc[5]
-                with st.expander(f"{acc[1]} - {acc[0]} (Balance: ₹{acc[2]:,.2f})"):
+                with st.expander(f"{acc[1]} - {acc[0]} (Maturity: ₹{maturity_value:,.2f})"):
                     st.write(f"**Account Number:** {acc[0]}")
                     st.write(f"**Type:** {acc[1]}")
-                    st.write(f"**Current Balance:** ₹{acc[2]:,.2f}")
+                    st.write(f"**Principal Balance:** ₹{acc[2]:,.2f}")
                     st.write(f"**Total Interest Earned:** ₹{acc[5]:,.2f}")
-                    st.write(f"**Maturity Value (Balance + Interest):** ₹{maturity_value:,.2f}")
+                    st.write(f"**Maturity Value (Principal + Interest):** ₹{maturity_value:,.2f}")
                     st.write(f"**Interest Rate:** {acc[3]}%")
                     st.write(f"**Status:** {acc[4]}")
                     st.write(f"**Opened:** {acc[6][:10]}")
@@ -1625,6 +1534,7 @@ def show_create_sb_account():
                     st.success(f"✅ SB Account created successfully!")
                     st.info(f"Account Number: **{account_number}**")
                     st.info(f"Opening Balance: **₹{opening_balance:,.2f}**")
+                    st.info(f"Maturity Value (Principal + Interest): **₹{opening_balance:,.2f}**")
                     st.balloons()
                     st.rerun()
                 except Exception as e:
@@ -1634,7 +1544,7 @@ def show_create_sb_account():
 
 def show_sb_accounts():
     st.markdown('<h1 class="main-header">💰 Savings Bank Accounts</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Manage savings accounts, deposits and withdrawals - including maturity values</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Manage savings accounts, deposits and withdrawals with maturity values</p>', unsafe_allow_html=True)
     
     conn = get_db()
     
@@ -1673,64 +1583,65 @@ def show_sb_accounts():
                 account_data.append({
                     'Account Number': acc[0],
                     'Customer Name': acc[1],
-                    'Balance': acc[2],
+                    'Principal Balance': acc[2],
                     'Interest Rate': acc[3],
                     'Status': acc[4],
                     'Total Interest Earned': acc[5],
-                    'Maturity Value (Balance + Interest)': maturity_value,
+                    'Maturity Value': maturity_value,
                     'Opening Date': acc[6]
                 })
             
             df = pd.DataFrame(account_data)
             st.dataframe(df.style.format({
-                'Balance': '₹{:,.2f}',
+                'Principal Balance': '₹{:,.2f}',
                 'Interest Rate': '{:.2f}%',
                 'Total Interest Earned': '₹{:,.2f}',
-                'Maturity Value (Balance + Interest)': '₹{:,.2f}'
+                'Maturity Value': '₹{:,.2f}'
             }), use_container_width=True)
             
-            total_balance = sum(acc[2] for acc in accounts)
+            total_sb = sum(acc[2] for acc in accounts)
             total_interest = sum(acc[5] for acc in accounts)
-            total_maturity = total_balance + total_interest
+            total_maturity = total_sb + total_interest
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.info(f"**Total Balance: ₹{total_balance:,.2f}**")
+                st.info(f"**Total Principal: ₹{total_sb:,.2f}**")
             with col2:
-                st.info(f"**Total Interest Earned: ₹{total_interest:,.2f}**")
+                st.info(f"**Total Interest: ₹{total_interest:,.2f}**")
             with col3:
                 st.success(f"**Total Maturity Value: ₹{total_maturity:,.2f}**")
-            
-            st.divider()
-            st.info("📌 **Maturity Value** = Current Balance + Total Interest Earned")
         else:
             st.info("No SB accounts found")
     
     with tab2:
         st.subheader("Transaction (Deposit/Withdrawal)")
-        st.warning("**Note: SB Account opening balance is always ₹0.00. All transactions are recorded with voucher numbers.**")
         
         if st.session_state.user['role'] == 'customer':
             accounts = conn.execute("""
-                SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance
+                SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance,
+                       COALESCE(a.total_interest_earned, 0) as total_interest
                 FROM accounts a
                 JOIN customers c ON a.customer_id = c.id
                 WHERE a.account_type='SB' AND a.status='ACTIVE' AND c.user_id=?
             """, (st.session_state.user['id'],)).fetchall()
         else:
             accounts = conn.execute("""
-                SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance
+                SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, a.balance,
+                       COALESCE(a.total_interest_earned, 0) as total_interest
                 FROM accounts a
                 JOIN customers c ON a.customer_id = c.id
                 WHERE a.account_type='SB' AND a.status='ACTIVE'
             """).fetchall()
         
         if accounts:
-            account_options = {f"{acc[1]} - {acc[2]} (Balance: ₹{acc[3]:,.2f})": acc for acc in accounts}
+            account_options = {f"{acc[1]} - {acc[2]} (Principal: ₹{acc[3]:,.2f}, Maturity: ₹{acc[3]+acc[4]:,.2f})": acc for acc in accounts}
             selected = st.selectbox("Select Account", list(account_options.keys()))
             
             if selected:
                 account = account_options[selected]
+                maturity_value = account[3] + account[4]
+                st.info(f"**Maturity Value:** ₹{maturity_value:,.2f} (Principal: ₹{account[3]:,.2f} + Interest: ₹{account[4]:,.2f})")
+                
                 transaction_type = st.radio("Transaction Type", ["💰 DEPOSIT", "💸 WITHDRAWAL"], horizontal=True)
                 
                 with st.form("sb_transaction"):
@@ -1745,7 +1656,7 @@ def show_sb_accounts():
                         txn_type_actual = "WITHDRAWAL" if "WITHDRAWAL" in transaction_type else "DEPOSIT"
                         
                         if txn_type_actual == "WITHDRAWAL" and amount > account[3]:
-                            st.error("❌ Insufficient balance!")
+                            st.error("❌ Insufficient principal balance!")
                         else:
                             try:
                                 if txn_type_actual == "DEPOSIT":
@@ -1775,8 +1686,11 @@ def show_sb_accounts():
                                 
                                 conn.commit()
                                 
+                                new_maturity = new_balance + account[4]
                                 st.success(f"✅ Transaction successful!")
-                                st.info(f"Voucher: **{voucher_num}** | New Balance: **₹{new_balance:,.2f}**")
+                                st.info(f"Voucher: **{voucher_num}**")
+                                st.info(f"New Principal: **₹{new_balance:,.2f}**")
+                                st.info(f"New Maturity Value: **₹{new_maturity:,.2f}**")
                                 st.balloons()
                                 st.rerun()
                             except Exception as e:
@@ -1838,9 +1752,8 @@ def show_sb_accounts():
             st.info("No accounts available")
     
     with tab4:
-        st.subheader("Interest Rate Information & Maturity Details")
+        st.subheader("Interest Information & Maturity Details")
         
-        # Get SB accounts with interest details
         if st.session_state.user['role'] == 'customer':
             accounts = conn.execute("""
                 SELECT a.account_number, c.first_name || ' ' || c.last_name as name,
@@ -1867,107 +1780,46 @@ def show_sb_accounts():
             
             interest_data = []
             for acc in accounts:
-                principal = acc[2]  # Balance is the principal
+                principal = acc[2]
                 total_interest = acc[4]
                 maturity_value = principal + total_interest
                 
                 interest_data.append({
                     'Account Number': acc[0],
                     'Customer': acc[1],
-                    'Current Balance': principal,
-                    'Interest Rate': acc[3],
-                    'Total Interest Earned': total_interest,
-                    'Maturity Value (Balance + Interest)': maturity_value,
+                    'Principal': principal,
+                    'Interest Rate': f"{acc[3]:.2f}%",
+                    'Total Interest': total_interest,
+                    'Maturity Value': maturity_value,
                     'Opened': acc[5][:10] if acc[5] else 'N/A'
                 })
             
             df = pd.DataFrame(interest_data)
             st.dataframe(df.style.format({
-                'Current Balance': '₹{:,.2f}',
-                'Interest Rate': '{:.2f}%',
-                'Total Interest Earned': '₹{:,.2f}',
-                'Maturity Value (Balance + Interest)': '₹{:,.2f}'
+                'Principal': '₹{:,.2f}',
+                'Total Interest': '₹{:,.2f}',
+                'Maturity Value': '₹{:,.2f}'
             }), use_container_width=True)
             
-            total_principal = sum(d['Current Balance'] for d in interest_data)
-            total_interest = sum(d['Total Interest Earned'] for d in interest_data)
-            total_maturity = sum(d['Maturity Value (Balance + Interest)'] for d in interest_data)
+            total_principal = sum(d['Principal'] for d in interest_data)
+            total_interest = sum(d['Total Interest'] for d in interest_data)
+            total_maturity = sum(d['Maturity Value'] for d in interest_data)
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Total Balance", f"₹{total_principal:,.2f}")
+                st.metric("Total Principal", f"₹{total_principal:,.2f}")
             with col2:
                 st.metric("Total Interest Earned", f"₹{total_interest:,.2f}")
             with col3:
-                st.success(f"**Total Maturity Value: ₹{total_maturity:,.2f}**")
-            
-            st.divider()
-            
-            st.info("""
-            ### SB Account Interest Calculation Rules:
-            
-            1. **Interest Rate:** 3.50% per annum (subject to change)
-            2. **Calculation Method:** Interest is calculated on the **minimum monthly balance** between 10th and last day of each month
-            3. **Calculation Frequency:** Quarterly (March, June, September, December)
-            4. **Minimum Balance:** No minimum balance required
-            5. **Opening Balance:** Always ₹0.00
-            6. **Maturity Value:** Current Balance + Total Interest Earned
-            
-            **Formula:** Interest = (Minimum Balance × Rate × Number of Days) / (100 × 365)
-            
-            **Example:**
-            - If minimum balance in January is ₹10,000
-            - Interest for January = (10,000 × 3.50 × 31) / (100 × 365) = ₹29.73
-            - Maturity Value = ₹10,000 + ₹29.73 = ₹10,029.73
-            """)
+                st.metric("Total Maturity Value", f"₹{total_maturity:,.2f}", delta=f"₹{total_interest:,.2f}")
         else:
             st.info("No SB accounts found")
-        
-        # Show recent interest calculations
-        if st.session_state.user['role'] in ['admin', 'staff']:
-            st.subheader("Recent Interest Calculations")
-            try:
-                interest_calcs = conn.execute("""
-                    SELECT ic.calculation_date, a.account_number, c.first_name || ' ' || c.last_name,
-                           ic.principal_amount, ic.interest_rate, ic.interest_earned, ic.days_calculated
-                    FROM interest_calculations ic
-                    JOIN accounts a ON ic.account_id = a.id
-                    JOIN customers c ON a.customer_id = c.id
-                    ORDER BY ic.calculation_date DESC
-                    LIMIT 20
-                """).fetchall()
-                
-                if interest_calcs:
-                    calc_data = []
-                    for calc in interest_calcs:
-                        calc_data.append({
-                            'Date': calc[0],
-                            'Account': calc[1],
-                            'Customer': calc[2],
-                            'Principal': calc[3],
-                            'Rate': calc[4],
-                            'Interest Earned': calc[5],
-                            'Days': calc[6],
-                            'Maturity Value (Principal + Interest)': calc[3] + calc[5]
-                        })
-                    
-                    df = pd.DataFrame(calc_data)
-                    st.dataframe(df.style.format({
-                        'Principal': '₹{:,.2f}',
-                        'Rate': '{:.2f}%',
-                        'Interest Earned': '₹{:,.2f}',
-                        'Maturity Value (Principal + Interest)': '₹{:,.2f}'
-                    }), use_container_width=True)
-                else:
-                    st.info("No interest calculations yet")
-            except sqlite3.OperationalError:
-                st.info("Interest calculations feature will be available after first interest calculation")
     
     conn.close()
 
 def show_interest_calculation():
     st.markdown('<h1 class="main-header">📊 Interest Calculation</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Calculate and post interest to SB and FD accounts</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Calculate and post interest to SB accounts with journal vouchers</p>', unsafe_allow_html=True)
     
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("⛔ Unauthorized access")
@@ -1975,29 +1827,24 @@ def show_interest_calculation():
     
     conn = get_db()
     
-    tab1, tab2, tab3 = st.tabs(["🧮 SB Interest", "💎 FD Interest", "📊 Interest History"])
+    tab1, tab2, tab3 = st.tabs(["🧮 Calculate & Post Interest", "📊 Interest History", "📈 Trial Balance Impact"])
     
     with tab1:
         st.subheader("Calculate and Post SB Interest")
-        
-        # Debug info
         st.info("""
         **Interest Calculation Rules:**
         - Interest is calculated on the minimum balance for the period
         - Default interest rate: 3.5% per annum
-        - Interest is calculated from last calculation date or account opening date
         - Formula: Interest = (Min Balance × Rate × Days) / (100 × 365)
-        - **Minimum interest to post: ₹0.01**
+        - Creates automatic journal vouchers with full details
         """)
         
-        # Show SB accounts summary with detailed info
-        st.markdown("### Current SB Account Status")
+        # Show SB accounts summary
         accounts = conn.execute("""
             SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, 
                    a.balance, a.interest_rate, 
                    COALESCE(a.total_interest_earned, 0) as total_interest,
-                   COALESCE(a.last_interest_calculation, DATE(a.created_at)) as last_calc,
-                   DATE(a.created_at) as created_date
+                   COALESCE(a.last_interest_calculation, DATE(a.created_at)) as last_calc
             FROM accounts a
             JOIN customers c ON a.customer_id = c.id
             WHERE a.account_type='SB' AND a.status='ACTIVE'
@@ -2005,56 +1852,31 @@ def show_interest_calculation():
         """).fetchall()
         
         if accounts:
+            st.markdown("### Current SB Account Status")
             account_data = []
-            current_date = date.today()
-            
             for acc in accounts:
-                last_calc_date = acc[6] if acc[6] else 'Never'
                 maturity_value = acc[3] + acc[5]
-                
-                # Calculate days since last calculation
-                try:
-                    if acc[6]:
-                        last_date = datetime.strptime(acc[6], '%Y-%m-%d').date()
-                    else:
-                        last_date = datetime.strptime(acc[7], '%Y-%m-%d').date()
-                    days_since = (current_date - last_date).days
-                except:
-                    days_since = 0
-                
-                # Calculate estimated interest
-                est_interest = calculate_sb_interest(acc[3], acc[4] if acc[4] else 3.5, days_since) if days_since > 0 else 0
-                
+                last_calc_date = acc[6] if acc[6] else 'Never'
                 account_data.append({
                     'Account': acc[1],
                     'Customer': acc[2],
-                    'Balance': acc[3],
+                    'Principal': acc[3],
                     'Rate': f"{acc[4]:.2f}%" if acc[4] else "3.50%",
-                    'Total Interest': acc[5],
+                    'Interest': acc[5],
                     'Maturity Value': maturity_value,
-                    'Last Calculation': last_calc_date,
-                    'Days Since': days_since,
-                    'Est. Interest': est_interest
+                    'Last Calculation': last_calc_date
                 })
             
             df = pd.DataFrame(account_data)
             st.dataframe(df.style.format({
-                'Balance': '₹{:,.2f}',
-                'Total Interest': '₹{:,.2f}',
-                'Maturity Value': '₹{:,.2f}',
-                'Est. Interest': '₹{:,.2f}'
+                'Principal': '₹{:,.2f}',
+                'Interest': '₹{:,.2f}',
+                'Maturity Value': '₹{:,.2f}'
             }), use_container_width=True)
-            
-            # Show total estimated interest
-            total_est = sum([d['Est. Interest'] for d in account_data])
-            if total_est > 0:
-                st.success(f"📊 **Total Estimated Interest to be Posted: ₹{total_est:,.2f}**")
-            else:
-                st.warning("⚠️ No interest estimated. Make sure accounts have balances and days have passed since last calculation.")
             
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("🧮 Calculate & Post SB Interest for All Accounts", use_container_width=True, type="primary"):
+                if st.button("🧮 Calculate & Post Interest", use_container_width=True, type="primary"):
                     with st.spinner("Calculating and posting interest..."):
                         status, result = calculate_and_post_sb_interest(st.session_state.user['id'])
                     
@@ -2064,49 +1886,42 @@ def show_interest_calculation():
                             
                             st.markdown("### Interest Posted Summary")
                             result_data = []
-                            total_interest_posted = 0
                             for r in result:
                                 result_data.append({
                                     'Account': r['account_number'],
                                     'Min Balance': r['min_balance'],
-                                    'Balance Before': r['balance_before'],
+                                    'Principal Before': r['balance_before'],
                                     'Interest': r['interest'],
-                                    'New Balance': r['new_balance'],
-                                    'Total Interest': r['total_interest_earned'],
+                                    'New Principal': r['new_balance'],
                                     'Maturity Value': r['maturity_value'],
                                     'Rate': f"{r['rate']:.2f}%",
                                     'Days': r['days'],
                                     'Journal Voucher': r['journal_voucher']
                                 })
-                                total_interest_posted += r['interest']
                             
                             result_df = pd.DataFrame(result_data)
                             st.dataframe(result_df.style.format({
                                 'Min Balance': '₹{:,.2f}',
-                                'Balance Before': '₹{:,.2f}',
+                                'Principal Before': '₹{:,.2f}',
                                 'Interest': '₹{:,.2f}',
-                                'New Balance': '₹{:,.2f}',
-                                'Total Interest': '₹{:,.2f}',
+                                'New Principal': '₹{:,.2f}',
                                 'Maturity Value': '₹{:,.2f}'
                             }), use_container_width=True)
                             
-                            st.metric("Total Interest Posted", f"₹{total_interest_posted:,.2f}")
+                            total_interest = sum(r['interest'] for r in result)
+                            st.metric("Total Interest Posted", f"₹{total_interest:,.2f}")
+                            st.info("✅ Journal vouchers created and posted. Check Trial Balance for impact.")
                             st.balloons()
                             
-                            # Download option
                             csv = result_df.to_csv(index=False)
-                            st.download_button("📥 Download Interest Summary", csv, "sb_interest_posting.csv", "text/csv")
-                            
-                            # Show trial balance impact
-                            st.info(f"📊 **Trial Balance Impact:** Interest Paid on SB (Debit) and SB Account (Credit) increased by ₹{total_interest_posted:,.2f}")
+                            st.download_button("📥 Download Summary", csv, "interest_posting.csv", "text/csv")
                         else:
-                            st.info("No interest to post. All accounts are up to date or have zero balance.")
+                            st.info("No interest to post. All accounts are up to date.")
                     else:
                         st.error(status)
             
             with col2:
-                if st.button("📊 Preview SB Interest (Without Posting)", use_container_width=True):
-                    # Preview calculation without posting
+                if st.button("📊 Preview Interest", use_container_width=True):
                     preview_data = []
                     for acc in accounts:
                         balance = acc[3]
@@ -2117,38 +1932,35 @@ def show_interest_calculation():
                             try:
                                 last_date = datetime.strptime(last_calc, '%Y-%m-%d').date()
                             except:
-                                last_date = current_date.replace(day=1)
+                                last_date = date.today().replace(day=1)
                         else:
-                            last_date = current_date.replace(day=1)
+                            last_date = date.today().replace(day=1)
                         
-                        days = (current_date - last_date).days
+                        days = (date.today() - last_date).days
                         if days > 0:
-                            # Get minimum balance (simplified version for preview)
-                            min_balance = balance
-                            interest = calculate_sb_interest(min_balance, rate, days)
+                            interest = calculate_sb_interest(balance, rate, days)
+                            maturity_value = balance + acc[5] + interest
                             preview_data.append({
                                 'Account': acc[1],
                                 'Customer': acc[2],
-                                'Balance': balance,
-                                'Min Balance': min_balance,
+                                'Principal': balance,
                                 'Rate': f"{rate:.2f}%",
                                 'Days': days,
-                                'Estimated Interest': interest,
-                                'New Balance': balance + interest,
-                                'Maturity Value': (balance + interest) + acc[5]
+                                'Interest': interest,
+                                'New Principal': balance + interest,
+                                'New Maturity': maturity_value
                             })
                     
                     if preview_data:
                         preview_df = pd.DataFrame(preview_data)
                         st.dataframe(preview_df.style.format({
-                            'Balance': '₹{:,.2f}',
-                            'Min Balance': '₹{:,.2f}',
-                            'Estimated Interest': '₹{:,.2f}',
-                            'New Balance': '₹{:,.2f}',
-                            'Maturity Value': '₹{:,.2f}'
+                            'Principal': '₹{:,.2f}',
+                            'Interest': '₹{:,.2f}',
+                            'New Principal': '₹{:,.2f}',
+                            'New Maturity': '₹{:,.2f}'
                         }), use_container_width=True)
                         
-                        total_estimated = sum(p['Estimated Interest'] for p in preview_data)
+                        total_estimated = sum(p['Interest'] for p in preview_data)
                         st.info(f"📊 Total Estimated Interest: ₹{total_estimated:,.2f}")
                     else:
                         st.info("No interest to calculate for current period")
@@ -2156,136 +1968,956 @@ def show_interest_calculation():
             st.warning("No active SB accounts found")
     
     with tab2:
-        # FD Interest tab (keep as before)
-        st.subheader("Calculate and Post FD Interest")
-        st.info("""
-        **FD Interest Calculation Rules:**
-        - Interest is calculated proportionally based on elapsed time
-        - Formula: (Total Interest × Days Elapsed) / Total Days
-        - Journal entry: Interest Paid on FD (Debit) and Interest Payable on FD (Credit)
-        """)
-        
-        # Get active FDs
-        fds = conn.execute("""
-            SELECT fd.id, fd.fd_number, c.first_name || ' ' || c.last_name as name,
-                   fd.principal_amount, fd.interest_rate, fd.start_date,
-                   fd.maturity_date, fd.maturity_amount, fd.status
-            FROM fixed_deposits fd
-            JOIN accounts a ON fd.account_id = a.id
-            JOIN customers c ON a.customer_id = c.id
-            WHERE fd.status='ACTIVE'
-            ORDER BY fd.maturity_date
-        """).fetchall()
-        
-        if fds:
-            st.markdown("### Active Fixed Deposits")
-            fd_data = []
-            for fd in fds:
-                start_date = datetime.strptime(fd[5], '%Y-%m-%d').date()
-                maturity_date = datetime.strptime(fd[6], '%Y-%m-%d').date()
-                total_days = (maturity_date - start_date).days
-                elapsed_days = (date.today() - start_date).days if date.today() > start_date else 0
-                total_interest = fd[7] - fd[3]
-                interest_earned = total_interest * (elapsed_days / total_days) if total_days > 0 else 0
-                
-                fd_data.append({
-                    'FD Number': fd[1],
-                    'Customer': fd[2],
-                    'Principal': fd[3],
-                    'Rate': f"{fd[4]:.2f}%",
-                    'Start Date': fd[5],
-                    'Maturity Date': fd[6],
-                    'Maturity Amount': fd[7],
-                    'Total Interest': total_interest,
-                    'Elapsed Days': elapsed_days,
-                    'Interest Earned': interest_earned
-                })
-            
-            df = pd.DataFrame(fd_data)
-            st.dataframe(df.style.format({
-                'Principal': '₹{:,.2f}',
-                'Maturity Amount': '₹{:,.2f}',
-                'Total Interest': '₹{:,.2f}',
-                'Interest Earned': '₹{:,.2f}'
-            }), use_container_width=True)
-            
-            # Select FD for interest posting
-            fd_options = {f"{fd[1]} - {fd[2]} (Principal: ₹{fd[3]:,.2f})": fd[0] for fd in fds}
-            selected_fd = st.selectbox("Select FD for Interest Posting", list(fd_options.keys()))
-            
-            if selected_fd:
-                fd_id = fd_options[selected_fd]
-                
-                if st.button("💎 Calculate & Post FD Interest", use_container_width=True, type="primary"):
-                    with st.spinner("Calculating and posting FD interest..."):
-                        status, result = calculate_and_post_fd_interest(fd_id, st.session_state.user['id'])
-                    
-                    if status == "SUCCESS":
-                        st.success(f"✅ FD Interest calculated and posted successfully!")
-                        st.info(f"📊 Interest Earned: ₹{result['interest_earned']:,.2f}")
-                        st.info(f"📝 Journal Voucher: {result['journal_voucher']}")
-                        st.info(f"📅 Days Elapsed: {result['days_elapsed']} days")
-                        st.balloons()
-                    else:
-                        st.error(status)
-        else:
-            st.info("No active FDs found")
-    
-    with tab3:
         st.subheader("Interest Calculation History")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("### SB Interest History")
-            sb_history = conn.execute("""
-                SELECT ic.calculation_date, a.account_number, 
-                       c.first_name || ' ' || c.last_name as customer,
-                       ic.principal_amount, ic.interest_rate, ic.interest_earned, 
-                       ic.days_calculated
-                FROM interest_calculations ic
-                JOIN accounts a ON ic.account_id = a.id
-                JOIN customers c ON a.customer_id = c.id
-                ORDER BY ic.calculation_date DESC
-                LIMIT 50
-            """).fetchall()
-            
-            if sb_history:
-                df_sb = pd.DataFrame(sb_history, columns=['Date', 'Account', 'Customer', 
-                                                         'Principal', 'Rate', 'Interest', 'Days'])
-                st.dataframe(df_sb.style.format({
-                    'Principal': '₹{:,.2f}',
-                    'Rate': '{:.2f}%',
-                    'Interest': '₹{:,.2f}'
-                }), use_container_width=True)
-            else:
-                st.info("No SB interest history")
+        history = conn.execute("""
+            SELECT ic.calculation_date, a.account_number, 
+                   c.first_name || ' ' || c.last_name as customer,
+                   ic.principal_amount, ic.interest_rate, ic.interest_earned, 
+                   ic.days_calculated,
+                   (ic.principal_amount + ic.interest_earned) as maturity_value
+            FROM interest_calculations ic
+            JOIN accounts a ON ic.account_id = a.id
+            JOIN customers c ON a.customer_id = c.id
+            ORDER BY ic.calculation_date DESC
+            LIMIT 100
+        """).fetchall()
         
-        with col2:
-            st.markdown("### FD Interest History")
-            fd_history = conn.execute("""
-                SELECT jv.voucher_date, jv.voucher_number, jv.total_amount,
-                       je.account_head, je.description
-                FROM journal_vouchers jv
-                JOIN journal_entries je ON jv.id = je.voucher_id
-                WHERE je.account_head = 'Interest Paid on FD' AND jv.status='POSTED'
-                ORDER BY jv.voucher_date DESC
-                LIMIT 50
-            """).fetchall()
+        if history:
+            hist_data = []
+            for h in history:
+                hist_data.append({
+                    'Date': h[0],
+                    'Account': h[1],
+                    'Customer': h[2],
+                    'Principal': h[3],
+                    'Rate': f"{h[4]:.2f}%",
+                    'Interest': h[5],
+                    'Days': h[6],
+                    'Maturity Value': h[7]
+                })
             
-            if fd_history:
-                df_fd = pd.DataFrame(fd_history, columns=['Date', 'Voucher', 'Amount', 
-                                                         'Account Head', 'Description'])
-                st.dataframe(df_fd.style.format({
-                    'Amount': '₹{:,.2f}'
-                }), use_container_width=True)
-            else:
-                st.info("No FD interest history")
+            df = pd.DataFrame(hist_data)
+            st.dataframe(df.style.format({
+                'Principal': '₹{:,.2f}',
+                'Interest': '₹{:,.2f}',
+                'Maturity Value': '₹{:,.2f}'
+            }), use_container_width=True)
+            
+            total_interest_paid = sum(h[5] for h in history)
+            st.metric("Total Interest Paid to Date", f"₹{total_interest_paid:,.2f}")
+            
+            csv = df.to_csv(index=False)
+            st.download_button("📥 Download History", csv, "interest_history.csv", "text/csv")
+        else:
+            st.info("No interest calculations recorded yet")
+    
+    with tab3:
+        st.subheader("Interest Impact on Trial Balance")
+        st.info("View all journal vouchers created for interest posting")
+        
+        # Show interest journal vouchers
+        interest_jvs = conn.execute("""
+            SELECT jv.voucher_number, jv.voucher_date, jv.description, jv.total_amount,
+                   jv.status,
+                   je.account_head, je.debit_amount, je.credit_amount, je.description
+            FROM journal_vouchers jv
+            JOIN journal_entries je ON jv.id = je.voucher_id
+            WHERE (je.account_head = 'Interest Paid on SB' OR je.account_head LIKE '%SB Account%')
+            AND jv.status = 'POSTED'
+            ORDER BY jv.voucher_date DESC
+            LIMIT 50
+        """).fetchall()
+        
+        if interest_jvs:
+            st.markdown(f"### 📝 Interest Journal Vouchers ({len(set(jv[0] for jv in interest_jvs))} vouchers)")
+            
+            # Group by voucher
+            jv_dict = {}
+            for jv in interest_jvs:
+                vn = jv[0]
+                if vn not in jv_dict:
+                    jv_dict[vn] = {
+                        'date': jv[1],
+                        'desc': jv[2],
+                        'amount': jv[3],
+                        'status': jv[4],
+                        'entries': []
+                    }
+                jv_dict[vn]['entries'].append({
+                    'head': jv[5],
+                    'debit': jv[6],
+                    'credit': jv[7],
+                    'desc': jv[8]
+                })
+            
+            for vn, data in jv_dict.items():
+                with st.expander(f"📄 {vn} - {data['date']} - ₹{data['amount']:,.2f} - {data['status']}"):
+                    st.write(f"**Description:** {data['desc']}")
+                    st.markdown("**Journal Entries:**")
+                    for entry in data['entries']:
+                        st.markdown(f"""
+                        <div class="jv-card">
+                            <b>{entry['head']}</b><br>
+                            Debit: ₹{entry['debit']:,.2f} | Credit: ₹{entry['credit']:,.2f}<br>
+                            <small>{entry['desc']}</small>
+                        </div>
+                        """, unsafe_allow_html=True)
+            
+            total_jv_amount = sum(jv[3] for jv in interest_jvs)
+            
+            st.divider()
+            st.markdown("### 📊 Trial Balance Impact Summary")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Interest Expense (Debit - P&L):**")
+                st.write(f"₹{total_jv_amount:,.2f}")
+                st.write("*Reduces Net Profit*")
+            
+            with col2:
+                st.markdown("**SB Account Liability (Credit - Balance Sheet):**")
+                st.write(f"₹{total_jv_amount:,.2f}")
+                st.write("*Increases SB Deposits*")
+            
+            st.success(f"✅ Trial Balance impact: Both Debit and Credit increase by ₹{total_jv_amount:,.2f} (Balanced)")
+        else:
+            st.info("No interest journal vouchers found. Post interest first to see the impact.")
+            
+            st.markdown("### Expected Journal Entry Format:")
+            st.markdown("""
+            <div class="jv-card">
+                <b>Interest Paid on SB (Expense)</b><br>
+                Debit: ₹XXX.XX | Credit: ₹0.00<br>
+                <small>Interest for A/C XXXXXX - XX days @ X.XX% p.a.</small>
+            </div>
+            <div class="jv-card">
+                <b>SB Account - XXXXXX (Liability)</b><br>
+                Debit: ₹0.00 | Credit: ₹XXX.XX<br>
+                <small>Interest credited to A/C XXXXXX</small>
+            </div>
+            """, unsafe_allow_html=True)
     
     conn.close()
 
-# [Continue with remaining functions: show_fixed_deposits, show_recurring_deposits, show_transactions, show_journal_vouchers, show_income_expenses, show_trial_balance, show_balance_sheet, show_profit_loss, show_reports]
+def show_trial_balance():
+    st.markdown('<h1 class="main-header">⚖️ Trial Balance</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Complete trial balance with all accounts including SB interest & journal vouchers</p>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
+    
+    conn = get_db()
+    
+    st.subheader("Generate Trial Balance")
+    as_on_date = st.date_input("As on Date", date.today())
+    
+    if st.button("📊 Generate Trial Balance", use_container_width=True):
+        trial_data = []
+        
+        # ==================== ASSETS (Debit Balance) ====================
+        
+        # 1. Cash in Hand
+        cash_balance = conn.execute("""
+            SELECT 
+                COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
+            FROM transactions
+            WHERE reference_type='CASH'
+        """).fetchone()[0]
+        if cash_balance != 0:
+            trial_data.append({
+                'account_head': 'Cash in Hand',
+                'category': 'Asset',
+                'debit': max(cash_balance, 0),
+                'credit': max(-cash_balance, 0),
+                'jv_ref': 'Cash transactions'
+            })
+        
+        # ==================== LIABILITIES (Credit Balance) ====================
+        
+        # 2. Savings Bank Deposits (Principal only)
+        sb_total = conn.execute("""
+            SELECT COALESCE(SUM(balance), 0) FROM accounts 
+            WHERE account_type='SB' AND status='ACTIVE'
+        """).fetchone()[0]
+        if sb_total > 0:
+            trial_data.append({
+                'account_head': 'Savings Bank Deposits (Principal)',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': sb_total,
+                'jv_ref': 'Sum of all SB account principal balances'
+            })
+        
+        # 3. Interest Payable on SB (from total_interest_earned)
+        interest_payable_sb = conn.execute("""
+            SELECT COALESCE(SUM(total_interest_earned), 0) 
+            FROM accounts 
+            WHERE account_type='SB' AND status='ACTIVE'
+        """).fetchone()[0]
+        
+        # Check journal entries as backup
+        if interest_payable_sb == 0:
+            interest_payable_sb = conn.execute("""
+                SELECT COALESCE(SUM(credit_amount), 0) 
+                FROM journal_entries je
+                JOIN journal_vouchers jv ON je.voucher_id = jv.id
+                WHERE je.account_head LIKE '%SB Account%' AND jv.status='POSTED'
+            """).fetchone()[0]
+        
+        # Check transactions as backup
+        if interest_payable_sb == 0:
+            interest_payable_sb = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0) 
+                FROM transactions 
+                WHERE transaction_type='CREDIT' AND reference_type='INTEREST'
+            """).fetchone()[0]
+        
+        if interest_payable_sb > 0:
+            # Get related JV numbers
+            jv_numbers = conn.execute("""
+                SELECT DISTINCT jv.voucher_number
+                FROM journal_vouchers jv
+                JOIN journal_entries je ON jv.id = je.voucher_id
+                WHERE je.account_head LIKE '%SB Account%' AND jv.status='POSTED'
+            """).fetchall()
+            jv_ref = ', '.join([jv[0] for jv in jv_numbers]) if jv_numbers else 'From SB interest postings'
+            
+            trial_data.append({
+                'account_head': 'Interest Payable on SB',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': interest_payable_sb,
+                'jv_ref': jv_ref
+            })
+        
+        # 4. Total SB Liability (Principal + Interest)
+        total_sb_liability = sb_total + interest_payable_sb
+        if total_sb_liability > 0:
+            trial_data.append({
+                'account_head': 'Total SB Deposits (Principal + Interest)',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': total_sb_liability,
+                'jv_ref': f'SB Principal (₹{sb_total:,.2f}) + SB Interest (₹{interest_payable_sb:,.2f})'
+            })
+        
+        # 5. Fixed Deposits
+        fd_total = conn.execute("""
+            SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if fd_total > 0:
+            trial_data.append({
+                'account_head': 'Fixed Deposits',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': fd_total,
+                'jv_ref': 'Sum of active FD principals'
+            })
+        
+        # 6. Interest Payable on FD
+        interest_payable_fd = conn.execute("""
+            SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
+            FROM fixed_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if interest_payable_fd > 0:
+            trial_data.append({
+                'account_head': 'Interest Payable on FD',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': interest_payable_fd,
+                'jv_ref': 'Accrued interest on active FDs'
+            })
+        
+        # 7. Recurring Deposits
+        rd_total = conn.execute("""
+            SELECT COALESCE(SUM(monthly_amount * installments_paid), 0) 
+            FROM recurring_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if rd_total > 0:
+            trial_data.append({
+                'account_head': 'Recurring Deposits',
+                'category': 'Liability',
+                'debit': 0,
+                'credit': rd_total,
+                'jv_ref': 'Sum of RD installments paid'
+            })
+        
+        # ==================== INCOME (Credit Balance) ====================
+        
+        # 8. Interest Earned
+        interest_earned = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Interest Earned'
+        """).fetchone()[0]
+        if interest_earned > 0:
+            trial_data.append({
+                'account_head': 'Interest Earned',
+                'category': 'Income',
+                'debit': 0,
+                'credit': interest_earned,
+                'jv_ref': 'Income entries'
+            })
+        
+        # 9. Fees & Charges
+        fees_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Fees & Charges'
+        """).fetchone()[0]
+        if fees_income > 0:
+            trial_data.append({
+                'account_head': 'Fees & Charges Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': fees_income,
+                'jv_ref': 'Income entries'
+            })
+        
+        # 10. Commission Income
+        commission_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Commission Income'
+        """).fetchone()[0]
+        if commission_income > 0:
+            trial_data.append({
+                'account_head': 'Commission Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': commission_income,
+                'jv_ref': 'Income entries'
+            })
+        
+        # 11. Other Income
+        other_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Other Income'
+        """).fetchone()[0]
+        if other_income > 0:
+            trial_data.append({
+                'account_head': 'Other Income',
+                'category': 'Income',
+                'debit': 0,
+                'credit': other_income,
+                'jv_ref': 'Income entries'
+            })
+        
+        # ==================== EXPENSES (Debit Balance) ====================
+        
+        # 12. Interest Paid on SB (from journal entries)
+        interest_paid_sb = conn.execute("""
+            SELECT COALESCE(SUM(debit_amount), 0) 
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE je.account_head = 'Interest Paid on SB' AND jv.status='POSTED'
+        """).fetchone()[0]
+        if interest_paid_sb > 0:
+            # Get JV numbers
+            jv_numbers_exp = conn.execute("""
+                SELECT DISTINCT jv.voucher_number
+                FROM journal_vouchers jv
+                JOIN journal_entries je ON jv.id = je.voucher_id
+                WHERE je.account_head = 'Interest Paid on SB' AND jv.status='POSTED'
+            """).fetchall()
+            jv_ref_exp = ', '.join([jv[0] for jv in jv_numbers_exp]) if jv_numbers_exp else 'From interest postings'
+            
+            trial_data.append({
+                'account_head': 'Interest Paid on SB Accounts',
+                'category': 'Expense',
+                'debit': interest_paid_sb,
+                'credit': 0,
+                'jv_ref': jv_ref_exp
+            })
+        
+        # 13. Salary & Wages
+        salary_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Salary & Wages'
+        """).fetchone()[0]
+        if salary_expense > 0:
+            trial_data.append({
+                'account_head': 'Salary & Wages',
+                'category': 'Expense',
+                'debit': salary_expense,
+                'credit': 0,
+                'jv_ref': 'Expense entries'
+            })
+        
+        # 14. Rent & Utilities
+        rent_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Rent & Utilities'
+        """).fetchone()[0]
+        if rent_expense > 0:
+            trial_data.append({
+                'account_head': 'Rent & Utilities',
+                'category': 'Expense',
+                'debit': rent_expense,
+                'credit': 0,
+                'jv_ref': 'Expense entries'
+            })
+        
+        # 15. Operating Expenses
+        operating_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Operating Expenses'
+        """).fetchone()[0]
+        if operating_expense > 0:
+            trial_data.append({
+                'account_head': 'Operating Expenses',
+                'category': 'Expense',
+                'debit': operating_expense,
+                'credit': 0,
+                'jv_ref': 'Expense entries'
+            })
+        
+        # 16. Administrative Expenses
+        admin_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Administrative Expenses'
+        """).fetchone()[0]
+        if admin_expense > 0:
+            trial_data.append({
+                'account_head': 'Administrative Expenses',
+                'category': 'Expense',
+                'debit': admin_expense,
+                'credit': 0,
+                'jv_ref': 'Expense entries'
+            })
+        
+        # 17. Other Expenses
+        other_expense = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Other Expenses'
+        """).fetchone()[0]
+        if other_expense > 0:
+            trial_data.append({
+                'account_head': 'Other Expenses',
+                'category': 'Expense',
+                'debit': other_expense,
+                'credit': 0,
+                'jv_ref': 'Expense entries'
+            })
+        
+        # ==================== CAPITAL ====================
+        
+        total_debits = sum(item['debit'] for item in trial_data)
+        total_credits = sum(item['credit'] for item in trial_data)
+        
+        diff = total_credits - total_debits
+        
+        if abs(diff) > 0.01:
+            if diff > 0:
+                trial_data.append({
+                    'account_head': 'Capital/Reserves (Net Worth)',
+                    'category': 'Capital',
+                    'debit': 0,
+                    'credit': diff,
+                    'jv_ref': 'Balancing figure'
+                })
+            else:
+                trial_data.append({
+                    'account_head': 'Capital/Reserves (Net Worth)',
+                    'category': 'Capital',
+                    'debit': abs(diff),
+                    'credit': 0,
+                    'jv_ref': 'Balancing figure'
+                })
+        
+        if trial_data:
+            df = pd.DataFrame(trial_data)
+            
+            st.markdown('<div class="trial-balance-table">', unsafe_allow_html=True)
+            
+            # Summary metrics
+            liabilities = sum(item['credit'] for item in trial_data if item['category'] == 'Liability')
+            assets = sum(item['debit'] for item in trial_data if item['category'] == 'Asset')
+            expenses = sum(item['debit'] for item in trial_data if item['category'] == 'Expense')
+            income = sum(item['credit'] for item in trial_data if item['category'] == 'Income')
+            capital = sum(item['credit'] for item in trial_data if item['category'] == 'Capital') - sum(item['debit'] for item in trial_data if item['category'] == 'Capital')
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Assets", f"₹{assets:,.2f}")
+            with col2:
+                st.metric("Total Liabilities", f"₹{liabilities:,.2f}")
+            with col3:
+                st.metric("Total Income", f"₹{income:,.2f}")
+            with col4:
+                st.metric("Total Expenses", f"₹{expenses:,.2f}")
+            
+            st.divider()
+            
+            # Full trial balance with JV references
+            st.subheader("📋 Complete Trial Balance with Journal Voucher References")
+            
+            for category in ['Asset', 'Liability', 'Income', 'Expense', 'Capital']:
+                cat_data = [item for item in trial_data if item['category'] == category]
+                if cat_data:
+                    st.markdown(f"**{category}s**")
+                    cat_df = pd.DataFrame(cat_data)
+                    display_df = cat_df[['account_head', 'debit', 'credit', 'jv_ref']].copy()
+                    display_df.columns = ['Account Head', 'Debit (₹)', 'Credit (₹)', 'JV Reference / Source']
+                    st.dataframe(display_df.style.format({
+                        'Debit (₹)': '₹{:,.2f}',
+                        'Credit (₹)': '₹{:,.2f}'
+                    }), use_container_width=True)
+            
+            total_debit = df['debit'].sum()
+            total_credit = df['credit'].sum()
+            
+            st.divider()
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Debit", f"₹{total_debit:,.2f}")
+            with col2:
+                st.metric("Total Credit", f"₹{total_credit:,.2f}")
+            with col3:
+                if abs(total_debit - total_credit) < 0.01:
+                    st.success("✅ BALANCED!")
+                else:
+                    st.error(f"❌ Difference: ₹{abs(total_debit - total_credit):,.2f}")
+            
+            # Interest-specific summary
+            st.divider()
+            st.markdown("### 📊 Interest-Related Entries Summary")
+            
+            interest_tb_entries = [item for item in trial_data if 'Interest' in item['account_head']]
+            if interest_tb_entries:
+                for entry in interest_tb_entries:
+                    direction = "DEBIT" if entry['debit'] > 0 else "CREDIT"
+                    amount = entry['debit'] if entry['debit'] > 0 else entry['credit']
+                    st.write(f"• **{entry['account_head']}**: {direction} ₹{amount:,.2f}")
+                    st.write(f"  *Source: {entry['jv_ref']}*")
+                
+                st.info(f"✅ Interest Paid on SB (Expense) = Interest Payable on SB (Liability) = ₹{interest_paid_sb:,.2f}")
+                st.info(f"✅ Total SB Maturity Value in Trial Balance: ₹{total_sb_liability:,.2f}")
+            else:
+                st.info("No interest entries in trial balance yet. Use Interest Calculation to post interest.")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Export options
+            col1, col2 = st.columns(2)
+            with col1:
+                csv = df.to_csv(index=False)
+                st.download_button("📥 Download CSV", csv, "trial_balance.csv", "text/csv")
+            
+            with col2:
+                if st.button("📄 Generate PDF Report"):
+                    pdf_data = {
+                        'date': as_on_date.strftime('%d-%m-%Y'),
+                        'entries': [{'account_head': item['account_head'], 'debit': item['debit'], 'credit': item['credit']} for item in trial_data]
+                    }
+                    pdf_file = generate_report_pdf('trial_balance', pdf_data, 'trial_balance.pdf')
+                    if pdf_file:
+                        with open(pdf_file, 'rb') as f:
+                            st.download_button("📥 Download PDF", f, "trial_balance.pdf", "application/pdf")
+        else:
+            st.info("No data available for trial balance")
+    
+    conn.close()
 
-# For brevity, I'll include the most important functions. The full code would continue with all remaining functions.
+def show_balance_sheet():
+    st.markdown('<h1 class="main-header">📊 Balance Sheet</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Complete balance sheet with assets, liabilities and capital</p>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
+    
+    conn = get_db()
+    as_on_date = st.date_input("As on Date", date.today())
+    
+    if st.button("📊 Generate Balance Sheet", use_container_width=True):
+        st.markdown(f"## Balance Sheet as on {as_on_date.strftime('%d-%m-%Y')}")
+        
+        # ==================== ASSETS ====================
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">📊 ASSETS</h3>', unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Current Assets**")
+            
+            cash = conn.execute("""
+                SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
+                FROM transactions WHERE reference_type='CASH'
+            """).fetchone()[0]
+            st.write(f"💰 Cash in Hand: **₹{cash:,.2f}**")
+            
+            sb_balance = conn.execute("""
+                SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'
+            """).fetchone()[0]
+            
+            total_interest_earned = conn.execute("""
+                SELECT COALESCE(SUM(total_interest_earned), 0) 
+                FROM accounts WHERE account_type='SB' AND status='ACTIVE'
+            """).fetchone()[0]
+            
+            if total_interest_earned == 0:
+                total_interest_earned = conn.execute("""
+                    SELECT COALESCE(SUM(credit_amount), 0) 
+                    FROM journal_entries je
+                    JOIN journal_vouchers jv ON je.voucher_id = jv.id
+                    WHERE je.account_head LIKE '%SB Account%' AND jv.status='POSTED'
+                """).fetchone()[0]
+            
+            if total_interest_earned == 0:
+                total_interest_earned = conn.execute("""
+                    SELECT COALESCE(SUM(amount), 0) 
+                    FROM transactions 
+                    WHERE transaction_type='CREDIT' AND reference_type='INTEREST'
+                """).fetchone()[0]
+            
+            sb_display = sb_balance
+            sb_maturity = sb_display + total_interest_earned
+            st.write(f"🏦 SB Deposits (Principal): **₹{sb_display:,.2f}**")
+            st.write(f"📈 SB Interest Accrued: **₹{total_interest_earned:,.2f}**")
+            st.write(f"💎 SB Total Maturity Value: **₹{sb_maturity:,.2f}**")
+            total_sb = sb_display
+        
+        with col2:
+            st.markdown("**Investments**")
+            
+            fd_total = conn.execute("""
+                SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'
+            """).fetchone()[0]
+            st.write(f"💎 Fixed Deposits: **₹{fd_total:,.2f}**")
+            
+            rd_total = conn.execute("""
+                SELECT COALESCE(SUM(monthly_amount * installments_paid), 0)
+                FROM recurring_deposits WHERE status='ACTIVE'
+            """).fetchone()[0]
+            st.write(f"🔄 Recurring Deposits: **₹{rd_total:,.2f}**")
+        
+        total_assets = cash + total_sb + fd_total + rd_total
+        st.markdown(f"### **Total Assets: ₹{total_assets:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # ==================== LIABILITIES ====================
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">📋 LIABILITIES</h3>', unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Current Liabilities**")
+            
+            interest_payable_sb = conn.execute("""
+                SELECT COALESCE(SUM(total_interest_earned), 0) 
+                FROM accounts WHERE account_type='SB' AND status='ACTIVE'
+            """).fetchone()[0]
+            
+            if interest_payable_sb == 0:
+                interest_payable_sb = conn.execute("""
+                    SELECT COALESCE(SUM(credit_amount), 0) 
+                    FROM journal_entries je
+                    JOIN journal_vouchers jv ON je.voucher_id = jv.id
+                    WHERE je.account_head LIKE '%SB Account%' AND jv.status='POSTED'
+                """).fetchone()[0]
+            
+            if interest_payable_sb == 0:
+                interest_payable_sb = conn.execute("""
+                    SELECT COALESCE(SUM(amount), 0) 
+                    FROM transactions 
+                    WHERE transaction_type='CREDIT' AND reference_type='INTEREST'
+                """).fetchone()[0]
+            
+            st.write(f"📈 Interest Payable on SB: **₹{interest_payable_sb:,.2f}**")
+            
+            interest_fd = conn.execute("""
+                SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
+                FROM fixed_deposits WHERE status='ACTIVE'
+            """).fetchone()[0]
+            st.write(f"📈 Interest Payable on FD: **₹{interest_fd:,.2f}**")
+        
+        with col2:
+            st.markdown("**Deposits (Liabilities)**")
+            st.write(f"💎 FD Deposits: **₹{fd_total:,.2f}**")
+            st.write(f"🔄 RD Deposits: **₹{rd_total:,.2f}**")
+            st.write(f"🏦 SB Deposits (Principal): **₹{sb_display:,.2f}**")
+            st.write(f"🏦 SB Total Liability (Principal + Interest): **₹{sb_maturity:,.2f}**")
+        
+        total_liabilities = interest_payable_sb + interest_fd + fd_total + rd_total + sb_display
+        st.markdown(f"### **Total Liabilities: ₹{total_liabilities:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # ==================== CAPITAL ====================
+        capital = total_assets - total_liabilities
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">💰 CAPITAL</h3>', unsafe_allow_html=True)
+        st.write(f"**Capital/Net Worth: ₹{capital:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # Verification
+        if abs(total_assets - (total_liabilities + capital)) < 0.01:
+            st.success(f"✅ Balance Sheet Balanced!")
+            st.write(f"Assets (₹{total_assets:,.2f}) = Liabilities (₹{total_liabilities:,.2f}) + Capital (₹{capital:,.2f})")
+        else:
+            st.error("❌ Balance Sheet not balanced!")
+        
+        # Detailed breakdown
+        with st.expander("📊 Detailed Breakdown with Interest & Maturity Values"):
+            st.markdown("### Assets")
+            st.write(f"💰 Cash in Hand: ₹{cash:,.2f}")
+            st.write(f"🏦 SB Deposits (Principal): ₹{sb_display:,.2f}")
+            st.write(f"💎 FD Deposits: ₹{fd_total:,.2f}")
+            st.write(f"🔄 RD Deposits: ₹{rd_total:,.2f}")
+            st.write(f"**Total Assets: ₹{total_assets:,.2f}**")
+            
+            st.markdown("### Liabilities")
+            st.write(f"📈 Interest Payable on SB: ₹{interest_payable_sb:,.2f}")
+            st.write(f"📈 Interest Payable on FD: ₹{interest_fd:,.2f}")
+            st.write(f"🏦 SB Deposits (Principal): ₹{sb_display:,.2f}")
+            st.write(f"💎 FD Deposits: ₹{fd_total:,.2f}")
+            st.write(f"🔄 RD Deposits: ₹{rd_total:,.2f}")
+            st.write(f"**Total Liabilities: ₹{total_liabilities:,.2f}**")
+            
+            st.markdown("### SB Account Maturity Summary")
+            st.write(f"💰 SB Principal: ₹{sb_display:,.2f}")
+            st.write(f"📈 SB Interest Accrued: ₹{interest_payable_sb:,.2f}")
+            st.write(f"💎 SB Total Maturity Value: ₹{sb_maturity:,.2f}")
+            
+            st.markdown("### Capital")
+            st.write(f"💰 Capital/Net Worth: ₹{capital:,.2f}")
+            
+            st.markdown("### Verification")
+            st.write(f"Assets = Liabilities + Capital")
+            st.write(f"₹{total_assets:,.2f} = ₹{total_liabilities:,.2f} + ₹{capital:,.2f}")
+    
+    conn.close()
+
+def show_profit_loss():
+    st.markdown('<h1 class="main-header">💵 Profit & Loss Account</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Complete profit and loss statement with income and expenses</p>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
+    
+    conn = get_db()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        from_date = st.date_input("From Date", date.today().replace(month=1, day=1))
+    with col2:
+        to_date = st.date_input("To Date", date.today())
+    
+    if st.button("📊 Generate P&L Statement", use_container_width=True):
+        st.subheader(f"Profit & Loss Account ({from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')})")
+        
+        # ==================== INCOME ====================
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">📈 INCOME</h3>', unsafe_allow_html=True)
+        
+        income_items = []
+        
+        interest_earned = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Interest Earned' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        income_items.append(('Interest Earned', interest_earned))
+        
+        fees = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Fees & Charges' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        income_items.append(('Fees & Charges', fees))
+        
+        commission = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Commission Income' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        income_items.append(('Commission Income', commission))
+        
+        other_income = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM income
+            WHERE income_type='Other Income' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        income_items.append(('Other Income', other_income))
+        
+        total_income = 0
+        for item, amount in income_items:
+            st.write(f"• {item}: **₹{amount:,.2f}**")
+            total_income += amount
+        
+        st.markdown(f"### **Total Income: ₹{total_income:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # ==================== EXPENSES ====================
+        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">📉 EXPENSES</h3>', unsafe_allow_html=True)
+        
+        expense_items = []
+        
+        # Interest Paid on SB (from journal entries)
+        interest_paid_sb = conn.execute("""
+            SELECT COALESCE(SUM(debit_amount), 0) 
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE je.account_head = 'Interest Paid on SB' AND jv.status='POSTED'
+            AND DATE(jv.voucher_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        if interest_paid_sb > 0:
+            expense_items.append(('Interest Paid on SB', interest_paid_sb))
+        
+        salary = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Salary & Wages' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        expense_items.append(('Salary & Wages', salary))
+        
+        rent = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Rent & Utilities' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        expense_items.append(('Rent & Utilities', rent))
+        
+        operating = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Operating Expenses' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        expense_items.append(('Operating Expenses', operating))
+        
+        admin = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Administrative Expenses' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        expense_items.append(('Administrative Expenses', admin))
+        
+        other_exp = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE expense_type='Other Expenses' AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()[0]
+        expense_items.append(('Other Expenses', other_exp))
+        
+        total_expenses = 0
+        for item, amount in expense_items:
+            if amount > 0:
+                st.write(f"• {item}: **₹{amount:,.2f}**")
+                total_expenses += amount
+        
+        st.markdown(f"### **Total Expenses: ₹{total_expenses:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # ==================== NET PROFIT/LOSS ====================
+        net_profit = total_income - total_expenses
+        
+        if net_profit >= 0:
+            st.success(f"## 🎉 Net Profit: ₹{net_profit:,.2f}")
+        else:
+            st.error(f"## 📉 Net Loss: ₹{abs(net_profit):,.2f}")
+        
+        # Charts
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            income_items_filtered = [(item, amt) for item, amt in income_items if amt > 0]
+            if income_items_filtered:
+                df_income = pd.DataFrame(income_items_filtered, columns=['Source', 'Amount'])
+                fig = px.pie(df_income, values='Amount', names='Source', title='Income Breakdown',
+                             color_discrete_sequence=px.colors.qualitative.Set3)
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            expense_items_filtered = [(item, amt) for item, amt in expense_items if amt > 0]
+            if expense_items_filtered:
+                df_expense = pd.DataFrame(expense_items_filtered, columns=['Category', 'Amount'])
+                fig = px.pie(df_expense, values='Amount', names='Category', title='Expense Breakdown',
+                             color_discrete_sequence=px.colors.qualitative.Set3)
+                st.plotly_chart(fig, use_container_width=True)
+    
+    conn.close()
+
+def show_income_expenses():
+    st.markdown('<h1 class="main-header">📈 Income & Expenses</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Record and track all income and expenses</p>', unsafe_allow_html=True)
+    
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("⛔ Unauthorized access")
+        return
+    
+    conn = get_db()
+    
+    tab1, tab2 = st.tabs(["💰 Record Income", "💸 Record Expense"])
+    
+    with tab1:
+        st.subheader("Record Income")
+        
+        with st.form("income_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                income_type = st.selectbox("Income Type", [
+                    "Interest Earned",
+                    "Fees & Charges",
+                    "Commission Income",
+                    "Other Income"
+                ])
+                amount = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
+            
+            with col2:
+                income_date = st.date_input("Date", date.today())
+                description = st.text_area("Description", placeholder="Enter income details")
+            
+            if st.form_submit_button("💰 Record Income", use_container_width=True):
+                try:
+                    income_id = generate_id('INC')
+                    conn.execute("""
+                        INSERT INTO income (income_id, income_type, amount, description, date, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (income_id, income_type, amount, description, income_date, st.session_state.user['id']))
+                    conn.commit()
+                    st.success(f"✅ Income recorded successfully! ₹{amount:,.2f}")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    
+    with tab2:
+        st.subheader("Record Expense")
+        
+        with st.form("expense_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                expense_type = st.selectbox("Expense Type", [
+                    "Salary & Wages",
+                    "Rent & Utilities",
+                    "Operating Expenses",
+                    "Administrative Expenses",
+                    "Other Expenses"
+                ])
+                amount = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
+            
+            with col2:
+                expense_date = st.date_input("Date", date.today())
+                description = st.text_area("Description", placeholder="Enter expense details")
+            
+            if st.form_submit_button("💸 Record Expense", use_container_width=True):
+                try:
+                    expense_id = generate_id('EXP')
+                    conn.execute("""
+                        INSERT INTO expenses (expense_id, expense_type, amount, description, date, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (expense_id, expense_type, amount, description, expense_date, st.session_state.user['id']))
+                    conn.commit()
+                    st.success(f"✅ Expense recorded successfully! ₹{amount:,.2f}")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    
+    conn.close()
 
 def show_fixed_deposits():
     st.markdown('<h1 class="main-header">💎 Fixed Deposits</h1>', unsafe_allow_html=True)
@@ -2326,7 +2958,6 @@ def show_fixed_deposits():
                         nominee_name = st.text_input("Nominee Name", placeholder="Enter nominee name")
                         nominee_relation = st.text_input("Nominee Relation", placeholder="e.g., Spouse, Son, Daughter")
                     
-                    # Calculate maturity
                     maturity_date = start_date + timedelta(days=tenure_months * 30)
                     maturity_amount = calculate_fd_maturity(principal, interest_rate, tenure_months)
                     interest_earned = maturity_amount - principal
@@ -2439,18 +3070,10 @@ def show_fixed_deposits():
                 'Principal': '₹{:,.2f}',
                 'Maturity Amount': '₹{:,.2f}'
             }), use_container_width=True)
-            
-            for fd in maturing_fds:
-                days_left = (datetime.strptime(fd[4], '%Y-%m-%d').date() - today).days
-                st.info(f"📅 {fd[0]} - {fd[1]}: **{days_left} days left** (Matures: {fd[4]})")
         else:
             st.success("No FDs maturing in next 30 days")
     
     conn.close()
-
-# Continue with remaining functions...
-# [The rest of the functions remain the same as in the previous version]
-# ==================== REMAINING FUNCTIONS ====================
 
 def show_recurring_deposits():
     st.markdown('<h1 class="main-header">🔄 Recurring Deposits</h1>', unsafe_allow_html=True)
@@ -2572,10 +3195,6 @@ def show_recurring_deposits():
                 'Rate (%)': '{:.2f}%',
                 'Maturity Amount': '₹{:,.2f}'
             }), use_container_width=True)
-            
-            total_rd = sum(rd[2] for rd in rds)
-            total_rd_interest = sum(rd[6] - (rd[2] * rd[8]) for rd in rds)
-            st.info(f"**Total RD Deposits: ₹{total_rd:,.2f}**")
         else:
             st.info("No active RDs found")
     
@@ -2633,10 +3252,10 @@ def show_recurring_deposits():
                                     SET status='MATURED' 
                                     WHERE id=?
                                 """, (rd[0],))
-                                st.info("🎉 Congratulations! RD matured. All installments paid.")
+                                st.info("🎉 Congratulations! RD matured.")
                             
                             conn.commit()
-                            st.success(f"✅ Installment paid successfully! ({new_paid}/{rd[5]})")
+                            st.success(f"✅ Installment paid! ({new_paid}/{rd[5]})")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error: {str(e)}")
@@ -2651,7 +3270,6 @@ def show_transactions():
     
     conn = get_db()
     
-    # Filters
     st.subheader("🔍 Filter Transactions")
     col1, col2, col3, col4 = st.columns(4)
     
@@ -2664,7 +3282,6 @@ def show_transactions():
     with col4:
         to_date = st.date_input("To Date", date.today())
     
-    # Build query
     query = """
         SELECT t.transaction_id, c.first_name || ' ' || c.last_name as customer,
                a.account_number, a.account_type, t.transaction_type, t.amount,
@@ -2699,7 +3316,6 @@ def show_transactions():
         st.dataframe(df.style.format({'Amount': '₹{:,.2f}', 'Balance': '₹{:,.2f}'}), 
                     use_container_width=True)
         
-        # Summary
         total_credit = sum(t[5] for t in transactions if t[4] == 'CREDIT')
         total_debit = sum(t[5] for t in transactions if t[4] == 'DEBIT')
         
@@ -2711,11 +3327,10 @@ def show_transactions():
         with col3:
             st.metric("Net Flow", f"₹{total_credit - total_debit:,.2f}")
         
-        # Download
         csv = df.to_csv(index=False)
         st.download_button("📥 Download Transactions", csv, "transactions.csv", "text/csv")
     else:
-        st.info("No transactions found for the selected filters")
+        st.info("No transactions found")
     
     conn.close()
 
@@ -2772,7 +3387,7 @@ def show_journal_vouchers():
             st.write(f"**Total Debit: ₹{total_debit:,.2f}** | **Total Credit: ₹{total_credit:,.2f}**")
             
             if abs(total_debit - total_credit) > 0.01:
-                st.error(f"⚠️ Difference: ₹{abs(total_debit - total_credit):,.2f}. Debits must equal Credits!")
+                st.error(f"⚠️ Difference: ₹{abs(total_debit - total_credit):,.2f}")
             
             if st.form_submit_button("📝 Create Voucher", use_container_width=True):
                 if abs(total_debit - total_credit) > 0.01:
@@ -2867,414 +3482,6 @@ def show_journal_vouchers():
     
     conn.close()
 
-def show_income_expenses():
-    st.markdown('<h1 class="main-header">📈 Income & Expenses</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Record and track all income and expenses</p>', unsafe_allow_html=True)
-    
-    if st.session_state.user['role'] not in ['admin', 'staff']:
-        st.error("⛔ Unauthorized access")
-        return
-    
-    conn = get_db()
-    
-    tab1, tab2 = st.tabs(["💰 Record Income", "💸 Record Expense"])
-    
-    with tab1:
-        st.subheader("Record Income")
-        
-        with st.form("income_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                income_type = st.selectbox("Income Type", [
-                    "Interest Earned",
-                    "Fees & Charges",
-                    "Commission Income",
-                    "Other Income"
-                ])
-                amount = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
-            
-            with col2:
-                income_date = st.date_input("Date", date.today())
-                description = st.text_area("Description", placeholder="Enter income details")
-            
-            if st.form_submit_button("💰 Record Income", use_container_width=True):
-                try:
-                    income_id = generate_id('INC')
-                    conn.execute("""
-                        INSERT INTO income (income_id, income_type, amount, description, date, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (income_id, income_type, amount, description, income_date, st.session_state.user['id']))
-                    conn.commit()
-                    st.success(f"✅ Income recorded successfully! ₹{amount:,.2f}")
-                    st.balloons()
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-    
-    with tab2:
-        st.subheader("Record Expense")
-        
-        with st.form("expense_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                expense_type = st.selectbox("Expense Type", [
-                    "Salary & Wages",
-                    "Rent & Utilities",
-                    "Operating Expenses",
-                    "Administrative Expenses",
-                    "Other Expenses"
-                ])
-                amount = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
-            
-            with col2:
-                expense_date = st.date_input("Date", date.today())
-                description = st.text_area("Description", placeholder="Enter expense details")
-            
-            if st.form_submit_button("💸 Record Expense", use_container_width=True):
-                try:
-                    expense_id = generate_id('EXP')
-                    conn.execute("""
-                        INSERT INTO expenses (expense_id, expense_type, amount, description, date, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (expense_id, expense_type, amount, description, expense_date, st.session_state.user['id']))
-                    conn.commit()
-                    st.success(f"✅ Expense recorded successfully! ₹{amount:,.2f}")
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-    
-    conn.close()
-
-def show_balance_sheet():
-    st.markdown('<h1 class="main-header">📊 Balance Sheet</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Complete balance sheet with assets, liabilities and capital</p>', unsafe_allow_html=True)
-    
-    if st.session_state.user['role'] not in ['admin', 'staff']:
-        st.error("⛔ Unauthorized access")
-        return
-    
-    conn = get_db()
-    as_on_date = st.date_input("As on Date", date.today())
-    
-    if st.button("📊 Generate Balance Sheet", use_container_width=True):
-        st.markdown(f"## Balance Sheet as on {as_on_date.strftime('%d-%m-%Y')}")
-        
-        # ==================== ASSETS ====================
-        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
-        st.markdown('<h3 class="section-header">📊 ASSETS</h3>', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Current Assets**")
-            
-            cash = conn.execute("""
-                SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
-                FROM transactions WHERE reference_type='CASH'
-            """).fetchone()[0]
-            st.write(f"💰 Cash in Hand: **₹{cash:,.2f}**")
-            
-            # Get SB balance
-            sb_balance = conn.execute("""
-                SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'
-            """).fetchone()[0]
-            
-            # Get total interest earned
-            total_interest_earned = conn.execute("""
-                SELECT COALESCE(SUM(total_interest_earned), 0) 
-                FROM accounts WHERE account_type='SB' AND status='ACTIVE'
-            """).fetchone()[0]
-            
-            # Show SB Deposits (including interest if credited)
-            sb_display = sb_balance
-            st.write(f"🏦 SB Deposits: **₹{sb_display:,.2f}**")
-        
-        with col2:
-            st.markdown("**Investments**")
-            
-            fd_total = conn.execute("""
-                SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'
-            """).fetchone()[0]
-            st.write(f"💎 Fixed Deposits: **₹{fd_total:,.2f}**")
-            
-            rd_total = conn.execute("""
-                SELECT COALESCE(SUM(monthly_amount * installments_paid), 0)
-                FROM recurring_deposits WHERE status='ACTIVE'
-            """).fetchone()[0]
-            st.write(f"🔄 Recurring Deposits: **₹{rd_total:,.2f}**")
-        
-        total_assets = cash + sb_display + fd_total + rd_total
-        st.markdown(f"### **Total Assets: ₹{total_assets:,.2f}**")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.divider()
-        
-        # ==================== LIABILITIES ====================
-        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
-        st.markdown('<h3 class="section-header">📋 LIABILITIES</h3>', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Current Liabilities**")
-            
-            # Calculate Interest Payable on SB
-            interest_payable_sb = conn.execute("""
-                SELECT COALESCE(SUM(total_interest_earned), 0) 
-                FROM accounts WHERE account_type='SB' AND status='ACTIVE'
-            """).fetchone()[0]
-            
-            if interest_payable_sb == 0:
-                interest_payable_sb = conn.execute("""
-                    SELECT COALESCE(SUM(credit_amount), 0) 
-                    FROM journal_entries je
-                    JOIN journal_vouchers jv ON je.voucher_id = jv.id
-                    WHERE je.account_head LIKE '%SB Account%' AND jv.status='POSTED'
-                """).fetchone()[0]
-            
-            st.write(f"📈 Interest Payable on SB: **₹{interest_payable_sb:,.2f}**")
-            
-            # Interest Payable on FD
-            interest_payable_fd = conn.execute("""
-                SELECT COALESCE(SUM(credit_amount), 0) 
-                FROM journal_entries je
-                JOIN journal_vouchers jv ON je.voucher_id = jv.id
-                WHERE je.account_head = 'Interest Payable on FD' AND jv.status='POSTED'
-            """).fetchone()[0]
-            
-            if interest_payable_fd == 0:
-                interest_payable_fd = conn.execute("""
-                    SELECT COALESCE(SUM(maturity_amount - principal_amount), 0)
-                    FROM fixed_deposits WHERE status='ACTIVE'
-                """).fetchone()[0]
-            
-            st.write(f"📈 Interest Payable on FD: **₹{interest_payable_fd:,.2f}**")
-        
-        with col2:
-            st.markdown("**Deposits (Liabilities)**")
-            st.write(f"💎 FD Deposits: **₹{fd_total:,.2f}**")
-            st.write(f"🔄 RD Deposits: **₹{rd_total:,.2f}**")
-            st.write(f"🏦 SB Deposits: **₹{sb_display:,.2f}**")
-        
-        total_liabilities = interest_payable_sb + interest_payable_fd + fd_total + rd_total + sb_display
-        st.markdown(f"### **Total Liabilities: ₹{total_liabilities:,.2f}**")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.divider()
-        
-        # ==================== CAPITAL ====================
-        capital = total_assets - total_liabilities
-        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
-        st.markdown('<h3 class="section-header">💰 CAPITAL</h3>', unsafe_allow_html=True)
-        st.write(f"**Capital/Net Worth: ₹{capital:,.2f}**")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.divider()
-        
-        # ==================== VERIFICATION ====================
-        if abs(total_assets - (total_liabilities + capital)) < 0.01:
-            st.success(f"✅ Balance Sheet Balanced! Assets (₹{total_assets:,.2f}) = Liabilities (₹{total_liabilities:,.2f}) + Capital (₹{capital:,.2f})")
-        else:
-            st.error("❌ Balance Sheet not balanced!")
-        
-        # ==================== DETAILED BREAKDOWN ====================
-        with st.expander("📊 Detailed Balance Sheet Breakdown with Interest Details"):
-            st.markdown("### Assets")
-            st.write(f"💰 Cash in Hand: ₹{cash:,.2f}")
-            st.write(f"🏦 SB Deposits: ₹{sb_display:,.2f}")
-            st.write(f"💎 FD Deposits: ₹{fd_total:,.2f}")
-            st.write(f"🔄 RD Deposits: ₹{rd_total:,.2f}")
-            st.write(f"**Total Assets: ₹{total_assets:,.2f}**")
-            
-            st.markdown("### Liabilities")
-            st.write(f"📈 Interest Payable on SB: ₹{interest_payable_sb:,.2f}")
-            st.write(f"📈 Interest Payable on FD: ₹{interest_payable_fd:,.2f}")
-            st.write(f"🏦 SB Deposits: ₹{sb_display:,.2f}")
-            st.write(f"💎 FD Deposits: ₹{fd_total:,.2f}")
-            st.write(f"🔄 RD Deposits: ₹{rd_total:,.2f}")
-            st.write(f"**Total Liabilities: ₹{total_liabilities:,.2f}**")
-            
-            st.markdown("### Capital")
-            st.write(f"💰 Capital/Net Worth: ₹{capital:,.2f}")
-            
-            st.markdown("### Interest Impact Summary")
-            st.write(f"- SB Interest Payable (added to liabilities): ₹{interest_payable_sb:,.2f}")
-            st.write(f"- FD Interest Payable (added to liabilities): ₹{interest_payable_fd:,.2f}")
-            st.write(f"- Total Interest Liability: ₹{interest_payable_sb + interest_payable_fd:,.2f}")
-            st.write(f"- SB Deposits including Interest: ₹{sb_display + interest_payable_sb:,.2f}")
-            
-            st.markdown("### Verification")
-            st.write(f"Assets = Liabilities + Capital")
-            st.write(f"₹{total_assets:,.2f} = ₹{total_liabilities:,.2f} + ₹{capital:,.2f}")
-    
-    conn.close()
-
-def show_profit_loss():
-    st.markdown('<h1 class="main-header">💵 Profit & Loss Account</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Complete profit and loss statement with income and expenses</p>', unsafe_allow_html=True)
-    
-    if st.session_state.user['role'] not in ['admin', 'staff']:
-        st.error("⛔ Unauthorized access")
-        return
-    
-    conn = get_db()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        from_date = st.date_input("From Date", date.today().replace(month=1, day=1))
-    with col2:
-        to_date = st.date_input("To Date", date.today())
-    
-    if st.button("📊 Generate P&L Statement", use_container_width=True):
-        st.subheader(f"Profit & Loss Account ({from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')})")
-        
-        # ==================== INCOME ====================
-        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
-        st.markdown('<h3 class="section-header">📈 INCOME</h3>', unsafe_allow_html=True)
-        
-        income_items = []
-        
-        # Interest Earned
-        interest_earned = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM income
-            WHERE income_type='Interest Earned' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        income_items.append(('Interest Earned', interest_earned))
-        
-        # Fees & Charges
-        fees = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM income
-            WHERE income_type='Fees & Charges' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        income_items.append(('Fees & Charges', fees))
-        
-        # Commission Income
-        commission = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM income
-            WHERE income_type='Commission Income' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        income_items.append(('Commission Income', commission))
-        
-        # Other Income
-        other_income = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM income
-            WHERE income_type='Other Income' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        income_items.append(('Other Income', other_income))
-        
-        total_income = 0
-        for item, amount in income_items:
-            st.write(f"• {item}: **₹{amount:,.2f}**")
-            total_income += amount
-        
-        st.markdown(f"### **Total Income: ₹{total_income:,.2f}**")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.divider()
-        
-        # ==================== EXPENSES ====================
-        st.markdown('<div class="balance-sheet-card">', unsafe_allow_html=True)
-        st.markdown('<h3 class="section-header">📉 EXPENSES</h3>', unsafe_allow_html=True)
-        
-        expense_items = []
-        
-        # Interest Paid on SB (from journal entries)
-        interest_paid_sb = conn.execute("""
-            SELECT COALESCE(SUM(debit_amount), 0) 
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE je.account_head = 'Interest Paid on SB' AND jv.status='POSTED'
-            AND DATE(jv.voucher_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        if interest_paid_sb > 0:
-            expense_items.append(('Interest Paid on SB', interest_paid_sb))
-        
-        # Interest Paid on FD (from journal entries)
-        interest_paid_fd = conn.execute("""
-            SELECT COALESCE(SUM(debit_amount), 0) 
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE je.account_head = 'Interest Paid on FD' AND jv.status='POSTED'
-            AND DATE(jv.voucher_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        if interest_paid_fd > 0:
-            expense_items.append(('Interest Paid on FD', interest_paid_fd))
-        
-        # Salary & Wages
-        salary = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM expenses
-            WHERE expense_type='Salary & Wages' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        expense_items.append(('Salary & Wages', salary))
-        
-        # Rent & Utilities
-        rent = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM expenses
-            WHERE expense_type='Rent & Utilities' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        expense_items.append(('Rent & Utilities', rent))
-        
-        # Operating Expenses
-        operating = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM expenses
-            WHERE expense_type='Operating Expenses' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        expense_items.append(('Operating Expenses', operating))
-        
-        # Administrative Expenses
-        admin = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM expenses
-            WHERE expense_type='Administrative Expenses' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        expense_items.append(('Administrative Expenses', admin))
-        
-        # Other Expenses
-        other_exp = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM expenses
-            WHERE expense_type='Other Expenses' AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()[0]
-        expense_items.append(('Other Expenses', other_exp))
-        
-        total_expenses = 0
-        for item, amount in expense_items:
-            if amount > 0:
-                st.write(f"• {item}: **₹{amount:,.2f}**")
-                total_expenses += amount
-        
-        st.markdown(f"### **Total Expenses: ₹{total_expenses:,.2f}**")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.divider()
-        
-        # ==================== NET PROFIT/LOSS ====================
-        net_profit = total_income - total_expenses
-        
-        if net_profit >= 0:
-            st.success(f"## 🎉 Net Profit: ₹{net_profit:,.2f}")
-        else:
-            st.error(f"## 📉 Net Loss: ₹{abs(net_profit):,.2f}")
-        
-        # ==================== CHARTS ====================
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            income_items_filtered = [(item, amt) for item, amt in income_items if amt > 0]
-            if income_items_filtered:
-                df_income = pd.DataFrame(income_items_filtered, columns=['Source', 'Amount'])
-                fig = px.pie(df_income, values='Amount', names='Source', title='Income Breakdown',
-                             color_discrete_sequence=px.colors.qualitative.Set3)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            expense_items_filtered = [(item, amt) for item, amt in expense_items if amt > 0]
-            if expense_items_filtered:
-                df_expense = pd.DataFrame(expense_items_filtered, columns=['Category', 'Amount'])
-                fig = px.pie(df_expense, values='Amount', names='Category', title='Expense Breakdown',
-                             color_discrete_sequence=px.colors.qualitative.Set3)
-                st.plotly_chart(fig, use_container_width=True)
-    
-    conn.close()
-
 def show_reports():
     st.markdown('<h1 class="main-header">📋 Reports</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Generate and download various reports</p>', unsafe_allow_html=True)
@@ -3331,77 +3538,27 @@ def show_reports():
                 'Principal': '₹{:,.2f}',
                 'Maturity Amt': '₹{:,.2f}'
             }), use_container_width=True)
-            csv = df.to_csv(index=False)
-            st.download_button("📥 Download CSV", csv, "fd_maturity_report.csv", "text/csv")
     
-    elif report_type == "RD Installment Report":
-        st.subheader("RD Installment Report")
-        rds = conn.execute("""
-            SELECT rd.rd_number, c.first_name || ' ' || c.last_name as name,
-                   rd.monthly_amount, rd.installments_paid, rd.total_installments,
-                   rd.start_date, rd.maturity_date, rd.status
-            FROM recurring_deposits rd
-            JOIN accounts a ON rd.account_id = a.id
+    elif report_type == "Interest Calculation Report":
+        st.subheader("Interest Calculation Report")
+        calcs = conn.execute("""
+            SELECT ic.calculation_date, a.account_number, 
+                   c.first_name || ' ' || c.last_name as customer,
+                   ic.principal_amount, ic.interest_rate, ic.interest_earned, ic.days_calculated
+            FROM interest_calculations ic
+            JOIN accounts a ON ic.account_id = a.id
             JOIN customers c ON a.customer_id = c.id
-            ORDER BY rd.created_at DESC
+            ORDER BY ic.calculation_date DESC
         """).fetchall()
         
-        if rds:
-            df = pd.DataFrame(rds, columns=['RD No', 'Customer', 'Monthly Amount', 
-                                           'Paid', 'Total', 'Start Date', 'Maturity Date', 'Status'])
-            df['Progress'] = df.apply(lambda row: f"{row['Paid']}/{row['Total']}", axis=1)
+        if calcs:
+            df = pd.DataFrame(calcs, columns=['Date', 'Account', 'Customer', 'Principal', 
+                                             'Rate', 'Interest', 'Days'])
             st.dataframe(df.style.format({
-                'Monthly Amount': '₹{:,.2f}'
+                'Principal': '₹{:,.2f}',
+                'Rate': '{:.2f}%',
+                'Interest': '₹{:,.2f}'
             }), use_container_width=True)
-            csv = df.to_csv(index=False)
-            st.download_button("📥 Download CSV", csv, "rd_installment_report.csv", "text/csv")
-    
-    elif report_type == "Transaction Summary":
-        st.subheader("Transaction Summary")
-        col1, col2 = st.columns(2)
-        with col1:
-            from_date = st.date_input("From Date", date.today().replace(day=1))
-        with col2:
-            to_date = st.date_input("To Date", date.today())
-        
-        if st.button("Generate Summary"):
-            # Summary by account type
-            summary = conn.execute("""
-                SELECT a.account_type, 
-                       COUNT(*) as transaction_count,
-                       SUM(CASE WHEN t.transaction_type='CREDIT' THEN t.amount ELSE 0 END) as total_credits,
-                       SUM(CASE WHEN t.transaction_type='DEBIT' THEN t.amount ELSE 0 END) as total_debits
-                FROM transactions t
-                JOIN accounts a ON t.account_id = a.id
-                WHERE DATE(t.created_at) BETWEEN ? AND ?
-                GROUP BY a.account_type
-            """, (from_date, to_date)).fetchall()
-            
-            if summary:
-                df = pd.DataFrame(summary, columns=['Account Type', 'Transactions', 'Credits', 'Debits'])
-                st.dataframe(df.style.format({
-                    'Credits': '₹{:,.2f}',
-                    'Debits': '₹{:,.2f}'
-                }), use_container_width=True)
-            else:
-                st.info("No transactions in selected period")
-    
-    elif report_type == "KYC Status Report":
-        st.subheader("KYC Status Report")
-        kyc_data = conn.execute("""
-            SELECT kyc_status, COUNT(*) as count,
-                   SUM(CASE WHEN kyc_status='VERIFIED' THEN 1 ELSE 0 END) as verified_count
-            FROM customers
-            GROUP BY kyc_status
-        """).fetchall()
-        
-        if kyc_data:
-            df = pd.DataFrame(kyc_data, columns=['Status', 'Count', 'Verified'])
-            st.dataframe(df, use_container_width=True)
-            
-            # KYC Pie Chart
-            fig = px.pie(df, values='Count', names='Status', title='KYC Status Distribution')
-            st.plotly_chart(fig, use_container_width=True)
     
     elif report_type == "Daily Transaction Report":
         st.subheader("Daily Transaction Report")
@@ -3421,79 +3578,8 @@ def show_reports():
             df = pd.DataFrame(transactions, columns=['Txn ID', 'Customer', 'Account Type',
                                                       'Type', 'Amount', 'Voucher', 'Time'])
             st.dataframe(df.style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
-            
-            # Summary
-            total_credit = sum(t[4] for t in transactions if t[3] == 'CREDIT')
-            total_debit = sum(t[4] for t in transactions if t[3] == 'DEBIT')
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Credits", f"₹{total_credit:,.2f}")
-            with col2:
-                st.metric("Total Debits", f"₹{total_debit:,.2f}")
-            with col3:
-                st.metric("Net Flow", f"₹{total_credit - total_debit:,.2f}")
-            
-            csv = df.to_csv(index=False)
-            st.download_button("📥 Download Report", csv, f"daily_transactions_{report_date}.csv", "text/csv")
         else:
             st.info(f"No transactions on {report_date}")
-    
-    elif report_type == "Interest Calculation Report":
-        st.subheader("Interest Calculation Report")
-        col1, col2 = st.columns(2)
-        with col1:
-            interest_type = st.selectbox("Interest Type", ["All", "SB", "FD"])
-        with col2:
-            if st.button("Generate Report"):
-                if interest_type == "All" or interest_type == "SB":
-                    st.markdown("### SB Interest Calculations")
-                    sb_calcs = conn.execute("""
-                        SELECT ic.calculation_date, a.account_number, 
-                               c.first_name || ' ' || c.last_name as customer,
-                               ic.principal_amount, ic.interest_rate, ic.interest_earned, 
-                               ic.days_calculated
-                        FROM interest_calculations ic
-                        JOIN accounts a ON ic.account_id = a.id
-                        JOIN customers c ON a.customer_id = c.id
-                        ORDER BY ic.calculation_date DESC
-                        LIMIT 50
-                    """).fetchall()
-                    
-                    if sb_calcs:
-                        df_sb = pd.DataFrame(sb_calcs, columns=['Date', 'Account', 'Customer', 
-                                                               'Principal', 'Rate', 'Interest', 'Days'])
-                        st.dataframe(df_sb.style.format({
-                            'Principal': '₹{:,.2f}',
-                            'Rate': '{:.2f}%',
-                            'Interest': '₹{:,.2f}'
-                        }), use_container_width=True)
-                        csv_sb = df_sb.to_csv(index=False)
-                        st.download_button("📥 Download SB Interest Report", csv_sb, "sb_interest_report.csv", "text/csv")
-                
-                if interest_type == "All" or interest_type == "FD":
-                    st.markdown("### FD Interest Calculations")
-                    fd_calcs = conn.execute("""
-                        SELECT jv.voucher_date, jv.voucher_number, 
-                               jv.total_amount as interest_amount,
-                               je.description
-                        FROM journal_vouchers jv
-                        JOIN journal_entries je ON jv.id = je.voucher_id
-                        WHERE je.account_head = 'Interest Paid on FD' AND jv.status='POSTED'
-                        ORDER BY jv.voucher_date DESC
-                        LIMIT 50
-                    """).fetchall()
-                    
-                    if fd_calcs:
-                        df_fd = pd.DataFrame(fd_calcs, columns=['Date', 'Voucher', 'Interest', 'Description'])
-                        st.dataframe(df_fd.style.format({
-                            'Interest': '₹{:,.2f}'
-                        }), use_container_width=True)
-                        csv_fd = df_fd.to_csv(index=False)
-                        st.download_button("📥 Download FD Interest Report", csv_fd, "fd_interest_report.csv", "text/csv")
-                
-                if not sb_calcs and not fd_calcs:
-                    st.info("No interest calculations found")
     
     elif report_type == "Income & Expense Report":
         st.subheader("Income & Expense Report")
@@ -3504,7 +3590,6 @@ def show_reports():
             to_date = st.date_input("To Date", date.today())
         
         if st.button("Generate Report"):
-            # Income
             income_data = conn.execute("""
                 SELECT income_type, SUM(amount) as total
                 FROM income
@@ -3516,12 +3601,7 @@ def show_reports():
                 st.markdown("### Income")
                 df_income = pd.DataFrame(income_data, columns=['Type', 'Amount'])
                 st.dataframe(df_income.style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
-                
-                # Income pie chart
-                fig_income = px.pie(df_income, values='Amount', names='Type', title='Income Breakdown')
-                st.plotly_chart(fig_income, use_container_width=True)
             
-            # Expenses
             expense_data = conn.execute("""
                 SELECT expense_type, SUM(amount) as total
                 FROM expenses
@@ -3533,26 +3613,6 @@ def show_reports():
                 st.markdown("### Expenses")
                 df_expense = pd.DataFrame(expense_data, columns=['Type', 'Amount'])
                 st.dataframe(df_expense.style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
-                
-                # Expenses pie chart
-                fig_expense = px.pie(df_expense, values='Amount', names='Type', title='Expense Breakdown')
-                st.plotly_chart(fig_expense, use_container_width=True)
-            
-            # Net summary
-            total_income = sum([row[1] for row in income_data]) if income_data else 0
-            total_expense = sum([row[1] for row in expense_data]) if expense_data else 0
-            net = total_income - total_expense
-            
-            st.divider()
-            st.markdown("### Summary")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Income", f"₹{total_income:,.2f}")
-            with col2:
-                st.metric("Total Expenses", f"₹{total_expense:,.2f}")
-            with col3:
-                color = "green" if net >= 0 else "red"
-                st.metric("Net", f"₹{net:,.2f}", delta_color=color)
     
     conn.close()
 

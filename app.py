@@ -253,7 +253,7 @@ def calculate_sb_interest(balance, rate, days):
     return round(interest, 2)
 
 def get_minimum_balance(conn, account_id, from_date, to_date):
-    """Get minimum balance for an account during a period"""
+    """Get minimum balance for an account during a period - FIXED VERSION"""
     try:
         # Get account info
         acc_info = conn.execute("""
@@ -263,21 +263,43 @@ def get_minimum_balance(conn, account_id, from_date, to_date):
         if not acc_info:
             return 0
         
-        # Get transactions during the period
+        # Get all transactions during the period
         transactions = conn.execute("""
             SELECT balance_after, created_at
             FROM transactions
-            WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ?
+            WHERE account_id=? AND DATE(created_at) BETWEEN DATE(?) AND DATE(?)
             ORDER BY created_at ASC
         """, (account_id, from_date, to_date)).fetchall()
         
-        if transactions:
-            balances = [t[0] for t in transactions]
-            return min(balances)
+        # Start with the balance at the beginning of the period
+        # Get balance just before the from_date
+        prev_balance = conn.execute("""
+            SELECT balance_after
+            FROM transactions
+            WHERE account_id=? AND DATE(created_at) < DATE(?)
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (account_id, from_date)).fetchone()
+        
+        if prev_balance:
+            current_min = prev_balance[0]
         else:
-            return acc_info[0]
+            # If no previous transactions, use the account's opening balance
+            current_min = acc_info[0]
+        
+        # Check all transactions during the period
+        for txn in transactions:
+            if txn[0] < current_min:
+                current_min = txn[0]
+        
+        # If no transactions during period, return the starting balance
+        if not transactions:
+            return current_min
             
+        return current_min
+        
     except Exception as e:
+        print(f"Error in get_minimum_balance: {str(e)}")
         # Return current balance as fallback
         result = conn.execute("""
             SELECT balance FROM accounts WHERE id=?
@@ -285,7 +307,7 @@ def get_minimum_balance(conn, account_id, from_date, to_date):
         return result[0] if result else 0
 
 def calculate_and_post_sb_interest(created_by_user_id=1):
-    """Calculate interest for all SB accounts and post to accounts with journal entries"""
+    """Calculate interest for all SB accounts and post to accounts with journal entries - FIXED VERSION"""
     conn = get_db()
     try:
         # Get all active SB accounts
@@ -312,14 +334,14 @@ def calculate_and_post_sb_interest(created_by_user_id=1):
             last_calc_date = acc[5]
             customer_id = acc[6]
             
-            # Determine calculation period
+            # Determine the last calculation date
             if last_calc_date:
                 try:
                     last_date = datetime.strptime(last_calc_date, '%Y-%m-%d').date()
                 except:
-                    last_date = current_date.replace(day=1)
+                    last_date = current_date.replace(day=1)  # First of current month
             else:
-                # Get account creation date
+                # If never calculated, use account creation date
                 acc_created = conn.execute("""
                     SELECT DATE(created_at) FROM accounts WHERE id=?
                 """, (account_id,)).fetchone()
@@ -331,20 +353,26 @@ def calculate_and_post_sb_interest(created_by_user_id=1):
                 else:
                     last_date = current_date.replace(day=1)
             
-            # Calculate days for interest
+            # Calculate days since last calculation
             days = (current_date - last_date).days
+            
+            # Only calculate if at least 1 day has passed
             if days <= 0:
                 continue
             
-            # Get minimum balance for the period
+            # Get the minimum balance during this period
             min_balance = get_minimum_balance(conn, account_id, last_date, current_date)
+            
+            # If min_balance is 0, use the current balance
             if min_balance <= 0:
                 min_balance = balance
             
-            # Calculate interest
-            interest = calculate_sb_interest(min_balance, rate, days)
+            # Calculate interest (simple interest formula)
+            interest = (min_balance * rate * days) / (100 * 365)
+            interest = round(interest, 2)
             
-            if interest > 0:
+            # Only post if interest is more than 0.01
+            if interest > 0.01:
                 # Update account with interest
                 new_balance = balance + interest
                 new_total_interest = existing_interest + interest
@@ -418,12 +446,17 @@ def calculate_and_post_sb_interest(created_by_user_id=1):
                     'total_interest_earned': new_total_interest,
                     'maturity_value': new_balance + new_total_interest
                 })
+                print(f"Interest posted for {account_number}: ₹{interest}")  # Debug
+            else:
+                print(f"No interest for {account_number}: Interest = ₹{interest}")  # Debug
         
         conn.commit()
+        print(f"Total accounts with interest: {len(interest_posted)}")  # Debug
         return "SUCCESS", interest_posted
     
     except Exception as e:
         conn.rollback()
+        print(f"Error in interest calculation: {str(e)}")  # Debug
         return f"Error: {str(e)}", []
     finally:
         conn.close()
@@ -1946,20 +1979,25 @@ def show_interest_calculation():
     
     with tab1:
         st.subheader("Calculate and Post SB Interest")
+        
+        # Debug info
         st.info("""
         **Interest Calculation Rules:**
         - Interest is calculated on the minimum balance for the period
         - Default interest rate: 3.5% per annum
         - Interest is calculated from last calculation date or account opening date
         - Formula: Interest = (Min Balance × Rate × Days) / (100 × 365)
+        - **Minimum interest to post: ₹0.01**
         """)
         
-        # Show SB accounts summary
+        # Show SB accounts summary with detailed info
+        st.markdown("### Current SB Account Status")
         accounts = conn.execute("""
             SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, 
                    a.balance, a.interest_rate, 
                    COALESCE(a.total_interest_earned, 0) as total_interest,
-                   COALESCE(a.last_interest_calculation, DATE(a.created_at)) as last_calc
+                   COALESCE(a.last_interest_calculation, DATE(a.created_at)) as last_calc,
+                   DATE(a.created_at) as created_date
             FROM accounts a
             JOIN customers c ON a.customer_id = c.id
             WHERE a.account_type='SB' AND a.status='ACTIVE'
@@ -1967,11 +2005,26 @@ def show_interest_calculation():
         """).fetchall()
         
         if accounts:
-            st.markdown("### Current SB Account Status")
             account_data = []
+            current_date = date.today()
+            
             for acc in accounts:
                 last_calc_date = acc[6] if acc[6] else 'Never'
                 maturity_value = acc[3] + acc[5]
+                
+                # Calculate days since last calculation
+                try:
+                    if acc[6]:
+                        last_date = datetime.strptime(acc[6], '%Y-%m-%d').date()
+                    else:
+                        last_date = datetime.strptime(acc[7], '%Y-%m-%d').date()
+                    days_since = (current_date - last_date).days
+                except:
+                    days_since = 0
+                
+                # Calculate estimated interest
+                est_interest = calculate_sb_interest(acc[3], acc[4] if acc[4] else 3.5, days_since) if days_since > 0 else 0
+                
                 account_data.append({
                     'Account': acc[1],
                     'Customer': acc[2],
@@ -1979,15 +2032,25 @@ def show_interest_calculation():
                     'Rate': f"{acc[4]:.2f}%" if acc[4] else "3.50%",
                     'Total Interest': acc[5],
                     'Maturity Value': maturity_value,
-                    'Last Calculation': last_calc_date
+                    'Last Calculation': last_calc_date,
+                    'Days Since': days_since,
+                    'Est. Interest': est_interest
                 })
             
             df = pd.DataFrame(account_data)
             st.dataframe(df.style.format({
                 'Balance': '₹{:,.2f}',
                 'Total Interest': '₹{:,.2f}',
-                'Maturity Value': '₹{:,.2f}'
+                'Maturity Value': '₹{:,.2f}',
+                'Est. Interest': '₹{:,.2f}'
             }), use_container_width=True)
+            
+            # Show total estimated interest
+            total_est = sum([d['Est. Interest'] for d in account_data])
+            if total_est > 0:
+                st.success(f"📊 **Total Estimated Interest to be Posted: ₹{total_est:,.2f}**")
+            else:
+                st.warning("⚠️ No interest estimated. Make sure accounts have balances and days have passed since last calculation.")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -2001,6 +2064,7 @@ def show_interest_calculation():
                             
                             st.markdown("### Interest Posted Summary")
                             result_data = []
+                            total_interest_posted = 0
                             for r in result:
                                 result_data.append({
                                     'Account': r['account_number'],
@@ -2014,6 +2078,7 @@ def show_interest_calculation():
                                     'Days': r['days'],
                                     'Journal Voucher': r['journal_voucher']
                                 })
+                                total_interest_posted += r['interest']
                             
                             result_df = pd.DataFrame(result_data)
                             st.dataframe(result_df.style.format({
@@ -2025,8 +2090,7 @@ def show_interest_calculation():
                                 'Maturity Value': '₹{:,.2f}'
                             }), use_container_width=True)
                             
-                            total_interest = sum(r['interest'] for r in result)
-                            st.metric("Total Interest Posted", f"₹{total_interest:,.2f}")
+                            st.metric("Total Interest Posted", f"₹{total_interest_posted:,.2f}")
                             st.balloons()
                             
                             # Download option
@@ -2034,7 +2098,7 @@ def show_interest_calculation():
                             st.download_button("📥 Download Interest Summary", csv, "sb_interest_posting.csv", "text/csv")
                             
                             # Show trial balance impact
-                            st.info(f"📊 **Trial Balance Impact:** Interest Paid on SB (Debit) and SB Account (Credit) increased by ₹{total_interest:,.2f}")
+                            st.info(f"📊 **Trial Balance Impact:** Interest Paid on SB (Debit) and SB Account (Credit) increased by ₹{total_interest_posted:,.2f}")
                         else:
                             st.info("No interest to post. All accounts are up to date or have zero balance.")
                     else:
@@ -2053,17 +2117,20 @@ def show_interest_calculation():
                             try:
                                 last_date = datetime.strptime(last_calc, '%Y-%m-%d').date()
                             except:
-                                last_date = date.today().replace(day=1)
+                                last_date = current_date.replace(day=1)
                         else:
-                            last_date = date.today().replace(day=1)
+                            last_date = current_date.replace(day=1)
                         
-                        days = (date.today() - last_date).days
+                        days = (current_date - last_date).days
                         if days > 0:
-                            interest = calculate_sb_interest(balance, rate, days)
+                            # Get minimum balance (simplified version for preview)
+                            min_balance = balance
+                            interest = calculate_sb_interest(min_balance, rate, days)
                             preview_data.append({
                                 'Account': acc[1],
                                 'Customer': acc[2],
                                 'Balance': balance,
+                                'Min Balance': min_balance,
                                 'Rate': f"{rate:.2f}%",
                                 'Days': days,
                                 'Estimated Interest': interest,
@@ -2075,6 +2142,7 @@ def show_interest_calculation():
                         preview_df = pd.DataFrame(preview_data)
                         st.dataframe(preview_df.style.format({
                             'Balance': '₹{:,.2f}',
+                            'Min Balance': '₹{:,.2f}',
                             'Estimated Interest': '₹{:,.2f}',
                             'New Balance': '₹{:,.2f}',
                             'Maturity Value': '₹{:,.2f}'
@@ -2088,6 +2156,7 @@ def show_interest_calculation():
             st.warning("No active SB accounts found")
     
     with tab2:
+        # FD Interest tab (keep as before)
         st.subheader("Calculate and Post FD Interest")
         st.info("""
         **FD Interest Calculation Rules:**
@@ -2116,7 +2185,8 @@ def show_interest_calculation():
                 maturity_date = datetime.strptime(fd[6], '%Y-%m-%d').date()
                 total_days = (maturity_date - start_date).days
                 elapsed_days = (date.today() - start_date).days if date.today() > start_date else 0
-                interest_earned = (fd[7] - fd[3]) * (elapsed_days / total_days) if total_days > 0 else 0
+                total_interest = fd[7] - fd[3]
+                interest_earned = total_interest * (elapsed_days / total_days) if total_days > 0 else 0
                 
                 fd_data.append({
                     'FD Number': fd[1],
@@ -2126,7 +2196,7 @@ def show_interest_calculation():
                     'Start Date': fd[5],
                     'Maturity Date': fd[6],
                     'Maturity Amount': fd[7],
-                    'Total Interest': fd[7] - fd[3],
+                    'Total Interest': total_interest,
                     'Elapsed Days': elapsed_days,
                     'Interest Earned': interest_earned
                 })
@@ -2156,19 +2226,6 @@ def show_interest_calculation():
                         st.info(f"📝 Journal Voucher: {result['journal_voucher']}")
                         st.info(f"📅 Days Elapsed: {result['days_elapsed']} days")
                         st.balloons()
-                        
-                        # Show journal entry
-                        st.markdown("### Journal Entry Created")
-                        journal_entry = pd.DataFrame([
-                            {'Account Head': 'Interest Paid on FD', 'Debit (₹)': result['interest_earned'], 'Credit (₹)': 0},
-                            {'Account Head': 'Interest Payable on FD', 'Debit (₹)': 0, 'Credit (₹)': result['interest_earned']}
-                        ])
-                        st.dataframe(journal_entry.style.format({
-                            'Debit (₹)': '₹{:,.2f}',
-                            'Credit (₹)': '₹{:,.2f}'
-                        }), use_container_width=True)
-                        
-                        st.info(f"📊 **Trial Balance Impact:** Interest Paid on FD (Debit) and Interest Payable on FD (Credit) increased by ₹{result['interest_earned']:,.2f}")
                     else:
                         st.error(status)
         else:

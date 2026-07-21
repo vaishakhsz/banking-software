@@ -1,3 +1,4 @@
+
 # 🏦 COMPLETE BANKING SYSTEM - Enterprise Edition
 import streamlit as st
 import pandas as pd
@@ -509,15 +510,17 @@ def main():
     .customer-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1.5rem; border-radius: 15px; margin-bottom: 1rem; }
     .stButton > button { width: 100%; border-radius: 10px; font-weight: 600; transition: all 0.3s ease; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 0.6rem 1.2rem; font-size: 1rem; }
     .stButton > button:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(102,126,234,0.4); }
-    .info-box { background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); padding: 1rem; border-radius: 10px; border-left: 4px solid #667eea; margin: 1rem 0; }
-    .success-box { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); padding: 1rem; border-radius: 10px; border-left: 4px solid #10b981; margin: 1rem 0; }
-    .warning-box { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding: 1rem; border-radius: 10px; border-left: 4px solid #f59e0b; margin: 1rem 0; }
-    .danger-box { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); padding: 1rem; border-radius: 10px; border-left: 4px solid #ef4444; margin: 1rem 0; }
+    .info-box { background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); padding: 1rem; border-radius: 10px; border-left: 4px solid #667eea; margin: 1rem 0; color: black; }
+    .success-box { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); padding: 1rem; border-radius: 10px; border-left: 4px solid #10b981; margin: 1rem 0; color: black; }
+    .warning-box { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding: 1rem; border-radius: 10px; border-left: 4px solid #f59e0b; margin: 1rem 0; color: black; }
+    .danger-box { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); padding: 1rem; border-radius: 10px; border-left: 4px solid #ef4444; margin: 1rem 0; color: black; }
     .trial-balance-table { background: white; padding: 1.5rem; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-    .balance-sheet-card { background: white; padding: 1.5rem; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 1rem; }
+    .balance-sheet-card { background: white; padding: 1.5rem; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 1rem; color: black; }
+    .balance-sheet-card h3 { color: black !important; }
+    .balance-sheet-card .section-header { color: #667eea !important; }
     .section-header { font-size: 1.3rem; font-weight: bold; color: #667eea; border-bottom: 3px solid #667eea; padding-bottom: 0.5rem; margin-bottom: 1rem; }
-    .jv-card { background: #f8f9fa; padding: 1rem; border-radius: 10px; border-left: 4px solid #667eea; margin: 0.5rem 0; }
-    .date-info-box { background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%); padding: 1.2rem; border-radius: 12px; border: 1px solid #c4b5fd; margin: 1rem 0; }
+    .jv-card { background: #f8f9fa; padding: 1rem; border-radius: 10px; border-left: 4px solid #667eea; margin: 0.5rem 0; color: black; }
+    .date-info-box { background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%); padding: 1.2rem; border-radius: 12px; border: 1px solid #c4b5fd; margin: 1rem 0; color: black; }
     .login-container { max-width: 450px; margin: 0 auto; padding: 2rem; background: white; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { border-radius: 10px 10px 0 0; padding: 0.5rem 1rem; font-weight: 600; }
@@ -808,6 +811,64 @@ def show_sb_accounts():
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {str(e)}")
+    with tab3:
+        st.subheader("Account Statement")
+        if st.session_state.user['role'] == 'customer':
+            accounts = conn.execute("SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name FROM accounts a JOIN customers c ON a.customer_id = c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND c.user_id=?", (st.session_state.user['id'],)).fetchall()
+        else:
+            accounts = conn.execute("SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name FROM accounts a JOIN customers c ON a.customer_id = c.id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
+        if accounts:
+            account_options = {f"{acc[1]} - {acc[2]}": acc[0] for acc in accounts}
+            selected = st.selectbox("Select Account for Statement", list(account_options.keys()), key="stmt_select")
+            if selected:
+                account_id = account_options[selected]
+                col1, col2 = st.columns(2)
+                with col1:
+                    from_date = st.date_input("From Date", date.today() - timedelta(days=30), key="stmt_from")
+                with col2:
+                    to_date = st.date_input("To Date", date.today(), key="stmt_to")
+                transactions = conn.execute("SELECT transaction_id, created_at, transaction_type, amount, balance_after, description, reference_type, voucher_number FROM transactions WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ? ORDER BY created_at DESC", (account_id, from_date, to_date)).fetchall()
+                if transactions:
+                    df = pd.DataFrame(transactions, columns=['Transaction ID', 'Date', 'Type', 'Amount', 'Balance', 'Description', 'Mode', 'Voucher No.'])
+                    st.dataframe(df.style.format({'Amount': '₹{:,.2f}', 'Balance': '₹{:,.2f}'}), use_container_width=True)
+                    csv = df.to_csv(index=False)
+                    st.download_button("📥 Download Statement", csv, "account_statement.csv", "text/csv")
+                else:
+                    st.info("No transactions in selected period")
+        else:
+            st.info("No accounts available")
+    with tab4:
+        st.subheader("Interest Information & Maturity Details")
+        if st.session_state.user['role'] == 'customer':
+            accounts = conn.execute("SELECT a.account_number, c.first_name || ' ' || c.last_name as name, a.balance, a.interest_rate, COALESCE(a.total_interest_earned, 0) as total_interest, a.created_at, a.last_interest_calculation FROM accounts a JOIN customers c ON a.customer_id = c.id WHERE a.account_type='SB' AND c.user_id=? ORDER BY a.created_at DESC", (st.session_state.user['id'],)).fetchall()
+        else:
+            accounts = conn.execute("SELECT a.account_number, c.first_name || ' ' || c.last_name as name, a.balance, a.interest_rate, COALESCE(a.total_interest_earned, 0) as total_interest, a.created_at, a.last_interest_calculation FROM accounts a JOIN customers c ON a.customer_id = c.id WHERE a.account_type='SB' ORDER BY a.created_at DESC").fetchall()
+        if accounts:
+            st.markdown("### 📊 SB Account Maturity Values")
+            interest_data = []
+            for acc in accounts:
+                interest_data.append({
+                    'Account Number': acc[0], 'Customer': acc[1],
+                    'Principal': acc[2], 'Interest Rate': f"{acc[3]:.2f}%" if acc[3] else "3.50%",
+                    'Total Interest': acc[4], 'Maturity Value': acc[2] + acc[4],
+                    'Last Calc': acc[6] if acc[6] else 'Never', 'Opened': acc[5][:10] if acc[5] else 'N/A'
+                })
+            df = pd.DataFrame(interest_data)
+            st.dataframe(df.style.format({'Principal': '₹{:,.2f}', 'Total Interest': '₹{:,.2f}', 'Maturity Value': '₹{:,.2f}'}), use_container_width=True)
+            col1, col2, col3 = st.columns(3)
+            with col1: st.metric("Total Principal", f"₹{sum(d['Principal'] for d in interest_data):,.2f}")
+            with col2: st.metric("Total Interest", f"₹{sum(d['Total Interest'] for d in interest_data):,.2f}")
+            with col3: st.metric("Total Maturity", f"₹{sum(d['Maturity Value'] for d in interest_data):,.2f}")
+        else:
+            st.info("No SB accounts found")
+        if st.session_state.user['role'] in ['admin', 'staff']:
+            st.subheader("Recent Interest Calculations")
+            interest_calcs = conn.execute("SELECT ic.calculation_date, a.account_number, c.first_name || ' ' || c.last_name, ic.principal_amount, ic.interest_rate, ic.interest_earned, ic.days_calculated FROM interest_calculations ic JOIN accounts a ON ic.account_id = a.id JOIN customers c ON a.customer_id = c.id ORDER BY ic.calculation_date DESC LIMIT 20").fetchall()
+            if interest_calcs:
+                calc_data = [{'Date': c[0], 'Account': c[1], 'Customer': c[2], 'Principal': c[3], 'Rate': f"{c[4]:.2f}%", 'Interest': c[5], 'Days': c[6]} for c in interest_calcs]
+                st.dataframe(pd.DataFrame(calc_data).style.format({'Principal': '₹{:,.2f}', 'Interest': '₹{:,.2f}'}), use_container_width=True)
+            else:
+                st.info("No interest calculations yet")
     conn.close()
 
 def show_interest_calculation():
@@ -825,20 +886,13 @@ def show_interest_calculation():
     with tab1:
         st.subheader("Calculate and Post SB Interest")
         
-        # Date range selection
         st.markdown('<div class="date-info-box">', unsafe_allow_html=True)
         st.markdown("### 📅 Select Interest Calculation Period")
         col1, col2 = st.columns(2)
         with col1:
-            calc_from_date = st.date_input("Calculate Interest From", 
-                                           value=date.today().replace(day=1),
-                                           help="Start date for interest calculation",
-                                           key="int_calc_from")
+            calc_from_date = st.date_input("Calculate Interest From", value=date.today().replace(day=1), help="Start date for interest calculation", key="int_calc_from")
         with col2:
-            calc_to_date = st.date_input("Calculate Interest To", 
-                                         value=date.today(),
-                                         help="End date for interest calculation",
-                                         key="int_calc_to")
+            calc_to_date = st.date_input("Calculate Interest To", value=date.today(), help="End date for interest calculation", key="int_calc_to")
         
         if calc_from_date > calc_to_date:
             st.error("❌ 'From Date' cannot be after 'To Date'")
@@ -857,7 +911,6 @@ def show_interest_calculation():
         - Interest is posted to account balance and recorded in journal vouchers
         """)
         
-        # Show SB accounts summary
         accounts = conn.execute("""
             SELECT a.id, a.account_number, c.first_name || ' ' || c.last_name as name, 
                    a.balance, a.interest_rate, 
@@ -959,7 +1012,6 @@ def show_interest_calculation():
         st.subheader("Interest Impact on Trial Balance")
         st.info("View all journal vouchers created for interest posting")
         
-        # Get interest journal vouchers
         interest_jvs = conn.execute("""
             SELECT jv.voucher_number, jv.voucher_date, jv.description, jv.total_amount, jv.status,
                    je.account_head, je.debit_amount, je.credit_amount, je.description
@@ -971,7 +1023,6 @@ def show_interest_calculation():
         """).fetchall()
         
         if interest_jvs:
-            # Group by voucher
             jv_dict = {}
             for jv in interest_jvs:
                 vn = jv[0]
@@ -988,7 +1039,6 @@ def show_interest_calculation():
                         color = "#fee2e2" if entry['debit'] > 0 else "#d1fae5"
                         st.markdown(f"""<div style="background: {color}; color: black; padding: 0.8rem; border-radius: 8px; margin: 0.3rem 0; border-left: 4px solid #667eea;"><b>{entry['head']}</b><br>Debit: ₹{entry['debit']:,.2f} | Credit: ₹{entry['credit']:,.2f}<br><small>{entry['desc']}</small></div>""", unsafe_allow_html=True)
             
-            # Calculate total from unique vouchers
             total_jv_amount = sum(data['amount'] for data in jv_dict.values())
             
             st.divider()
@@ -1032,12 +1082,10 @@ def show_trial_balance():
     if st.button("📊 Generate Trial Balance", use_container_width=True):
         trial_data = []
         
-        # Assets
         cash_balance = conn.execute("SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0) FROM transactions WHERE reference_type='CASH'").fetchone()[0]
         if abs(cash_balance) > 0:
             trial_data.append({'account_head': 'Cash in Hand', 'category': 'Asset', 'debit': max(cash_balance, 0), 'credit': max(-cash_balance, 0), 'jv_ref': 'Cash transactions'})
         
-        # Liabilities
         sb_total = conn.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         interest_payable_sb = conn.execute("SELECT COALESCE(SUM(total_interest_earned), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         if interest_payable_sb == 0:
@@ -1058,13 +1106,11 @@ def show_trial_balance():
         if rd_total > 0:
             trial_data.append({'account_head': 'Recurring Deposits', 'category': 'Liability', 'debit': 0, 'credit': rd_total, 'jv_ref': 'RD installments paid'})
         
-        # Income
         for inc_type in ['Interest Earned', 'Fees & Charges', 'Commission Income', 'Other Income']:
             amt = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM income WHERE income_type=?", (inc_type,)).fetchone()[0]
             if amt > 0:
                 trial_data.append({'account_head': inc_type, 'category': 'Income', 'debit': 0, 'credit': amt, 'jv_ref': 'Income entries'})
         
-        # Expenses
         interest_paid_sb = conn.execute("SELECT COALESCE(SUM(debit_amount), 0) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE je.account_head='Interest Paid on SB' AND jv.status='POSTED'").fetchone()[0]
         if interest_paid_sb > 0:
             jv_numbers_exp = conn.execute("SELECT DISTINCT jv.voucher_number FROM journal_vouchers jv JOIN journal_entries je ON jv.id=je.voucher_id WHERE je.account_head='Interest Paid on SB' AND jv.status='POSTED'").fetchall()
@@ -1076,7 +1122,6 @@ def show_trial_balance():
             if amt > 0:
                 trial_data.append({'account_head': exp_type, 'category': 'Expense', 'debit': amt, 'credit': 0, 'jv_ref': 'Expense entries'})
         
-        # Capital
         total_debits = sum(item['debit'] for item in trial_data)
         total_credits = sum(item['credit'] for item in trial_data)
         diff = total_credits - total_debits
@@ -1087,7 +1132,6 @@ def show_trial_balance():
             df = pd.DataFrame(trial_data)
             st.markdown('<div class="trial-balance-table">', unsafe_allow_html=True)
             
-            # Summary
             col1, col2, col3, col4 = st.columns(4)
             with col1: st.metric("Total Assets", f"₹{sum(i['debit'] for i in trial_data if i['category']=='Asset'):,.2f}")
             with col2: st.metric("Total Liabilities", f"₹{sum(i['credit'] for i in trial_data if i['category']=='Liability'):,.2f}")
@@ -1117,7 +1161,6 @@ def show_trial_balance():
                 else:
                     st.error(f"❌ Difference: ₹{abs(total_debit - total_credit):,.2f}")
             
-            # Interest summary
             st.divider()
             st.markdown("### 📊 Interest & Maturity Summary")
             st.write(f"• SB Principal: ₹{sb_total:,.2f}")
@@ -1164,21 +1207,34 @@ def show_balance_sheet():
         capital = total_assets - total_liabilities
         sb_maturity = sb_balance + total_interest
         
-        st.markdown('<div class="balance-sheet-card"><h3 class="section-header">📊 ASSETS</h3>', unsafe_allow_html=True)
-        st.write(f"💰 Cash: ₹{cash:,.2f} | 🏦 SB Principal: ₹{sb_balance:,.2f} | 💎 FD: ₹{fd_total:,.2f} | 🔄 RD: ₹{rd_total:,.2f}")
-        st.markdown(f"### Total Assets: ₹{total_assets:,.2f}</div>", unsafe_allow_html=True)
+        st.markdown('<div class="balance-sheet-card"><h3 class="section-header" style="color: #667eea !important;">📊 ASSETS</h3>', unsafe_allow_html=True)
+        st.write(f"💰 Cash: ₹{cash:,.2f}")
+        st.write(f"🏦 SB Principal: ₹{sb_balance:,.2f}")
+        st.write(f"💎 FD: ₹{fd_total:,.2f}")
+        st.write(f"🔄 RD: ₹{rd_total:,.2f}")
+        st.markdown(f"### **Total Assets: ₹{total_assets:,.2f}**</div>", unsafe_allow_html=True)
         
-        st.markdown('<div class="balance-sheet-card"><h3 class="section-header">📋 LIABILITIES</h3>', unsafe_allow_html=True)
-        st.write(f"📈 SB Interest Payable: ₹{total_interest:,.2f} | 📈 FD Interest: ₹{interest_fd:,.2f}")
-        st.write(f"🏦 SB Principal: ₹{sb_balance:,.2f} | 💎 FD: ₹{fd_total:,.2f} | 🔄 RD: ₹{rd_total:,.2f}")
+        st.markdown('<div class="balance-sheet-card"><h3 class="section-header" style="color: #667eea !important;">📋 LIABILITIES</h3>', unsafe_allow_html=True)
+        st.write(f"📈 SB Interest Payable: ₹{total_interest:,.2f}")
+        st.write(f"📈 FD Interest: ₹{interest_fd:,.2f}")
+        st.write(f"🏦 SB Principal: ₹{sb_balance:,.2f}")
+        st.write(f"💎 FD: ₹{fd_total:,.2f}")
+        st.write(f"🔄 RD: ₹{rd_total:,.2f}")
         st.write(f"💎 SB Total Liability: ₹{sb_maturity:,.2f}")
-        st.markdown(f"### Total Liabilities: ₹{total_liabilities:,.2f}</div>", unsafe_allow_html=True)
+        st.markdown(f"### **Total Liabilities: ₹{total_liabilities:,.2f}**</div>", unsafe_allow_html=True)
         
-        st.markdown('<div class="balance-sheet-card"><h3 class="section-header">💰 CAPITAL</h3>', unsafe_allow_html=True)
-        st.write(f"**Capital: ₹{capital:,.2f}**</div>", unsafe_allow_html=True)
+        st.markdown('<div class="balance-sheet-card"><h3 class="section-header" style="color: #667eea !important;">💰 CAPITAL</h3>', unsafe_allow_html=True)
+        st.write(f"**Capital/Net Worth: ₹{capital:,.2f}**</div>", unsafe_allow_html=True)
         
         if abs(total_assets - (total_liabilities + capital)) < 0.01:
             st.success(f"✅ Balanced! Assets ₹{total_assets:,.2f} = Liabilities ₹{total_liabilities:,.2f} + Capital ₹{capital:,.2f}")
+        
+        with st.expander("📊 SB Account Maturity Details"):
+            st.write(f"💰 SB Principal: ₹{sb_balance:,.2f}")
+            st.write(f"📈 SB Interest Accrued: ₹{total_interest:,.2f}")
+            st.write(f"💎 SB Total Maturity Value: ₹{sb_maturity:,.2f}")
+            if sb_balance > 0:
+                st.write(f"📊 Interest as % of Principal: {total_interest/sb_balance*100:.2f}%")
     conn.close()
 
 def show_profit_loss():
@@ -1453,14 +1509,40 @@ def show_journal_vouchers():
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
     with tab2:
-        vouchers = conn.execute("SELECT jv.voucher_number, jv.voucher_date, jv.description, jv.total_amount, jv.status FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+        st.subheader("Journal Vouchers List")
+        vouchers = conn.execute("SELECT jv.voucher_number, jv.voucher_date, jv.description, jv.total_amount, jv.status, u.username, jv.created_at FROM journal_vouchers jv LEFT JOIN users u ON jv.created_by = u.id ORDER BY jv.created_at DESC").fetchall()
         if vouchers:
             for v in vouchers:
-                sc = {'DRAFT':'🟡','POSTED':'🟢','CANCELLED':'🔴'}
-                with st.expander(f"{sc.get(v[4],'⚪')} {v[0]} - {v[1]} - ₹{v[3]:,.2f} ({v[4]})"):
+                status_color = {'DRAFT': '🟡', 'POSTED': '🟢', 'CANCELLED': '🔴'}
+                with st.expander(f"{status_color.get(v[4], '⚪')} {v[0]} - {v[1]} - ₹{v[3]:,.2f} ({v[4]})"):
+                    st.write(f"**Date:** {v[1]}")
+                    st.write(f"**Description:** {v[2]}")
+                    st.write(f"**Created by:** {v[5]}")
+                    st.write(f"**Amount:** ₹{v[3]:,.2f}")
+                    
                     entries = conn.execute("SELECT account_head, debit_amount, credit_amount FROM journal_entries WHERE voucher_id=(SELECT id FROM journal_vouchers WHERE voucher_number=?)", (v[0],)).fetchall()
                     if entries:
-                        st.dataframe(pd.DataFrame(entries, columns=['Head','Debit','Credit']).style.format({'Debit':'₹{:,.2f}','Credit':'₹{:,.2f}'}), use_container_width=True)
+                        df_entries = pd.DataFrame(entries, columns=['Account Head', 'Debit', 'Credit'])
+                        st.dataframe(df_entries.style.format({'Debit': '₹{:,.2f}', 'Credit': '₹{:,.2f}'}), use_container_width=True)
+                    
+                    if v[4] == 'DRAFT':
+                        st.divider()
+                        st.markdown("**Actions:**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button(f"✅ Post/Approve Voucher", key=f"post_{v[0]}", use_container_width=True, type="primary"):
+                                conn.execute("UPDATE journal_vouchers SET status='POSTED', posted_by=?, posted_at=CURRENT_TIMESTAMP WHERE voucher_number=?", (st.session_state.user['id'], v[0]))
+                                conn.commit()
+                                st.success(f"✅ Voucher {v[0]} posted successfully!")
+                                st.rerun()
+                        with col2:
+                            if st.button(f"❌ Cancel Voucher", key=f"cancel_{v[0]}", use_container_width=True):
+                                conn.execute("UPDATE journal_vouchers SET status='CANCELLED' WHERE voucher_number=?", (v[0],))
+                                conn.commit()
+                                st.warning(f"⚠️ Voucher {v[0]} cancelled!")
+                                st.rerun()
+        else:
+            st.info("No journal vouchers found. Create one in the 'Create Voucher' tab.")
     conn.close()
 
 def show_reports():
@@ -1509,5 +1591,8 @@ def show_my_details():
     conn.close()
 
 # ==================== MAIN ====================
+if __name__ == "__main__":
+    main()
+
 if __name__ == "__main__":
     main()

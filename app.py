@@ -1,5 +1,5 @@
 
-# 🏦 ENTERPRISE CORE BANKING SYSTEM - SB, FD & RD MODULES
+# 🏦 ENTERPRISE CORE BANKING SYSTEM - SB, FD & RD MODULES (CORRECTED)
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -7,8 +7,6 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 import uuid
 import hashlib
-import plotly.express as px
-import plotly.graph_objects as go
 
 # ==================== DATABASE INITIALIZATION ====================
 def init_database():
@@ -142,13 +140,11 @@ def create_default_admin():
     conn.close()
 
 def calculate_fd_maturity(principal, rate, months):
-    # Compound interest quarterly for FD
     years = months / 12.0
     maturity = principal * ((1 + (rate / 400.0)) ** (4 * years))
     return round(maturity, 2)
 
 def calculate_rd_maturity(monthly_amt, rate, months):
-    # RD Maturity calculation: A = P * n + P * [n(n+1)/2] * [r / 1200]
     total_deposit = monthly_amt * months
     interest = monthly_amt * (months * (months + 1) / 2.0) * (rate / 1200.0)
     return round(total_deposit + interest, 2)
@@ -341,7 +337,7 @@ def customers_module():
             df = pd.DataFrame(custs, columns=['DB ID', 'Customer ID', 'Name', 'Email', 'Phone', 'KYC Status'])
             st.dataframe(df, use_container_width=True)
             
-            sel_id = st.selectbox("Select Customer to Verify/Approve", options=[c[0] for c in custs], format_func=lambda x: next(f"{c[1]} - {c[2]} {c[5]})" for c in custs if c[0] == x))
+            sel_id = st.selectbox("Select Customer to Verify/Approve", options=[c[0] for c in custs], format_func=lambda x: next(f"{c[1]} - {c[2]} ({c[5])}" for c in custs if c[0] == x))
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("✅ Approve KYC & Open SB Account", type="primary", use_container_width=True):
@@ -387,7 +383,7 @@ def fd_accounts_module():
         if not custs:
             st.warning("No verified customers available to open an FD.")
         else:
-            with fd_form := st.form("fd_creation_form"):
+            with st.form("fd_creation_form"):
                 cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs}
                 sel_cust = st.selectbox("Select Customer", options=list(cust_dict.keys()))
                 principal = st.number_input("Deposit Principal Amount (₹)", min_value=1000.00, step=1000.00, value=50000.00)
@@ -404,10 +400,8 @@ def fd_accounts_module():
                     conn = get_db()
                     acno = generate_account_number('FD')
                     
-                    # Insert FD Account
                     conn.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, status, interest_rate, tenor_months, maturity_date, maturity_amount) VALUES (?,?,'FD',?,'ACTIVE',?,?,?,?)", (acno, cid, principal, interest_rate, tenor_months, maturity_dt, maturity_amt))
                     
-                    # Double Entry Voucher (Debit Cash / Bank, Credit FD Control Account)
                     jvn = generate_voucher_number('JOURNAL')
                     conn.execute("INSERT INTO journal_vouchers (voucher_number, voucher_date, description, total_amount, status, created_by) VALUES (?,?,?,?,'POSTED',?)", (jvn, date.today(), f"Fixed Deposit Creation {acno}", principal, st.session_state.user['id']))
                     jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -445,7 +439,7 @@ def rd_accounts_module():
             with st.form("rd_creation_form"):
                 cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs}
                 sel_cust = st.selectbox("Select Customer", options=list(cust_dict.keys()), key="rd_cust")
-                monthly_amt = st.number_input("Monthly Installment Amount (₹)", min_value=500.00, step500=500.00, value=5000.00) if hasattr(st, 'number_input') else st.number_input("Monthly Installment Amount (₹)", min_value=500.00, value=5000.00)
+                monthly_amt = st.number_input("Monthly Installment Amount (₹)", min_value=500.00, step=500.00, value=5000.00, key="rd_monthly")
                 tenor_months = st.number_input("Tenor (in Months)", min_value=6, max_value=120, value=12, key="rd_tenor")
                 interest_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.1, max_value=20.0, value=6.0, step=0.1, key="rd_rate")
                 
@@ -459,10 +453,8 @@ def rd_accounts_module():
                     conn = get_db()
                     acno = generate_account_number('RD')
                     
-                    # Insert RD Account
                     conn.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, status, interest_rate, tenor_months, monthly_installment, maturity_date, maturity_amount) VALUES (?,?,'RD',?,'ACTIVE',?,?,?,?,?)", (acno, cid, monthly_amt, interest_rate, tenor_months, monthly_amt, maturity_dt, maturity_amt))
                     
-                    # Double Entry Voucher for first installment
                     jvn = generate_voucher_number('JOURNAL')
                     conn.execute("INSERT INTO journal_vouchers (voucher_number, voucher_date, description, total_amount, status, created_by) VALUES (?,?,?,?,'POSTED',?)", (jvn, date.today(), f"Recurring Deposit Opening {acno}", monthly_amt, st.session_state.user['id']))
                     jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -577,6 +569,8 @@ def trial_balance_module():
 
 if __name__ == '__main__':
     main()
+
+
 
 
 

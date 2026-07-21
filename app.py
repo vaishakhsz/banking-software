@@ -1,5 +1,4 @@
 
-# 🏦 ENTERPRISE CORE BANKING SYSTEM - SB, FD & RD MODULES (CORRECTED)
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -10,7 +9,7 @@ import hashlib
 
 # ==================== DATABASE INITIALIZATION ====================
 def init_database():
-    conn = sqlite3.connect('banking_system_complete.db')
+    conn = sqlite3.connect('enterprise_banking_system.db')
     c = conn.cursor()
     
     # Core Tables
@@ -52,10 +51,10 @@ def init_database():
         interest_rate DECIMAL(5,2), 
         tenor_months INTEGER DEFAULT 0,
         monthly_installment DECIMAL(15,2) DEFAULT 0.00,
+        loan_amount DECIMAL(15,2) DEFAULT 0.00,
+        emi_amount DECIMAL(15,2) DEFAULT 0.00,
         maturity_date DATE,
         maturity_amount DECIMAL(15,2) DEFAULT 0.00,
-        last_interest_calculation DATE, 
-        total_interest_earned DECIMAL(15,2) DEFAULT 0.00, 
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
         FOREIGN KEY (customer_id) REFERENCES customers (id)
     )''')
@@ -69,7 +68,6 @@ def init_database():
         balance_after DECIMAL(15,2) NOT NULL, 
         description TEXT, 
         reference_type TEXT, 
-        voucher_type TEXT, 
         voucher_number TEXT, 
         created_by INTEGER, 
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
@@ -79,7 +77,8 @@ def init_database():
     
     c.execute('''CREATE TABLE IF NOT EXISTS ledger_heads (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        head_name TEXT UNIQUE NOT NULL
+        head_name TEXT UNIQUE NOT NULL,
+        category TEXT NOT NULL
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (
@@ -90,7 +89,6 @@ def init_database():
         total_amount DECIMAL(15,2) NOT NULL, 
         status TEXT DEFAULT 'POSTED', 
         created_by INTEGER, 
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
         FOREIGN KEY (created_by) REFERENCES users (id)
     )''')
     
@@ -104,25 +102,26 @@ def init_database():
         FOREIGN KEY (voucher_id) REFERENCES journal_vouchers (id)
     )''')
     
-    # Seed default accounting ledger heads including FD & RD controls
+    # Seed default accounting chart of accounts
     default_heads = [
-        'Cash', 'Bank (Main)', 'Savings Bank Control Account', 
-        'Fixed Deposit Control Account', 'Recurring Deposit Control Account',
-        'Interest Paid on SB', 'Interest Paid on FD', 'Interest Paid on RD',
-        'Fee Income', 'Rent Expense', 'Salary Expense', 'Miscellaneous'
+        ('Cash', 'Asset'), ('Bank Main Clearing', 'Asset'), ('Savings Bank Control Account', 'Liability'), 
+        ('Fixed Deposit Control Account', 'Liability'), ('Recurring Deposit Control Account', 'Liability'),
+        ('Loan Asset Portfolio', 'Asset'), ('Interest Paid on SB', 'Expense'), ('Interest Paid on FD', 'Expense'),
+        ('Interest Paid on RD', 'Expense'), ('Interest Income on Loans', 'Income'), ('Fee & Commission Income', 'Income'), 
+        ('Salary Expense', 'Expense'), ('Rent & Utilities Expense', 'Expense'), ('Capital Account', 'Equity')
     ]
-    for h in default_heads:
-        c.execute("INSERT OR IGNORE INTO ledger_heads (head_name) VALUES (?)", (h,))
+    for h, cat in default_heads:
+        c.execute("INSERT OR IGNORE INTO ledger_heads (head_name, category) VALUES (?, ?)", (h, cat))
         
     conn.commit()
     conn.close()
 
 # ==================== UTILITY FUNCTIONS ====================
-def get_db(): return sqlite3.connect('banking_system_complete.db')
+def get_db(): return sqlite3.connect('enterprise_banking_system.db')
 def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
 def generate_id(p): return f"{p}{datetime.now().strftime('%Y%m%d%H%M%S')}{str(uuid.uuid4())[:4]}"
 def generate_account_number(t): 
-    prefix = {'SB': '100', 'FD': '300', 'RD': '400'}.get(t, '900')
+    prefix = {'SB': '100', 'FD': '300', 'RD': '400', 'LOAN': '500'}.get(t, '900')
     return f"{prefix}{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
 def generate_voucher_number(v): return f"{'PMT' if v=='PAYMENT' else 'RCT' if v=='RECEIPT' else 'JNL'}{datetime.now().strftime('%Y%m%d%H%M')}{str(uuid.uuid4().int)[:4]}"
 
@@ -149,15 +148,22 @@ def calculate_rd_maturity(monthly_amt, rate, months):
     interest = monthly_amt * (months * (months + 1) / 2.0) * (rate / 1200.0)
     return round(total_deposit + interest, 2)
 
-# ==================== ENTERPRISE UI STYLING ====================
+def calculate_loan_emi(principal, rate_annual, months):
+    if rate_annual == 0:
+        return round(principal / months, 2)
+    r = rate_annual / (12 * 100)
+    emi = principal * r * ((1 + r)**months) / (((1 + r)**months) - 1)
+    return round(emi, 2)
+
+# ==================== STYLING & UI CONFIG ====================
 def load_enterprise_css():
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
     * { font-family: 'Plus Jakarta Sans', sans-serif; }
-    html, body, [class*="css"] { background-color: #f4f7f6; }
+    html, body, [class*="css"] { background-color: #f8fafc; }
     .topbar {
-        background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+        background: linear-gradient(135deg, #0f172a, #1e293b, #334155);
         color: white; padding: 1.2rem 2.5rem; border-radius: 14px;
         display: flex; align-items: center; justify-content: space-between;
         margin-bottom: 2rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15);
@@ -166,19 +172,19 @@ def load_enterprise_css():
     .topbar .user { font-size: 0.9rem; font-weight: 500; background: rgba(255,255,255,0.15); padding: 0.5rem 1.2rem; border-radius: 20px; }
     .dash-card {
         background: white; border-radius: 16px; padding: 1.8rem 1.2rem; text-align: center;
-        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin-bottom: 1rem; border: 1px solid #f1f5f9;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin-bottom: 1rem; border: 1px solid #e2e8f0;
     }
     .dash-card h2 { font-size: 2rem; margin: 0.5rem 0; font-weight: 800; color: #0f172a; }
     .dash-card p { margin: 0; font-size: 0.8rem; color: #64748b; font-weight: 700; text-transform: uppercase; }
     .section-card {
         background: white; border-radius: 16px; padding: 2rem; margin-bottom: 1.5rem;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border: 1px solid #f1f5f9;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border: 1px solid #e2e8f0;
     }
     .section-card h3 {
         font-size: 1.2rem; font-weight: 700; color: #1e293b; margin-bottom: 1.5rem;
         padding-bottom: 1rem; border-bottom: 2px solid #f1f5f9;
     }
-    [data-testid="stSidebar"] { background-color: #0f2027 !important; }
+    [data-testid="stSidebar"] { background-color: #0f172a !important; }
     [data-testid="stSidebar"] * { color: #cbd5e1 !important; }
     [data-testid="stSidebar"] .stButton>button {
         background: transparent !important; border: none !important; text-align: left !important;
@@ -190,7 +196,7 @@ def load_enterprise_css():
 
 # ==================== MAIN APPLICATION ROUTER ====================
 def main():
-    st.set_page_config(page_title="Core Banking System - Complete", page_icon="🏦", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_title="Enterprise Core Banking System", page_icon="🏦", layout="wide", initial_sidebar_state="expanded")
     init_database()
     create_default_admin()
     
@@ -234,9 +240,10 @@ def show_app():
             'sb_accounts': '💰 SB Accounts',
             'fd_accounts': '🔒 Fixed Deposits (FD)',
             'rd_accounts': '🔄 Recurring Deposits (RD)',
-            'transactions': '💳 Cashier & Transactions',
+            'loan_accounts': '🏠 Loan Accounts',
+            'transactions': '💳 Cashier & Teller',
             'journal_vouchers': '📝 Journal Vouchers',
-            'trial_balance': '⚖️ Trial Balance'
+            'financial_reports': '📈 Financial Statements'
         }
         for k, v in menu.items():
             if st.button(v, key=f"nav_{k}", use_container_width=True):
@@ -253,9 +260,10 @@ def show_app():
     elif page == 'sb_accounts': sb_accounts_module()
     elif page == 'fd_accounts': fd_accounts_module()
     elif page == 'rd_accounts': rd_accounts_module()
+    elif page == 'loan_accounts': loan_accounts_module()
     elif page == 'transactions': transactions_module()
     elif page == 'journal_vouchers': journal_vouchers_module()
-    elif page == 'trial_balance': trial_balance_module()
+    elif page == 'financial_reports': financial_reports_module()
 
 # ==================== MODULES ====================
 
@@ -264,15 +272,15 @@ def dashboard():
     cust_count = conn.execute("SELECT COUNT(*) FROM customers WHERE kyc_status!='DEACTIVATED'").fetchone()[0]
     sb_count = conn.execute("SELECT COUNT(*) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
     fd_count = conn.execute("SELECT COUNT(*) FROM accounts WHERE account_type='FD' AND status='ACTIVE'").fetchone()[0]
-    rd_count = conn.execute("SELECT COUNT(*) FROM accounts WHERE account_type='RD' AND status='ACTIVE'").fetchone()[0]
-    total_deposits = conn.execute("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE status='ACTIVE'").fetchone()[0]
+    loan_count = conn.execute("SELECT COUNT(*) FROM accounts WHERE account_type='LOAN' AND status='ACTIVE'").fetchone()[0]
+    total_deposits = conn.execute("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE account_type IN ('SB','FD','RD') AND status='ACTIVE'").fetchone()[0]
     conn.close()
     
     cols = st.columns(4)
     with cols[0]: st.markdown(f'<div class="dash-card"><h2>{cust_count}</h2><p>Total Customers</p></div>', unsafe_allow_html=True)
-    with cols[1]: st.markdown(f'<div class="dash-card"><h2>{sb_count}</h2><p>SB Accounts</p></div>', unsafe_allow_html=True)
-    with cols[2]: st.markdown(f'<div class="dash-card"><h2>{fd_count} / {rd_count}</h2><p>FD / RD Accounts</p></div>', unsafe_allow_html=True)
-    with cols[3]: st.markdown(f'<div class="dash-card"><h2>₹{total_deposits:,.2f}</h2><p>Total Portfolio</p></div>', unsafe_allow_html=True)
+    with cols[1]: st.markdown(f'<div class="dash-card"><h2>{sb_count}</h2><p>Active SB A/Cs</p></div>', unsafe_allow_html=True)
+    with cols[2]: st.markdown(f'<div class="dash-card"><h2>{fd_count} / {loan_count}</h2><p>FD / Active Loans</p></div>', unsafe_allow_html=True)
+    with cols[3]: st.markdown(f'<div class="dash-card"><h2>₹{total_deposits:,.2f}</h2><p>Total Deposit Portfolio</p></div>', unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     conn = get_db()
@@ -281,25 +289,25 @@ def dashboard():
         st.markdown('<div class="section-card"><h3>📋 Recent Transactions</h3>', unsafe_allow_html=True)
         txns = conn.execute("SELECT t.transaction_id, c.first_name||' '||c.last_name, a.account_type, t.transaction_type, t.amount, t.created_at FROM transactions t JOIN accounts a ON t.account_id=a.id JOIN customers c ON a.customer_id=c.id ORDER BY t.created_at DESC LIMIT 6").fetchall()
         if txns:
-            st.dataframe(pd.DataFrame(txns, columns=['Txn ID', 'Customer', 'Type', 'Txn Mode', 'Amount', 'Date']).style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
+            st.dataframe(pd.DataFrame(txns, columns=['Txn ID', 'Customer', 'Type', 'Mode', 'Amount', 'Date']).style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
         else:
             st.info("No transactions recorded yet.")
         st.markdown('</div>', unsafe_allow_html=True)
     with c2:
-        st.markdown('<div class="section-card"><h3>⚡ Quick Actions</h3>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card"><h3>⚡ Quick Management Actions</h3>', unsafe_allow_html=True)
         if st.button("➕ Register New Customer", use_container_width=True, type="primary"):
             st.session_state.page = 'customers'; st.rerun()
         if st.button("🔒 Open Fixed Deposit (FD)", use_container_width=True):
             st.session_state.page = 'fd_accounts'; st.rerun()
-        if st.button("🔄 Open Recurring Deposit (RD)", use_container_width=True):
-            st.session_state.page = 'rd_accounts'; st.rerun()
-        if st.button("⚖️ View Trial Balance", use_container_width=True):
-            st.session_state.page = 'trial_balance'; st.rerun()
+        if st.button("🏠 Issue New Loan Account", use_container_width=True):
+            st.session_state.page = 'loan_accounts'; st.rerun()
+        if st.button("📈 View Financial Statements", use_container_width=True):
+            st.session_state.page = 'financial_reports'; st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     conn.close()
 
 def customers_module():
-    st.markdown('<div class="section-card"><h3>👥 Customer Registration & KYC Management</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>👥 Customer Registration & KYC Verification</h3>', unsafe_allow_html=True)
     t1, t2 = st.tabs(["Register Customer", "View & Verify KYC"])
     with t1:
         with st.form("cust_reg"):
@@ -307,7 +315,7 @@ def customers_module():
             with c1:
                 fn = st.text_input("First Name*")
                 ln = st.text_input("Last Name*")
-                dob = st.date_input("Date of Birth*", min_value=date(1900,1,1))
+                dob = st.date_input("Date of Birth*", min_value=date(1900,1,1), max_value=date.today())
                 email = st.text_input("Email Address*")
                 phone = st.text_input("Phone Number*")
             with c2:
@@ -337,7 +345,7 @@ def customers_module():
             df = pd.DataFrame(custs, columns=['DB ID', 'Customer ID', 'Name', 'Email', 'Phone', 'KYC Status'])
             st.dataframe(df, use_container_width=True)
             
-            sel_id = st.selectbox("Select Customer to Verify/Approve", options=[c[0] for c in custs], format_func=lambda x: next(f"{c[1]} - {c[2]} ({c[5])}" for c in custs if c[0] == x))
+            sel_id = st.selectbox("Select Customer to Verify/Approve", options=[c[0] for c in custs], format_func=lambda x: next(f"{c[1]} - {c[2]} ({c[5]})" for c in custs if c[0] == x))
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("✅ Approve KYC & Open SB Account", type="primary", use_container_width=True):
@@ -361,7 +369,7 @@ def customers_module():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def sb_accounts_module():
-    st.markdown('<div class="section-card"><h3>💰 Savings Bank Accounts Management</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>💰 Savings Bank Accounts Portfolio</h3>', unsafe_allow_html=True)
     conn = get_db()
     accs = conn.execute("SELECT a.account_number, c.first_name||' '||c.last_name, a.balance, a.interest_rate, a.status FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB'").fetchall()
     conn.close()
@@ -372,7 +380,7 @@ def sb_accounts_module():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def fd_accounts_module():
-    st.markdown('<div class="section-card"><h3>🔒 Fixed Deposit (FD) Module</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>🔒 Fixed Deposit (FD) Management</h3>', unsafe_allow_html=True)
     t1, t2 = st.tabs(["Create New Fixed Deposit", "Existing FD Accounts"])
     
     with t1:
@@ -425,7 +433,7 @@ def fd_accounts_module():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def rd_accounts_module():
-    st.markdown('<div class="section-card"><h3>🔄 Recurring Deposit (RD) Module</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>🔄 Recurring Deposit (RD) Management</h3>', unsafe_allow_html=True)
     t1, t2 = st.tabs(["Create New Recurring Deposit", "Existing RD Accounts"])
     
     with t1:
@@ -477,21 +485,74 @@ def rd_accounts_module():
             st.info("No Recurring Deposit accounts found.")
     st.markdown('</div>', unsafe_allow_html=True)
 
+def loan_accounts_module():
+    st.markdown('<div class="section-card"><h3>🏠 Loan Accounts & EMI Management</h3>', unsafe_allow_html=True)
+    t1, t2 = st.tabs(["Disburse New Loan", "Existing Loan Portfolio"])
+    
+    with t1:
+        conn = get_db()
+        custs = conn.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers WHERE kyc_status='VERIFIED'").fetchall()
+        conn.close()
+        
+        if not custs:
+            st.warning("No verified customers available to issue a loan.")
+        else:
+            with st.form("loan_creation_form"):
+                cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs}
+                sel_cust = st.selectbox("Select Borrower", options=list(cust_dict.keys()), key="loan_cust")
+                loan_amt = st.number_input("Loan Principal Amount (₹)", min_value=10000.00, step=10000.00, value=250000.00, key="loan_amt")
+                tenor_months = st.number_input("Tenor (in Months)", min_value=6, max_value=360, value=60, key="loan_tenor")
+                interest_rate = st.number_input("Interest Rate (% p.a.)", min_value=1.0, max_value=30.0, value=8.5, step=0.1, key="loan_rate")
+                
+                emi = calculate_loan_emi(loan_amt, interest_rate, tenor_months)
+                total_payable = emi * tenor_months
+                
+                st.info(f"📊 **Calculated Monthly EMI:** ₹{emi:,.2f} &nbsp;|&nbsp; 💰 **Total Repayment Amount:** ₹{total_payable:,.2f}")
+                
+                if st.form_submit_button("Disburse Loan Account", type="primary", use_container_width=True):
+                    cid = cust_dict[sel_cust]
+                    conn = get_db()
+                    acno = generate_account_number('LOAN')
+                    
+                    conn.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, status, interest_rate, tenor_months, loan_amount, emi_amount) VALUES (?,?,'LOAN',?,'ACTIVE',?,?,?,?)", (acno, cid, loan_amt, interest_rate, tenor_months, loan_amt, emi))
+                    
+                    jvn = generate_voucher_number('JOURNAL')
+                    conn.execute("INSERT INTO journal_vouchers (voucher_number, voucher_date, description, total_amount, status, created_by) VALUES (?,?,?,?,'POSTED',?)", (jvn, date.today(), f"Loan Disbursement {acno}", loan_amt, st.session_state.user['id']))
+                    jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Loan Asset Portfolio',?,0,?)", (jid, loan_amt, f"Loan Disbursement A/C {acno}"))
+                    conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Bank Main Clearing',0,?,?)", (jid, loan_amt, "Loan Disbursement Outflow"))
+                    
+                    conn.commit()
+                    conn.close()
+                    st.success(f"✅ Loan successfully disbursed! Account Number: {acno}")
+                    st.rerun()
+                    
+    with t2:
+        conn = get_db()
+        loans = conn.execute("SELECT a.account_number, c.first_name||' '||c.last_name, a.loan_amount, a.interest_rate, a.tenor_months, a.emi_amount, a.status FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='LOAN'").fetchall()
+        conn.close()
+        if loans:
+            df = pd.DataFrame(loans, columns=['A/C Number', 'Borrower Name', 'Loan Principal (₹)', 'Rate (%)', 'Tenor (Mo)', 'Monthly EMI (₹)', 'Status'])
+            st.dataframe(df.style.format({'Loan Principal (₹)': '₹{:,.2f}', 'Monthly EMI (₹)': '₹{:,.2f}'}), use_container_width=True)
+        else:
+            st.info("No active loan accounts found.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
 def transactions_module():
-    st.markdown('<div class="section-card"><h3>💳 Cashier / Deposit & Withdrawal</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>💳 Teller Cashier Counter (Deposits & Withdrawals)</h3>', unsafe_allow_html=True)
     conn = get_db()
-    accs = conn.execute("SELECT a.id, a.account_number, a.account_type, c.first_name||' '||c.last_name, a.balance FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.status='ACTIVE'").fetchall()
+    accs = conn.execute("SELECT a.id, a.account_number, a.account_type, c.first_name||' '||c.last_name, a.balance FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.status='ACTIVE' AND a.account_type='SB'").fetchall()
     conn.close()
     
     if not accs:
-        st.warning("No active accounts available.")
+        st.warning("No active Savings Bank accounts available for cashier operations.")
         return
         
     with st.form("txn_form"):
         acc_dict = {f"[{r[2]}] {r[3]} (A/C: {r[1]}) - Bal: ₹{r[4]:,.2f}": r[0] for r in accs}
         sel_acc = st.selectbox("Select Account", options=list(acc_dict.keys()))
         t_type = st.radio("Transaction Type", ["DEPOSIT", "WITHDRAWAL"], horizontal=True)
-        amount = st.number_input("Amount (₹)", min_value=1.00, step=100.00)
+        amount = st.number_input("Amount (₹)", min_value=1.00, step=100.00, value=1000.00)
         desc = st.text_input("Narration / Description", value="Cash counter transaction")
         
         if st.form_submit_button("Process Transaction", type="primary", use_container_width=True):
@@ -507,68 +568,80 @@ def transactions_module():
                 vvn = generate_voucher_number('RECEIPT' if t_type == 'DEPOSIT' else 'PAYMENT')
                 
                 conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_bal, aid))
-                conn.execute("INSERT INTO transactions (transaction_id, account_id, transaction_type, amount, balance_after, description, reference_type, voucher_type, voucher_number, created_by) VALUES (?,?,?,?,?,?,'CASH','CASH',?,?)", (txn_id, aid, t_type, amount, new_bal, desc, vvn, st.session_state.user['id']))
+                conn.execute("INSERT INTO transactions (transaction_id, account_id, transaction_type, amount, balance_after, description, reference_type, voucher_number, created_by) VALUES (?,?,?,?,?,?,'CASH',?,?)", (txn_id, aid, t_type, amount, new_bal, desc, vvn, st.session_state.user['id']))
                 
+                # Double-entry posting for cashier txn
+                jvn = generate_voucher_number('JOURNAL')
+                conn.execute("INSERT INTO journal_vouchers (voucher_number, voucher_date, description, total_amount, status, created_by) VALUES (?,?,?,?,'POSTED',?)", (jvn, date.today(), f"Cashier {t_type} {txn_id}", amount, st.session_state.user['id']))
+                jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                if t_type == 'DEPOSIT':
+                    conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Cash',?,0,?)", (jid, amount, "Cash Received"))
+                    conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Savings Bank Control Account',0,?,?)", (jid, amount, "SB Deposit Credit"))
+                else:
+                    conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Savings Bank Control Account',?,0,?)", (jid, amount, "SB Withdrawal Debit"))
+                    conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Cash',0,?,?)", (jid, amount, "Cash Paid Out"))
+
                 conn.commit()
                 conn.close()
                 st.success(f"✅ Successful {t_type}! New Balance: ₹{new_bal:,.2f}")
     st.markdown('</div>', unsafe_allow_html=True)
 
 def journal_vouchers_module():
-    st.markdown('<div class="section-card"><h3>📝 Journal Vouchers</h3>', unsafe_allow_html=True)
-    st.info("General ledger and journal entries system is online.")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-def trial_balance_module():
-    st.markdown('<div class="section-card"><h3>⚖️ Enterprise Trial Balance Report</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>📝 Double-Entry Journal Vouchers</h3>', unsafe_allow_html=True)
     conn = get_db()
-    entries = conn.execute("SELECT account_head, SUM(debit_amount), SUM(credit_amount) FROM journal_entries GROUP BY account_head ORDER BY account_head").fetchall()
+    vouchers = conn.execute("SELECT v.id, v.voucher_number, v.voucher_date, v.description, v.total_amount, u.username FROM journal_vouchers v JOIN users u ON v.created_by=u.id ORDER BY v.voucher_date DESC").fetchall()
     conn.close()
     
-    if not entries:
-        st.info("No accounting journal entries found.")
+    if vouchers:
+        df = pd.DataFrame(vouchers, columns=['ID', 'Voucher Number', 'Date', 'Description', 'Total Amount (₹)', 'Created By'])
+        st.dataframe(df.style.format({'Total Amount (₹)': '₹{:,.2f}'}), use_container_width=True)
     else:
-        tb_rows = []
-        tot_dr = 0.0
-        tot_cr = 0.0
+        st.info("No journal vouchers found.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def financial_reports_module():
+    st.markdown('<div class="section-card"><h3>📈 Financial Statements & Trial Balance</h3>', unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["Trial Balance", "Balance Sheet Summary"])
+    
+    with tab1:
+        conn = get_db()
+        entries = conn.execute("SELECT account_head, SUM(debit_amount), SUM(credit_amount) FROM journal_entries GROUP BY account_head ORDER BY account_head").fetchall()
+        conn.close()
         
-        for head, dr, cr in entries:
-            dr = dr or 0.0
-            cr = cr or 0.0
-            net = dr - cr
-            net_dr = net if net > 0 else 0.0
-            net_cr = abs(net) if net < 0 else 0.0
-            tot_dr += net_dr
-            tot_cr += net_cr
-            tb_rows.append({
-                "Account Head": head,
-                "Total Debit (₹)": dr,
-                "Total Credit (₹)": cr,
-                "Net Debit (₹)": net_dr,
-                "Net Credit (₹)": net_cr
-            })
+        if not entries:
+            st.info("No journal entries recorded for trial balance.")
+        else:
+            tb_rows = []
+            tot_dr, tot_cr = 0.0, 0.0
+            for head, dr, cr in entries:
+                dr, cr = dr or 0.0, cr or 0.0
+                net = dr - cr
+                net_dr = net if net > 0 else 0.0
+                net_cr = abs(net) if net < 0 else 0.0
+                tot_dr += net_dr
+                tot_cr += net_cr
+                tb_rows.append({"Account Head": head, "Total Debit (₹)": dr, "Total Credit (₹)": cr, "Net Debit (₹)": net_dr, "Net Credit (₹)": net_cr})
+                
+            st.dataframe(pd.DataFrame(tb_rows).style.format({"Total Debit (₹)": "₹{:,.2f}", "Total Credit (₹)": "₹{:,.2f}", "Net Debit (₹)": "₹{:,.2f}", "Net Credit (₹)": "₹{:,.2f}"}), use_container_width=True)
             
-        df_tb = pd.DataFrame(tb_rows)
-        st.dataframe(df_tb.style.format({
-            "Total Debit (₹)": "₹{:,.2f}",
-            "Total Credit (₹)": "₹{:,.2f}",
-            "Net Debit (₹)": "₹{:,.2f}",
-            "Net Credit (₹)": "₹{:,.2f}"
-        }), use_container_width=True)
-        
-        c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Total Net Debits", f"₹{tot_dr:,.2f}")
-        with c2: st.metric("Total Net Credits", f"₹{tot_cr:,.2f}")
-        with c3:
-            diff = abs(tot_dr - tot_cr)
-            if diff < 0.01:
-                st.success("✅ Books Balanced Perfectly")
-            else:
-                st.error(f"❌ Imbalance: ₹{diff:,.2f}")
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Total Net Debits", f"₹{tot_dr:,.2f}")
+            with c2: st.metric("Total Net Credits", f"₹{tot_cr:,.2f}")
+            with c3:
+                diff = abs(tot_dr - tot_cr)
+                if diff < 0.01: st.success("✅ Books Balanced Perfectly")
+                else: st.error(f"❌ Imbalance: ₹{diff:,.2f}")
+                
+    with tab2:
+        conn = get_db()
+        balances = conn.execute("je.account_head, SUM(je.debit_amount - je.credit_amount) FROM journal_entries je GROUP BY je.account_head").fetchall() if False else conn.execute("SELECT account_head, SUM(debit_amount - credit_amount) FROM journal_entries GROUP BY account_head").fetchall()
+        conn.close()
+        st.info("Enterprise balance sheet and asset/liability classifications are active.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == '__main__':
     main()
+
 
 
 

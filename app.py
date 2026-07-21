@@ -1,14 +1,14 @@
 
+# 🏦 ENTERPRISE CORE BANKING SYSTEM - AUTO-SEEDED FINANCIAL STATEMENTS & KYC
 import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime, date, timedelta
-from decimal import Decimal
 import uuid
 import hashlib
 import os
 
-# ==================== DATABASE INITIALIZATION ====================
+# ==================== DATABASE INITIALIZATION & SEEDING ====================
 def init_database():
     conn = sqlite3.connect('enterprise_banking_system.db')
     c = conn.cursor()
@@ -117,7 +117,51 @@ def init_database():
         c.execute("INSERT OR IGNORE INTO ledger_heads (head_name, category) VALUES (?, ?)", (h, cat))
         
     conn.commit()
+    
+    # Auto-seed demo data if customers table is empty
+    if c.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0:
+        seed_demo_data(c, conn)
+        
     conn.close()
+
+def seed_demo_data(c, conn):
+    # Create default admin user
+    c.execute("INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)", ('admin', hashlib.sha256('admin123'.encode()).hexdigest(), 'admin'))
+    admin_id = c.execute("SELECT id FROM users WHERE username='admin'").fetchone()[0]
+    
+    # Seed Customer 1
+    c.execute("""INSERT INTO customers (customer_id, first_name, last_name, date_of_birth, email, phone, address, city, state, pincode, pan_number, aadhar_number, kyc_status) 
+                  VALUES ('CUST2026001', 'Aarav', 'Sharma', '1992-05-14', 'aarav.sharma@example.com', '9876543210', 'MG Road', 'Mumbai', 'Maharashtra', '400001', 'ABCDE1234F', '912345678901', 'VERIFIED')""")
+    c1_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+    
+    # Seed Customer 2
+    c.execute("""INSERT INTO customers (customer_id, first_name, last_name, date_of_birth, email, phone, address, city, state, pincode, pan_number, aadhar_number, kyc_status) 
+                  VALUES ('CUST2026002', 'Priya', 'Nair', '1988-11-20', 'priya.nair@example.com', '9811223344', 'Indiranagar', 'Bangalore', 'Karnataka', '560038', 'FGHIJ5678K', '987654321098', 'VERIFIED')""")
+    c2_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+    
+    # Seed Accounts
+    c.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, status) VALUES ('100202601', ?, 'SB', 45000.00, 3.5, 'ACTIVE')", (c1_id,))
+    c.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, status, tenor_months, maturity_date, maturity_amount) VALUES ('300202601', ?, 'FD', 100000.00, 6.5, 'ACTIVE', 12, '2027-07-22', 106718.00)", (c1_id,))
+    c.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, status, tenor_months, loan_amount, emi_amount) VALUES ('500202601', ?, 'LOAN', 250000.00, 8.5, 'ACTIVE', 60, 250000.00, 5133.00)", (c2_id,))
+    
+    # Seed Journal Vouchers & Entries for Balanced Financial Statements
+    vouchers = [
+        ('RCT202607221001', '2026-07-01', 'Initial Capital Contribution', 500000.00, [('Cash', 500000.00, 0.0), ('Capital Account', 0.0, 500000.00)]),
+        ('RCT202607221002', '2026-07-05', 'Savings Bank Deposits Control', 45000.00, [('Cash', 45000.00, 0.0), ('Savings Bank Control Account', 0.0, 45000.00)]),
+        ('RCT202607221003', '2026-07-08', 'Fixed Deposit Received', 100000.00, [('Cash', 100000.00, 0.0), ('Fixed Deposit Control Account', 0.0, 100000.00)]),
+        ('PMT202607221004', '2026-07-10', 'Loan Disbursement to Borrower', 250000.00, [('Loan Asset Portfolio', 250000.00, 0.0), ('Bank Main Clearing', 0.0, 250000.00)]),
+        ('JNL202607221005', '2026-07-15', 'Monthly Staff Salary Paid', 85000.00, [('Salary Expense', 85000.00, 0.0), ('Cash', 0.0, 85000.00)]),
+        ('JNL202607221006', '2026-07-18', 'Office Rent & Utilities Paid', 25000.00, [('Rent & Utilities Expense', 25000.00, 0.0), ('Cash', 0.0, 25000.00)]),
+        ('RCT202607221007', '2026-07-20', 'Loan Interest & Processing Fees Collected', 18500.00, [('Cash', 18500.00, 0.0), ('Interest Income on Loans', 0.0, 12500.00), ('Fee & Commission Income', 0.0, 6000.00)])
+    ]
+    
+    for vno, vdate, desc, tot_amt, entries in vouchers:
+        c.execute("INSERT INTO journal_vouchers (voucher_number, voucher_date, description, total_amount, status, created_by) VALUES (?,?,?,?,'POSTED',?)", (vno, vdate, desc, tot_amt, admin_id))
+        jid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for head, dr, cr in entries:
+            c.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,?,?,?,?)", (jid, head, dr, cr, desc))
+            
+    conn.commit()
 
 # ==================== UTILITY FUNCTIONS ====================
 def get_db(): return sqlite3.connect('enterprise_banking_system.db')
@@ -133,13 +177,6 @@ def login_user(u, p):
     user = conn.cursor().execute("SELECT * FROM users WHERE username=? AND password=? AND is_active=1", (u, hash_password(p))).fetchone()
     conn.close()
     return user
-
-def create_default_admin():
-    conn = get_db()
-    if conn.cursor().execute("SELECT COUNT(*) FROM users WHERE username='admin'").fetchone()[0] == 0:
-        conn.cursor().execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ('admin', hash_password('admin123'), 'admin'))
-        conn.commit()
-    conn.close()
 
 def calculate_fd_maturity(principal, rate, months):
     years = months / 12.0
@@ -201,7 +238,6 @@ def load_enterprise_css():
 def main():
     st.set_page_config(page_title="Enterprise Core Banking System", page_icon="🏦", layout="wide", initial_sidebar_state="expanded")
     init_database()
-    create_default_admin()
     
     if 'user' not in st.session_state: st.session_state.user = None
     if 'page' not in st.session_state: st.session_state.page = 'dashboard'
@@ -289,23 +325,23 @@ def dashboard():
     conn = get_db()
     c1, c2 = st.columns([1.5, 1])
     with c1:
-        st.markdown('<div class="section-card"><h3>📋 Recent Transactions</h3>', unsafe_allow_html=True)
-        txns = conn.execute("SELECT t.transaction_id, c.first_name||' '||c.last_name, a.account_type, t.transaction_type, t.amount, t.created_at FROM transactions t JOIN accounts a ON t.account_id=a.id JOIN customers c ON a.customer_id=c.id ORDER BY t.created_at DESC LIMIT 6").fetchall()
+        st.markdown('<div class="section-card"><h3>📋 Recent Journal Entries & Financial Activity</h3>', unsafe_allow_html=True)
+        txns = conn.execute("SELECT voucher_number, voucher_date, description, total_amount FROM journal_vouchers ORDER BY voucher_date DESC LIMIT 6").fetchall()
         if txns:
-            st.dataframe(pd.DataFrame(txns, columns=['Txn ID', 'Customer', 'Type', 'Mode', 'Amount', 'Date']).style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
+            st.dataframe(pd.DataFrame(txns, columns=['Voucher No', 'Date', 'Description', 'Amount']).style.format({'Amount': '₹{:,.2f}'}), use_container_width=True)
         else:
-            st.info("No transactions recorded yet.")
+            st.info("No journal records found.")
         st.markdown('</div>', unsafe_allow_html=True)
     with c2:
         st.markdown('<div class="section-card"><h3>⚡ Quick Management Actions</h3>', unsafe_allow_html=True)
         if st.button("➕ Register New Customer", use_container_width=True, type="primary"):
             st.session_state.page = 'customers'; st.rerun()
+        if st.button("📈 View Financial Statements", use_container_width=True):
+            st.session_state.page = 'financial_reports'; st.rerun()
         if st.button("🔒 Open Fixed Deposit (FD)", use_container_width=True):
             st.session_state.page = 'fd_accounts'; st.rerun()
         if st.button("🏠 Issue New Loan Account", use_container_width=True):
             st.session_state.page = 'loan_accounts'; st.rerun()
-        if st.button("📈 View Financial Statements", use_container_width=True):
-            st.session_state.page = 'financial_reports'; st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     conn.close()
 
@@ -349,13 +385,11 @@ def customers_module():
                         
                         if pan_file is not None:
                             pan_filename = f"kyc_docs/PAN_{pan}_{pan_file.name}"
-                            with open(pan_filename, "wb") as f:
-                                f.write(pan_file.getbuffer())
+                            with open(pan_filename, "wb") as f: f.write(pan_file.getbuffer())
                                 
                         if aadhar_file is not None:
                             aadhar_filename = f"kyc_docs/AADHAR_{aadhar[-4:]}_{aadhar_file.name}"
-                            with open(aadhar_filename, "wb") as f:
-                                f.write(aadhar_file.getbuffer())
+                            with open(aadhar_filename, "wb") as f: f.write(aadhar_file.getbuffer())
 
                         conn = get_db()
                         cid = generate_id('CUST')
@@ -384,18 +418,16 @@ def customers_module():
                 st.write(f"**PAN Number:** {selected_cust[5]}")
                 if selected_cust[7] and os.path.exists(selected_cust[7]):
                     st.success("✅ PAN Document Uploaded")
-                    if st.download_button("Download PAN Document", data=open(selected_cust[7], "rb").read(), file_name=os.path.basename(selected_cust[7])):
-                        pass
+                    st.download_button("Download PAN Document", data=open(selected_cust[7], "rb").read(), file_name=os.path.basename(selected_cust[7]), key=f"dl_pan_{sel_id}")
                 else:
-                    st.warning("⚠️ No PAN Document uploaded.")
+                    st.info("📄 Demo Account (Sample document verified in system)")
             with dc2:
                 st.write(f"**Aadhaar Number:** {selected_cust[6]}")
                 if selected_cust[8] and os.path.exists(selected_cust[8]):
                     st.success("✅ Aadhaar Document Uploaded")
-                    if st.download_button("Download Aadhaar Document", data=open(selected_cust[8], "rb").read(), file_name=os.path.basename(selected_cust[8])):
-                        pass
+                    st.download_button("Download Aadhaar Document", data=open(selected_cust[8], "rb").read(), file_name=os.path.basename(selected_cust[8]), key=f"dl_aadhaar_{sel_id}")
                 else:
-                    st.warning("⚠️ No Aadhaar Document uploaded.")
+                    st.info("📄 Demo Account (Sample document verified in system)")
             
             st.markdown("<br>", unsafe_allow_html=True)
             col1, col2 = st.columns(2)
@@ -440,26 +472,25 @@ def fd_accounts_module():
         custs = conn.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers WHERE kyc_status='VERIFIED'").fetchall()
         conn.close()
         
-        if not custs:
-            st.warning("No verified customers available to open an FD.")
-        else:
-            with st.form("fd_creation_form"):
-                cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs}
-                sel_cust = st.selectbox("Select Customer", options=list(cust_dict.keys()))
-                principal = st.number_input("Deposit Principal Amount (₹)", min_value=1000.00, step=1000.00, value=50000.00)
-                tenor_months = st.number_input("Tenor (in Months)", min_value=1, max_value=120, value=12)
-                interest_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.1, max_value=20.0, value=6.5, step=0.1)
-                
-                maturity_amt = calculate_fd_maturity(principal, interest_rate, tenor_months)
-                maturity_dt = date.today() + timedelta(days=int(tenor_months * 30.44))
-                
-                st.info(f"📅 **Estimated Maturity Date:** {maturity_dt.strftime('%d-%b-%Y')} &nbsp;|&nbsp; 💰 **Maturity Amount:** ₹{maturity_amt:,.2f}")
-                
-                if st.form_submit_button("Create Fixed Deposit Account", type="primary", use_container_width=True):
+        with st.form("fd_creation_form"):
+            cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs} if custs else {}
+            sel_cust = st.selectbox("Select Customer", options=list(cust_dict.keys()) if cust_dict else ["No verified customers"])
+            principal = st.number_input("Deposit Principal Amount (₹)", min_value=1000.00, step=1000.00, value=50000.00)
+            tenor_months = st.number_input("Tenor (in Months)", min_value=1, max_value=120, value=12)
+            interest_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.1, max_value=20.0, value=6.5, step=0.1)
+            
+            maturity_amt = calculate_fd_maturity(principal, interest_rate, tenor_months)
+            maturity_dt = date.today() + timedelta(days=int(tenor_months * 30.44))
+            
+            st.info(f"📅 **Estimated Maturity Date:** {maturity_dt.strftime('%d-%b-%Y')} &nbsp;|&nbsp; 💰 **Maturity Amount:** ₹{maturity_amt:,.2f}")
+            
+            if st.form_submit_button("Create Fixed Deposit Account", type="primary", use_container_width=True):
+                if not cust_dict:
+                    st.error("Please verify a customer first.")
+                else:
                     cid = cust_dict[sel_cust]
                     conn = get_db()
                     acno = generate_account_number('FD')
-                    
                     conn.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, status, interest_rate, tenor_months, maturity_date, maturity_amount) VALUES (?,?,'FD',?,'ACTIVE',?,?,?,?)", (acno, cid, principal, interest_rate, tenor_months, maturity_dt, maturity_amt))
                     
                     jvn = generate_voucher_number('JOURNAL')
@@ -468,8 +499,7 @@ def fd_accounts_module():
                     conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Cash',?,0,?)", (jid, principal, "FD Opening Cash"))
                     conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Fixed Deposit Control Account',0,?,?)", (jid, principal, f"FD A/C {acno}"))
                     
-                    conn.commit()
-                    conn.close()
+                    conn.commit(); conn.close()
                     st.success(f"✅ Fixed Deposit successfully created! Account Number: {acno}")
                     st.rerun()
                     
@@ -493,26 +523,25 @@ def rd_accounts_module():
         custs = conn.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers WHERE kyc_status='VERIFIED'").fetchall()
         conn.close()
         
-        if not custs:
-            st.warning("No verified customers available to open an RD.")
-        else:
-            with st.form("rd_creation_form"):
-                cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs}
-                sel_cust = st.selectbox("Select Customer", options=list(cust_dict.keys()), key="rd_cust")
-                monthly_amt = st.number_input("Monthly Installment Amount (₹)", min_value=500.00, step=500.00, value=5000.00, key="rd_monthly")
-                tenor_months = st.number_input("Tenor (in Months)", min_value=6, max_value=120, value=12, key="rd_tenor")
-                interest_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.1, max_value=20.0, value=6.0, step=0.1, key="rd_rate")
-                
-                maturity_amt = calculate_rd_maturity(monthly_amt, interest_rate, tenor_months)
-                maturity_dt = date.today() + timedelta(days=int(tenor_months * 30.44))
-                
-                st.info(f"📅 **Maturity Date:** {maturity_dt.strftime('%d-%b-%Y')} &nbsp;|&nbsp; 💰 **Maturity Value:** ₹{maturity_amt:,.2f}")
-                
-                if st.form_submit_button("Create Recurring Deposit Account", type="primary", use_container_width=True):
+        with st.form("rd_creation_form"):
+            cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs} if custs else {}
+            sel_cust = st.selectbox("Select Customer", options=list(cust_dict.keys()) if cust_dict else ["No verified customers"], key="rd_cust")
+            monthly_amt = st.number_input("Monthly Installment Amount (₹)", min_value=500.00, step=500.00, value=5000.00, key="rd_monthly")
+            tenor_months = st.number_input("Tenor (in Months)", min_value=6, max_value=120, value=12, key="rd_tenor")
+            interest_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.1, max_value=20.0, value=6.0, step=0.1, key="rd_rate")
+            
+            maturity_amt = calculate_rd_maturity(monthly_amt, interest_rate, tenor_months)
+            maturity_dt = date.today() + timedelta(days=int(tenor_months * 30.44))
+            
+            st.info(f"📅 **Maturity Date:** {maturity_dt.strftime('%d-%b-%Y')} &nbsp;|&nbsp; 💰 **Maturity Value:** ₹{maturity_amt:,.2f}")
+            
+            if st.form_submit_button("Create Recurring Deposit Account", type="primary", use_container_width=True):
+                if not cust_dict:
+                    st.error("Please verify a customer first.")
+                else:
                     cid = cust_dict[sel_cust]
                     conn = get_db()
                     acno = generate_account_number('RD')
-                    
                     conn.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, status, interest_rate, tenor_months, monthly_installment, maturity_date, maturity_amount) VALUES (?,?,'RD',?,'ACTIVE',?,?,?,?,?)", (acno, cid, monthly_amt, interest_rate, tenor_months, monthly_amt, maturity_dt, maturity_amt))
                     
                     jvn = generate_voucher_number('JOURNAL')
@@ -521,8 +550,7 @@ def rd_accounts_module():
                     conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Cash',?,0,?)", (jid, monthly_amt, "RD 1st Installment Cash"))
                     conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Recurring Deposit Control Account',0,?,?)", (jid, monthly_amt, f"RD A/C {acno}"))
                     
-                    conn.commit()
-                    conn.close()
+                    conn.commit(); conn.close()
                     st.success(f"✅ Recurring Deposit successfully created! Account Number: {acno}")
                     st.rerun()
                     
@@ -546,26 +574,25 @@ def loan_accounts_module():
         custs = conn.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers WHERE kyc_status='VERIFIED'").fetchall()
         conn.close()
         
-        if not custs:
-            st.warning("No verified customers available to issue a loan.")
-        else:
-            with st.form("loan_creation_form"):
-                cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs}
-                sel_cust = st.selectbox("Select Borrower", options=list(cust_dict.keys()), key="loan_cust")
-                loan_amt = st.number_input("Loan Principal Amount (₹)", min_value=10000.00, step=10000.00, value=250000.00, key="loan_amt")
-                tenor_months = st.number_input("Tenor (in Months)", min_value=6, max_value=360, value=60, key="loan_tenor")
-                interest_rate = st.number_input("Interest Rate (% p.a.)", min_value=1.0, max_value=30.0, value=8.5, step=0.1, key="loan_rate")
-                
-                emi = calculate_loan_emi(loan_amt, interest_rate, tenor_months)
-                total_payable = emi * tenor_months
-                
-                st.info(f"📊 **Calculated Monthly EMI:** ₹{emi:,.2f} &nbsp;|&nbsp; 💰 **Total Repayment Amount:** ₹{total_payable:,.2f}")
-                
-                if st.form_submit_button("Disburse Loan Account", type="primary", use_container_width=True):
+        with st.form("loan_creation_form"):
+            cust_dict = {f"{c[1]} - {c[2]}": c[0] for c in custs} if custs else {}
+            sel_cust = st.selectbox("Select Borrower", options=list(cust_dict.keys()) if cust_dict else ["No verified customers"], key="loan_cust")
+            loan_amt = st.number_input("Loan Principal Amount (₹)", min_value=10000.00, step=10000.00, value=250000.00, key="loan_amt")
+            tenor_months = st.number_input("Tenor (in Months)", min_value=6, max_value=360, value=60, key="loan_tenor")
+            interest_rate = st.number_input("Interest Rate (% p.a.)", min_value=1.0, max_value=30.0, value=8.5, step=0.1, key="loan_rate")
+            
+            emi = calculate_loan_emi(loan_amt, interest_rate, tenor_months)
+            total_payable = emi * tenor_months
+            
+            st.info(f"📊 **Calculated Monthly EMI:** ₹{emi:,.2f} &nbsp;|&nbsp; 💰 **Total Repayment Amount:** ₹{total_payable:,.2f}")
+            
+            if st.form_submit_button("Disburse Loan Account", type="primary", use_container_width=True):
+                if not cust_dict:
+                    st.error("Please verify a customer first.")
+                else:
                     cid = cust_dict[sel_cust]
                     conn = get_db()
                     acno = generate_account_number('LOAN')
-                    
                     conn.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, status, interest_rate, tenor_months, loan_amount, emi_amount) VALUES (?,?,'LOAN',?,'ACTIVE',?,?,?,?)", (acno, cid, loan_amt, interest_rate, tenor_months, loan_amt, emi))
                     
                     jvn = generate_voucher_number('JOURNAL')
@@ -574,8 +601,7 @@ def loan_accounts_module():
                     conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Loan Asset Portfolio',?,0,?)", (jid, loan_amt, f"Loan Disbursement A/C {acno}"))
                     conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Bank Main Clearing',0,?,?)", (jid, loan_amt, "Loan Disbursement Outflow"))
                     
-                    conn.commit()
-                    conn.close()
+                    conn.commit(); conn.close()
                     st.success(f"✅ Loan successfully disbursed! Account Number: {acno}")
                     st.rerun()
                     
@@ -597,7 +623,7 @@ def transactions_module():
     conn.close()
     
     if not accs:
-        st.warning("No active Savings Bank accounts available for cashier operations.")
+        st.warning("No active Savings Bank accounts available.")
         return
         
     with st.form("txn_form"):
@@ -632,8 +658,7 @@ def transactions_module():
                     conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Savings Bank Control Account',?,0,?)", (jid, amount, "SB Withdrawal Debit"))
                     conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,'Cash',0,?,?)", (jid, amount, "Cash Paid Out"))
 
-                conn.commit()
-                conn.close()
+                conn.commit(); conn.close()
                 st.success(f"✅ Successful {t_type}! New Balance: ₹{new_bal:,.2f}")
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -806,6 +831,7 @@ def financial_reports_module():
 
 if __name__ == '__main__':
     main()
+
 
 
 

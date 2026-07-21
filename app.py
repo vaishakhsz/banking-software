@@ -1175,45 +1175,152 @@ def transactions():
     c.close()
 
 def journal_vouchers():
-    st.markdown('<div class="section-card"><h3>Create Journal Voucher (JV)</h3>', unsafe_allow_html=True)
-    
+    # --- 1. DYNAMICALLY PATCH DATABASE FOR LEDGER HEADS ---
+    # This ensures the new table is created without breaking your existing database
     c = get_db()
-    accs = c.execute("SELECT a.id, a.account_number, c.first_name, c.last_name FROM accounts a JOIN customers c ON a.customer_id = c.id WHERE a.status='ACTIVE'").fetchall()
-    c.close()
+    c.execute('''CREATE TABLE IF NOT EXISTS ledger_heads (id INTEGER PRIMARY KEY AUTOINCREMENT, head_name TEXT UNIQUE NOT NULL)''')
+    if c.execute("SELECT COUNT(*) FROM ledger_heads").fetchone()[0] == 0:
+        # Insert some standard banking ledgers by default
+        for h in ['Cash', 'Bank (Main)', 'Fee Income', 'Rent Expense', 'Salary Expense', 'Miscellaneous']:
+            c.execute("INSERT OR IGNORE INTO ledger_heads (head_name) VALUES (?)", (h,))
+    c.commit()
+
+    # --- 2. BUILD THE UI TABS ---
+    t1, t2 = st.tabs(["📝 Create Journal Voucher", "⚙️ Manage Ledger Heads"])
     
-    # Pre-populate with standard ledgers AND customer accounts
-    acc_options = {"Cash": "Cash", "Bank (Main)": "Bank", "Fee Income": "Fee Income"}
-    acc_options.update({f"Customer A/C: {r[1]} ({r[2]} {r[3]})": str(r[0]) for r in accs})
-    
-    with st.form("jv_form"):
-        c1, c2 = st.columns(2)
-        with c1: 
-            debit_head = st.selectbox("Debit Account", options=list(acc_options.keys()))
-            debit_amt = st.number_input("Debit Amount (₹)", min_value=1.0, format="%.2f")
-        with c2: 
-            credit_head = st.selectbox("Credit Account", options=list(acc_options.keys()))
-            credit_amt = st.number_input("Credit Amount (₹)", min_value=1.0, format="%.2f")
-            
-        desc = st.text_input("Voucher Description / Narration")
+    # --- TAB 2: CREATE & MANAGE LEDGER HEADS ---
+    with t2:
+        st.markdown('<div class="section-card"><h3>Create New Ledger Head</h3>', unsafe_allow_html=True)
+        with st.form("new_ledger_form"):
+            new_head = st.text_input("Enter New Ledger Name (e.g., 'Marketing Expense', 'Penalty Income')")
+            if st.form_submit_button("➕ Add Ledger", type="primary"):
+                if new_head:
+                    try:
+                        c.execute("INSERT INTO ledger_heads (head_name) VALUES (?)", (new_head.strip(),))
+                        c.commit()
+                        st.success(f"✅ Ledger '{new_head.strip()}' added successfully!")
+                    except sqlite3.IntegrityError:
+                        st.error("❌ This ledger head already exists.")
+                else:
+                    st.error("Please enter a name.")
         
-        if st.form_submit_button("Post Journal Entry", type="primary", use_container_width=True):
-            if debit_amt != credit_amt:
-                st.error("❌ Debit and Credit amounts must be exactly equal.")
-            elif debit_head == credit_head:
-                st.error("❌ You cannot debit and credit the same account.")
+        st.markdown("#### Current Master Ledger Heads")
+        heads = c.execute("SELECT head_name FROM ledger_heads ORDER BY head_name").fetchall()
+        st.write([h[0] for h in heads])
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    # --- TAB 1: DYNAMIC JOURNAL VOUCHER ENTRY ---
+    with t1:
+        st.markdown('<div class="section-card"><h3>Dynamic Journal Voucher</h3>', unsafe_allow_html=True)
+        
+        # Fetch Accounts and Ledgers for the dropdowns
+        accs = c.execute("SELECT a.id, a.account_number, c.first_name, c.last_name FROM accounts a JOIN customers c ON a.customer_id = c.id WHERE a.status='ACTIVE'").fetchall()
+        ledgers = c.execute("SELECT head_name FROM ledger_heads ORDER BY head_name").fetchall()
+        
+        # Map Customer accounts to their DB IDs so we can update their balance if selected
+        acc_options = {f"Customer A/C: {r[1]} ({r[2]} {r[3]})": str(r[0]) for r in accs}
+        all_options = [h[0] for h in ledgers] + list(acc_options.keys())
+        
+        # Header-level customer link
+        linked_cust = st.selectbox("Link Voucher to Specific Customer (Optional)", options=["None"] + [f"{r[2]} {r[3]} (A/C: {r[1]})" for r in accs])
+        desc_main = st.text_input("Master Voucher Description / Narration")
+        
+        st.markdown("#### Voucher Entries")
+        st.caption("💡 **Tip:** Scroll to the bottom of the table and click the '+' row to add as many heads as you need. You can also select rows and press 'Delete'.")
+        
+        # Initialize default empty dataframe for the data editor
+        if 'jv_data' not in st.session_state:
+            st.session_state.jv_data = pd.DataFrame([
+                {"Account": None, "Debit": 0.00, "Credit": 0.00, "Line_Remarks": ""},
+                {"Account": None, "Debit": 0.00, "Credit": 0.00, "Line_Remarks": ""}
+            ])
+            
+        # Render the interactive grid
+        edited_df = st.data_editor(
+            st.session_state.jv_data,
+            column_config={
+                "Account": st.column_config.SelectboxColumn("Account / Ledger Head", options=all_options, required=True, width="large"),
+                "Debit": st.column_config.NumberColumn("Debit (₹)", min_value=0.0, format="%.2f"),
+                "Credit": st.column_config.NumberColumn("Credit (₹)", min_value=0.0, format="%.2f"),
+                "Line_Remarks": st.column_config.TextColumn("Line Remarks")
+            },
+            num_rows="dynamic",
+            use_container_width=True,
+            key="jv_editor"
+        )
+        
+        # Real-time calculation of Debits vs Credits
+        total_debit = edited_df["Debit"].sum()
+        total_credit = edited_df["Credit"].sum()
+        
+        st.markdown(f"<h4 style='text-align: right; color: {'#166534' if total_debit == total_credit and total_debit > 0 else '#92400e'};'>Total Debit: ₹{total_debit:,.2f} &nbsp;|&nbsp; Total Credit: ₹{total_credit:,.2f}</h4>", unsafe_allow_html=True)
+        
+        if st.button("🚀 Post Journal Entry", type="primary", use_container_width=True):
+            # Strict Accounting Validations
+            if total_debit <= 0 or total_credit <= 0:
+                st.error("❌ Amounts must be greater than zero.")
+            elif round(total_debit, 2) != round(total_credit, 2):
+                st.error(f"❌ Out of Balance! Debits (₹{total_debit}) and Credits (₹{total_credit}) must match exactly.")
+            elif edited_df["Account"].isnull().any():
+                st.error("❌ Please select an Account/Ledger for all rows.")
             else:
-                conn = get_db()
-                jvn = generate_voucher_number('JOURNAL')
-                conn.execute("INSERT INTO journal_vouchers (voucher_number, voucher_date, description, total_amount, status, created_by) VALUES (?,?,?,?,'POSTED',?)", (jvn, date.today(), desc, debit_amt, st.session_state.user['id']))
-                jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                
-                # Insert Debit Line
-                conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,?,?,?,?)", (jid, debit_head, debit_amt, 0.00, desc))
-                # Insert Credit Line
-                conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,?,?,?,?)", (jid, credit_head, 0.00, credit_amt, desc))
-                
-                conn.commit(); conn.close()
-                st.success(f"✅ Journal Voucher {jvn} posted successfully!")
+                try:
+                    # Append linked customer to the master description if selected
+                    final_desc = desc_main
+                    if linked_cust != "None":
+                        final_desc = f"[Linked: {linked_cust}] " + final_desc
+                        
+                    conn = get_db()
+                    jvn = generate_voucher_number('JOURNAL')
+                    
+                    # 1. Save Header Record
+                    conn.execute("INSERT INTO journal_vouchers (voucher_number, voucher_date, description, total_amount, status, created_by) VALUES (?,?,?,?,'POSTED',?)", (jvn, date.today(), final_desc, total_debit, st.session_state.user['id']))
+                    jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    
+                    # 2. Loop through dynamic rows and save line items
+                    for index, row in edited_df.iterrows():
+                        acc_val = row["Account"]
+                        deb = float(row["Debit"])
+                        cred = float(row["Credit"])
+                        narr = row["Line_Remarks"] if pd.notna(row["Line_Remarks"]) else ""
+                        
+                        # IF user selected a Customer Account, update their bank balance!
+                        if str(acc_val).startswith("Customer A/C:"):
+                            actual_aid = acc_options[acc_val]
+                            curr_bal = conn.execute("SELECT balance FROM accounts WHERE id=?", (actual_aid,)).fetchone()[0]
+                            
+                            if cred > 0: 
+                                new_bal = curr_bal + cred
+                                txn_type = 'CREDIT'
+                                amt = cred
+                            elif deb > 0: 
+                                new_bal = curr_bal - deb
+                                txn_type = 'DEBIT'
+                                amt = deb
+                            else:
+                                continue
+                                
+                            # Update account balance & log transaction
+                            conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_bal, actual_aid))
+                            conn.execute("INSERT INTO transactions (transaction_id, account_id, transaction_type, amount, balance_after, description, reference_type, voucher_type, voucher_number, created_by) VALUES (?,?,?,?,?,?,'JOURNAL','JOURNAL',?,?)", (generate_id('TXN'), actual_aid, txn_type, amt, new_bal, narr or final_desc, jvn, st.session_state.user['id']))
+                            
+                        # Save journal entry line
+                        conn.execute("INSERT INTO journal_entries (voucher_id, account_head, debit_amount, credit_amount, description) VALUES (?,?,?,?,?)", (jid, acc_val, deb, cred, narr))
+                        
+                    conn.commit()
+                    st.success(f"✅ Journal Voucher {jvn} posted successfully!")
+                    
+                    # Clear grid for next entry
+                    del st.session_state.jv_data 
+                    st.rerun()
+                    
+                except Exception as e:
+                    conn.rollback()
+                    st.error(f"❌ Error posting voucher: {e}")
+                finally:
+                    conn.close()
+                    
+    c.close()
     st.markdown('</div>', unsafe_allow_html=True)
 
 def reports():

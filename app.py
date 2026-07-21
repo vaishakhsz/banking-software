@@ -986,7 +986,7 @@ def show_interest_calculation():
                     st.write(f"**Description:** {data['desc']}")
                     for entry in data['entries']:
                         color = "#fee2e2" if entry['debit'] > 0 else "#d1fae5"
-                        st.markdown(f"""<div style="background: {color}; padding: 0.8rem; border-radius: 8px; margin: 0.3rem 0; border-left: 4px solid #667eea;"><b>{entry['head']}</b><br>Debit: ₹{entry['debit']:,.2f} | Credit: ₹{entry['credit']:,.2f}<br><small>{entry['desc']}</small></div>""", unsafe_allow_html=True)
+                        st.markdown(f"""<div style="background: {color}; color: black; padding: 0.8rem; border-radius: 8px; margin: 0.3rem 0; border-left: 4px solid #667eea;"><b>{entry['head']}</b><br>Debit: ₹{entry['debit']:,.2f} | Credit: ₹{entry['credit']:,.2f}<br><small>{entry['desc']}</small></div>""", unsafe_allow_html=True)
             
             # Calculate total from unique vouchers
             total_jv_amount = sum(data['amount'] for data in jv_dict.values())

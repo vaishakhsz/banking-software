@@ -6,6 +6,7 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 import uuid
 import hashlib
+import os
 
 # ==================== DATABASE INITIALIZATION ====================
 def init_database():
@@ -37,6 +38,8 @@ def init_database():
         pincode TEXT, 
         pan_number TEXT UNIQUE, 
         aadhar_number TEXT UNIQUE, 
+        pan_document TEXT,
+        aadhar_document TEXT,
         kyc_status TEXT DEFAULT 'PENDING', 
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
@@ -307,8 +310,9 @@ def dashboard():
     conn.close()
 
 def customers_module():
-    st.markdown('<div class="section-card"><h3>👥 Customer Registration & KYC Verification</h3>', unsafe_allow_html=True)
-    t1, t2 = st.tabs(["Register Customer", "View & Verify KYC"])
+    st.markdown('<div class="section-card"><h3>👥 Customer Registration & KYC Document Upload</h3>', unsafe_allow_html=True)
+    t1, t2 = st.tabs(["Register Customer & Upload KYC", "View & Verify KYC Documents"])
+    
     with t1:
         with st.form("cust_reg"):
             c1, c2 = st.columns(2)
@@ -325,27 +329,75 @@ def customers_module():
                 city = st.text_input("City")
                 state = st.text_input("State")
                 pin = st.text_input("PIN Code")
-            if st.form_submit_button("Submit Registration", type="primary", use_container_width=True):
+            
+            st.markdown("---")
+            st.markdown("#### 📂 KYC Document Uploads")
+            col_up1, col_up2 = st.columns(2)
+            with col_up1:
+                pan_file = st.file_uploader("Upload PAN Card (PDF, JPG, PNG)", type=['pdf', 'jpg', 'png'], key="pan_upload")
+            with col_up2:
+                aadhar_file = st.file_uploader("Upload Aadhar Card (PDF, JPG, PNG)", type=['pdf', 'jpg', 'png'], key="aadhar_upload")
+                
+            if st.form_submit_button("Submit Registration & Upload KYC", type="primary", use_container_width=True):
                 if not all([fn, ln, email, phone, pan, aadhar]):
-                    st.error("Please fill all required (*) fields.")
+                    st.error("Please fill all required (*) text fields.")
                 else:
                     try:
+                        os.makedirs("kyc_docs", exist_ok=True)
+                        pan_filename = None
+                        aadhar_filename = None
+                        
+                        if pan_file is not None:
+                            pan_filename = f"kyc_docs/PAN_{pan}_{pan_file.name}"
+                            with open(pan_filename, "wb") as f:
+                                f.write(pan_file.getbuffer())
+                                
+                        if aadhar_file is not None:
+                            aadhar_filename = f"kyc_docs/AADHAR_{aadhar[-4:]}_{aadhar_file.name}"
+                            with open(aadhar_filename, "wb") as f:
+                                f.write(aadhar_file.getbuffer())
+
                         conn = get_db()
                         cid = generate_id('CUST')
-                        conn.execute("INSERT INTO customers (customer_id, first_name, last_name, date_of_birth, email, phone, address, city, state, pincode, pan_number, aadhar_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (cid, fn, ln, dob, email, phone, addr, city, state, pin, pan, aadhar))
+                        conn.execute("""INSERT INTO customers (customer_id, first_name, last_name, date_of_birth, email, phone, address, city, state, pincode, pan_number, aadhar_number, pan_document, aadhar_document) 
+                                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", 
+                                     (cid, fn, ln, dob, email, phone, addr, city, state, pin, pan, aadhar, pan_filename, aadhar_filename))
                         conn.commit(); conn.close()
-                        st.success(f"✅ Customer successfully registered! ID: {cid}")
+                        st.success(f"✅ Customer successfully registered with documents! ID: {cid}")
                     except sqlite3.IntegrityError:
                         st.error("❌ Customer with this Email, PAN, or Aadhar already exists.")
+                        
     with t2:
         conn = get_db()
-        custs = conn.execute("SELECT id, customer_id, first_name||' '||last_name, email, phone, kyc_status FROM customers WHERE kyc_status!='DEACTIVATED'").fetchall()
+        custs = conn.execute("SELECT id, customer_id, first_name||' '||last_name, email, phone, pan_number, aadhar_number, pan_document, aadhar_document, kyc_status FROM customers WHERE kyc_status!='DEACTIVATED'").fetchall()
         conn.close()
         if custs:
-            df = pd.DataFrame(custs, columns=['DB ID', 'Customer ID', 'Name', 'Email', 'Phone', 'KYC Status'])
+            df = pd.DataFrame(custs, columns=['DB ID', 'Customer ID', 'Name', 'Email', 'Phone', 'PAN', 'Aadhar', 'PAN Doc', 'Aadhaar Doc', 'KYC Status'])
             st.dataframe(df, use_container_width=True)
             
-            sel_id = st.selectbox("Select Customer to Verify/Approve", options=[c[0] for c in custs], format_func=lambda x: next(f"{c[1]} - {c[2]} ({c[5]})" for c in custs if c[0] == x))
+            sel_id = st.selectbox("Select Customer to Review Documents & Verify", options=[c[0] for c in custs], format_func=lambda x: next(f"{c[1]} - {c[2]} ({c[9]})" for c in custs if c[0] == x))
+            
+            selected_cust = next(c for c in custs if c[0] == sel_id)
+            st.markdown(f"#### Reviewing Documents for: **{selected_cust[2]}**")
+            dc1, dc2 = st.columns(2)
+            with dc1:
+                st.write(f"**PAN Number:** {selected_cust[5]}")
+                if selected_cust[7] and os.path.exists(selected_cust[7]):
+                    st.success("✅ PAN Document Uploaded")
+                    if st.download_button("Download PAN Document", data=open(selected_cust[7], "rb").read(), file_name=os.path.basename(selected_cust[7])):
+                        pass
+                else:
+                    st.warning("⚠️ No PAN Document uploaded.")
+            with dc2:
+                st.write(f"**Aadhaar Number:** {selected_cust[6]}")
+                if selected_cust[8] and os.path.exists(selected_cust[8]):
+                    st.success("✅ Aadhaar Document Uploaded")
+                    if st.download_button("Download Aadhaar Document", data=open(selected_cust[8], "rb").read(), file_name=os.path.basename(selected_cust[8])):
+                        pass
+                else:
+                    st.warning("⚠️ No Aadhaar Document uploaded.")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("✅ Approve KYC & Open SB Account", type="primary", use_container_width=True):
@@ -570,7 +622,6 @@ def transactions_module():
                 conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_bal, aid))
                 conn.execute("INSERT INTO transactions (transaction_id, account_id, transaction_type, amount, balance_after, description, reference_type, voucher_number, created_by) VALUES (?,?,?,?,?,?,'CASH',?,?)", (txn_id, aid, t_type, amount, new_bal, desc, vvn, st.session_state.user['id']))
                 
-                # Double-entry posting for cashier txn
                 jvn = generate_voucher_number('JOURNAL')
                 conn.execute("INSERT INTO journal_vouchers (voucher_number, voucher_date, description, total_amount, status, created_by) VALUES (?,?,?,?,'POSTED',?)", (jvn, date.today(), f"Cashier {t_type} {txn_id}", amount, st.session_state.user['id']))
                 jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -600,28 +651,48 @@ def journal_vouchers_module():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def financial_reports_module():
-    st.markdown('<div class="section-card"><h3>📈 Financial Statements & Trial Balance</h3>', unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["Trial Balance", "Balance Sheet Summary"])
+    st.markdown('<div class="section-card"><h3>📈 Comprehensive Financial Statements & Reports</h3>', unsafe_allow_html=True)
+    tab1, tab2, tab3 = st.tabs(["Trial Balance", "Profit & Loss (Income Statement)", "Balance Sheet"])
     
-    with tab1:
-        conn = get_db()
-        entries = conn.execute("SELECT account_head, SUM(debit_amount), SUM(credit_amount) FROM journal_entries GROUP BY account_head ORDER BY account_head").fetchall()
-        conn.close()
+    conn = get_db()
+    heads_df = pd.read_sql("SELECT head_name, category FROM ledger_heads", conn)
+    entries = conn.execute("""
+        SELECT je.account_head, 
+               COALESCE(SUM(je.debit_amount), 0), 
+               COALESCE(SUM(je.credit_amount), 0) 
+        FROM journal_entries je 
+        GROUP BY je.account_head
+    """).fetchall()
+    conn.close()
+    
+    head_cat_map = dict(zip(heads_df['head_name'], heads_df['category']))
+    report_data = {}
+    for head, dr, cr in entries:
+        cat = head_cat_map.get(head, 'Asset')
+        report_data[head] = {'category': cat, 'debit': dr, 'credit': cr}
         
+    with tab1:
+        st.markdown("#### ⚖️ Trial Balance Report")
         if not entries:
             st.info("No journal entries recorded for trial balance.")
         else:
             tb_rows = []
             tot_dr, tot_cr = 0.0, 0.0
-            for head, dr, cr in entries:
-                dr, cr = dr or 0.0, cr or 0.0
+            for head, data in report_data.items():
+                dr, cr = data['debit'], data['credit']
                 net = dr - cr
                 net_dr = net if net > 0 else 0.0
                 net_cr = abs(net) if net < 0 else 0.0
                 tot_dr += net_dr
                 tot_cr += net_cr
-                tb_rows.append({"Account Head": head, "Total Debit (₹)": dr, "Total Credit (₹)": cr, "Net Debit (₹)": net_dr, "Net Credit (₹)": net_cr})
-                
+                tb_rows.append({
+                    "Account Head": head, 
+                    "Category": data['category'],
+                    "Total Debit (₹)": dr, 
+                    "Total Credit (₹)": cr, 
+                    "Net Debit (₹)": net_dr, 
+                    "Net Credit (₹)": net_cr
+                })
             st.dataframe(pd.DataFrame(tb_rows).style.format({"Total Debit (₹)": "₹{:,.2f}", "Total Credit (₹)": "₹{:,.2f}", "Net Debit (₹)": "₹{:,.2f}", "Net Credit (₹)": "₹{:,.2f}"}), use_container_width=True)
             
             c1, c2, c3 = st.columns(3)
@@ -633,14 +704,110 @@ def financial_reports_module():
                 else: st.error(f"❌ Imbalance: ₹{diff:,.2f}")
                 
     with tab2:
-        conn = get_db()
-        balances = conn.execute("je.account_head, SUM(je.debit_amount - je.credit_amount) FROM journal_entries je GROUP BY je.account_head").fetchall() if False else conn.execute("SELECT account_head, SUM(debit_amount - credit_amount) FROM journal_entries GROUP BY account_head").fetchall()
-        conn.close()
-        st.info("Enterprise balance sheet and asset/liability classifications are active.")
+        st.markdown("#### 📊 Profit & Loss Statement (Income Statement)")
+        income_rows = []
+        expense_rows = []
+        total_income = 0.0
+        total_expense = 0.0
+        
+        for head, data in report_data.items():
+            cat = data['category']
+            if cat == 'Income':
+                net_inc = data['credit'] - data['debit']
+                total_income += net_inc
+                income_rows.append({"Income Head": head, "Amount (₹)": net_inc})
+            elif cat == 'Expense':
+                net_exp = data['debit'] - data['credit']
+                total_expense += net_exp
+                expense_rows.append({"Expense Head": head, "Amount (₹)": net_exp})
+                
+        col_inc, col_exp = st.columns(2)
+        with col_inc:
+            st.markdown("##### 📥 Incomes & Revenues")
+            if income_rows:
+                st.dataframe(pd.DataFrame(income_rows).style.format({"Amount (₹)": "₹{:,.2f}"}), use_container_width=True)
+            else:
+                st.info("No income recorded.")
+            st.metric("Total Income", f"₹{total_income:,.2f}")
+            
+        with col_exp:
+            st.markdown("##### 📤 Expenses")
+            if expense_rows:
+                st.dataframe(pd.DataFrame(expense_rows).style.format({"Amount (₹)": "₹{:,.2f}"}), use_container_width=True)
+            else:
+                st.info("No expenses recorded.")
+            st.metric("Total Expenses", f"₹{total_expense:,.2f}")
+            
+        st.markdown("---")
+        net_profit = total_income - total_expense
+        if net_profit >= 0:
+            st.success(f"🎉 **Net Profit (YTD):** ₹{net_profit:,.2f}")
+        else:
+            st.error(f"⚠️ **Net Loss (YTD):** ₹{abs(net_profit):,.2f}")
+            
+    with tab3:
+        st.markdown("#### 🏛️ Balance Sheet Summary")
+        asset_rows = []
+        liability_rows = []
+        equity_rows = []
+        
+        total_assets = 0.0
+        total_liabilities = 0.0
+        total_equity = 0.0
+        
+        for head, data in report_data.items():
+            cat = data['category']
+            if cat == 'Asset':
+                net_val = data['debit'] - data['credit']
+                total_assets += net_val
+                asset_rows.append({"Asset Head": head, "Amount (₹)": net_val})
+            elif cat == 'Liability':
+                net_val = data['credit'] - data['debit']
+                total_liabilities += net_val
+                liability_rows.append({"Liability Head": head, "Amount (₹)": net_val})
+            elif cat == 'Equity':
+                net_val = data['credit'] - data['debit']
+                total_equity += net_val
+                equity_rows.append({"Equity Head": head, "Amount (₹)": net_val})
+                
+        net_profit = total_income - total_expense
+        total_equity += net_profit
+        equity_rows.append({"Equity Head": "Retained Earnings / Net Profit (YTD)", "Amount (₹)": net_profit})
+        
+        col_a, col_l = st.columns(2)
+        with col_a:
+            st.markdown("##### 💼 Assets Portfolio")
+            if asset_rows:
+                st.dataframe(pd.DataFrame(asset_rows).style.format({"Amount (₹)": "₹{:,.2f}"}), use_container_width=True)
+            else:
+                st.info("No assets recorded.")
+            st.metric("Total Assets", f"₹{total_assets:,.2f}")
+            
+        with col_l:
+            st.markdown("##### 📋 Liabilities & Equity")
+            if liability_rows:
+                st.markdown("**Liabilities:**")
+                st.dataframe(pd.DataFrame(liability_rows).style.format({"Amount (₹)": "₹{:,.2f}"}), use_container_width=True)
+            if equity_rows:
+                st.markdown("**Equity & Reserves:**")
+                st.dataframe(pd.DataFrame(equity_rows).style.format({"Amount (₹)": "₹{:,.2f}"}), use_container_width=True)
+                
+            total_liab_equity = total_liabilities + total_equity
+            st.metric("Total Liabilities & Equity", f"₹{total_liab_equity:,.2f}")
+            
+        st.markdown("---")
+        bs_diff = abs(total_assets - total_liab_equity)
+        if bs_diff < 0.01:
+            st.success("✅ Balance Sheet Matches (Assets = Liabilities + Equity)")
+        else:
+            st.error(f"❌ Balance Sheet Imbalance: ₹{bs_diff:,.2f}")
+            
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == '__main__':
     main()
+
+
 
 
 

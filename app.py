@@ -331,8 +331,10 @@ def sb_accounts():
     t1,t2,t3,t4=st.tabs(["List","Transact","Statement","Maturity"])
     with t1:
         st.markdown('<div class="panel"><h3>SB Accounts</h3>',unsafe_allow_html=True)
-        q=f"SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND {'c.user_id=?' if role=='customer' else 'c.kyc_status=\\'VERIFIED\\''}"
-        accs=c.execute(q,(uid,) if role=='customer' else ()).fetchall()
+        if role=='customer':
+            accs=c.execute("SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND c.user_id=?",(uid,)).fetchall()
+        else:
+            accs=c.execute("SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND c.kyc_status='VERIFIED'").fetchall()
         if accs:
             data=[{'Account':a[0],'Customer':a[1],'Principal':a[2],'Rate':f"{a[3]:.2f}%",'Interest':a[4],'Maturity':a[2]+a[4]} for a in accs]
             st.dataframe(pd.DataFrame(data).style.format({'Principal':'₹{:,.2f}','Interest':'₹{:,.2f}','Maturity':'₹{:,.2f}'}),use_container_width=True,height=350)
@@ -340,8 +342,10 @@ def sb_accounts():
         st.markdown('</div>',unsafe_allow_html=True)
     with t2:
         st.markdown('<div class="panel"><h3>Transact</h3>',unsafe_allow_html=True)
-        q2=f"SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND {'c.user_id=?' if role=='customer' else '1=1'}"
-        accs=c.execute(q2,(uid,) if role=='customer' else ()).fetchall()
+        if role=='customer':
+            accs=c.execute("SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND c.user_id=?",(uid,)).fetchall()
+        else:
+            accs=c.execute("SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
         if accs:
             sel=st.selectbox("Account",[f"{a[1]} - {a[2]} (₹{a[3]+a[4]:,.2f})" for a in accs])
             if sel:
@@ -360,8 +364,10 @@ def sb_accounts():
         st.markdown('</div>',unsafe_allow_html=True)
     with t3:
         st.markdown('<div class="panel"><h3>Statement</h3>',unsafe_allow_html=True)
-        q3=f"SELECT a.id,a.account_number,c.first_name||' '||c.last_name FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND {'c.user_id=?' if role=='customer' else '1=1'}"
-        accs=c.execute(q3,(uid,) if role=='customer' else ()).fetchall()
+        if role=='customer':
+            accs=c.execute("SELECT a.id,a.account_number,c.first_name||' '||c.last_name FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND c.user_id=?",(uid,)).fetchall()
+        else:
+            accs=c.execute("SELECT a.id,a.account_number,c.first_name||' '||c.last_name FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
         if accs:
             sel=st.selectbox("Account",[f"{a[1]} - {a[2]}" for a in accs],key="ss")
             if sel:
@@ -374,8 +380,10 @@ def sb_accounts():
         st.markdown('</div>',unsafe_allow_html=True)
     with t4:
         st.markdown('<div class="panel"><h3>Maturity</h3>',unsafe_allow_html=True)
-        q4=f"SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND {'c.user_id=?' if role=='customer' else '1=1'}"
-        accs=c.execute(q4,(uid,) if role=='customer' else ()).fetchall()
+        if role=='customer':
+            accs=c.execute("SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND c.user_id=?",(uid,)).fetchall()
+        else:
+            accs=c.execute("SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB'").fetchall()
         if accs:
             data=[{'Account':a[0],'Principal':a[2],'Rate':f"{a[3]:.2f}%",'Interest':a[4],'Maturity':a[2]+a[4]} for a in accs]
             st.dataframe(pd.DataFrame(data).style.format({'Principal':'₹{:,.2f}','Interest':'₹{:,.2f}','Maturity':'₹{:,.2f}'}),use_container_width=True)

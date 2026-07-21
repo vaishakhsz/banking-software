@@ -1,5 +1,4 @@
-
-# 🏦 ENTERPRISE CORE BANKING SYSTEM - AUTO-SEEDED FINANCIAL STATEMENTS & KYC
+# 🏦 ENTERPRISE CORE BANKING SYSTEM - AUTO-MIGRATION & FINANCIAL STATEMENTS
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -8,7 +7,7 @@ import uuid
 import hashlib
 import os
 
-# ==================== DATABASE INITIALIZATION & SEEDING ====================
+# ==================== DATABASE INITIALIZATION & MIGRATION ====================
 def init_database():
     conn = sqlite3.connect('enterprise_banking_system.db')
     c = conn.cursor()
@@ -105,6 +104,18 @@ def init_database():
         FOREIGN KEY (voucher_id) REFERENCES journal_vouchers (id)
     )''')
     
+    conn.commit()
+    
+    # Safe Schema Migration for existing databases
+    c.execute("PRAGMA table_info(customers)")
+    cust_cols = [col[1] for col in c.fetchall()]
+    if cust_cols:
+        if 'pan_document' not in cust_cols:
+            c.execute("ALTER TABLE customers ADD COLUMN pan_document TEXT")
+        if 'aadhar_document' not in cust_cols:
+            c.execute("ALTER TABLE customers ADD COLUMN aadhar_document TEXT")
+        conn.commit()
+        
     # Seed default accounting chart of accounts
     default_heads = [
         ('Cash', 'Asset'), ('Bank Main Clearing', 'Asset'), ('Savings Bank Control Account', 'Liability'), 
@@ -125,26 +136,21 @@ def init_database():
     conn.close()
 
 def seed_demo_data(c, conn):
-    # Create default admin user
     c.execute("INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)", ('admin', hashlib.sha256('admin123'.encode()).hexdigest(), 'admin'))
     admin_id = c.execute("SELECT id FROM users WHERE username='admin'").fetchone()[0]
     
-    # Seed Customer 1
     c.execute("""INSERT INTO customers (customer_id, first_name, last_name, date_of_birth, email, phone, address, city, state, pincode, pan_number, aadhar_number, kyc_status) 
                   VALUES ('CUST2026001', 'Aarav', 'Sharma', '1992-05-14', 'aarav.sharma@example.com', '9876543210', 'MG Road', 'Mumbai', 'Maharashtra', '400001', 'ABCDE1234F', '912345678901', 'VERIFIED')""")
     c1_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
     
-    # Seed Customer 2
     c.execute("""INSERT INTO customers (customer_id, first_name, last_name, date_of_birth, email, phone, address, city, state, pincode, pan_number, aadhar_number, kyc_status) 
                   VALUES ('CUST2026002', 'Priya', 'Nair', '1988-11-20', 'priya.nair@example.com', '9811223344', 'Indiranagar', 'Bangalore', 'Karnataka', '560038', 'FGHIJ5678K', '987654321098', 'VERIFIED')""")
     c2_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
     
-    # Seed Accounts
     c.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, status) VALUES ('100202601', ?, 'SB', 45000.00, 3.5, 'ACTIVE')", (c1_id,))
     c.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, status, tenor_months, maturity_date, maturity_amount) VALUES ('300202601', ?, 'FD', 100000.00, 6.5, 'ACTIVE', 12, '2027-07-22', 106718.00)", (c1_id,))
     c.execute("INSERT INTO accounts (account_number, customer_id, account_type, balance, interest_rate, status, tenor_months, loan_amount, emi_amount) VALUES ('500202601', ?, 'LOAN', 250000.00, 8.5, 'ACTIVE', 60, 250000.00, 5133.00)", (c2_id,))
     
-    # Seed Journal Vouchers & Entries for Balanced Financial Statements
     vouchers = [
         ('RCT202607221001', '2026-07-01', 'Initial Capital Contribution', 500000.00, [('Cash', 500000.00, 0.0), ('Capital Account', 0.0, 500000.00)]),
         ('RCT202607221002', '2026-07-05', 'Savings Bank Deposits Control', 45000.00, [('Cash', 45000.00, 0.0), ('Savings Bank Control Account', 0.0, 45000.00)]),
@@ -831,10 +837,6 @@ def financial_reports_module():
 
 if __name__ == '__main__':
     main()
-
-
-
-
 
 
 

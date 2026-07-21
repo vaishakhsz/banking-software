@@ -439,7 +439,9 @@ def dashboard():
     c.close()
 
 def customer_mgmt():
-    t1, t2 = st.tabs(["➕ Register New Customer", "📋 View Customers"])
+    t1, t2, t3 = st.tabs(["➕ Register New Customer", "📋 View Customers", "✏️ Edit / Resubmit KYC"])
+    
+    # --- TAB 1: REGISTER ---
     with t1:
         st.markdown('<div class="section-card"><h3>Register New Customer</h3>', unsafe_allow_html=True)
         with st.form("cr"):
@@ -477,10 +479,13 @@ def customer_mgmt():
                         conn.commit(); conn.close()
                         st.success(f"✅ Customer successfully registered! ID: {cid}")
                         st.balloons()
+                    except sqlite3.IntegrityError:
+                        st.error("❌ A customer with this Email, PAN, or Aadhar already exists.")
                     except Exception as e:
                         st.error(f"Database Error: {str(e)}")
         st.markdown('</div>', unsafe_allow_html=True)
         
+    # --- TAB 2: VIEW ---
     with t2:
         st.markdown('<div class="section-card"><h3>Customer Directory</h3>', unsafe_allow_html=True)
         conn = get_db()
@@ -490,6 +495,84 @@ def customer_mgmt():
         else:
             st.info("No customers registered yet.")
         conn.close()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # --- TAB 3: EDIT & RESUBMIT ---
+    with t3:
+        st.markdown('<div class="section-card"><h3>Edit Customer Details</h3>', unsafe_allow_html=True)
+        c = get_db()
+        customers = c.execute("SELECT customer_id, first_name, last_name, kyc_status FROM customers ORDER BY created_at DESC").fetchall()
+        
+        if not customers:
+            st.info("No customers available to edit.")
+        else:
+            # Create a dropdown to select the customer
+            cust_dict = {f"{r[0]} - {r[1]} {r[2]} ({r[3]})": r[0] for r in customers}
+            selected_cust = st.selectbox("Select Customer to Edit", options=list(cust_dict.keys()))
+            cid = cust_dict[selected_cust]
+            
+            # Fetch current data for the selected customer
+            curr = c.execute("SELECT first_name, last_name, date_of_birth, email, phone, pan_number, aadhar_number, address, city, state, pincode, kyc_status FROM customers WHERE customer_id=?", (cid,)).fetchone()
+            
+            if curr:
+                try:
+                    dob_val = datetime.strptime(str(curr[2])[:10], '%Y-%m-%d').date()
+                except:
+                    dob_val = date(2000, 1, 1)
+                    
+                with st.form("edit_form"):
+                    st.info(f"Current KYC Status: **{curr[11]}**. Submitting this form will automatically reset the status to **PENDING**.")
+                    c1, c2 = st.columns(2)
+                    with c1: 
+                        fn = st.text_input("First Name*", value=curr[0])
+                        ln = st.text_input("Last Name*", value=curr[1])
+                        dob = st.date_input("Date of Birth*", value=dob_val)
+                        email = st.text_input("Email Address*", value=curr[3])
+                        phone = st.text_input("Phone Number*", value=curr[4])
+                    with c2: 
+                        pan = st.text_input("PAN Number*", value=curr[5])
+                        aadhar = st.text_input("Aadhar Number*", value=curr[6])
+                        addr = st.text_area("Full Address", value=curr[7] if curr[7] else "")
+                        col_c1, col_c2 = st.columns(2)
+                        with col_c1: city = st.text_input("City", value=curr[8] if curr[8] else "")
+                        with col_c2: state = st.text_input("State", value=curr[9] if curr[9] else "")
+                        pin = st.text_input("PIN Code", value=curr[10] if curr[10] else "")
+                        
+                    st.markdown("#### Update Documents (Optional)")
+                    st.caption("Leave these blank if you want to keep the previously uploaded documents.")
+                    doc1, doc2 = st.columns(2)
+                    with doc1: pan_doc = st.file_uploader("Upload New PAN Card", type=['jpg', 'jpeg', 'png', 'pdf'], key="pu_edit")
+                    with doc2: aadhar_doc = st.file_uploader("Upload New Aadhar Card", type=['jpg', 'jpeg', 'png', 'pdf'], key="au_edit")
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.form_submit_button("Update & Resubmit KYC", use_container_width=True, type="primary"):
+                        if not all([fn, ln, email, phone, pan, aadhar]):
+                            st.error("Please fill all required (*) fields.")
+                        else:
+                            try:
+                                conn = get_db()
+                                # 1. Update text records and reset KYC status
+                                update_sql = """UPDATE customers SET 
+                                    first_name=?, last_name=?, date_of_birth=?, email=?, phone=?, 
+                                    address=?, city=?, state=?, pincode=?, pan_number=?, aadhar_number=?, 
+                                    kyc_status='PENDING' 
+                                    WHERE customer_id=?"""
+                                conn.execute(update_sql, (fn, ln, dob, email, phone, addr, city, state, pin, pan, aadhar, cid))
+                                
+                                # 2. Update documents only if new ones were uploaded
+                                if pan_doc:
+                                    conn.execute("UPDATE customers SET pan_document=? WHERE customer_id=?", (pan_doc.read(), cid))
+                                if aadhar_doc:
+                                    conn.execute("UPDATE customers SET aadhar_document=? WHERE customer_id=?", (aadhar_doc.read(), cid))
+                                    
+                                conn.commit(); conn.close()
+                                st.success(f"✅ Customer {cid} successfully updated and returned to PENDING status!")
+                                
+                            except sqlite3.IntegrityError:
+                                st.error("❌ Update failed. This Email, PAN, or Aadhar belongs to another user.")
+                            except Exception as e:
+                                st.error(f"Database Error: {str(e)}")
+        c.close()
         st.markdown('</div>', unsafe_allow_html=True)
 
 def kyc_verify():

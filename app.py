@@ -254,10 +254,12 @@ def load_enterprise_css():
         padding: 0.6rem 1rem !important;
         font-weight: 500;
         background-color: #f8fafc !important;
+        color: #0f172a !important;
     }
     .stTextInput>div>div>input:focus, .stNumberInput>div>div>input:focus, .stSelectbox>div>div>div:focus {
         border-color: #203a43 !important;
         background-color: white !important;
+        color: #0f172a !important;
         box-shadow: 0 0 0 3px rgba(32, 58, 67, 0.1) !important;
     }
     

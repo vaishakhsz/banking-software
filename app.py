@@ -1594,5 +1594,3 @@ def show_my_details():
 if __name__ == "__main__":
     main()
 
-if __name__ == "__main__":
-    main()

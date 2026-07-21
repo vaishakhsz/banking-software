@@ -1,3 +1,4 @@
+# 🏦 COMPLETE BANKING SYSTEM - Enterprise Edition (Enhanced)
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -32,11 +33,17 @@ def init_database():
     c.execute('''CREATE TABLE IF NOT EXISTS fixed_deposits (id INTEGER PRIMARY KEY AUTOINCREMENT, fd_number TEXT UNIQUE NOT NULL, account_id INTEGER NOT NULL, principal_amount DECIMAL(15,2) NOT NULL, interest_rate DECIMAL(5,2) NOT NULL, start_date DATE NOT NULL, maturity_date DATE NOT NULL, maturity_amount DECIMAL(15,2), tenure_months INTEGER NOT NULL, status TEXT DEFAULT 'ACTIVE', nominee_name TEXT, nominee_relation TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (id INTEGER PRIMARY KEY AUTOINCREMENT, rd_number TEXT UNIQUE NOT NULL, account_id INTEGER NOT NULL, monthly_amount DECIMAL(15,2) NOT NULL, interest_rate DECIMAL(5,2) NOT NULL, start_date DATE NOT NULL, maturity_date DATE NOT NULL, maturity_amount DECIMAL(15,2), tenure_months INTEGER NOT NULL, installments_paid INTEGER DEFAULT 0, total_installments INTEGER NOT NULL, status TEXT DEFAULT 'ACTIVE', nominee_name TEXT, nominee_relation TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, transaction_id TEXT UNIQUE NOT NULL, account_id INTEGER NOT NULL, transaction_type TEXT NOT NULL, amount DECIMAL(15,2) NOT NULL, balance_after DECIMAL(15,2) NOT NULL, description TEXT, reference_type TEXT, reference_id TEXT, voucher_type TEXT, voucher_number TEXT, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id), FOREIGN KEY (created_by) REFERENCES users (id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_number TEXT UNIQUE NOT NULL, voucher_date DATE NOT NULL, description TEXT, total_amount DECIMAL(15,2) NOT NULL, status TEXT DEFAULT 'DRAFT', created_by INTEGER, posted_by INTEGER, posted_at TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_number TEXT UNIQUE NOT NULL, voucher_date DATE NOT NULL, description TEXT, total_amount DECIMAL(15,2) NOT NULL, status TEXT DEFAULT 'DRAFT', created_by INTEGER, posted_by INTEGER, posted_at TIMESTAMP, customer_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id), FOREIGN KEY (customer_id) REFERENCES customers (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_id INTEGER NOT NULL, account_id INTEGER, account_head TEXT, debit_amount DECIMAL(15,2) DEFAULT 0.00, credit_amount DECIMAL(15,2) DEFAULT 0.00, description TEXT, FOREIGN KEY (voucher_id) REFERENCES journal_vouchers (id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS interest_calculations (id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL, calculation_date DATE NOT NULL, principal_amount DECIMAL(15,2) NOT NULL, interest_rate DECIMAL(5,2) NOT NULL, interest_earned DECIMAL(15,2) NOT NULL, days_calculated INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, expense_id TEXT UNIQUE NOT NULL, expense_type TEXT NOT NULL, amount DECIMAL(15,2) NOT NULL, description TEXT, date DATE NOT NULL, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS income (id INTEGER PRIMARY KEY AUTOINCREMENT, income_id TEXT UNIQUE NOT NULL, income_type TEXT NOT NULL, amount DECIMAL(15,2) NOT NULL, description TEXT, date DATE NOT NULL, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS interest_calculations (id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL, calculation_date DATE NOT NULL, principal_amount DECIMAL(15,2) NOT NULL, interest_rate DECIMAL(5,2) NOT NULL, interest_earned DECIMAL(15,2) NOT NULL, days_calculated INTEGER NOT NULL, customer_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id), FOREIGN KEY (customer_id) REFERENCES customers (id))''')
+    try: c.execute("SELECT customer_id FROM interest_calculations LIMIT 1")
+    except: c.execute("ALTER TABLE interest_calculations ADD COLUMN customer_id INTEGER")
+    c.execute('''CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, expense_id TEXT UNIQUE NOT NULL, expense_type TEXT NOT NULL, amount DECIMAL(15,2) NOT NULL, description TEXT, date DATE NOT NULL, customer_id INTEGER, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id), FOREIGN KEY (customer_id) REFERENCES customers (id))''')
+    try: c.execute("SELECT customer_id FROM expenses LIMIT 1")
+    except: c.execute("ALTER TABLE expenses ADD COLUMN customer_id INTEGER")
+    c.execute('''CREATE TABLE IF NOT EXISTS income (id INTEGER PRIMARY KEY AUTOINCREMENT, income_id TEXT UNIQUE NOT NULL, income_type TEXT NOT NULL, amount DECIMAL(15,2) NOT NULL, description TEXT, date DATE NOT NULL, customer_id INTEGER, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id), FOREIGN KEY (customer_id) REFERENCES customers (id))''')
+    try: c.execute("SELECT customer_id FROM income LIMIT 1")
+    except: c.execute("ALTER TABLE income ADD COLUMN customer_id INTEGER")
     conn.commit(); conn.close()
 
 # ==================== UTILITY FUNCTIONS ====================
@@ -56,10 +63,15 @@ def get_minimum_balance(c,aid,fd,td):
         return min([sb]+[t[0] for t in txns]) if txns else sb
     except: return (c.execute("SELECT balance FROM accounts WHERE id=?",(aid,)).fetchone() or [0])[0]
 
-def calculate_and_post_sb_interest(uid=1,cfd=None,ctd=None):
+def calculate_and_post_sb_interest(uid=1,cfd=None,ctd=None,customer_id=None):
     c=get_db()
     try:
-        accs=c.execute("SELECT id,account_number,balance,interest_rate,COALESCE(total_interest_earned,0),last_interest_calculation,customer_id,created_at FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchall()
+        query = "SELECT id,account_number,balance,interest_rate,COALESCE(total_interest_earned,0),last_interest_calculation,customer_id,created_at FROM accounts WHERE account_type='SB' AND status='ACTIVE'"
+        if customer_id:
+            query += " AND customer_id=?"
+            accs=c.execute(query, (customer_id,)).fetchall()
+        else:
+            accs=c.execute(query).fetchall()
         if not accs: return "No active SB accounts",[]
         if not ctd: ctd=date.today()
         if not cfd: cfd=ctd.replace(day=1)
@@ -86,13 +98,13 @@ def calculate_and_post_sb_interest(uid=1,cfd=None,ctd=None):
                 nb=bal+interest; nti=ei+interest
                 c.execute("UPDATE accounts SET balance=?,total_interest_earned=?,last_interest_calculation=? WHERE id=?",(nb,nti,ctd,aid))
                 c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,'CREDIT',?,?,'SB Interest','INTEREST','RECEIPT',?,?)",(generate_id('TXN'),aid,interest,nb,generate_voucher_number('RECEIPT'),uid))
-                c.execute("INSERT INTO interest_calculations (account_id,calculation_date,principal_amount,interest_rate,interest_earned,days_calculated) VALUES (?,?,?,?,?,?)",(aid,ctd,mb,rate,interest,days))
+                c.execute("INSERT INTO interest_calculations (account_id,calculation_date,principal_amount,interest_rate,interest_earned,days_calculated,customer_id) VALUES (?,?,?,?,?,?,?)",(aid,ctd,mb,rate,interest,days,cid))
                 jvn=generate_voucher_number('JOURNAL')
-                c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,status,created_by) VALUES (?,?,?,?,'POSTED',?)",(jvn,ctd,f"SB Interest - A/C {an}",interest,uid))
+                c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,status,created_by,customer_id) VALUES (?,?,?,?,'POSTED',?,?)",(jvn,ctd,f"SB Interest - A/C {an}",interest,uid,cid))
                 jid=c.execute("SELECT last_insert_rowid()").fetchone()[0]
                 c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount,description) VALUES (?,'Interest Paid on SB',?,0,?)",(jid,interest,f"{days}d @ {rate}%"))
                 c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount,description) VALUES (?,'SB Account - '||?,0,?,?)",(jid,an,interest,f"Interest credited"))
-                posted.append({'account_number':an,'min_balance':mb,'balance_before':bal,'interest':interest,'new_balance':nb,'rate':rate,'days':days,'from_date':afd,'to_date':ctd,'journal_voucher':jvn,'total_interest_earned':nti,'maturity_value':nb})
+                posted.append({'account_number':an,'min_balance':mb,'balance_before':bal,'interest':interest,'new_balance':nb,'rate':rate,'days':days,'from_date':afd,'to_date':ctd,'journal_voucher':jvn,'total_interest_earned':nti,'maturity_value':nb,'customer_id':cid})
         c.commit(); return "SUCCESS",posted
     except Exception as e: c.rollback(); return f"Error: {e}",[]
     finally: c.close()
@@ -139,6 +151,21 @@ def load_enterprise_css():
     /* Global App Background */
     html, body, [class*="css"] {
         background-color: #f4f7f6;
+    }
+    
+    /* Dark Mode Text Fix for Inputs */
+    .stTextInput input, .stTextArea textarea, .stNumberInput input, 
+    .stSelectbox div[data-baseweb="select"] > div, 
+    .stDateInput input, .stTextInput input:focus, 
+    .stTextArea textarea:focus, .stNumberInput input:focus {
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+    }
+    
+    /* Placeholder text color */
+    .stTextInput input::placeholder, .stTextArea textarea::placeholder {
+        color: #94a3b8 !important;
+        -webkit-text-fill-color: #94a3b8 !important;
     }
     
     /* Elegant Topbar */
@@ -252,11 +279,19 @@ def load_enterprise_css():
         padding: 0.6rem 1rem !important;
         font-weight: 500;
         background-color: #f8fafc !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
     }
     .stTextInput>div>div>input:focus, .stNumberInput>div>div>input:focus, .stSelectbox>div>div>div:focus {
         border-color: #203a43 !important;
         background-color: white !important;
         box-shadow: 0 0 0 3px rgba(32, 58, 67, 0.1) !important;
+    }
+    
+    /* Select box text color */
+    div[data-baseweb="select"] div[data-baseweb="select"] span {
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
     }
     
     /* Primary Buttons */
@@ -435,7 +470,7 @@ def dashboard():
     c.close()
 
 def customer_mgmt():
-    t1, t2 = st.tabs(["➕ Register New Customer", "📋 View Customers"])
+    t1, t2, t3 = st.tabs(["➕ Register New Customer", "📋 View Customers", "✏️ Edit Customer (KYC Rejected)"])
     with t1:
         st.markdown('<div class="section-card"><h3>Register New Customer</h3>', unsafe_allow_html=True)
         with st.form("cr"):
@@ -487,6 +522,75 @@ def customer_mgmt():
             st.info("No customers registered yet.")
         conn.close()
         st.markdown('</div>', unsafe_allow_html=True)
+    
+    with t3:
+        st.markdown('<div class="section-card"><h3>Edit Customer Details (For KYC Rejected Cases)</h3>', unsafe_allow_html=True)
+        conn = get_db()
+        # Get rejected or pending customers for editing
+        rejected_custs = conn.execute("SELECT id, customer_id, first_name, last_name, email, phone, address, city, state, pincode, pan_number, aadhar_number, kyc_status, date_of_birth FROM customers WHERE kyc_status IN ('REJECTED', 'PENDING') ORDER BY created_at DESC").fetchall()
+        
+        if not rejected_custs:
+            st.info("No customers with rejected or pending KYC status found.")
+        else:
+            sel = st.selectbox("Select Customer to Edit", [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in rejected_custs])
+            if sel:
+                idx = [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in rejected_custs].index(sel)
+                cust = rejected_custs[idx]
+                
+                with st.form("edit_cust"):
+                    st.warning(f"Editing Customer ID: {cust[1]} | Current KYC Status: {cust[12]}")
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        fn = st.text_input("First Name*", value=cust[2])
+                        ln = st.text_input("Last Name*", value=cust[3])
+                        dob = st.date_input("Date of Birth*", value=datetime.strptime(cust[13][:10] if cust[13] else '2000-01-01', '%Y-%m-%d').date() if cust[13] else date(2000,1,1))
+                        email = st.text_input("Email Address*", value=cust[4])
+                        phone = st.text_input("Phone Number*", value=cust[5])
+                    with c2:
+                        pan = st.text_input("PAN Number*", value=cust[10] if cust[10] else "")
+                        aadhar = st.text_input("Aadhar Number*", value=cust[11] if cust[11] else "")
+                        addr = st.text_area("Full Address", value=cust[6] if cust[6] else "")
+                        col_c1, col_c2 = st.columns(2)
+                        with col_c1: city = st.text_input("City", value=cust[7] if cust[7] else "")
+                        with col_c2: state = st.text_input("State", value=cust[8] if cust[8] else "")
+                        pin = st.text_input("PIN Code", value=cust[9] if cust[9] else "")
+                    
+                    st.markdown("#### Update Documents (Upload new to replace)")
+                    doc1, doc2 = st.columns(2)
+                    with doc1: 
+                        pan_doc = st.file_uploader("Upload PAN Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="epu")
+                    with doc2: 
+                        aadhar_doc = st.file_uploader("Upload Aadhar Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="eau")
+                    
+                    # Reset KYC status to PENDING after edit
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.info("After editing, the KYC status will be reset to PENDING for re-verification.")
+                    
+                    if st.form_submit_button("Update Customer & Send for Re-verification", use_container_width=True, type="primary"):
+                        try:
+                            update_query = """UPDATE customers SET first_name=?, last_name=?, date_of_birth=?, email=?, phone=?, address=?, city=?, state=?, pincode=?, pan_number=?, aadhar_number=?, kyc_status='PENDING', kyc_verified_by=NULL, kyc_verified_at=NULL"""
+                            params = [fn, ln, dob, email, phone, addr, city, state, pin, pan, aadhar]
+                            
+                            if pan_doc:
+                                update_query += ", pan_document=?"
+                                params.append(pan_doc.read())
+                            if aadhar_doc:
+                                update_query += ", aadhar_document=?"
+                                params.append(aadhar_doc.read())
+                            
+                            update_query += " WHERE id=?"
+                            params.append(cust[0])
+                            
+                            conn.execute(update_query, params)
+                            conn.commit()
+                            st.success(f"✅ Customer {cust[1]} updated successfully! KYC status reset to PENDING for re-verification.")
+                            st.balloons()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Update Error: {str(e)}")
+        conn.close()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def kyc_verify():
     if st.session_state.user['role'] not in ['admin', 'staff']:
@@ -515,6 +619,7 @@ def kyc_verify():
                     if st.button("❌ Reject KYC", key=f"r_{cust[0]}", use_container_width=True):
                         c.execute("UPDATE customers SET kyc_status='REJECTED' WHERE id=?", (cust[0],))
                         c.commit()
+                        st.error("❌ KYC Rejected! Customer can edit and resubmit.")
                         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
     c.close()
@@ -640,10 +745,10 @@ def interest_calc():
         
     c = get_db()
     uid = st.session_state.user['id']
-    t1, t2, t3 = st.tabs(["⚙️ Calculate & Post", "📜 History", "📉 Impact Check"])
+    t1, t2, t3, t4 = st.tabs(["⚙️ Calculate & Post (All)", "👤 Calculate by Customer", "📜 History", "📉 Impact Check"])
     
     with t1:
-        st.markdown('<div class="section-card"><h3>Calculate Interest</h3>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card"><h3>Calculate Interest - All SB Accounts</h3>', unsafe_allow_html=True)
         d1, d2 = st.columns(2)
         with d1: cfd = st.date_input("From Date", date.today().replace(day=1), key="if")
         with d2: ctd = st.date_input("To Date", date.today(), key="it")
@@ -651,7 +756,7 @@ def interest_calc():
         if cfd > ctd:
             st.error("Invalid date range selected.")
         else:
-            st.info(f"Targeting: {cfd.strftime('%d %b %Y')} → {ctd.strftime('%d %b %Y')} ({(ctd-cfd).days+1} days)")
+            st.info(f"Targeting: {cfd.strftime('%d %b %Y')} → {ctd.strftime('%d %b %Y')} ({(ctd-ctd).days+1} days)")
             
         accs = c.execute("SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
         
@@ -678,8 +783,57 @@ def interest_calc():
                     if pv:
                         st.dataframe(pd.DataFrame(pv).style.format({'Min Balance': '₹{:,.2f}', 'Interest Output': '₹{:,.2f}', 'New Maturity Total': '₹{:,.2f}'}), use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
-        
+    
     with t2:
+        st.markdown('<div class="section-card"><h3>Calculate Interest - By Customer</h3>', unsafe_allow_html=True)
+        # Customer dropdown for interest calculation
+        custs = c.execute("SELECT DISTINCT c.id, c.customer_id, c.first_name||' '||c.last_name FROM customers c JOIN accounts a ON c.id=a.customer_id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
+        
+        if custs:
+            sel_cust = st.selectbox("Select Customer", [f"{c[1]} - {c[2]}" for c in custs], key="ic_cust")
+            if sel_cust:
+                idx = [f"{c[1]} - {c[2]}" for c in custs].index(sel_cust)
+                selected_customer_id = custs[idx][0]
+                selected_customer_name = custs[idx][2]
+                
+                d1, d2 = st.columns(2)
+                with d1: cfd = st.date_input("From Date", date.today().replace(day=1), key="icf_cust")
+                with d2: ctd = st.date_input("To Date", date.today(), key="ict_cust")
+                
+                # Get customer's SB accounts
+                accs = c.execute("SELECT a.id,a.account_number,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a WHERE a.customer_id=? AND a.account_type='SB' AND a.status='ACTIVE'", (selected_customer_id,)).fetchall()
+                
+                if accs:
+                    st.markdown(f"**Customer:** {selected_customer_name} | **Accounts:** {len(accs)}")
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("Calculate & Post Interest", use_container_width=True, type="primary", key="cp_cust"):
+                            s, r = calculate_and_post_sb_interest(uid, cfd, ctd, selected_customer_id)
+                            if s == "SUCCESS" and len(r) > 0:
+                                st.success(f"✅ Posted ₹{sum(x['interest'] for x in r):,.2f} interest for {selected_customer_name}")
+                                st.balloons()
+                            else:
+                                st.info(s if s != "SUCCESS" else f"No interest to post for {selected_customer_name}")
+                    with b2:
+                        if st.button("Preview Calculations Only", use_container_width=True, key="pv_cust"):
+                            pv = []
+                            for a in accs:
+                                mb = get_minimum_balance(c, a[0], cfd, ctd)
+                                if mb <= 0: mb = a[2]
+                                days = (ctd-cfd).days+1
+                                if days > 0:
+                                    pv.append({'Account': a[1], 'Min Balance': mb, 'Interest Output': calculate_sb_interest(mb, a[3] or 3.5, days), 'New Maturity Total': a[2]+a[4]+calculate_sb_interest(mb, a[3] or 3.5, days)})
+                            if pv:
+                                st.dataframe(pd.DataFrame(pv).style.format({'Min Balance': '₹{:,.2f}', 'Interest Output': '₹{:,.2f}', 'New Maturity Total': '₹{:,.2f}'}), use_container_width=True)
+                else:
+                    st.info("No active SB accounts found for this customer.")
+        else:
+            st.info("No customers with active SB accounts found.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    with t3:
         st.markdown('<div class="section-card"><h3>Interest Run History</h3>', unsafe_allow_html=True)
         h = c.execute("SELECT ic.calculation_date,a.account_number,c.first_name||' '||c.last_name,ic.principal_amount,ic.interest_rate,ic.interest_earned,ic.days_calculated FROM interest_calculations ic JOIN accounts a ON ic.account_id=a.id JOIN customers c ON a.customer_id=c.id ORDER BY ic.calculation_date DESC LIMIT 50").fetchall()
         if h:
@@ -688,7 +842,7 @@ def interest_calc():
             st.info("No interest calculation history available.")
         st.markdown('</div>', unsafe_allow_html=True)
         
-    with t3:
+    with t4:
         st.markdown('<div class="section-card"><h3>Journal Voucher Impact</h3>', unsafe_allow_html=True)
         jvs = c.execute("SELECT jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,je.account_head,je.debit_amount,je.credit_amount FROM journal_vouchers jv JOIN journal_entries je ON jv.id=je.voucher_id WHERE (je.account_head='Interest Paid on SB' OR je.account_head LIKE '%SB Account%') AND jv.status='POSTED' ORDER BY jv.voucher_date DESC LIMIT 50").fetchall()
         if jvs:
@@ -851,7 +1005,6 @@ def balance_sheet():
             
     st.markdown('</div>', unsafe_allow_html=True); c.close()
 
-# The remaining functions follow the same structured design updates
 def profit_loss():
     if st.session_state.user['role'] not in ['admin','staff']: st.error("Unauthorized"); return
     c = get_db()
@@ -906,7 +1059,11 @@ def income_expenses():
     if st.session_state.user['role'] not in ['admin','staff']: st.error("Unauthorized"); return
     c = get_db()
     uid = st.session_state.user['id']
-    t1, t2 = st.tabs(["💰 Record Income", "📉 Record Expense"])
+    t1, t2, t3, t4 = st.tabs(["💰 Record Income", "📉 Record Expense", "📋 View Income", "📋 View Expenses"])
+    
+    # Get customer list for dropdown
+    custs = c.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers ORDER BY customer_id").fetchall()
+    cust_options = ["None (General Entry)"] + [f"{c[1]} - {c[2]}" for c in custs]
     
     with t1:
         st.markdown('<div class="section-card"><h3>Register New Income</h3>', unsafe_allow_html=True)
@@ -915,13 +1072,20 @@ def income_expenses():
             with d1: 
                 it = st.selectbox("Income Type", ["Interest Earned", "Fees & Charges", "Commission Income", "Other Income"])
                 amt = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
+                sel_cust = st.selectbox("Related Customer (Optional)", cust_options, key="inc_cust")
             with d2: 
                 dt = st.date_input("Date", date.today(), key="id")
                 desc = st.text_area("Description")
             
+            customer_id = None
+            if sel_cust != "None (General Entry)":
+                idx = cust_options.index(sel_cust) - 1
+                if idx >= 0:
+                    customer_id = custs[idx][0]
+            
             st.markdown("<br>", unsafe_allow_html=True)
             if st.form_submit_button("Record Income", use_container_width=True, type="primary"):
-                c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", (generate_id('INC'), it, amt, desc, dt, uid))
+                c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", (generate_id('INC'), it, amt, desc, dt, uid, customer_id))
                 c.commit()
                 st.success(f"✅ Successfully recorded Income: ₹{amt:,.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -933,15 +1097,40 @@ def income_expenses():
             with d1: 
                 et = st.selectbox("Expense Type", ["Salary & Wages", "Rent & Utilities", "Operating Expenses", "Administrative Expenses", "Other Expenses"])
                 amt = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
+                sel_cust = st.selectbox("Related Customer (Optional)", cust_options, key="exp_cust")
             with d2: 
                 dt = st.date_input("Date", date.today(), key="ed")
                 desc = st.text_area("Description")
             
+            customer_id = None
+            if sel_cust != "None (General Entry)":
+                idx = cust_options.index(sel_cust) - 1
+                if idx >= 0:
+                    customer_id = custs[idx][0]
+            
             st.markdown("<br>", unsafe_allow_html=True)
             if st.form_submit_button("Record Expense", use_container_width=True, type="primary"):
-                c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", (generate_id('EXP'), et, amt, desc, dt, uid))
+                c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", (generate_id('EXP'), et, amt, desc, dt, uid, customer_id))
                 c.commit()
                 st.success(f"✅ Successfully recorded Expense: ₹{amt:,.2f}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with t3:
+        st.markdown('<div class="section-card"><h3>Income Ledger</h3>', unsafe_allow_html=True)
+        inc_data = c.execute("SELECT income_id, income_type, amount, description, date, COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=income.customer_id), 'General') as customer_name FROM income ORDER BY date DESC LIMIT 100").fetchall()
+        if inc_data:
+            st.dataframe(pd.DataFrame(inc_data, columns=['ID', 'Type', 'Amount', 'Description', 'Date', 'Customer']).style.format({'Amount': '₹{:,.2f}'}), use_container_width=True, height=400)
+        else:
+            st.info("No income records found.")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with t4:
+        st.markdown('<div class="section-card"><h3>Expense Ledger</h3>', unsafe_allow_html=True)
+        exp_data = c.execute("SELECT expense_id, expense_type, amount, description, date, COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=expenses.customer_id), 'General') as customer_name FROM expenses ORDER BY date DESC LIMIT 100").fetchall()
+        if exp_data:
+            st.dataframe(pd.DataFrame(exp_data, columns=['ID', 'Type', 'Amount', 'Description', 'Date', 'Customer']).style.format({'Amount': '₹{:,.2f}'}), use_container_width=True, height=400)
+        else:
+            st.info("No expense records found.")
         st.markdown('</div>', unsafe_allow_html=True)
     c.close()
 
@@ -1116,6 +1305,11 @@ def journal_vouchers():
         
     c = get_db()
     uid = st.session_state.user['id']
+    
+    # Get customer list for dropdown
+    custs = c.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers ORDER BY customer_id").fetchall()
+    cust_options = ["None (General Voucher)"] + [f"{c[1]} - {c[2]}" for c in custs]
+    
     t1, t2 = st.tabs(["📝 Create JV", "📋 Manage Vouchers"])
     
     with t1:
@@ -1123,6 +1317,15 @@ def journal_vouchers():
         with st.form("jv"):
             vd = st.date_input("Voucher Date", date.today(), key="jvd")
             desc = st.text_area("Voucher Narration / Description")
+            
+            # Customer dropdown
+            sel_cust = st.selectbox("Related Customer (Optional)", cust_options, key="jv_cust")
+            customer_id = None
+            if sel_cust != "None (General Voucher)":
+                idx = cust_options.index(sel_cust) - 1
+                if idx >= 0:
+                    customer_id = custs[idx][0]
+            
             n = st.number_input("Number of Ledger Entries", 2, 10, 2)
             entries = []
             td_v = 0
@@ -1148,7 +1351,7 @@ def journal_vouchers():
                     st.error("Voucher must be perfectly balanced!")
                 else:
                     vn = generate_voucher_number('JOURNAL')
-                    c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,created_by) VALUES (?,?,?,?,?)", (vn, vd, desc, td_v, uid))
+                    c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,created_by,customer_id) VALUES (?,?,?,?,?,?)", (vn, vd, desc, td_v, uid, customer_id))
                     vid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
                     for e in entries:
                         if e['d'] > 0 or e['c'] > 0: 
@@ -1160,12 +1363,15 @@ def journal_vouchers():
         
     with t2:
         st.markdown('<div class="section-card"><h3>Journal Voucher Directory</h3>', unsafe_allow_html=True)
-        vouchers = c.execute("SELECT jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+        vouchers = c.execute("SELECT jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=jv.customer_id), 'General') as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
         if vouchers:
             for v in vouchers:
                 sc = {'DRAFT': '🟡 DRAFT', 'POSTED': '🟢 POSTED', 'CANCELLED': '🔴 CANCELLED'}
-                with st.expander(f"{sc.get(v[4],'⚪')} &nbsp;|&nbsp; {v[0]} &nbsp;|&nbsp; Date: {v[1]} &nbsp;|&nbsp; ₹{v[3]:,.2f}"):
+                cust_label = f" | 👤 {v[5]}" if v[5] != 'General' else ""
+                with st.expander(f"{sc.get(v[4],'⚪')} &nbsp;|&nbsp; {v[0]} &nbsp;|&nbsp; Date: {v[1]} &nbsp;|&nbsp; ₹{v[3]:,.2f}{cust_label}"):
                     st.markdown(f"**Narration:** {v[2]}")
+                    if v[5] != 'General':
+                        st.markdown(f"**Customer:** {v[5]}")
                     entries = c.execute("SELECT account_head,debit_amount,credit_amount FROM journal_entries WHERE voucher_id=(SELECT id FROM journal_vouchers WHERE voucher_number=?)", (v[0],)).fetchall()
                     if entries: 
                         st.dataframe(pd.DataFrame(entries, columns=['Ledger Head', 'Debit (Dr)', 'Credit (Cr)']).style.format({'Debit (Dr)': '₹{:,.2f}', 'Credit (Cr)': '₹{:,.2f}'}), use_container_width=True)

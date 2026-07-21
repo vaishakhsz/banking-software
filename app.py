@@ -341,7 +341,7 @@ def customers_module():
             df = pd.DataFrame(custs, columns=['DB ID', 'Customer ID', 'Name', 'Email', 'Phone', 'KYC Status'])
             st.dataframe(df, use_container_width=True)
             
-            sel_id = st.selectbox("Select Customer to Verify/Approve", options=[c[0] for c in custs], format_func=lambda x: next(f"{c[1]} - {c[2]} ({c[5])}" for c in custs if c[0] == x))
+            sel_id = st.selectbox("Select Customer to Verify/Approve", options=[c[0] for c in custs], format_func=lambda x: next(f"{c[1]} - {c[2]} {c[5]})" for c in custs if c[0] == x))
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("✅ Approve KYC & Open SB Account", type="primary", use_container_width=True):

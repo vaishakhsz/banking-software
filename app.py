@@ -1,4 +1,4 @@
-# 🏦 COMPLETE BANKING SYSTEM - Enterprise Edition (Enhanced)
+# 🏦 COMPLETE BANKING SYSTEM - Enterprise Edition (Fully Fixed)
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -28,118 +28,212 @@ def init_database():
     c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL, is_active BOOLEAN DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT UNIQUE NOT NULL, user_id INTEGER, first_name TEXT NOT NULL, last_name TEXT NOT NULL, date_of_birth DATE NOT NULL, gender TEXT, email TEXT UNIQUE NOT NULL, phone TEXT NOT NULL, address TEXT, city TEXT, state TEXT, pincode TEXT, pan_number TEXT UNIQUE, aadhar_number TEXT UNIQUE, kyc_status TEXT DEFAULT 'PENDING', kyc_verified_by INTEGER, kyc_verified_at TIMESTAMP, pan_document BLOB, aadhar_document BLOB, photo BLOB, signature BLOB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, account_number TEXT UNIQUE NOT NULL, customer_id INTEGER NOT NULL, account_type TEXT NOT NULL, balance DECIMAL(15,2) DEFAULT 0.00, status TEXT DEFAULT 'ACTIVE', interest_rate DECIMAL(5,2), last_interest_calculation DATE, total_interest_earned DECIMAL(15,2) DEFAULT 0.00, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (customer_id) REFERENCES customers (id))''')
-    try: c.execute("SELECT total_interest_earned FROM accounts LIMIT 1")
-    except: c.execute("ALTER TABLE accounts ADD COLUMN total_interest_earned DECIMAL(15,2) DEFAULT 0.00")
+    
+    # Safe migrations for existing tables
+    try: 
+        c.execute("SELECT total_interest_earned FROM accounts LIMIT 1")
+    except: 
+        c.execute("ALTER TABLE accounts ADD COLUMN total_interest_earned DECIMAL(15,2) DEFAULT 0.00")
+    
     c.execute('''CREATE TABLE IF NOT EXISTS fixed_deposits (id INTEGER PRIMARY KEY AUTOINCREMENT, fd_number TEXT UNIQUE NOT NULL, account_id INTEGER NOT NULL, principal_amount DECIMAL(15,2) NOT NULL, interest_rate DECIMAL(5,2) NOT NULL, start_date DATE NOT NULL, maturity_date DATE NOT NULL, maturity_amount DECIMAL(15,2), tenure_months INTEGER NOT NULL, status TEXT DEFAULT 'ACTIVE', nominee_name TEXT, nominee_relation TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (id INTEGER PRIMARY KEY AUTOINCREMENT, rd_number TEXT UNIQUE NOT NULL, account_id INTEGER NOT NULL, monthly_amount DECIMAL(15,2) NOT NULL, interest_rate DECIMAL(5,2) NOT NULL, start_date DATE NOT NULL, maturity_date DATE NOT NULL, maturity_amount DECIMAL(15,2), tenure_months INTEGER NOT NULL, installments_paid INTEGER DEFAULT 0, total_installments INTEGER NOT NULL, status TEXT DEFAULT 'ACTIVE', nominee_name TEXT, nominee_relation TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, transaction_id TEXT UNIQUE NOT NULL, account_id INTEGER NOT NULL, transaction_type TEXT NOT NULL, amount DECIMAL(15,2) NOT NULL, balance_after DECIMAL(15,2) NOT NULL, description TEXT, reference_type TEXT, reference_id TEXT, voucher_type TEXT, voucher_number TEXT, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id), FOREIGN KEY (created_by) REFERENCES users (id))''')
+    
+    # Create journal_vouchers with customer_id
     c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_number TEXT UNIQUE NOT NULL, voucher_date DATE NOT NULL, description TEXT, total_amount DECIMAL(15,2) NOT NULL, status TEXT DEFAULT 'DRAFT', created_by INTEGER, posted_by INTEGER, posted_at TIMESTAMP, customer_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id), FOREIGN KEY (customer_id) REFERENCES customers (id))''')
+    try:
+        c.execute("SELECT customer_id FROM journal_vouchers LIMIT 1")
+    except:
+        c.execute("ALTER TABLE journal_vouchers ADD COLUMN customer_id INTEGER")
+    
     c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_id INTEGER NOT NULL, account_id INTEGER, account_head TEXT, debit_amount DECIMAL(15,2) DEFAULT 0.00, credit_amount DECIMAL(15,2) DEFAULT 0.00, description TEXT, FOREIGN KEY (voucher_id) REFERENCES journal_vouchers (id))''')
+    
     c.execute('''CREATE TABLE IF NOT EXISTS interest_calculations (id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL, calculation_date DATE NOT NULL, principal_amount DECIMAL(15,2) NOT NULL, interest_rate DECIMAL(5,2) NOT NULL, interest_earned DECIMAL(15,2) NOT NULL, days_calculated INTEGER NOT NULL, customer_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (account_id) REFERENCES accounts (id), FOREIGN KEY (customer_id) REFERENCES customers (id))''')
-    try: c.execute("SELECT customer_id FROM interest_calculations LIMIT 1")
-    except: c.execute("ALTER TABLE interest_calculations ADD COLUMN customer_id INTEGER")
+    try:
+        c.execute("SELECT customer_id FROM interest_calculations LIMIT 1")
+    except:
+        c.execute("ALTER TABLE interest_calculations ADD COLUMN customer_id INTEGER")
+    
     c.execute('''CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, expense_id TEXT UNIQUE NOT NULL, expense_type TEXT NOT NULL, amount DECIMAL(15,2) NOT NULL, description TEXT, date DATE NOT NULL, customer_id INTEGER, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id), FOREIGN KEY (customer_id) REFERENCES customers (id))''')
-    try: c.execute("SELECT customer_id FROM expenses LIMIT 1")
-    except: c.execute("ALTER TABLE expenses ADD COLUMN customer_id INTEGER")
+    try:
+        c.execute("SELECT customer_id FROM expenses LIMIT 1")
+    except:
+        c.execute("ALTER TABLE expenses ADD COLUMN customer_id INTEGER")
+    
     c.execute('''CREATE TABLE IF NOT EXISTS income (id INTEGER PRIMARY KEY AUTOINCREMENT, income_id TEXT UNIQUE NOT NULL, income_type TEXT NOT NULL, amount DECIMAL(15,2) NOT NULL, description TEXT, date DATE NOT NULL, customer_id INTEGER, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (created_by) REFERENCES users (id), FOREIGN KEY (customer_id) REFERENCES customers (id))''')
-    try: c.execute("SELECT customer_id FROM income LIMIT 1")
-    except: c.execute("ALTER TABLE income ADD COLUMN customer_id INTEGER")
-    conn.commit(); conn.close()
+    try:
+        c.execute("SELECT customer_id FROM income LIMIT 1")
+    except:
+        c.execute("ALTER TABLE income ADD COLUMN customer_id INTEGER")
+    
+    conn.commit()
+    conn.close()
 
 # ==================== UTILITY FUNCTIONS ====================
-def get_db(): return sqlite3.connect('banking_system.db')
-def generate_id(p): return f"{p}{datetime.now().strftime('%Y%m%d%H%M%S')}{str(uuid.uuid4())[:4]}"
-def generate_account_number(t): return f"{'100' if t=='SB' else '200' if t=='FD' else '300'}{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
-def generate_voucher_number(v): return f"{'PMT' if v=='PAYMENT' else 'RCT' if v=='RECEIPT' else 'JNL'}{datetime.now().strftime('%Y%m%d%H%M')}{str(uuid.uuid4().int)[:4]}"
-def calculate_fd_maturity(p,r,m): return round(p*(1+r/400)**(m/3),2)
-def calculate_rd_maturity(m,r,mo): return round(m*(((1+r/400)**(mo/3)-1)/(1-(1+r/400)**(-1/3))),2)
-def calculate_sb_interest(b,r,d): return 0 if b<=0 else round((b*r*d)/(100*365),2)
+def get_db(): 
+    return sqlite3.connect('banking_system.db')
 
-def get_minimum_balance(c,aid,fd,td):
+def generate_id(p): 
+    return f"{p}{datetime.now().strftime('%Y%m%d%H%M%S')}{str(uuid.uuid4())[:4]}"
+
+def generate_account_number(t): 
+    return f"{'100' if t=='SB' else '200' if t=='FD' else '300'}{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
+
+def generate_voucher_number(v): 
+    return f"{'PMT' if v=='PAYMENT' else 'RCT' if v=='RECEIPT' else 'JNL'}{datetime.now().strftime('%Y%m%d%H%M')}{str(uuid.uuid4().int)[:4]}"
+
+def calculate_fd_maturity(p, r, m): 
+    return round(p * (1 + r/400) ** (m/3), 2)
+
+def calculate_rd_maturity(m, r, mo): 
+    return round(m * (((1 + r/400) ** (mo/3) - 1) / (1 - (1 + r/400) ** (-1/3))), 2)
+
+def calculate_sb_interest(b, r, d): 
+    return 0 if b <= 0 else round((b * r * d) / (100 * 365), 2)
+
+def get_minimum_balance(c, aid, fd, td):
     try:
-        sb=c.execute("SELECT balance_after FROM transactions WHERE account_id=? AND DATE(created_at)<? ORDER BY created_at DESC LIMIT 1",(aid,fd)).fetchone()
-        sb=sb[0] if sb else (c.execute("SELECT balance FROM accounts WHERE id=?",(aid,)).fetchone() or [0])[0]
-        txns=c.execute("SELECT balance_after FROM transactions WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ? ORDER BY created_at",(aid,fd,td)).fetchall()
-        return min([sb]+[t[0] for t in txns]) if txns else sb
-    except: return (c.execute("SELECT balance FROM accounts WHERE id=?",(aid,)).fetchone() or [0])[0]
+        sb = c.execute("SELECT balance_after FROM transactions WHERE account_id=? AND DATE(created_at)<? ORDER BY created_at DESC LIMIT 1", (aid, fd)).fetchone()
+        sb = sb[0] if sb else (c.execute("SELECT balance FROM accounts WHERE id=?", (aid,)).fetchone() or [0])[0]
+        txns = c.execute("SELECT balance_after FROM transactions WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ? ORDER BY created_at", (aid, fd, td)).fetchall()
+        return min([sb] + [t[0] for t in txns]) if txns else sb
+    except: 
+        return (c.execute("SELECT balance FROM accounts WHERE id=?", (aid,)).fetchone() or [0])[0]
 
-def calculate_and_post_sb_interest(uid=1,cfd=None,ctd=None,customer_id=None):
-    c=get_db()
+def calculate_and_post_sb_interest(uid=1, cfd=None, ctd=None, customer_id=None):
+    c = get_db()
     try:
         query = "SELECT id,account_number,balance,interest_rate,COALESCE(total_interest_earned,0),last_interest_calculation,customer_id,created_at FROM accounts WHERE account_type='SB' AND status='ACTIVE'"
         if customer_id:
             query += " AND customer_id=?"
-            accs=c.execute(query, (customer_id,)).fetchall()
+            accs = c.execute(query, (customer_id,)).fetchall()
         else:
-            accs=c.execute(query).fetchall()
-        if not accs: return "No active SB accounts",[]
-        if not ctd: ctd=date.today()
-        if not cfd: cfd=ctd.replace(day=1)
-        posted=[]
+            accs = c.execute(query).fetchall()
+        if not accs: 
+            return "No active SB accounts", []
+        if not ctd: 
+            ctd = date.today()
+        if not cfd: 
+            cfd = ctd.replace(day=1)
+        posted = []
         for a in accs:
-            aid,an,bal,rate,ei,lc,cid=a[0],a[1],a[2],a[3] or 3.5,a[4],a[5],a[6]
-            afd=cfd
+            aid, an, bal, rate, ei, lc, cid = a[0], a[1], a[2], a[3] or 3.5, a[4], a[5], a[6]
+            afd = cfd
             if a[7]:
                 try:
-                    acd=datetime.strptime(str(a[7])[:10],'%Y-%m-%d').date()
-                    if acd>afd: afd=acd
-                except: pass
+                    acd = datetime.strptime(str(a[7])[:10], '%Y-%m-%d').date()
+                    if acd > afd: 
+                        afd = acd
+                except: 
+                    pass
             if lc:
                 try:
-                    lcd=datetime.strptime(str(lc)[:10],'%Y-%m-%d').date()
-                    if lcd>=afd: afd=lcd+timedelta(days=1)
-                except: pass
-            days=(ctd-afd).days+1
-            if days<=0: continue
-            mb=get_minimum_balance(c,aid,afd,ctd)
-            if mb<=0: mb=bal
-            interest=calculate_sb_interest(mb,rate,days)
-            if interest>0:
-                nb=bal+interest; nti=ei+interest
-                c.execute("UPDATE accounts SET balance=?,total_interest_earned=?,last_interest_calculation=? WHERE id=?",(nb,nti,ctd,aid))
-                c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,'CREDIT',?,?,'SB Interest','INTEREST','RECEIPT',?,?)",(generate_id('TXN'),aid,interest,nb,generate_voucher_number('RECEIPT'),uid))
-                c.execute("INSERT INTO interest_calculations (account_id,calculation_date,principal_amount,interest_rate,interest_earned,days_calculated,customer_id) VALUES (?,?,?,?,?,?,?)",(aid,ctd,mb,rate,interest,days,cid))
-                jvn=generate_voucher_number('JOURNAL')
-                c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,status,created_by,customer_id) VALUES (?,?,?,?,'POSTED',?,?)",(jvn,ctd,f"SB Interest - A/C {an}",interest,uid,cid))
-                jid=c.execute("SELECT last_insert_rowid()").fetchone()[0]
-                c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount,description) VALUES (?,'Interest Paid on SB',?,0,?)",(jid,interest,f"{days}d @ {rate}%"))
-                c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount,description) VALUES (?,'SB Account - '||?,0,?,?)",(jid,an,interest,f"Interest credited"))
-                posted.append({'account_number':an,'min_balance':mb,'balance_before':bal,'interest':interest,'new_balance':nb,'rate':rate,'days':days,'from_date':afd,'to_date':ctd,'journal_voucher':jvn,'total_interest_earned':nti,'maturity_value':nb,'customer_id':cid})
-        c.commit(); return "SUCCESS",posted
-    except Exception as e: c.rollback(); return f"Error: {e}",[]
-    finally: c.close()
+                    lcd = datetime.strptime(str(lc)[:10], '%Y-%m-%d').date()
+                    if lcd >= afd: 
+                        afd = lcd + timedelta(days=1)
+                except: 
+                    pass
+            days = (ctd - afd).days + 1
+            if days <= 0: 
+                continue
+            mb = get_minimum_balance(c, aid, afd, ctd)
+            if mb <= 0: 
+                mb = bal
+            interest = calculate_sb_interest(mb, rate, days)
+            if interest > 0:
+                nb = bal + interest
+                nti = ei + interest
+                c.execute("UPDATE accounts SET balance=?,total_interest_earned=?,last_interest_calculation=? WHERE id=?", (nb, nti, ctd, aid))
+                c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,'CREDIT',?,?,'SB Interest','INTEREST','RECEIPT',?,?)", (generate_id('TXN'), aid, interest, nb, generate_voucher_number('RECEIPT'), uid))
+                c.execute("INSERT INTO interest_calculations (account_id,calculation_date,principal_amount,interest_rate,interest_earned,days_calculated,customer_id) VALUES (?,?,?,?,?,?,?)", (aid, ctd, mb, rate, interest, days, cid))
+                jvn = generate_voucher_number('JOURNAL')
+                try:
+                    c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,status,created_by,customer_id) VALUES (?,?,?,?,'POSTED',?,?)", (jvn, ctd, f"SB Interest - A/C {an}", interest, uid, cid))
+                except:
+                    c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,status,created_by) VALUES (?,?,?,?,'POSTED',?)", (jvn, ctd, f"SB Interest - A/C {an}", interest, uid))
+                jid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount,description) VALUES (?,'Interest Paid on SB',?,0,?)", (jid, interest, f"{days}d @ {rate}%"))
+                c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount,description) VALUES (?,'SB Account - '||?,0,?,?)", (jid, an, interest, "Interest credited"))
+                posted.append({'account_number': an, 'min_balance': mb, 'balance_before': bal, 'interest': interest, 'new_balance': nb, 'rate': rate, 'days': days, 'from_date': afd, 'to_date': ctd, 'journal_voucher': jvn, 'total_interest_earned': nti, 'maturity_value': nb, 'customer_id': cid})
+        c.commit()
+        return "SUCCESS", posted
+    except Exception as e: 
+        c.rollback()
+        return f"Error: {e}", []
+    finally: 
+        c.close()
 
-def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
+def hash_password(p): 
+    return hashlib.sha256(p.encode()).hexdigest()
 
-def login_user(u,p):
-    c=get_db(); cur=c.cursor()
-    cur.execute("SELECT * FROM users WHERE username=? AND password=? AND is_active=1",(u,hash_password(p))); user=cur.fetchone(); c.close(); return user
+def login_user(u, p):
+    c = get_db()
+    cur = c.cursor()
+    cur.execute("SELECT * FROM users WHERE username=? AND password=? AND is_active=1", (u, hash_password(p)))
+    user = cur.fetchone()
+    c.close()
+    return user
 
 def create_default_admin():
-    c=get_db()
-    if c.execute("SELECT COUNT(*) FROM users WHERE username='admin'").fetchone()[0]==0:
-        c.execute("INSERT INTO users (username,password,role) VALUES (?,?,?)",('admin',hash_password('admin123'),'admin')); c.commit()
+    c = get_db()
+    if c.execute("SELECT COUNT(*) FROM users WHERE username='admin'").fetchone()[0] == 0:
+        c.execute("INSERT INTO users (username,password,role) VALUES (?,?,?)", ('admin', hash_password('admin123'), 'admin'))
+        c.commit()
     c.close()
 
 class BankPDF(FPDF):
-    def header(self): self.set_font('Arial','B',16); self.cell(0,10,'BANKING SYSTEM',0,1,'C'); self.set_font('Arial','',10); self.cell(0,5,'Reports',0,1,'C'); self.line(10,self.get_y(),200,self.get_y()); self.ln(5)
-    def footer(self): self.set_y(-15); self.set_font('Arial','I',8); self.cell(0,10,f'Page {self.page_no()}/{{nb}}',0,0,'C')
+    def header(self): 
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 10, 'BANKING SYSTEM', 0, 1, 'C')
+        self.set_font('Arial', '', 10)
+        self.cell(0, 5, 'Reports', 0, 1, 'C')
+        self.line(10, self.get_y(), 200, self.get_y())
+        self.ln(5)
+    
+    def footer(self): 
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'C')
 
-def generate_report_pdf(rt,data,fn):
-    if FPDF is None: return None
-    pdf=BankPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    if rt=='trial_balance':
-        pdf.set_font('Arial','B',14); pdf.cell(0,10,'TRIAL BALANCE',0,1,'C'); pdf.set_font('Arial','',10); pdf.cell(0,5,f'As on: {data["date"]}',0,1,'C'); pdf.ln(10)
-        pdf.set_font('Arial','B',10); pdf.cell(10,7,'S.No',1); pdf.cell(90,7,'Account Head',1); pdf.cell(45,7,'Debit',1,0,'R'); pdf.cell(45,7,'Credit',1,1,'R')
-        pdf.set_font('Arial','',9); td_pdf=0; tc_pdf=0
-        for i,e in enumerate(data['entries'],1):
-            pdf.cell(10,6,str(i),1); pdf.cell(90,6,e['account_head'],1); pdf.cell(45,6,f"{e['debit']:,.2f}",1,0,'R'); pdf.cell(45,6,f"{e['credit']:,.2f}",1,1,'R'); td_pdf+=e['debit']; tc_pdf+=e['credit']
-        pdf.set_font('Arial','B',10); pdf.cell(100,7,'TOTAL',1); pdf.cell(45,7,f"{td_pdf:,.2f}",1,0,'R'); pdf.cell(45,7,f"{tc_pdf:,.2f}",1,1,'R')
-    pdf.output(fn); return fn
+def generate_report_pdf(rt, data, fn):
+    if FPDF is None: 
+        return None
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    if rt == 'trial_balance':
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(0, 10, 'TRIAL BALANCE', 0, 1, 'C')
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(0, 5, f'As on: {data["date"]}', 0, 1, 'C')
+        pdf.ln(10)
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(10, 7, 'S.No', 1)
+        pdf.cell(90, 7, 'Account Head', 1)
+        pdf.cell(45, 7, 'Debit', 1, 0, 'R')
+        pdf.cell(45, 7, 'Credit', 1, 1, 'R')
+        pdf.set_font('Arial', '', 9)
+        td_pdf = 0
+        tc_pdf = 0
+        for i, e in enumerate(data['entries'], 1):
+            pdf.cell(10, 6, str(i), 1)
+            pdf.cell(90, 6, e['account_head'], 1)
+            pdf.cell(45, 6, f"{e['debit']:,.2f}", 1, 0, 'R')
+            pdf.cell(45, 6, f"{e['credit']:,.2f}", 1, 1, 'R')
+            td_pdf += e['debit']
+            tc_pdf += e['credit']
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(100, 7, 'TOTAL', 1)
+        pdf.cell(45, 7, f"{td_pdf:,.2f}", 1, 0, 'R')
+        pdf.cell(45, 7, f"{tc_pdf:,.2f}", 1, 1, 'R')
+    pdf.output(fn)
+    return fn
 
 def init_session_state():
-    if 'user' not in st.session_state: st.session_state.user=None
-    if 'page' not in st.session_state: st.session_state.page='dashboard'
+    if 'user' not in st.session_state: 
+        st.session_state.user = None
+    if 'page' not in st.session_state: 
+        st.session_state.page = 'dashboard'
 
 # ==================== MODERN ENTERPRISE CSS ====================
 def load_enterprise_css():
@@ -153,22 +247,21 @@ def load_enterprise_css():
         background-color: #f4f7f6;
     }
     
-    /* Dark Mode Text Fix for Inputs */
+    /* Dark Mode Text Fix */
     .stTextInput input, .stTextArea textarea, .stNumberInput input, 
     .stSelectbox div[data-baseweb="select"] > div, 
     .stDateInput input, .stTextInput input:focus, 
-    .stTextArea textarea:focus, .stNumberInput input:focus {
+    .stTextArea textarea:focus, .stNumberInput input:focus,
+    div[data-baseweb="select"] span, input, textarea {
         color: #0f172a !important;
         -webkit-text-fill-color: #0f172a !important;
     }
     
-    /* Placeholder text color */
     .stTextInput input::placeholder, .stTextArea textarea::placeholder {
         color: #94a3b8 !important;
         -webkit-text-fill-color: #94a3b8 !important;
     }
     
-    /* Elegant Topbar */
     .topbar {
         background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
         color: white;
@@ -183,27 +276,25 @@ def load_enterprise_css():
     .topbar h1 { margin: 0; font-size: 1.6rem; font-weight: 800; color: #ffffff !important; letter-spacing: -0.5px; }
     .topbar .user { font-size: 0.9rem; font-weight: 500; background: rgba(255,255,255,0.15); padding: 0.5rem 1.2rem; border-radius: 20px; backdrop-filter: blur(5px); }
     
-    /* Dashboard Cards */
     .dash-card {
         background: white;
         border: none;
         border-radius: 16px;
         padding: 1.8rem 1.2rem;
         text-align: center;
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
+        transition: transform 0.3s, box-shadow 0.3s;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
         margin-bottom: 1rem;
     }
     .dash-card:hover {
         transform: translateY(-5px);
-        box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+        box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
         border-bottom: 3px solid #203a43;
     }
     .dash-card .icon { font-size: 2.5rem; margin-bottom: 0.5rem; display: block; }
     .dash-card h2 { font-size: 2rem; margin: 0.5rem 0; font-weight: 800; color: #0f172a; }
     .dash-card p { margin: 0; font-size: 0.8rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; }
     
-    /* Section Cards */
     .section-card {
         background: white;
         border-radius: 16px;
@@ -219,12 +310,8 @@ def load_enterprise_css():
         margin-bottom: 1.5rem;
         padding-bottom: 1rem;
         border-bottom: 2px solid #f1f5f9;
-        display: flex;
-        align-items: center;
-        gap: 8px;
     }
     
-    /* Login Screen Centering */
     .login-wrapper {
         display: flex;
         justify-content: center;
@@ -246,14 +333,11 @@ def load_enterprise_css():
     .login-box h2 { font-weight: 800; color: #0f172a; margin-top: 1rem; margin-bottom: 0.2rem; }
     .login-box p { color: #64748b; font-weight: 500; margin-bottom: 2rem; }
     
-    /* Sidebar Overhaul */
     [data-testid="stSidebar"] {
         background-color: #0f2027 !important;
         border-right: none !important;
     }
-    [data-testid="stSidebar"] * {
-        color: #cbd5e1 !important;
-    }
+    [data-testid="stSidebar"] * { color: #cbd5e1 !important; }
     [data-testid="stSidebar"] .stButton>button {
         background: transparent !important;
         border: 1px solid transparent !important;
@@ -271,35 +355,19 @@ def load_enterprise_css():
         transform: translateX(6px);
     }
     
-    /* Input Styling */
-    .stTextInput>div>div>input, .stNumberInput>div>div>input, .stSelectbox>div>div>div, .stDateInput>div>div>input, .stTextArea>div>div>textarea {
+    .stTextInput>div>div>input, .stNumberInput>div>div>input, 
+    .stSelectbox>div>div>div, .stDateInput>div>div>input, 
+    .stTextArea>div>div>textarea {
         border-radius: 10px !important;
         border: 1.5px solid #e2e8f0 !important;
-        box-shadow: none !important;
         padding: 0.6rem 1rem !important;
-        font-weight: 500;
         background-color: #f8fafc !important;
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-    }
-    .stTextInput>div>div>input:focus, .stNumberInput>div>div>input:focus, .stSelectbox>div>div>div:focus {
-        border-color: #203a43 !important;
-        background-color: white !important;
-        box-shadow: 0 0 0 3px rgba(32, 58, 67, 0.1) !important;
     }
     
-    /* Select box text color */
-    div[data-baseweb="select"] div[data-baseweb="select"] span {
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-    }
-    
-    /* Primary Buttons */
     .stButton>button {
         border-radius: 10px !important;
         font-weight: 700 !important;
         padding: 0.6rem 1.2rem !important;
-        transition: all 0.3s ease !important;
     }
     div[data-testid="stFormSubmitButton"]>button, 
     button[kind="primary"] {
@@ -307,52 +375,29 @@ def load_enterprise_css():
         color: white !important;
         border: none !important;
     }
-    div[data-testid="stFormSubmitButton"]>button:hover,
-    button[kind="primary"]:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1) !important;
-    }
     
-    /* DataFrames */
     .stDataFrame {
         border-radius: 12px !important;
         border: 1px solid #e2e8f0 !important;
-        overflow: hidden !important;
     }
     .stDataFrame thead th {
         background-color: #f8fafc !important;
-        color: #475569 !important;
         font-weight: 700 !important;
         text-transform: uppercase;
         font-size: 0.75rem;
-        letter-spacing: 0.5px;
     }
     
-    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {
         background-color: #f1f5f9;
         padding: 6px;
         border-radius: 12px;
-        gap: 4px;
-        border: none;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
-        padding: 0.5rem 1.5rem;
-        font-weight: 600;
-        color: #64748b;
-    }
-    .stTabs [data-baseweb="tab"]:hover {
-        background-color: #e2e8f0;
     }
     .stTabs [aria-selected="true"] {
         background-color: white !important;
         color: #0f172a !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
     }
     
-    /* Alerts */
-    .alert { padding: 1rem 1.2rem; border-radius: 12px; margin: 0.8rem 0; font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 10px; }
+    .alert { padding: 1rem 1.2rem; border-radius: 12px; margin: 0.8rem 0; font-weight: 600; }
     .alert-info { background: #eff6ff; border-left: 4px solid #3b82f6; color: #1e40af; }
     .alert-success { background: #f0fdf4; border-left: 4px solid #22c55e; color: #166534; }
     .alert-warning { background: #fffbeb; border-left: 4px solid #f59e0b; color: #92400e; }
@@ -392,14 +437,25 @@ def show_login():
     st.markdown('</div></div>', unsafe_allow_html=True)
 
 def show_app():
-    # Top Bar
     st.markdown(f'<div class="topbar"><h1>🏦 CoreBanking OS</h1><div class="user">👤 {st.session_state.user["username"]} &nbsp;<span style="opacity:0.7; font-size:0.8rem;">({st.session_state.user["role"].upper()})</span></div></div>', unsafe_allow_html=True)
     
     with st.sidebar:
         st.markdown('<div style="padding: 1rem 0; text-align: center;"><img src="https://cdn-icons-png.flaticon.com/512/2830/2830284.png" width="60" style="opacity:0.9; margin-bottom: 10px;"/><h3 style="margin:0; font-weight:700; color:white; font-size: 1.2rem;">Navigation</h3></div>', unsafe_allow_html=True)
         st.markdown('<hr style="border-color: rgba(255,255,255,0.1); margin-top: 0;">', unsafe_allow_html=True)
         
-        menu = {'dashboard': '📊 Dashboard', 'customer_management': '👥 Customers', 'kyc_verification': '🔍 KYC Center', 'create_sb_account': '🏦 Open SB A/c', 'sb_accounts': '💰 SB Accounts', 'fixed_deposits': '💎 Fixed Deposits', 'recurring_deposits': '🔄 Recurring Dep.', 'transactions': '💳 Transactions', 'journal_vouchers': '📝 Journal Vouchers', 'income_expenses': '📈 Income & Exp.', 'interest_calculation': '📊 Interest Calc', 'trial_balance': '⚖️ Trial Balance', 'balance_sheet': '📊 Balance Sheet', 'profit_loss': '💵 Profit & Loss', 'reports': '📋 Reports Engine'} if st.session_state.user['role'] in ['admin', 'staff'] else {'dashboard': '📊 Dashboard', 'my_accounts': '💰 My Accounts', 'my_transactions': '💳 Transactions', 'my_details': '👤 Profile'}
+        menu = {
+            'dashboard': '📊 Dashboard', 'customer_management': '👥 Customers', 
+            'kyc_verification': '🔍 KYC Center', 'create_sb_account': '🏦 Open SB A/c', 
+            'sb_accounts': '💰 SB Accounts', 'fixed_deposits': '💎 Fixed Deposits', 
+            'recurring_deposits': '🔄 Recurring Dep.', 'transactions': '💳 Transactions', 
+            'journal_vouchers': '📝 Journal Vouchers', 'income_expenses': '📈 Income & Exp.', 
+            'interest_calculation': '📊 Interest Calc', 'trial_balance': '⚖️ Trial Balance', 
+            'balance_sheet': '📊 Balance Sheet', 'profit_loss': '💵 Profit & Loss', 
+            'reports': '📋 Reports Engine'
+        } if st.session_state.user['role'] in ['admin', 'staff'] else {
+            'dashboard': '📊 Dashboard', 'my_accounts': '💰 My Accounts', 
+            'my_transactions': '💳 Transactions', 'my_details': '👤 Profile'
+        }
         
         for k, v in menu.items():
             if st.sidebar.button(v, key=f"m_{k}", use_container_width=True):
@@ -471,6 +527,7 @@ def dashboard():
 
 def customer_mgmt():
     t1, t2, t3 = st.tabs(["➕ Register New Customer", "📋 View Customers", "✏️ Edit Customer (KYC Rejected)"])
+    
     with t1:
         st.markdown('<div class="section-card"><h3>Register New Customer</h3>', unsafe_allow_html=True)
         with st.form("cr"):
@@ -503,9 +560,11 @@ def customer_mgmt():
                     st.error("Please upload both required documents.")
                 else:
                     try:
-                        conn = get_db(); cid = generate_id('CUST')
+                        conn = get_db()
+                        cid = generate_id('CUST')
                         conn.execute("INSERT INTO customers (customer_id,first_name,last_name,date_of_birth,email,phone,address,city,state,pincode,pan_number,aadhar_number,pan_document,aadhar_document) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (cid, fn, ln, dob, email, phone, addr, city, state, pin, pan, aadhar, pan_doc.read(), aadhar_doc.read()))
-                        conn.commit(); conn.close()
+                        conn.commit()
+                        conn.close()
                         st.success(f"✅ Customer successfully registered! ID: {cid}")
                         st.balloons()
                     except Exception as e:
@@ -526,7 +585,6 @@ def customer_mgmt():
     with t3:
         st.markdown('<div class="section-card"><h3>Edit Customer Details (For KYC Rejected Cases)</h3>', unsafe_allow_html=True)
         conn = get_db()
-        # Get rejected or pending customers for editing
         rejected_custs = conn.execute("SELECT id, customer_id, first_name, last_name, email, phone, address, city, state, pincode, pan_number, aadhar_number, kyc_status, date_of_birth FROM customers WHERE kyc_status IN ('REJECTED', 'PENDING') ORDER BY created_at DESC").fetchall()
         
         if not rejected_custs:
@@ -544,7 +602,11 @@ def customer_mgmt():
                     with c1:
                         fn = st.text_input("First Name*", value=cust[2])
                         ln = st.text_input("Last Name*", value=cust[3])
-                        dob = st.date_input("Date of Birth*", value=datetime.strptime(cust[13][:10] if cust[13] else '2000-01-01', '%Y-%m-%d').date() if cust[13] else date(2000,1,1))
+                        try:
+                            dob_val = datetime.strptime(str(cust[13])[:10], '%Y-%m-%d').date() if cust[13] else date(2000, 1, 1)
+                        except:
+                            dob_val = date(2000, 1, 1)
+                        dob = st.date_input("Date of Birth*", value=dob_val)
                         email = st.text_input("Email Address*", value=cust[4])
                         phone = st.text_input("Phone Number*", value=cust[5])
                     with c2:
@@ -558,12 +620,9 @@ def customer_mgmt():
                     
                     st.markdown("#### Update Documents (Upload new to replace)")
                     doc1, doc2 = st.columns(2)
-                    with doc1: 
-                        pan_doc = st.file_uploader("Upload PAN Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="epu")
-                    with doc2: 
-                        aadhar_doc = st.file_uploader("Upload Aadhar Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="eau")
+                    with doc1: pan_doc = st.file_uploader("Upload PAN Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="epu")
+                    with doc2: aadhar_doc = st.file_uploader("Upload Aadhar Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="eau")
                     
-                    # Reset KYC status to PENDING after edit
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.info("After editing, the KYC status will be reset to PENDING for re-verification.")
                     
@@ -637,7 +696,8 @@ def create_sb():
     else:
         sel = st.selectbox("Select Eligible Customer", [f"{x[1]} - {x[2]}" for x in custs])
         if sel:
-            idx = [f"{x[1]} - {x[2]}" for x in custs].index(sel); cust = custs[idx]
+            idx = [f"{x[1]} - {x[2]}" for x in custs].index(sel)
+            cust = custs[idx]
             with st.form("sb"):
                 c1, c2 = st.columns(2)
                 with c1: rate = st.number_input("Interest Rate (%)", 0.0, 10.0, 3.5, 0.25)
@@ -650,7 +710,8 @@ def create_sb():
                     c.commit()
                     st.success(f"✅ Savings Account Created! Account Number: {an}")
                     st.balloons()
-    st.markdown('</div>', unsafe_allow_html=True); c.close()
+    st.markdown('</div>', unsafe_allow_html=True)
+    c.close()
 
 def sb_accounts():
     c = get_db()
@@ -756,7 +817,7 @@ def interest_calc():
         if cfd > ctd:
             st.error("Invalid date range selected.")
         else:
-            st.info(f"Targeting: {cfd.strftime('%d %b %Y')} → {ctd.strftime('%d %b %Y')} ({(ctd-ctd).days+1} days)")
+            st.info(f"Targeting: {cfd.strftime('%d %b %Y')} → {ctd.strftime('%d %b %Y')} ({(ctd-cfd).days+1} days)")
             
         accs = c.execute("SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
         
@@ -786,7 +847,6 @@ def interest_calc():
     
     with t2:
         st.markdown('<div class="section-card"><h3>Calculate Interest - By Customer</h3>', unsafe_allow_html=True)
-        # Customer dropdown for interest calculation
         custs = c.execute("SELECT DISTINCT c.id, c.customer_id, c.first_name||' '||c.last_name FROM customers c JOIN accounts a ON c.id=a.customer_id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
         
         if custs:
@@ -800,7 +860,6 @@ def interest_calc():
                 with d1: cfd = st.date_input("From Date", date.today().replace(day=1), key="icf_cust")
                 with d2: ctd = st.date_input("To Date", date.today(), key="ict_cust")
                 
-                # Get customer's SB accounts
                 accs = c.execute("SELECT a.id,a.account_number,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a WHERE a.customer_id=? AND a.account_type='SB' AND a.status='ACTIVE'", (selected_customer_id,)).fetchall()
                 
                 if accs:
@@ -848,11 +907,13 @@ def interest_calc():
         if jvs:
             jd = {}
             for j in jvs:
-                if j[0] not in jd: jd[j[0]] = {'date': j[1], 'desc': j[2], 'amt': j[3], 'entries': []}
+                if j[0] not in jd: 
+                    jd[j[0]] = {'date': j[1], 'desc': j[2], 'amt': j[3], 'entries': []}
                 jd[j[0]]['entries'].append({'head': j[4], 'debit': j[5], 'credit': j[6]})
             for vn, d in jd.items():
                 with st.expander(f"📄 {vn} | Date: {d['date']} | Total: ₹{d['amt']:,.2f}"):
-                    for e in d['entries']: st.markdown(f"**{e['head']}**: Dr ₹{e['debit']:,.2f} | Cr ₹{e['credit']:,.2f}")
+                    for e in d['entries']: 
+                        st.markdown(f"**{e['head']}**: Dr ₹{e['debit']:,.2f} | Cr ₹{e['credit']:,.2f}")
             st.success(f"✅ Total TB Impact: ₹{sum(d['amt'] for d in jd.values()):,.2f}")
         else:
             st.info("No mapped Journal Vouchers found.")
@@ -921,7 +982,8 @@ def trial_balance():
                     st.markdown(f"#### {cat}s Ledger")
                     st.dataframe(pd.DataFrame(cd)[['head', 'dr', 'cr']].rename(columns={'head': 'Account Head', 'dr': 'Debit (Dr)', 'cr': 'Credit (Cr)'}).style.format({'Debit (Dr)': '₹{:,.2f}', 'Credit (Cr)': '₹{:,.2f}'}), use_container_width=True, height=min(250, len(cd)*45+40))
                     
-            dft = df['dr'].sum(); cft = df['cr'].sum()
+            dft = df['dr'].sum()
+            cft = df['cr'].sum()
             st.divider()
             
             n1, n2, n3 = st.columns(3)
@@ -1003,10 +1065,12 @@ def balance_sheet():
         if abs(ta - (tl + cap)) < 0.01:
             st.success(f"✅ Balance Sheet is perfectly aligned.")
             
-    st.markdown('</div>', unsafe_allow_html=True); c.close()
+    st.markdown('</div>', unsafe_allow_html=True)
+    c.close()
 
 def profit_loss():
-    if st.session_state.user['role'] not in ['admin','staff']: st.error("Unauthorized"); return
+    if st.session_state.user['role'] not in ['admin','staff']: 
+        st.error("Unauthorized"); return
     c = get_db()
     st.markdown('<div class="section-card"><h3>💵 Profit & Loss Statement</h3>', unsafe_allow_html=True)
     d1, d2 = st.columns(2)
@@ -1056,13 +1120,16 @@ def profit_loss():
     c.close()
 
 def income_expenses():
-    if st.session_state.user['role'] not in ['admin','staff']: st.error("Unauthorized"); return
+    if st.session_state.user['role'] not in ['admin','staff']: 
+        st.error("Unauthorized"); return
     c = get_db()
     uid = st.session_state.user['id']
     t1, t2, t3, t4 = st.tabs(["💰 Record Income", "📉 Record Expense", "📋 View Income", "📋 View Expenses"])
     
-    # Get customer list for dropdown
-    custs = c.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers ORDER BY customer_id").fetchall()
+    try:
+        custs = c.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers ORDER BY customer_id").fetchall()
+    except:
+        custs = []
     cust_options = ["None (General Entry)"] + [f"{c[1]} - {c[2]}" for c in custs]
     
     with t1:
@@ -1085,7 +1152,10 @@ def income_expenses():
             
             st.markdown("<br>", unsafe_allow_html=True)
             if st.form_submit_button("Record Income", use_container_width=True, type="primary"):
-                c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", (generate_id('INC'), it, amt, desc, dt, uid, customer_id))
+                try:
+                    c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", (generate_id('INC'), it, amt, desc, dt, uid, customer_id))
+                except:
+                    c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", (generate_id('INC'), it, amt, desc, dt, uid))
                 c.commit()
                 st.success(f"✅ Successfully recorded Income: ₹{amt:,.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1110,14 +1180,20 @@ def income_expenses():
             
             st.markdown("<br>", unsafe_allow_html=True)
             if st.form_submit_button("Record Expense", use_container_width=True, type="primary"):
-                c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", (generate_id('EXP'), et, amt, desc, dt, uid, customer_id))
+                try:
+                    c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", (generate_id('EXP'), et, amt, desc, dt, uid, customer_id))
+                except:
+                    c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", (generate_id('EXP'), et, amt, desc, dt, uid))
                 c.commit()
                 st.success(f"✅ Successfully recorded Expense: ₹{amt:,.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t3:
         st.markdown('<div class="section-card"><h3>Income Ledger</h3>', unsafe_allow_html=True)
-        inc_data = c.execute("SELECT income_id, income_type, amount, description, date, COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=income.customer_id), 'General') as customer_name FROM income ORDER BY date DESC LIMIT 100").fetchall()
+        try:
+            inc_data = c.execute("SELECT income_id, income_type, amount, description, date, COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=income.customer_id), 'General') as customer_name FROM income ORDER BY date DESC LIMIT 100").fetchall()
+        except:
+            inc_data = c.execute("SELECT income_id, income_type, amount, description, date, 'General' as customer_name FROM income ORDER BY date DESC LIMIT 100").fetchall()
         if inc_data:
             st.dataframe(pd.DataFrame(inc_data, columns=['ID', 'Type', 'Amount', 'Description', 'Date', 'Customer']).style.format({'Amount': '₹{:,.2f}'}), use_container_width=True, height=400)
         else:
@@ -1126,7 +1202,10 @@ def income_expenses():
     
     with t4:
         st.markdown('<div class="section-card"><h3>Expense Ledger</h3>', unsafe_allow_html=True)
-        exp_data = c.execute("SELECT expense_id, expense_type, amount, description, date, COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=expenses.customer_id), 'General') as customer_name FROM expenses ORDER BY date DESC LIMIT 100").fetchall()
+        try:
+            exp_data = c.execute("SELECT expense_id, expense_type, amount, description, date, COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=expenses.customer_id), 'General') as customer_name FROM expenses ORDER BY date DESC LIMIT 100").fetchall()
+        except:
+            exp_data = c.execute("SELECT expense_id, expense_type, amount, description, date, 'General' as customer_name FROM expenses ORDER BY date DESC LIMIT 100").fetchall()
         if exp_data:
             st.dataframe(pd.DataFrame(exp_data, columns=['ID', 'Type', 'Amount', 'Description', 'Date', 'Customer']).style.format({'Amount': '₹{:,.2f}'}), use_container_width=True, height=400)
         else:
@@ -1145,7 +1224,8 @@ def fixed_deposits():
         if custs:
             sel = st.selectbox("Select Customer", [f"{x[1]} - {x[2]}" for x in custs])
             if sel:
-                idx = [f"{x[1]} - {x[2]}" for x in custs].index(sel); cust = custs[idx]
+                idx = [f"{x[1]} - {x[2]}" for x in custs].index(sel)
+                cust = custs[idx]
                 with st.form("fd"):
                     d1, d2 = st.columns(2)
                     with d1: 
@@ -1163,7 +1243,8 @@ def fixed_deposits():
                     st.markdown("<br>", unsafe_allow_html=True)
                     
                     if st.form_submit_button("Open Fixed Deposit", use_container_width=True, type="primary"):
-                        fdn = generate_id('FD'); an = generate_account_number('FD')
+                        fdn = generate_id('FD')
+                        an = generate_account_number('FD')
                         c.execute("INSERT INTO accounts (account_number,customer_id,account_type,balance,interest_rate) VALUES (?,?,'FD',0.00,?)", (an, cust[0], r))
                         aid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
                         c.execute("INSERT INTO fixed_deposits (fd_number,account_id,principal_amount,interest_rate,start_date,maturity_date,maturity_amount,tenure_months,nominee_name) VALUES (?,?,?,?,?,?,?,?,?)", (fdn, aid, p, r, sd, md, ma, t, nom))
@@ -1205,7 +1286,8 @@ def recurring_deposits():
         if custs:
             sel = st.selectbox("Select Customer", [f"{x[1]} - {x[2]}" for x in custs])
             if sel:
-                idx = [f"{x[1]} - {x[2]}" for x in custs].index(sel); cust = custs[idx]
+                idx = [f"{x[1]} - {x[2]}" for x in custs].index(sel)
+                cust = custs[idx]
                 with st.form("rd"):
                     d1, d2 = st.columns(2)
                     with d1: 
@@ -1223,7 +1305,8 @@ def recurring_deposits():
                     st.markdown("<br>", unsafe_allow_html=True)
                     
                     if st.form_submit_button("Open Recurring Deposit", use_container_width=True, type="primary"):
-                        rdn = generate_id('RD'); an = generate_account_number('RD')
+                        rdn = generate_id('RD')
+                        an = generate_account_number('RD')
                         c.execute("INSERT INTO accounts (account_number,customer_id,account_type,balance,interest_rate) VALUES (?,?,'RD',0.00,?)", (an, cust[0], r))
                         aid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
                         c.execute("INSERT INTO recurring_deposits (rd_number,account_id,monthly_amount,interest_rate,start_date,maturity_date,maturity_amount,tenure_months,total_installments,nominee_name) VALUES (?,?,?,?,?,?,?,?,?,?)", (rdn, aid, m, r, sd, md, ma, t, t, nom))
@@ -1251,7 +1334,8 @@ def recurring_deposits():
         if rds:
             sel = st.selectbox("Select RD Account", [f"{r[1]} - {r[2]} (Paid: {r[4]}/{r[5]})" for r in rds])
             if sel:
-                idx = [f"{r[1]} - {r[2]} (Paid: {r[4]}/{r[5]})" for r in rds].index(sel); rd = rds[idx]
+                idx = [f"{r[1]} - {r[2]} (Paid: {r[4]}/{r[5]})" for r in rds].index(sel)
+                rd = rds[idx]
                 with st.form("pr"):
                     amt = st.number_input("Installment Amount (₹)", value=float(rd[3]), min_value=float(rd[3]))
                     st.markdown("<br>", unsafe_allow_html=True)
@@ -1282,11 +1366,14 @@ def transactions():
     params = [fd, td]
     
     if st.session_state.user['role'] == 'customer': 
-        q += " AND c.user_id=?"; params.append(uid)
+        q += " AND c.user_id=?"
+        params.append(uid)
     if at != "All": 
-        q += " AND a.account_type=?"; params.append(at)
+        q += " AND a.account_type=?"
+        params.append(at)
     if tt != "All": 
-        q += " AND t.transaction_type=?"; params.append(tt)
+        q += " AND t.transaction_type=?"
+        params.append(tt)
         
     q += " ORDER BY t.created_at DESC LIMIT 200"
     txns = c.execute(q, params).fetchall()
@@ -1306,8 +1393,10 @@ def journal_vouchers():
     c = get_db()
     uid = st.session_state.user['id']
     
-    # Get customer list for dropdown
-    custs = c.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers ORDER BY customer_id").fetchall()
+    try:
+        custs = c.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers ORDER BY customer_id").fetchall()
+    except:
+        custs = []
     cust_options = ["None (General Voucher)"] + [f"{c[1]} - {c[2]}" for c in custs]
     
     t1, t2 = st.tabs(["📝 Create JV", "📋 Manage Vouchers"])
@@ -1318,7 +1407,6 @@ def journal_vouchers():
             vd = st.date_input("Voucher Date", date.today(), key="jvd")
             desc = st.text_area("Voucher Narration / Description")
             
-            # Customer dropdown
             sel_cust = st.selectbox("Related Customer (Optional)", cust_options, key="jv_cust")
             customer_id = None
             if sel_cust != "None (General Voucher)":
@@ -1338,7 +1426,8 @@ def journal_vouchers():
                 with e1: h = st.text_input(f"Account Head", key=f"jh{i}")
                 with e2: d = st.number_input(f"Debit (Dr)", min_value=0.0, step=100.0, key=f"jd{i}")
                 with e3: cr = st.number_input(f"Credit (Cr)", min_value=0.0, step=100.0, key=f"jc{i}")
-                td_v += d; tc_v += cr
+                td_v += d
+                tc_v += cr
                 entries.append({'h': h, 'd': d, 'c': cr})
                 
             st.info(f"**Total Debit:** ₹{td_v:,.2f} &nbsp;|&nbsp; **Total Credit:** ₹{tc_v:,.2f}")
@@ -1351,7 +1440,11 @@ def journal_vouchers():
                     st.error("Voucher must be perfectly balanced!")
                 else:
                     vn = generate_voucher_number('JOURNAL')
-                    c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,created_by,customer_id) VALUES (?,?,?,?,?,?)", (vn, vd, desc, td_v, uid, customer_id))
+                    try:
+                        c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,created_by,customer_id) VALUES (?,?,?,?,?,?)", (vn, vd, desc, td_v, uid, customer_id))
+                    except:
+                        c.execute("INSERT INTO journal_vouchers (voucher_number,voucher_date,description,total_amount,created_by) VALUES (?,?,?,?,?)", (vn, vd, desc, td_v, uid))
+                    
                     vid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
                     for e in entries:
                         if e['d'] > 0 or e['c'] > 0: 
@@ -1363,7 +1456,11 @@ def journal_vouchers():
         
     with t2:
         st.markdown('<div class="section-card"><h3>Journal Voucher Directory</h3>', unsafe_allow_html=True)
-        vouchers = c.execute("SELECT jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=jv.customer_id), 'General') as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+        try:
+            vouchers = c.execute("SELECT jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=jv.customer_id), 'General') as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+        except:
+            vouchers = c.execute("SELECT jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,'General' as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+        
         if vouchers:
             for v in vouchers:
                 sc = {'DRAFT': '🟡 DRAFT', 'POSTED': '🟢 POSTED', 'CANCELLED': '🔴 CANCELLED'}
@@ -1382,11 +1479,15 @@ def journal_vouchers():
                         with f1:
                             if st.button("✅ Post Ledger", key=f"po_{v[0]}", use_container_width=True, type="primary"):
                                 c.execute("UPDATE journal_vouchers SET status='POSTED',posted_by=?,posted_at=CURRENT_TIMESTAMP WHERE voucher_number=?", (uid, v[0]))
-                                c.commit(); st.success("Voucher Posted successfully!"); st.rerun()
+                                c.commit()
+                                st.success("Voucher Posted successfully!")
+                                st.rerun()
                         with f2:
                             if st.button("❌ Cancel Voucher", key=f"ca_{v[0]}", use_container_width=True):
                                 c.execute("UPDATE journal_vouchers SET status='CANCELLED' WHERE voucher_number=?", (v[0],))
-                                c.commit(); st.warning("Voucher Cancelled!"); st.rerun()
+                                c.commit()
+                                st.warning("Voucher Cancelled!")
+                                st.rerun()
         else: 
             st.info("No journal vouchers available.")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1455,8 +1556,6 @@ def my_details():
 
 if __name__ == "__main__":
     main()
-
-
 
 
 

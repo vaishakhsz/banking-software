@@ -376,6 +376,114 @@ def generate_fd_statement_pdf(fd_data, customer_data):
     pdf.cell(0, 4, '4. Please keep this receipt for future reference.', 0, 1, 'L')
     
     return pdf
+
+def generate_rd_statement_pdf(rd_data, customer_data):
+    if FPDF is None:
+        return None
+    
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'RECURRING DEPOSIT RECEIPT', 0, 1, 'C')
+    pdf.ln(5)
+    
+    # Customer Details Section
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 6, f"CUSTOMER ID: {customer_data['customer_id']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"CUSTOMER NAME: {customer_data['customer_name']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"ADDRESS: {customer_data.get('address', 'N/A')}", 0, 1, 'L')
+    pdf.cell(0, 6, f"PHONE: {customer_data.get('phone', 'N/A')}", 0, 1, 'L')
+    pdf.ln(3)
+    
+    # RD Details Section
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 6, 'RECURRING DEPOSIT DETAILS', 0, 1, 'L')
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(60, 6, 'RD Number:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['rd_number']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Account Number:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['account_number']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Monthly Installment:', 0, 0, 'L')
+    pdf.cell(0, 6, f"Rs. {rd_data['monthly_amount']:,.2f}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Interest Rate:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['interest_rate']}% per annum", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Tenure:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['tenure_months']} months", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Total Installments:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['total_installments']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Installments Paid:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['installments_paid']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Pending Installments:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['total_installments'] - rd_data['installments_paid']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Start Date:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['start_date']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Maturity Date:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['maturity_date']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Total Deposit Amount:', 0, 0, 'L')
+    total_deposited = rd_data['monthly_amount'] * rd_data['installments_paid']
+    pdf.cell(0, 6, f"Rs. {total_deposited:,.2f}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Maturity Amount:', 0, 0, 'L')
+    pdf.cell(0, 6, f"Rs. {rd_data['maturity_amount']:,.2f}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Total Interest Earned:', 0, 0, 'L')
+    pdf.cell(0, 6, f"Rs. {rd_data['maturity_amount'] - total_deposited:,.2f}", 0, 1, 'L')
+    
+    if rd_data.get('nominee_name'):
+        pdf.cell(60, 6, 'Nominee Name:', 0, 0, 'L')
+        pdf.cell(0, 6, f"{rd_data['nominee_name']}", 0, 1, 'L')
+    
+    if rd_data.get('nominee_relation'):
+        pdf.cell(60, 6, 'Nominee Relation:', 0, 0, 'L')
+        pdf.cell(0, 6, f"{rd_data['nominee_relation']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Status:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{rd_data['status']}", 0, 1, 'L')
+    
+    # Installment Progress Bar (Text-based)
+    pdf.ln(3)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 6, 'INSTALLMENT PROGRESS:', 0, 1, 'L')
+    pdf.set_font('Arial', '', 10)
+    progress = (rd_data['installments_paid'] / rd_data['total_installments']) * 100
+    pdf.cell(0, 6, f"Progress: {rd_data['installments_paid']} / {rd_data['total_installments']} installments paid ({progress:.1f}%)", 0, 1, 'L')
+    
+    # Visual progress bar (using characters)
+    bar_length = 50
+    filled = int((progress / 100) * bar_length)
+    bar = '█' * filled + '░' * (bar_length - filled)
+    pdf.cell(0, 6, f"[{bar}]", 0, 1, 'L')
+    
+    # Footer
+    pdf.ln(5)
+    pdf.set_font('Arial', 'I', 9)
+    pdf.cell(0, 5, 'This is a system generated receipt.', 0, 1, 'C')
+    pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'C')
+    
+    # Terms and Conditions
+    pdf.ln(3)
+    pdf.set_font('Arial', 'I', 8)
+    pdf.cell(0, 4, 'Terms & Conditions:', 0, 1, 'L')
+    pdf.cell(0, 4, '1. Recurring Deposit is subject to terms and conditions of the bank.', 0, 1, 'L')
+    pdf.cell(0, 4, '2. Premature closure is subject to applicable penalties.', 0, 1, 'L')
+    pdf.cell(0, 4, '3. TDS will be applicable as per Income Tax rules.', 0, 1, 'L')
+    pdf.cell(0, 4, '4. Please keep this receipt for future reference.', 0, 1, 'L')
+    pdf.cell(0, 4, '5. Installments must be paid on or before the due date.', 0, 1, 'L')
+    
+    return pdf
     
 
 def init_session_state():
@@ -1838,7 +1946,7 @@ def recurring_deposits():
     
     with t1:
         st.markdown('<div class="section-card"><h3>Open Recurring Deposit</h3>', unsafe_allow_html=True)
-        custs = c.execute("SELECT c.id,c.customer_id,c.first_name||' '||c.last_name FROM customers c JOIN accounts a ON c.id=a.customer_id WHERE a.account_type='SB' AND c.kyc_status='VERIFIED' AND a.status='ACTIVE'").fetchall()
+        custs = c.execute("SELECT c.id,c.customer_id,c.first_name||' '||c.last_name FROM customers c JOIN accounts a ON c.id=a.customer_id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
         if custs:
             sel = st.selectbox("Select Customer", [f"{x[1]} - {x[2]}" for x in custs])
             if sel:
@@ -1853,6 +1961,7 @@ def recurring_deposits():
                     with d2: 
                         sd = st.date_input("Start Date", date.today(), key="rs")
                         nom = st.text_input("Nominee Name")
+                        nom_rel = st.text_input("Nominee Relation")
                     
                     md = sd + timedelta(days=t*30)
                     ma = calculate_rd_maturity(m, r, t)
@@ -1865,7 +1974,7 @@ def recurring_deposits():
                         an = generate_account_number('RD')
                         c.execute("INSERT INTO accounts (account_number,customer_id,account_type,balance,interest_rate) VALUES (?,?,'RD',0.00,?)", (an, cust[0], r))
                         aid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-                        c.execute("INSERT INTO recurring_deposits (rd_number,account_id,monthly_amount,interest_rate,start_date,maturity_date,maturity_amount,tenure_months,total_installments,nominee_name) VALUES (?,?,?,?,?,?,?,?,?,?)", (rdn, aid, m, r, sd, md, ma, t, t, nom))
+                        c.execute("INSERT INTO recurring_deposits (rd_number,account_id,monthly_amount,interest_rate,start_date,maturity_date,maturity_amount,tenure_months,total_installments,nominee_name,nominee_relation) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (rdn, aid, m, r, sd, md, ma, t, t, nom, nom_rel))
                         c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,'CREDIT',?,?,'RD Install 1','RD_INSTALLMENT','RECEIPT',?,?)", (generate_id('TXN'), aid, m, m, generate_voucher_number('RECEIPT'), uid))
                         c.execute("UPDATE recurring_deposits SET installments_paid=1 WHERE rd_number=?", (rdn,))
                         c.commit()
@@ -1875,18 +1984,166 @@ def recurring_deposits():
         
     with t2:
         st.markdown('<div class="section-card"><h3>Active Recurring Deposits</h3>', unsafe_allow_html=True)
-        rds = c.execute("SELECT rd.rd_number,c.first_name||' '||c.last_name,rd.monthly_amount,rd.interest_rate,rd.start_date,rd.maturity_date,rd.maturity_amount,rd.installments_paid,rd.total_installments FROM recurring_deposits rd JOIN accounts a ON rd.account_id=a.id JOIN customers c ON a.customer_id=c.id WHERE rd.status='ACTIVE' ORDER BY rd.maturity_date").fetchall()
+        rds = c.execute("""
+            SELECT rd.id, rd.rd_number, c.first_name||' '||c.last_name, 
+                   rd.monthly_amount, rd.interest_rate, rd.start_date, 
+                   rd.maturity_date, rd.maturity_amount, rd.tenure_months, 
+                   rd.installments_paid, rd.total_installments, rd.nominee_name,
+                   rd.nominee_relation, rd.status, c.id as customer_id,
+                   a.account_number
+            FROM recurring_deposits rd 
+            JOIN accounts a ON rd.account_id=a.id 
+            JOIN customers c ON a.customer_id=c.id 
+            WHERE rd.status='ACTIVE' 
+            ORDER BY rd.maturity_date
+        """).fetchall()
+        
         if rds:
-            df = pd.DataFrame(rds, columns=['RD Ref', 'Customer', 'Monthly (₹)', 'Rate', 'Start Date', 'Maturity Date', 'Maturity Value', 'Paid', 'Total'])
-            df['Progress'] = df.apply(lambda r: f"{r['Paid']} / {r['Total']}", axis=1)
-            st.dataframe(df[['RD Ref', 'Customer', 'Monthly (₹)', 'Rate', 'Start Date', 'Maturity Date', 'Maturity Value', 'Progress']].style.format({'Monthly (₹)': '₹{:,.2f}', 'Maturity Value': '₹{:,.2f}'}), use_container_width=True)
+            # Display as dataframe
+            df_data = []
+            for rd in rds:
+                # Handle date conversion
+                start_date = rd[5]
+                maturity_date = rd[6]
+                
+                if isinstance(start_date, str):
+                    try:
+                        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    except:
+                        start_date = date.today()
+                elif isinstance(start_date, datetime):
+                    start_date = start_date.date()
+                
+                if isinstance(maturity_date, str):
+                    try:
+                        maturity_date = datetime.strptime(maturity_date, '%Y-%m-%d').date()
+                    except:
+                        maturity_date = date.today()
+                elif isinstance(maturity_date, datetime):
+                    maturity_date = maturity_date.date()
+                
+                progress = (rd[9] / rd[10]) * 100 if rd[10] > 0 else 0
+                
+                df_data.append({
+                    'RD Ref': rd[1],
+                    'Customer': rd[2],
+                    'Monthly (₹)': rd[3],
+                    'Rate': f"{rd[4]:.2f}%",
+                    'Start Date': start_date.strftime('%d-%b-%Y') if start_date else 'N/A',
+                    'Maturity Date': maturity_date.strftime('%d-%b-%Y') if maturity_date else 'N/A',
+                    'Maturity Value (₹)': rd[7],
+                    'Progress': f"{rd[9]}/{rd[10]} ({progress:.0f}%)",
+                    'Status': rd[13]
+                })
+            
+            if df_data:
+                st.dataframe(pd.DataFrame(df_data).style.format({
+                    'Monthly (₹)': '₹{:,.2f}',
+                    'Maturity Value (₹)': '₹{:,.2f}'
+                }), use_container_width=True)
+                
+                # Print RD Receipt Button
+                st.markdown("---")
+                st.subheader("📄 Print RD Receipt")
+                
+                # Select RD for printing
+                rd_options = [f"{rd[1]} - {rd[2]} (₹{rd[7]:,.2f})" for rd in rds]
+                selected_rd = st.selectbox("Select RD to print receipt", rd_options, key="rd_print")
+                
+                if selected_rd and st.button("🖨️ Print RD Receipt (PDF)", use_container_width=True, type="primary"):
+                    # Find the selected RD
+                    rd_idx = rd_options.index(selected_rd)
+                    rd = rds[rd_idx]
+                    
+                    # Prepare customer data
+                    customer_data = {
+                        'customer_id': rd[14],  # customer_id
+                        'customer_name': rd[2],  # customer name
+                    }
+                    
+                    # Get customer address and phone
+                    cust_info = c.execute("SELECT address, phone FROM customers WHERE id=?", (rd[14],)).fetchone()
+                    if cust_info:
+                        customer_data['address'] = cust_info[0] or 'N/A'
+                        customer_data['phone'] = cust_info[1] or 'N/A'
+                    
+                    # Handle date conversion for RD data
+                    start_date = rd[5]
+                    maturity_date = rd[6]
+                    
+                    if isinstance(start_date, str):
+                        try:
+                            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                        except:
+                            start_date = date.today()
+                    elif isinstance(start_date, datetime):
+                        start_date = start_date.date()
+                    
+                    if isinstance(maturity_date, str):
+                        try:
+                            maturity_date = datetime.strptime(maturity_date, '%Y-%m-%d').date()
+                        except:
+                            maturity_date = date.today()
+                    elif isinstance(maturity_date, datetime):
+                        maturity_date = maturity_date.date()
+                    
+                    # Prepare RD data
+                    rd_data = {
+                        'rd_number': rd[1],
+                        'account_number': rd[15],
+                        'monthly_amount': rd[3],
+                        'interest_rate': rd[4],
+                        'start_date': start_date.strftime('%d-%b-%Y') if start_date else 'N/A',
+                        'maturity_date': maturity_date.strftime('%d-%b-%Y') if maturity_date else 'N/A',
+                        'maturity_amount': rd[7],
+                        'tenure_months': rd[8],
+                        'installments_paid': rd[9],
+                        'total_installments': rd[10],
+                        'nominee_name': rd[11],
+                        'nominee_relation': rd[12],
+                        'status': rd[13]
+                    }
+                    
+                    # Generate PDF
+                    pdf = generate_rd_statement_pdf(rd_data, customer_data)
+                    
+                    if pdf:
+                        # Save to bytes using temporary file
+                        import tempfile
+                        import os
+                        
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                            pdf.output(tmp_file.name)
+                            tmp_file.flush()
+                            with open(tmp_file.name, 'rb') as f:
+                                pdf_bytes = f.read()
+                            os.unlink(tmp_file.name)
+                        
+                        st.download_button(
+                            label="📥 Download RD Receipt PDF",
+                            data=pdf_bytes,
+                            file_name=f"RD_Receipt_{rd[1]}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                        st.success("✅ RD Receipt generated successfully!")
+                    else:
+                        st.error("PDF generation library not available. Please install fpdf.")
         else:
             st.info("No active RDs found in the system.")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t3:
         st.markdown('<div class="section-card"><h3>Process RD Installment</h3>', unsafe_allow_html=True)
-        rds = c.execute("SELECT rd.id,rd.rd_number,c.first_name||' '||c.last_name,rd.monthly_amount,rd.installments_paid,rd.total_installments,a.id FROM recurring_deposits rd JOIN accounts a ON rd.account_id=a.id JOIN customers c ON a.customer_id=c.id WHERE rd.status='ACTIVE' AND rd.installments_paid<rd.total_installments").fetchall()
+        rds = c.execute("""
+            SELECT rd.id, rd.rd_number, c.first_name||' '||c.last_name, 
+                   rd.monthly_amount, rd.installments_paid, rd.total_installments, a.id 
+            FROM recurring_deposits rd 
+            JOIN accounts a ON rd.account_id=a.id 
+            JOIN customers c ON a.customer_id=c.id 
+            WHERE rd.status='ACTIVE' AND rd.installments_paid<rd.total_installments
+        """).fetchall()
+        
         if rds:
             sel = st.selectbox("Select RD Account", [f"{r[1]} - {r[2]} (Paid: {r[4]}/{r[5]})" for r in rds])
             if sel:
@@ -1904,6 +2161,8 @@ def recurring_deposits():
                         c.commit()
                         st.success(f"✅ Installment Paid Successfully! Progress: {np}/{rd[5]}")
                         st.rerun()
+        else:
+            st.info("All installments are up to date!")
         st.markdown('</div>', unsafe_allow_html=True)
     c.close()
 

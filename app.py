@@ -1272,7 +1272,7 @@ def sb_accounts():
                                 st.download_button(
                                     label="📥 Download Statement PDF",
                                     data=pdf_bytes,
-                                    file_name=f"Statement_{account_number}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                                    file_name=f"SB_Statement_{account_number}_{datetime.now().strftime('%Y%m%d')}.pdf",
                                     mime="application/pdf",
                                     use_container_width=True
                                 )

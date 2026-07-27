@@ -205,15 +205,15 @@ def generate_statement_pdf(account_data, transactions, customer_data, from_date,
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Customer Details Section
+    # Customer Details Section - without rupee symbol
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 6, f"CUSTOMER ID: {customer_data['customer_id']}", 0, 1, 'L')
     pdf.cell(0, 6, f"CUSTOMER NAME: {customer_data['customer_name']}", 0, 1, 'L')
     pdf.cell(0, 6, f"ACCOUNT NUMBER: {account_data['account_number']}", 0, 1, 'L')
     pdf.cell(0, 6, f"INTEREST RATE: {account_data['interest_rate']}%", 0, 1, 'L')
-    pdf.cell(0, 6, f"TOTAL DEPOSITS: ₹{account_data['total_deposits']:,.2f}", 0, 1, 'L')
-    pdf.cell(0, 6, f"TOTAL INTEREST EARNED: ₹{account_data['total_interest']:,.2f}", 0, 1, 'L')
-    pdf.cell(0, 6, f"TOTAL AMOUNT (Deposits + Interest): ₹{account_data['total_amount']:,.2f}", 0, 1, 'L')
+    pdf.cell(0, 6, f"TOTAL DEPOSITS: Rs. {account_data['total_deposits']:,.2f}", 0, 1, 'L')
+    pdf.cell(0, 6, f"TOTAL INTEREST EARNED: Rs. {account_data['total_interest']:,.2f}", 0, 1, 'L')
+    pdf.cell(0, 6, f"TOTAL AMOUNT (Deposits + Interest): Rs. {account_data['total_amount']:,.2f}", 0, 1, 'L')
     pdf.cell(0, 6, f"STATEMENT PERIOD: {from_date} to {to_date}", 0, 1, 'L')
     pdf.ln(5)
     
@@ -241,27 +241,21 @@ def generate_statement_pdf(account_data, transactions, customer_data, from_date,
     # Summary Footer
     pdf.ln(5)
     pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 7, f"TOTAL CREDIT: ₹{sum(t['credit'] for t in transactions):,.2f}", 0, 1, 'L')
-    pdf.cell(0, 7, f"TOTAL DEBIT: ₹{sum(t['debit'] for t in transactions):,.2f}", 0, 1, 'L')
-    pdf.cell(0, 7, f"CLOSING BALANCE: ₹{account_data['total_amount']:,.2f}", 0, 1, 'L')
+    pdf.cell(0, 7, f"TOTAL CREDIT: Rs. {sum(t['credit'] for t in transactions):,.2f}", 0, 1, 'L')
+    pdf.cell(0, 7, f"TOTAL DEBIT: Rs. {sum(t['debit'] for t in transactions):,.2f}", 0, 1, 'L')
+    pdf.cell(0, 7, f"CLOSING BALANCE: Rs. {account_data['total_amount']:,.2f}", 0, 1, 'L')
     
     # Interest Calculation Details
     if account_data.get('interest_calculated', 0) > 0:
         pdf.ln(3)
         pdf.set_font('Arial', 'I', 9)
         pdf.cell(0, 5, f"* Interest calculated at {account_data['interest_rate']}% per annum", 0, 1, 'L')
-        pdf.cell(0, 5, f"* Interest amount: ₹{account_data['interest_calculated']:,.2f}", 0, 1, 'L')
+        pdf.cell(0, 5, f"* Interest amount: Rs. {account_data['interest_calculated']:,.2f}", 0, 1, 'L')
     
     pdf.set_font('Arial', 'I', 8)
     pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'L')
     
     return pdf
-
-def init_session_state():
-    if 'user' not in st.session_state: 
-        st.session_state.user = None
-    if 'page' not in st.session_state: 
-        st.session_state.page = 'dashboard'
 
 # ==================== MODERN ENTERPRISE CSS ====================
 def load_enterprise_css():

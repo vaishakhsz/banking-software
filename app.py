@@ -1663,13 +1663,34 @@ def fixed_deposits():
             # Display as dataframe
             df_data = []
             for fd in fds:
+                # Handle date conversion
+                start_date = fd[5]
+                maturity_date = fd[6]
+                
+                # Convert to datetime if they are strings
+                if isinstance(start_date, str):
+                    try:
+                        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    except:
+                        start_date = date.today()
+                elif isinstance(start_date, datetime):
+                    start_date = start_date.date()
+                
+                if isinstance(maturity_date, str):
+                    try:
+                        maturity_date = datetime.strptime(maturity_date, '%Y-%m-%d').date()
+                    except:
+                        maturity_date = date.today()
+                elif isinstance(maturity_date, datetime):
+                    maturity_date = maturity_date.date()
+                
                 df_data.append({
                     'FD Ref': fd[1],
                     'Customer': fd[2],
                     'Principal (₹)': fd[3],
                     'Rate': f"{fd[4]:.2f}%",
-                    'Start Date': fd[5],
-                    'Maturity Date': fd[6],
+                    'Start Date': start_date.strftime('%d-%b-%Y') if start_date else 'N/A',
+                    'Maturity Date': maturity_date.strftime('%d-%b-%Y') if maturity_date else 'N/A',
                     'Maturity Value (₹)': fd[7],
                     'Tenure': f"{fd[8]} months",
                     'Nominee': fd[9] or 'N/A',
@@ -1707,14 +1728,34 @@ def fixed_deposits():
                         customer_data['address'] = cust_info[0] or 'N/A'
                         customer_data['phone'] = cust_info[1] or 'N/A'
                     
+                    # Handle date conversion for FD data
+                    start_date = fd[5]
+                    maturity_date = fd[6]
+                    
+                    if isinstance(start_date, str):
+                        try:
+                            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                        except:
+                            start_date = date.today()
+                    elif isinstance(start_date, datetime):
+                        start_date = start_date.date()
+                    
+                    if isinstance(maturity_date, str):
+                        try:
+                            maturity_date = datetime.strptime(maturity_date, '%Y-%m-%d').date()
+                        except:
+                            maturity_date = date.today()
+                    elif isinstance(maturity_date, datetime):
+                        maturity_date = maturity_date.date()
+                    
                     # Prepare FD data
                     fd_data = {
                         'fd_number': fd[1],
                         'account_number': fd[13],
                         'principal': fd[3],
                         'interest_rate': fd[4],
-                        'start_date': fd[5].strftime('%d-%b-%Y'),
-                        'maturity_date': fd[6].strftime('%d-%b-%Y'),
+                        'start_date': start_date.strftime('%d-%b-%Y') if start_date else 'N/A',
+                        'maturity_date': maturity_date.strftime('%d-%b-%Y') if maturity_date else 'N/A',
                         'maturity_amount': fd[7],
                         'tenure_months': fd[8],
                         'nominee_name': fd[9],
@@ -1765,12 +1806,28 @@ def fixed_deposits():
         """, (today, today+timedelta(days=30))).fetchall()
         if mat: 
             st.warning(f"🔔 {len(mat)} accounts are maturing soon")
-            st.dataframe(pd.DataFrame(mat, columns=['FD Ref', 'Customer', 'Maturity Value', 'Maturity Date']).style.format({'Maturity Value': '₹{:,.2f}'}), use_container_width=True)
+            # Handle date conversion for maturity alerts
+            mat_data = []
+            for m in mat:
+                maturity_date = m[3]
+                if isinstance(maturity_date, str):
+                    try:
+                        maturity_date = datetime.strptime(maturity_date, '%Y-%m-%d').date()
+                    except:
+                        maturity_date = date.today()
+                elif isinstance(maturity_date, datetime):
+                    maturity_date = maturity_date.date()
+                mat_data.append({
+                    'FD Ref': m[0],
+                    'Customer': m[1],
+                    'Maturity Value': m[2],
+                    'Maturity Date': maturity_date.strftime('%d-%b-%Y') if maturity_date else 'N/A'
+                })
+            st.dataframe(pd.DataFrame(mat_data).style.format({'Maturity Value': '₹{:,.2f}'}), use_container_width=True)
         else: 
             st.success("✅ No imminent maturities to process.")
         st.markdown('</div>', unsafe_allow_html=True)
     c.close()
-
 def recurring_deposits():
     c = get_db()
     uid = st.session_state.user['id']

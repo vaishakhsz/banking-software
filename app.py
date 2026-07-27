@@ -182,52 +182,80 @@ def create_default_admin():
     c.close()
 
 class BankPDF(FPDF):
-    def header(self): 
+    def header(self):
+        # Bank Name Header
         self.set_font('Arial', 'B', 16)
-        self.cell(0, 10, 'BANKING SYSTEM', 0, 1, 'C')
+        self.cell(0, 8, 'AASHA NIDHI PVT LIMITED BANK', 0, 1, 'C')
+        self.set_font('Arial', 'B', 12)
+        self.cell(0, 6, 'BALARAMAPURAM', 0, 1, 'C')
         self.set_font('Arial', '', 10)
-        self.cell(0, 5, 'Reports', 0, 1, 'C')
-        self.line(10, self.get_y(), 200, self.get_y())
-        self.ln(5)
+        self.cell(0, 5, '-------------------------------------------', 0, 1, 'C')
+        self.ln(3)
     
     def footer(self): 
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'C')
 
-def generate_report_pdf(rt, data, fn):
-    if FPDF is None: 
+def generate_statement_pdf(account_data, transactions, customer_data, from_date, to_date):
+    if FPDF is None:
         return None
+    
     pdf = BankPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
-    if rt == 'trial_balance':
-        pdf.set_font('Arial', 'B', 14)
-        pdf.cell(0, 10, 'TRIAL BALANCE', 0, 1, 'C')
-        pdf.set_font('Arial', '', 10)
-        pdf.cell(0, 5, f'As on: {data["date"]}', 0, 1, 'C')
-        pdf.ln(10)
-        pdf.set_font('Arial', 'B', 10)
-        pdf.cell(10, 7, 'S.No', 1)
-        pdf.cell(90, 7, 'Account Head', 1)
-        pdf.cell(45, 7, 'Debit', 1, 0, 'R')
-        pdf.cell(45, 7, 'Credit', 1, 1, 'R')
-        pdf.set_font('Arial', '', 9)
-        td_pdf = 0
-        tc_pdf = 0
-        for i, e in enumerate(data['entries'], 1):
-            pdf.cell(10, 6, str(i), 1)
-            pdf.cell(90, 6, e['account_head'], 1)
-            pdf.cell(45, 6, f"{e['debit']:,.2f}", 1, 0, 'R')
-            pdf.cell(45, 6, f"{e['credit']:,.2f}", 1, 1, 'R')
-            td_pdf += e['debit']
-            tc_pdf += e['credit']
-        pdf.set_font('Arial', 'B', 10)
-        pdf.cell(100, 7, 'TOTAL', 1)
-        pdf.cell(45, 7, f"{td_pdf:,.2f}", 1, 0, 'R')
-        pdf.cell(45, 7, f"{tc_pdf:,.2f}", 1, 1, 'R')
-    pdf.output(fn)
-    return fn
+    
+    # Customer Details Section
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 6, f"CUSTOMER ID: {customer_data['customer_id']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"CUSTOMER NAME: {customer_data['customer_name']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"ACCOUNT NUMBER: {account_data['account_number']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"INTEREST RATE: {account_data['interest_rate']}%", 0, 1, 'L')
+    pdf.cell(0, 6, f"TOTAL DEPOSITS: ₹{account_data['total_deposits']:,.2f}", 0, 1, 'L')
+    pdf.cell(0, 6, f"TOTAL INTEREST EARNED: ₹{account_data['total_interest']:,.2f}", 0, 1, 'L')
+    pdf.cell(0, 6, f"TOTAL AMOUNT (Deposits + Interest): ₹{account_data['total_amount']:,.2f}", 0, 1, 'L')
+    pdf.cell(0, 6, f"STATEMENT PERIOD: {from_date} to {to_date}", 0, 1, 'L')
+    pdf.ln(5)
+    
+    # Statement Table Header
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(15, 7, 'S.No', 1)
+    pdf.cell(30, 7, 'Date', 1)
+    pdf.cell(25, 7, 'Type', 1)
+    pdf.cell(30, 7, 'Description', 1)
+    pdf.cell(25, 7, 'Credit', 1, 0, 'R')
+    pdf.cell(25, 7, 'Debit', 1, 0, 'R')
+    pdf.cell(30, 7, 'Balance', 1, 1, 'R')
+    
+    # Transaction Data
+    pdf.set_font('Arial', '', 9)
+    for idx, txn in enumerate(transactions, 1):
+        pdf.cell(15, 6, str(idx), 1)
+        pdf.cell(30, 6, txn['date'], 1)
+        pdf.cell(25, 6, txn['type'], 1)
+        pdf.cell(30, 6, txn['description'][:20], 1)
+        pdf.cell(25, 6, f"{txn['credit']:,.2f}" if txn['credit'] > 0 else "", 1, 0, 'R')
+        pdf.cell(25, 6, f"{txn['debit']:,.2f}" if txn['debit'] > 0 else "", 1, 0, 'R')
+        pdf.cell(30, 6, f"{txn['balance']:,.2f}", 1, 1, 'R')
+    
+    # Summary Footer
+    pdf.ln(5)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 7, f"TOTAL CREDIT: ₹{sum(t['credit'] for t in transactions):,.2f}", 0, 1, 'L')
+    pdf.cell(0, 7, f"TOTAL DEBIT: ₹{sum(t['debit'] for t in transactions):,.2f}", 0, 1, 'L')
+    pdf.cell(0, 7, f"CLOSING BALANCE: ₹{account_data['total_amount']:,.2f}", 0, 1, 'L')
+    
+    # Interest Calculation Details
+    if account_data.get('interest_calculated', 0) > 0:
+        pdf.ln(3)
+        pdf.set_font('Arial', 'I', 9)
+        pdf.cell(0, 5, f"* Interest calculated at {account_data['interest_rate']}% per annum", 0, 1, 'L')
+        pdf.cell(0, 5, f"* Interest amount: ₹{account_data['interest_calculated']:,.2f}", 0, 1, 'L')
+    
+    pdf.set_font('Arial', 'I', 8)
+    pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'L')
+    
+    return pdf
 
 def init_session_state():
     if 'user' not in st.session_state: 
@@ -497,7 +525,7 @@ def dashboard():
     cols = st.columns(4)
     with cols[0]: st.markdown(f'<div class="dash-card"><span class="icon">👥</span><h2>{cust}</h2><p>Total Customers</p></div>', unsafe_allow_html=True)
     with cols[1]: st.markdown(f'<div class="dash-card"><span class="icon">💰</span><h2>{sb}</h2><p>Active SB Accounts</p></div>', unsafe_allow_html=True)
-    with cols[2]: st.markdown(f'<div class="dash-card"><span class="icon">🏦</span><h2>₹{bal+intt:,.0f}</h2><p>Total SB Maturity</p></div>', unsafe_allow_html=True)
+    with cols[2]: st.markdown(f'<div class="dash-card"><span class="icon">🏦</span><h2>₹{bal+intt:,.0f}</h2><p>Total SB Deposits</p></div>', unsafe_allow_html=True)
     with cols[3]: st.markdown(f'<div class="dash-card"><span class="icon">🔍</span><h2>{kyc}</h2><p>Pending KYC Approvals</p></div>', unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
@@ -764,8 +792,6 @@ def kyc_verify():
                 with b1:
                     if st.button("✅ Approve KYC", key=f"a_{cust[0]}", use_container_width=True, type="primary"):
                         c.execute("UPDATE customers SET kyc_status='VERIFIED',kyc_verified_by=?,kyc_verified_at=CURRENT_TIMESTAMP WHERE id=?", (st.session_state.user['id'], cust[0]))
-                        # MODIFIED: Auto-create SB account even if not KYC verified (this will just update status)
-                        # Account creation happens on demand in create_sb function
                         c.commit()
                         st.success("✅ KYC Approved Successfully!")
                         st.rerun()
@@ -828,7 +854,7 @@ def create_sb():
 
 def sb_accounts():
     c = get_db()
-    t1, t2, t3, t4 = st.tabs(["📋 Account List", "💸 Transact", "📜 Statement", "📈 Maturity Values"])
+    t1, t2, t3, t4 = st.tabs(["📋 Account List", "💸 Transact", "📜 Statement", "📈 Deposits Summary"])
     role = st.session_state.user['role']
     uid = st.session_state.user['id']
     
@@ -837,8 +863,8 @@ def sb_accounts():
         q = "SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND " + ("c.user_id=?" if role == 'customer' else "1=1")
         accs = c.execute(q, (uid,) if role == 'customer' else ()).fetchall()
         if accs:
-            data = [{'Account Number': a[0], 'Customer Name': a[1], 'Principal (₹)': a[2], 'Rate': f"{a[3]:.2f}%", 'Interest Earned (₹)': a[4], 'Maturity (₹)': a[2]+a[4]} for a in accs]
-            st.dataframe(pd.DataFrame(data).style.format({'Principal (₹)': '₹{:,.2f}', 'Interest Earned (₹)': '₹{:,.2f}', 'Maturity (₹)': '₹{:,.2f}'}), use_container_width=True, height=350)
+            data = [{'Account Number': a[0], 'Customer Name': a[1], 'Total Deposits (₹)': a[2], 'Rate': f"{a[3]:.2f}%", 'Interest Earned (₹)': a[4], 'Total Amount (₹)': a[2]+a[4]} for a in accs]
+            st.dataframe(pd.DataFrame(data).style.format({'Total Deposits (₹)': '₹{:,.2f}', 'Interest Earned (₹)': '₹{:,.2f}', 'Total Amount (₹)': '₹{:,.2f}'}), use_container_width=True, height=350)
         else:
             st.info("No active accounts found.")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -848,9 +874,9 @@ def sb_accounts():
         q2 = "SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND " + ("c.user_id=?" if role == 'customer' else "1=1")
         accs = c.execute(q2, (uid,) if role == 'customer' else ()).fetchall()
         if accs:
-            sel = st.selectbox("Select Account", [f"{a[1]} - {a[2]} (Maturity Value: ₹{a[3]+a[4]:,.2f})" for a in accs])
+            sel = st.selectbox("Select Account", [f"{a[1]} - {a[2]} (Total Amount: ₹{a[3]+a[4]:,.2f})" for a in accs])
             if sel:
-                idx = [f"{a[1]} - {a[2]} (Maturity Value: ₹{a[3]+a[4]:,.2f})" for a in accs].index(sel)
+                idx = [f"{a[1]} - {a[2]} (Total Amount: ₹{a[3]+a[4]:,.2f})" for a in accs].index(sel)
                 acc = accs[idx]
                 st.markdown("<br>", unsafe_allow_html=True)
                 tt = st.radio("Transaction Type", ["Deposit", "Withdraw"], horizontal=True)
@@ -873,43 +899,149 @@ def sb_accounts():
                             c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)", (generate_id('TXN'), acc[0], tdb, amt, nb, desc, mode, vt, generate_voucher_number(vt), uid))
                             c.execute("UPDATE accounts SET balance=? WHERE id=?", (nb, acc[0]))
                             c.commit()
-                            st.success(f"✅ Transaction Successful! New Maturity Balance: ₹{nb+acc[4]:,.2f}")
+                            st.success(f"✅ Transaction Successful! New Total Amount: ₹{nb+acc[4]:,.2f}")
                             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t3:
-        st.markdown('<div class="section-card"><h3>Account Statements</h3>', unsafe_allow_html=True)
-        q3 = "SELECT a.id,a.account_number,c.first_name||' '||c.last_name FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND " + ("c.user_id=?" if role == 'customer' else "1=1")
+        st.markdown('<div class="section-card"><h3>Account Statement</h3>', unsafe_allow_html=True)
+        q3 = "SELECT a.id,a.account_number,c.id as customer_id,c.customer_id as cust_id,c.first_name||' '||c.last_name as customer_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND " + ("c.user_id=?" if role == 'customer' else "1=1")
         accs = c.execute(q3, (uid,) if role == 'customer' else ()).fetchall()
+        
         if accs:
-            sel = st.selectbox("Choose Account", [f"{a[1]} - {a[2]}" for a in accs], key="ss")
+            sel = st.selectbox("Choose Account", [f"{a[1]} - {a[4]}" for a in accs], key="ss")
             if sel:
-                aid = [a[0] for a in accs if f"{a[1]} - {a[2]}" == sel][0]
+                idx = [f"{a[1]} - {a[4]}" for a in accs].index(sel)
+                acc_data = accs[idx]
+                aid = acc_data[0]
+                account_number = acc_data[1]
+                customer_id = acc_data[2]
+                cust_id_display = acc_data[3]
+                customer_name = acc_data[4]
+                balance = acc_data[5]
+                interest_rate = acc_data[6]
+                total_interest = acc_data[7]
+                
                 d1, d2 = st.columns(2)
                 with d1: fd = st.date_input("From Date", date.today()-timedelta(days=30), key="sf")
                 with d2: td = st.date_input("To Date", date.today(), key="st")
                 
-                txns = c.execute("SELECT transaction_id,created_at,transaction_type,amount,balance_after,description,voucher_number FROM transactions WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ? ORDER BY created_at DESC", (aid, fd, td)).fetchall()
-                if txns:
-                    st.dataframe(pd.DataFrame(txns, columns=['Txn ID', 'Date', 'Type', 'Amount', 'Balance', 'Description', 'Voucher Number']).style.format({'Amount': '₹{:,.2f}', 'Balance': '₹{:,.2f}'}), use_container_width=True, height=350)
+                if fd <= td:
+                    # Get transactions
+                    txns = c.execute("""
+                        SELECT transaction_id, created_at, transaction_type, amount, 
+                               balance_after, description, voucher_number 
+                        FROM transactions 
+                        WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ? 
+                        ORDER BY created_at DESC
+                    """, (aid, fd, td)).fetchall()
+                    
+                    if txns:
+                        # Prepare data for display
+                        txn_data = []
+                        for txn in txns:
+                            txn_data.append({
+                                'Date': txn[1],
+                                'Type': txn[2],
+                                'Description': txn[5],
+                                'Credit': txn[3] if txn[2] == 'CREDIT' else 0,
+                                'Debit': txn[3] if txn[2] == 'DEBIT' else 0,
+                                'Balance': txn[4],
+                                'Voucher': txn[6]
+                            })
+                        
+                        df = pd.DataFrame(txn_data)
+                        st.dataframe(df.style.format({
+                            'Credit': '₹{:,.2f}',
+                            'Debit': '₹{:,.2f}',
+                            'Balance': '₹{:,.2f}'
+                        }), use_container_width=True, height=350)
+                        
+                        # Summary Section
+                        st.markdown("---")
+                        st.markdown("#### Account Summary")
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Total Deposits", f"₹{balance:,.2f}")
+                        with col2:
+                            st.metric("Total Interest", f"₹{total_interest:,.2f}")
+                        with col3:
+                            st.metric("Interest Rate", f"{interest_rate}%")
+                        with col4:
+                            st.metric("Total Amount", f"₹{balance + total_interest:,.2f}")
+                        
+                        # Print Statement Button
+                        st.markdown("---")
+                        if st.button("🖨️ Print Statement (PDF)", use_container_width=True, type="primary"):
+                            # Prepare data for PDF
+                            pdf_data = {
+                                'account_number': account_number,
+                                'total_deposits': balance,
+                                'total_interest': total_interest,
+                                'total_amount': balance + total_interest,
+                                'interest_rate': interest_rate,
+                                'interest_calculated': 0  # Add actual interest calculation if needed
+                            }
+                            
+                            customer_data = {
+                                'customer_id': cust_id_display,
+                                'customer_name': customer_name
+                            }
+                            
+                            # Format transactions for PDF
+                            pdf_txns = []
+                            for txn in txns:
+                                pdf_txns.append({
+                                    'date': txn[1].strftime('%d-%b-%Y'),
+                                    'type': txn[2],
+                                    'description': txn[5],
+                                    'credit': txn[3] if txn[2] == 'CREDIT' else 0,
+                                    'debit': txn[3] if txn[2] == 'DEBIT' else 0,
+                                    'balance': txn[4]
+                                })
+                            
+                            # Generate PDF
+                            pdf = generate_statement_pdf(
+                                pdf_data, 
+                                pdf_txns, 
+                                customer_data,
+                                fd.strftime('%d-%b-%Y'),
+                                td.strftime('%d-%b-%Y')
+                            )
+                            
+                            if pdf:
+                                # Save to bytes
+                                pdf_output = pdf.output(dest='S').encode('latin1')
+                                st.download_button(
+                                    label="📥 Download Statement PDF",
+                                    data=pdf_output,
+                                    file_name=f"Statement_{account_number}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True
+                                )
+                                st.success("✅ Statement generated successfully!")
+                            else:
+                                st.error("PDF generation library not available. Please install fpdf.")
+                    else:
+                        st.info("No transactions found in this period.")
                 else:
-                    st.info("No transactions found in this period.")
+                    st.error("From Date must be before To Date")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t4:
-        st.markdown('<div class="section-card"><h3>Maturity Analysis</h3>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card"><h3>Deposits Summary</h3>', unsafe_allow_html=True)
         q4 = "SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND " + ("c.user_id=?" if role == 'customer' else "1=1")
         accs = c.execute(q4, (uid,) if role == 'customer' else ()).fetchall()
         if accs:
-            data = [{'Account': a[0], 'Customer': a[1], 'Principal': a[2], 'Rate': f"{a[3]:.2f}%", 'Interest': a[4], 'Maturity': a[2]+a[4]} for a in accs]
+            data = [{'Account': a[0], 'Customer': a[1], 'Total Deposits': a[2], 'Rate': f"{a[3]:.2f}%", 'Interest': a[4], 'Total Amount': a[2]+a[4]} for a in accs]
             
             m1, m2, m3 = st.columns(3)
-            with m1: st.metric("Total Principal", f"₹{sum(d['Principal'] for d in data):,.2f}")
+            with m1: st.metric("Total Deposits", f"₹{sum(d['Total Deposits'] for d in data):,.2f}")
             with m2: st.metric("Total Interest", f"₹{sum(d['Interest'] for d in data):,.2f}")
-            with m3: st.metric("Gross Maturity", f"₹{sum(d['Maturity'] for d in data):,.2f}")
+            with m3: st.metric("Gross Total", f"₹{sum(d['Total Amount'] for d in data):,.2f}")
             
             st.markdown("<br>", unsafe_allow_html=True)
-            st.dataframe(pd.DataFrame(data).style.format({'Principal': '₹{:,.2f}', 'Interest': '₹{:,.2f}', 'Maturity': '₹{:,.2f}'}), use_container_width=True)
+            st.dataframe(pd.DataFrame(data).style.format({'Total Deposits': '₹{:,.2f}', 'Interest': '₹{:,.2f}', 'Total Amount': '₹{:,.2f}'}), use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
     c.close()
 
@@ -953,9 +1085,9 @@ def interest_calc():
                         if mb <= 0: mb = a[3]
                         days = (ctd-cfd).days+1
                         if days > 0:
-                            pv.append({'Account': a[1], 'Min Balance': mb, 'Interest Output': calculate_sb_interest(mb, a[4] or 3.5, days), 'New Maturity Total': a[3]+a[5]+calculate_sb_interest(mb, a[4] or 3.5, days)})
+                            pv.append({'Account': a[1], 'Min Balance': mb, 'Interest Output': calculate_sb_interest(mb, a[4] or 3.5, days), 'New Total Amount': a[3]+a[5]+calculate_sb_interest(mb, a[4] or 3.5, days)})
                     if pv:
-                        st.dataframe(pd.DataFrame(pv).style.format({'Min Balance': '₹{:,.2f}', 'Interest Output': '₹{:,.2f}', 'New Maturity Total': '₹{:,.2f}'}), use_container_width=True)
+                        st.dataframe(pd.DataFrame(pv).style.format({'Min Balance': '₹{:,.2f}', 'Interest Output': '₹{:,.2f}', 'New Total Amount': '₹{:,.2f}'}), use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t2:
@@ -996,9 +1128,9 @@ def interest_calc():
                                 if mb <= 0: mb = a[2]
                                 days = (ctd-cfd).days+1
                                 if days > 0:
-                                    pv.append({'Account': a[1], 'Min Balance': mb, 'Interest Output': calculate_sb_interest(mb, a[3] or 3.5, days), 'New Maturity Total': a[2]+a[4]+calculate_sb_interest(mb, a[3] or 3.5, days)})
+                                    pv.append({'Account': a[1], 'Min Balance': mb, 'Interest Output': calculate_sb_interest(mb, a[3] or 3.5, days), 'New Total Amount': a[2]+a[4]+calculate_sb_interest(mb, a[3] or 3.5, days)})
                             if pv:
-                                st.dataframe(pd.DataFrame(pv).style.format({'Min Balance': '₹{:,.2f}', 'Interest Output': '₹{:,.2f}', 'New Maturity Total': '₹{:,.2f}'}), use_container_width=True)
+                                st.dataframe(pd.DataFrame(pv).style.format({'Min Balance': '₹{:,.2f}', 'Interest Output': '₹{:,.2f}', 'New Total Amount': '₹{:,.2f}'}), use_container_width=True)
                 else:
                     st.info("No active SB accounts found for this customer.")
         else:
@@ -1656,8 +1788,8 @@ def my_details():
                 st.markdown(f"""
                 <div style="background:#f8fafc; padding:1.2rem; border-radius:12px; margin:0.5rem 0; border-left:4px solid #203a43; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
                     <h4 style="margin: 0 0 10px 0; color:#0f172a;">Account: {a[0]}</h4>
-                    <p style="margin: 0; color:#334155;">Principal: <b>₹{a[1]:,.2f}</b> &nbsp;|&nbsp; Interest Earned: <b>₹{a[2]:,.2f}</b></p>
-                    <p style="margin: 5px 0 0 0; color:#0f172a; font-size:1.1rem;">Total Maturity: <b>₹{mv:,.2f}</b></p>
+                    <p style="margin: 0; color:#334155;">Total Deposits: <b>₹{a[1]:,.2f}</b> &nbsp;|&nbsp; Interest Earned: <b>₹{a[2]:,.2f}</b></p>
+                    <p style="margin: 5px 0 0 0; color:#0f172a; font-size:1.1rem;">Total Amount: <b>₹{mv:,.2f}</b></p>
                 </div>
                 """, unsafe_allow_html=True)
         else: 
@@ -1669,7 +1801,6 @@ def my_details():
 
 if __name__ == "__main__":
     main()
-
 
 
 

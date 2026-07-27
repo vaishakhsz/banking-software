@@ -526,7 +526,7 @@ def dashboard():
     c.close()
 
 def customer_mgmt():
-    t1, t2, t3 = st.tabs(["➕ Register New Customer", "📋 View Customers", "✏️ Edit Customer (KYC Rejected)"])
+    t1, t2, t3, t4 = st.tabs(["➕ Register New Customer", "📋 View Customers", "✏️ Edit Customer (KYC Rejected)", "✏️ Edit Any Customer"])
     
     with t1:
         st.markdown('<div class="section-card"><h3>Register New Customer</h3>', unsafe_allow_html=True)
@@ -595,7 +595,7 @@ def customer_mgmt():
                 idx = [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in rejected_custs].index(sel)
                 cust = rejected_custs[idx]
                 
-                with st.form("edit_cust"):
+                with st.form("edit_cust_rejected"):
                     st.warning(f"Editing Customer ID: {cust[1]} | Current KYC Status: {cust[12]}")
                     
                     c1, c2 = st.columns(2)
@@ -650,6 +650,101 @@ def customer_mgmt():
                             st.error(f"Update Error: {str(e)}")
         conn.close()
         st.markdown('</div>', unsafe_allow_html=True)
+    
+    with t4:
+        st.markdown('<div class="section-card"><h3>Edit Any Customer (No KYC Restriction)</h3>', unsafe_allow_html=True)
+        conn = get_db()
+        all_custs = conn.execute("SELECT id, customer_id, first_name, last_name, email, phone, address, city, state, pincode, pan_number, aadhar_number, kyc_status, date_of_birth FROM customers ORDER BY created_at DESC").fetchall()
+        
+        if not all_custs:
+            st.info("No customers found in the system.")
+        else:
+            # Show KYC status in selection
+            sel = st.selectbox("Select Customer to Edit", [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in all_custs])
+            if sel:
+                idx = [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in all_custs].index(sel)
+                cust = all_custs[idx]
+                
+                with st.form("edit_cust_any"):
+                    # Show current KYC status with appropriate styling
+                    current_kyc = cust[12]
+                    if current_kyc == 'VERIFIED':
+                        st.success(f"✅ Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
+                    elif current_kyc == 'PENDING':
+                        st.warning(f"⚠️ Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
+                    else:
+                        st.error(f"❌ Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        fn = st.text_input("First Name*", value=cust[2])
+                        ln = st.text_input("Last Name*", value=cust[3])
+                        try:
+                            dob_val = datetime.strptime(str(cust[13])[:10], '%Y-%m-%d').date() if cust[13] else date(2000, 1, 1)
+                        except:
+                            dob_val = date(2000, 1, 1)
+                        dob = st.date_input("Date of Birth*", value=dob_val)
+                        email = st.text_input("Email Address*", value=cust[4])
+                        phone = st.text_input("Phone Number*", value=cust[5])
+                    with c2:
+                        pan = st.text_input("PAN Number*", value=cust[10] if cust[10] else "")
+                        aadhar = st.text_input("Aadhar Number*", value=cust[11] if cust[11] else "")
+                        addr = st.text_area("Full Address", value=cust[6] if cust[6] else "")
+                        col_c1, col_c2 = st.columns(2)
+                        with col_c1: city = st.text_input("City", value=cust[7] if cust[7] else "")
+                        with col_c2: state = st.text_input("State", value=cust[8] if cust[8] else "")
+                        pin = st.text_input("PIN Code", value=cust[9] if cust[9] else "")
+                    
+                    st.markdown("#### Update Documents (Upload new to replace)")
+                    doc1, doc2 = st.columns(2)
+                    with doc1: pan_doc = st.file_uploader("Upload PAN Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="ap1")
+                    with doc2: aadhar_doc = st.file_uploader("Upload Aadhar Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="ap2")
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    # Option to change KYC status
+                    new_kyc_status = st.selectbox(
+                        "Update KYC Status (Optional)", 
+                        ["KEEP_CURRENT", "VERIFIED", "PENDING", "REJECTED"],
+                        help="Select 'KEEP_CURRENT' to maintain existing KYC status"
+                    )
+                    
+                    if new_kyc_status != "KEEP_CURRENT":
+                        st.warning(f"KYC status will be changed to: {new_kyc_status}")
+                    
+                    if st.form_submit_button("Update Customer Details", use_container_width=True, type="primary"):
+                        try:
+                            update_query = """UPDATE customers SET first_name=?, last_name=?, date_of_birth=?, email=?, phone=?, address=?, city=?, state=?, pincode=?, pan_number=?, aadhar_number=?"""
+                            params = [fn, ln, dob, email, phone, addr, city, state, pin, pan, aadhar]
+                            
+                            if new_kyc_status != "KEEP_CURRENT":
+                                update_query += ", kyc_status=?"
+                                params.append(new_kyc_status)
+                                if new_kyc_status == "VERIFIED":
+                                    update_query += ", kyc_verified_by=?, kyc_verified_at=CURRENT_TIMESTAMP"
+                                    params.append(st.session_state.user['id'])
+                                else:
+                                    update_query += ", kyc_verified_by=NULL, kyc_verified_at=NULL"
+                            
+                            if pan_doc:
+                                update_query += ", pan_document=?"
+                                params.append(pan_doc.read())
+                            if aadhar_doc:
+                                update_query += ", aadhar_document=?"
+                                params.append(aadhar_doc.read())
+                            
+                            update_query += " WHERE id=?"
+                            params.append(cust[0])
+                            
+                            conn.execute(update_query, params)
+                            conn.commit()
+                            st.success(f"✅ Customer {cust[1]} updated successfully!")
+                            st.balloons()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Update Error: {str(e)}")
+        conn.close()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def kyc_verify():
     if st.session_state.user['role'] not in ['admin', 'staff']:
@@ -669,8 +764,8 @@ def kyc_verify():
                 with b1:
                     if st.button("✅ Approve KYC", key=f"a_{cust[0]}", use_container_width=True, type="primary"):
                         c.execute("UPDATE customers SET kyc_status='VERIFIED',kyc_verified_by=?,kyc_verified_at=CURRENT_TIMESTAMP WHERE id=?", (st.session_state.user['id'], cust[0]))
-                        if not c.execute("SELECT id FROM accounts WHERE customer_id=? AND account_type='SB' AND status='ACTIVE'", (cust[0],)).fetchone():
-                            c.execute("INSERT INTO accounts (account_number,customer_id,account_type,balance,interest_rate,last_interest_calculation,total_interest_earned) VALUES (?,?,'SB',0.00,3.50,DATE('now'),0.00)", (generate_account_number('SB'), cust[0]))
+                        # MODIFIED: Auto-create SB account even if not KYC verified (this will just update status)
+                        # Account creation happens on demand in create_sb function
                         c.commit()
                         st.success("✅ KYC Approved Successfully!")
                         st.rerun()
@@ -688,16 +783,34 @@ def create_sb():
         st.error("Unauthorized"); return
         
     c = get_db()
-    custs = c.execute("SELECT c.id,c.customer_id,c.first_name||' '||c.last_name FROM customers c WHERE c.kyc_status='VERIFIED' AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.customer_id=c.id AND a.account_type='SB' AND a.status='ACTIVE')").fetchall()
+    # MODIFIED: Allow all customers, not just KYC verified
+    custs = c.execute("SELECT c.id,c.customer_id,c.first_name||' '||c.last_name FROM customers c WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE a.customer_id=c.id AND a.account_type='SB' AND a.status='ACTIVE')").fetchall()
     
     st.markdown('<div class="section-card"><h3>Open Savings Account</h3>', unsafe_allow_html=True)
     if not custs:
-        st.markdown('<div class="alert alert-success">✅ All eligible verified customers already have an SB account!</div>', unsafe_allow_html=True)
+        st.markdown('<div class="alert alert-success">✅ All customers already have an SB account!</div>', unsafe_allow_html=True)
     else:
-        sel = st.selectbox("Select Eligible Customer", [f"{x[1]} - {x[2]}" for x in custs])
+        # Create list with KYC status indicator
+        cust_list = []
+        for x in custs:
+            kyc_status = c.execute("SELECT kyc_status FROM customers WHERE id=?", (x[0],)).fetchone()[0]
+            status_icon = "✅" if kyc_status == 'VERIFIED' else "⚠️" if kyc_status == 'PENDING' else "❌"
+            cust_list.append(f"{x[1]} - {x[2]} (KYC: {status_icon} {kyc_status})")
+        
+        sel = st.selectbox("Select Customer", cust_list)
         if sel:
-            idx = [f"{x[1]} - {x[2]}" for x in custs].index(sel)
+            idx = cust_list.index(sel)
             cust = custs[idx]
+            # Get KYC status for display
+            kyc_status = c.execute("SELECT kyc_status FROM customers WHERE id=?", (cust[0],)).fetchone()[0]
+            
+            if kyc_status == 'VERIFIED':
+                st.success("✅ Customer KYC is VERIFIED")
+            elif kyc_status == 'PENDING':
+                st.warning("⚠️ Customer KYC is PENDING - Account can still be opened")
+            else:
+                st.warning("⚠️ Customer KYC is REJECTED - Account can still be opened")
+            
             with st.form("sb"):
                 c1, c2 = st.columns(2)
                 with c1: rate = st.number_input("Interest Rate (%)", 0.0, 10.0, 3.5, 0.25)
@@ -721,7 +834,7 @@ def sb_accounts():
     
     with t1:
         st.markdown('<div class="section-card"><h3>Savings Accounts Overview</h3>', unsafe_allow_html=True)
-        q = "SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND " + ("c.user_id=?" if role == 'customer' else "c.kyc_status='VERIFIED'")
+        q = "SELECT a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND " + ("c.user_id=?" if role == 'customer' else "1=1")
         accs = c.execute(q, (uid,) if role == 'customer' else ()).fetchall()
         if accs:
             data = [{'Account Number': a[0], 'Customer Name': a[1], 'Principal (₹)': a[2], 'Rate': f"{a[3]:.2f}%", 'Interest Earned (₹)': a[4], 'Maturity (₹)': a[2]+a[4]} for a in accs]

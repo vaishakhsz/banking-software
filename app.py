@@ -849,7 +849,8 @@ def customer_mgmt():
         if not rejected_custs:
             st.info("No customers with rejected or pending KYC status found.")
         else:
-            sel = st.selectbox("Select Customer to Edit", [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in rejected_custs])
+            # Fixed: Added unique key for this selectbox
+            sel = st.selectbox("Select Customer to Edit", [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in rejected_custs], key="edit_rejected_cust")
             if sel:
                 idx = [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in rejected_custs].index(sel)
                 cust = rejected_custs[idx]
@@ -879,8 +880,8 @@ def customer_mgmt():
                     
                     st.markdown("#### Update Documents (Upload new to replace)")
                     doc1, doc2 = st.columns(2)
-                    with doc1: pan_doc = st.file_uploader("Upload PAN Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="epu")
-                    with doc2: aadhar_doc = st.file_uploader("Upload Aadhar Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="eau")
+                    with doc1: pan_doc = st.file_uploader("Upload PAN Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="epu_rejected")
+                    with doc2: aadhar_doc = st.file_uploader("Upload Aadhar Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="eau_rejected")
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.info("After editing, the KYC status will be reset to PENDING for re-verification.")
@@ -918,8 +919,8 @@ def customer_mgmt():
         if not all_custs:
             st.info("No customers found in the system.")
         else:
-            # Show KYC status in selection
-            sel = st.selectbox("Select Customer to Edit", [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in all_custs])
+            # Fixed: Added unique key for this selectbox
+            sel = st.selectbox("Select Customer to Edit", [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in all_custs], key="edit_any_cust")
             if sel:
                 idx = [f"{c[1]} - {c[2]} {c[3]} ({c[12]})" for c in all_custs].index(sel)
                 cust = all_custs[idx]
@@ -956,8 +957,8 @@ def customer_mgmt():
                     
                     st.markdown("#### Update Documents (Upload new to replace)")
                     doc1, doc2 = st.columns(2)
-                    with doc1: pan_doc = st.file_uploader("Upload PAN Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="ap1")
-                    with doc2: aadhar_doc = st.file_uploader("Upload Aadhar Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="ap2")
+                    with doc1: pan_doc = st.file_uploader("Upload PAN Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="ap1_any")
+                    with doc2: aadhar_doc = st.file_uploader("Upload Aadhar Card (Leave empty to keep existing)", type=['jpg', 'jpeg', 'png', 'pdf'], key="ap2_any")
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     
@@ -965,7 +966,8 @@ def customer_mgmt():
                     new_kyc_status = st.selectbox(
                         "Update KYC Status (Optional)", 
                         ["KEEP_CURRENT", "VERIFIED", "PENDING", "REJECTED"],
-                        help="Select 'KEEP_CURRENT' to maintain existing KYC status"
+                        help="Select 'KEEP_CURRENT' to maintain existing KYC status",
+                        key="kyc_status_any"
                     )
                     
                     if new_kyc_status != "KEEP_CURRENT":

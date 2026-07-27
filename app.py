@@ -464,7 +464,7 @@ def generate_rd_statement_pdf(rd_data, customer_data):
     # Visual progress bar (using characters)
     bar_length = 50
     filled = int((progress / 100) * bar_length)
-    bar = '█' * filled + '░' * (bar_length - filled)
+    bar = '=' * filled + '-' * (bar_length - filled)  # NEW - works with fpdf
     pdf.cell(0, 6, f"[{bar}]", 0, 1, 'L')
     
     # Footer

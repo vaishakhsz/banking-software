@@ -186,9 +186,11 @@ class BankPDF(FPDF):
     def header(self):
         # Bank Name Header
         self.set_font('Arial', 'B', 16)
-        self.cell(0, 8, 'AASHA NIDHI PVT LIMITED BANK', 0, 1, 'C')
+        self.cell(0, 8, 'AASHA NIDHI PVT LIMITED ', 0, 1, 'C')
         self.set_font('Arial', 'B', 12)
         self.cell(0, 6, 'BALARAMAPURAM', 0, 1, 'C')
+        self.set_font('Arial', '', 10)
+        self.cell(0, 8, 'Savings Bank Account Statement', 0, 1, 'C')
         self.set_font('Arial', '', 10)
         self.cell(0, 5, '-------------------------------------------', 0, 1, 'C')
         self.ln(3)

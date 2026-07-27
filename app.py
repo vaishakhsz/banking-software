@@ -504,6 +504,334 @@ def generate_rd_statement_pdf(rd_data, customer_data):
     pdf.cell(0, 4, '5. Installments must be paid on or before the due date.', 0, 1, 'L')
     
     return pdf
+
+# ==================== PDF GENERATION FUNCTIONS ====================
+
+def generate_journal_voucher_pdf(voucher_data, entries_data):
+    """Generate PDF for Journal Voucher"""
+    if FPDF is None:
+        return None
+    
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'JOURNAL VOUCHER', 0, 1, 'C')
+    pdf.ln(3)
+    
+    # Voucher Details
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 6, f"Voucher Number: {voucher_data['voucher_number']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"Date: {voucher_data['voucher_date']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"Description: {voucher_data['description']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"Status: {voucher_data['status']}", 0, 1, 'L')
+    if voucher_data.get('customer_name'):
+        pdf.cell(0, 6, f"Customer: {voucher_data['customer_name']}", 0, 1, 'L')
+    pdf.ln(5)
+    
+    # Entries Table Header
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(10, 7, 'S.No', 1)
+    pdf.cell(80, 7, 'Account Head', 1)
+    pdf.cell(45, 7, 'Debit (Dr)', 1, 0, 'R')
+    pdf.cell(45, 7, 'Credit (Cr)', 1, 1, 'R')
+    
+    # Entries
+    pdf.set_font('Arial', '', 9)
+    total_dr = 0
+    total_cr = 0
+    for idx, entry in enumerate(entries_data, 1):
+        pdf.cell(10, 6, str(idx), 1)
+        pdf.cell(80, 6, entry['account_head'], 1)
+        pdf.cell(45, 6, f"{entry['debit']:,.2f}", 1, 0, 'R')
+        pdf.cell(45, 6, f"{entry['credit']:,.2f}", 1, 1, 'R')
+        total_dr += entry['debit']
+        total_cr += entry['credit']
+    
+    # Totals
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(90, 7, 'TOTAL', 1)
+    pdf.cell(45, 7, f"{total_dr:,.2f}", 1, 0, 'R')
+    pdf.cell(45, 7, f"{total_cr:,.2f}", 1, 1, 'R')
+    
+    # Check if balanced
+    if abs(total_dr - total_cr) < 0.01:
+        pdf.set_font('Arial', 'B', 11)
+        pdf.set_text_color(0, 128, 0)
+        pdf.cell(0, 7, '✅ VOUCHER IS BALANCED', 0, 1, 'C')
+    else:
+        pdf.set_font('Arial', 'B', 11)
+        pdf.set_text_color(255, 0, 0)
+        pdf.cell(0, 7, f'❌ MISMATCH: Rs. {abs(total_dr - total_cr):,.2f}', 0, 1, 'C')
+    
+    # Footer
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(5)
+    pdf.set_font('Arial', 'I', 9)
+    pdf.cell(0, 5, 'This is a system generated voucher.', 0, 1, 'C')
+    pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'C')
+    
+    return pdf
+
+
+def generate_profit_loss_pdf(data, from_date, to_date):
+    """Generate PDF for Profit & Loss Statement"""
+    if FPDF is None:
+        return None
+    
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'PROFIT & LOSS STATEMENT', 0, 1, 'C')
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 5, f"Period: {from_date} to {to_date}", 0, 1, 'C')
+    pdf.ln(5)
+    
+    # Income Section
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 8, 'INCOME', 0, 1, 'L')
+    pdf.set_font('Arial', '', 10)
+    total_income = 0
+    for item in data['income']:
+        pdf.cell(50, 6, item['name'], 0, 0, 'L')
+        pdf.cell(0, 6, f"Rs. {item['amount']:,.2f}", 0, 1, 'R')
+        total_income += item['amount']
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(50, 7, 'Total Income', 0, 0, 'L')
+    pdf.cell(0, 7, f"Rs. {total_income:,.2f}", 0, 1, 'R')
+    pdf.ln(5)
+    
+    # Expenses Section
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 8, 'EXPENSES', 0, 1, 'L')
+    pdf.set_font('Arial', '', 10)
+    total_expense = 0
+    for item in data['expenses']:
+        pdf.cell(50, 6, item['name'], 0, 0, 'L')
+        pdf.cell(0, 6, f"Rs. {item['amount']:,.2f}", 0, 1, 'R')
+        total_expense += item['amount']
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(50, 7, 'Total Expenses', 0, 0, 'L')
+    pdf.cell(0, 7, f"Rs. {total_expense:,.2f}", 0, 1, 'R')
+    pdf.ln(5)
+    
+    # Net Profit/Loss
+    net = total_income - total_expense
+    pdf.set_font('Arial', 'B', 12)
+    if net >= 0:
+        pdf.set_text_color(0, 128, 0)  # Green
+        pdf.cell(0, 8, f"NET PROFIT: Rs. {net:,.2f}", 0, 1, 'C')
+    else:
+        pdf.set_text_color(255, 0, 0)  # Red
+        pdf.cell(0, 8, f"NET LOSS: Rs. {abs(net):,.2f}", 0, 1, 'C')
+    
+    # Footer
+    pdf.set_text_color(0, 0, 0)  # Reset to black
+    pdf.ln(5)
+    pdf.set_font('Arial', 'I', 9)
+    pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'C')
+    
+    return pdf
+
+
+def generate_balance_sheet_pdf(data):
+    """Generate PDF for Balance Sheet"""
+    if FPDF is None:
+        return None
+    
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'BALANCE SHEET', 0, 1, 'C')
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 5, f"As on: {data['as_on']}", 0, 1, 'C')
+    pdf.ln(5)
+    
+    # Assets Section
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 8, 'ASSETS', 0, 1, 'L')
+    pdf.set_font('Arial', '', 10)
+    total_assets = 0
+    for item in data['assets']:
+        pdf.cell(60, 6, item['name'], 0, 0, 'L')
+        pdf.cell(0, 6, f"Rs. {item['amount']:,.2f}", 0, 1, 'R')
+        total_assets += item['amount']
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(60, 7, 'Total Assets', 0, 0, 'L')
+    pdf.cell(0, 7, f"Rs. {total_assets:,.2f}", 0, 1, 'R')
+    pdf.ln(5)
+    
+    # Liabilities Section
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 8, 'LIABILITIES', 0, 1, 'L')
+    pdf.set_font('Arial', '', 10)
+    total_liabilities = 0
+    for item in data['liabilities']:
+        pdf.cell(60, 6, item['name'], 0, 0, 'L')
+        pdf.cell(0, 6, f"Rs. {item['amount']:,.2f}", 0, 1, 'R')
+        total_liabilities += item['amount']
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(60, 7, 'Total Liabilities', 0, 0, 'L')
+    pdf.cell(0, 7, f"Rs. {total_liabilities:,.2f}", 0, 1, 'R')
+    pdf.ln(5)
+    
+    # Capital/Equity
+    if data.get('capital'):
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 8, 'CAPITAL / EQUITY', 0, 1, 'L')
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(60, 6, 'Capital / Equity', 0, 0, 'L')
+        pdf.cell(0, 6, f"Rs. {data['capital']:,.2f}", 0, 1, 'R')
+        pdf.ln(3)
+    
+    # Total Check
+    pdf.set_font('Arial', 'B', 10)
+    total = total_assets
+    liabilities_plus_capital = total_liabilities + data.get('capital', 0)
+    
+    pdf.cell(60, 7, 'Total Assets', 0, 0, 'L')
+    pdf.cell(0, 7, f"Rs. {total_assets:,.2f}", 0, 1, 'R')
+    pdf.cell(60, 7, 'Total Liabilities + Capital', 0, 0, 'L')
+    pdf.cell(0, 7, f"Rs. {liabilities_plus_capital:,.2f}", 0, 1, 'R')
+    
+    if abs(total_assets - liabilities_plus_capital) < 0.01:
+        pdf.set_font('Arial', 'B', 11)
+        pdf.set_text_color(0, 128, 0)
+        pdf.cell(0, 7, '✅ BALANCE SHEET IS BALANCED', 0, 1, 'C')
+    
+    # Footer
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(5)
+    pdf.set_font('Arial', 'I', 9)
+    pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'C')
+    
+    return pdf
+
+
+def generate_trial_balance_pdf(data):
+    """Generate PDF for Trial Balance"""
+    if FPDF is None:
+        return None
+    
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'TRIAL BALANCE', 0, 1, 'C')
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 5, f"As on: {data['as_on']}", 0, 1, 'C')
+    pdf.ln(5)
+    
+    # Table Header
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(10, 7, 'S.No', 1)
+    pdf.cell(80, 7, 'Account Head', 1)
+    pdf.cell(45, 7, 'Debit (Dr)', 1, 0, 'R')
+    pdf.cell(45, 7, 'Credit (Cr)', 1, 1, 'R')
+    
+    # Entries
+    pdf.set_font('Arial', '', 9)
+    total_dr = 0
+    total_cr = 0
+    for idx, entry in enumerate(data['entries'], 1):
+        pdf.cell(10, 6, str(idx), 1)
+        pdf.cell(80, 6, entry['account_head'], 1)
+        pdf.cell(45, 6, f"{entry['debit']:,.2f}", 1, 0, 'R')
+        pdf.cell(45, 6, f"{entry['credit']:,.2f}", 1, 1, 'R')
+        total_dr += entry['debit']
+        total_cr += entry['credit']
+    
+    # Totals
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(90, 7, 'TOTAL', 1)
+    pdf.cell(45, 7, f"{total_dr:,.2f}", 1, 0, 'R')
+    pdf.cell(45, 7, f"{total_cr:,.2f}", 1, 1, 'R')
+    
+    # Check if balanced
+    if abs(total_dr - total_cr) < 0.01:
+        pdf.set_font('Arial', 'B', 11)
+        pdf.set_text_color(0, 128, 0)
+        pdf.cell(0, 7, '✅ TRIAL BALANCE IS BALANCED', 0, 1, 'C')
+    else:
+        pdf.set_font('Arial', 'B', 11)
+        pdf.set_text_color(255, 0, 0)
+        pdf.cell(0, 7, f'❌ MISMATCH: Rs. {abs(total_dr - total_cr):,.2f}', 0, 1, 'C')
+    
+    # Footer
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(5)
+    pdf.set_font('Arial', 'I', 9)
+    pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'C')
+    
+    return pdf
+
+
+def generate_report_pdf(data, report_type, title):
+    """Generate PDF for various reports"""
+    if FPDF is None:
+        return None
+    
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, title.upper(), 0, 1, 'C')
+    pdf.set_font('Arial', '', 10)
+    if isinstance(data, dict) and data.get('date'):
+        pdf.cell(0, 5, f"Date: {data['date']}", 0, 1, 'C')
+    pdf.ln(5)
+    
+    # Check if data is a list (for tables)
+    if isinstance(data, list) and len(data) > 0:
+        # Determine columns from first item
+        columns = list(data[0].keys())
+        
+        # Calculate column widths
+        col_widths = []
+        for col in columns:
+            # Calculate max width needed
+            max_len = len(col)
+            for row in data:
+                if len(str(row[col])) > max_len:
+                    max_len = len(str(row[col]))
+            col_widths.append(min(max_len * 2 + 4, 50))  # Max 50, min based on content
+        
+        # Table Header
+        pdf.set_font('Arial', 'B', 9)
+        x_start = pdf.get_x()
+        for i, col in enumerate(columns):
+            pdf.cell(col_widths[i], 7, col.upper(), 1, 0, 'C')
+        pdf.ln()
+        
+        # Table Data
+        pdf.set_font('Arial', '', 8)
+        for row in data:
+            for i, col in enumerate(columns):
+                value = str(row[col])
+                # Truncate if too long
+                if len(value) > 20:
+                    value = value[:17] + '...'
+                pdf.cell(col_widths[i], 6, value, 1, 0, 'L')
+            pdf.ln()
+    
+    # Footer
+    pdf.ln(5)
+    pdf.set_font('Arial', 'I', 9)
+    pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'C')
+    
+    return pdf
     
 
 def init_session_state():

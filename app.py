@@ -2,7 +2,8 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta 
+from dateutil.relativedelta import relativedelta  # ADD THIS LINE
 from decimal import Decimal
 import uuid
 import os
@@ -1758,7 +1759,7 @@ def fixed_deposits():
                         nom = st.text_input("Nominee Name")
                         nom_rel = st.text_input("Nominee Relation")
                     
-                    md = sd + timedelta(days=t*30)
+                    md = sd + relativedelta(months=t)
                     ma = calculate_fd_maturity(p, r, t)
                     
                     st.info(f"Calculated Maturity Date: **{md.strftime('%d %b %Y')}** | Maturity Value: **₹{ma:,.2f}**")
@@ -1984,7 +1985,7 @@ def recurring_deposits():
                         nom = st.text_input("Nominee Name")
                         nom_rel = st.text_input("Nominee Relation")
                     
-                    md = sd + timedelta(days=t*30)
+                    md = sd + relativedelta(months=t)
                     ma = calculate_rd_maturity(m, r, t)
                     
                     st.info(f"Calculated Maturity Date: **{md.strftime('%d %b %Y')}** | Maturity Value: **₹{ma:,.2f}**")

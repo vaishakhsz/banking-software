@@ -432,15 +432,34 @@ def generate_rd_statement_pdf(rd_data, customer_data):
     pdf.cell(60, 6, 'Maturity Date:', 0, 0, 'L')
     pdf.cell(0, 6, f"{rd_data['maturity_date']}", 0, 1, 'L')
     
-    pdf.cell(60, 6, 'Total Deposit Amount:', 0, 0, 'L')
+    # Calculate total deposited
     total_deposited = rd_data['monthly_amount'] * rd_data['installments_paid']
+    pdf.cell(60, 6, 'Total Deposit Amount:', 0, 0, 'L')
     pdf.cell(0, 6, f"Rs. {total_deposited:,.2f}", 0, 1, 'L')
     
-    pdf.cell(60, 6, 'Maturity Amount:', 0, 0, 'L')
+    # FIXED: Calculate ACTUAL interest earned based on installments paid
+    actual_interest = 0
+    if rd_data['installments_paid'] > 0:
+        # Calculate maturity amount for the installments paid
+        actual_maturity = calculate_rd_maturity(
+            rd_data['monthly_amount'], 
+            rd_data['interest_rate'], 
+            rd_data['installments_paid']
+        )
+        actual_interest = actual_maturity - total_deposited
+    
+    pdf.cell(60, 6, 'Maturity Amount (Projected):', 0, 0, 'L')
     pdf.cell(0, 6, f"Rs. {rd_data['maturity_amount']:,.2f}", 0, 1, 'L')
     
-    pdf.cell(60, 6, 'Total Interest Earned:', 0, 0, 'L')
-    pdf.cell(0, 6, f"Rs. {rd_data['maturity_amount'] - total_deposited:,.2f}", 0, 1, 'L')
+    pdf.cell(60, 6, 'Maturity Amount (Current):', 0, 0, 'L')
+    pdf.cell(0, 6, f"Rs. {total_deposited + actual_interest:,.2f}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Interest Earned (Actual):', 0, 0, 'L')
+    pdf.cell(0, 6, f"Rs. {actual_interest:,.2f}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Interest Earned (Projected Full):', 0, 0, 'L')
+    projected_interest = rd_data['maturity_amount'] - (rd_data['monthly_amount'] * rd_data['total_installments'])
+    pdf.cell(0, 6, f"Rs. {projected_interest:,.2f}", 0, 1, 'L')
     
     if rd_data.get('nominee_name'):
         pdf.cell(60, 6, 'Nominee Name:', 0, 0, 'L')
@@ -453,7 +472,7 @@ def generate_rd_statement_pdf(rd_data, customer_data):
     pdf.cell(60, 6, 'Status:', 0, 0, 'L')
     pdf.cell(0, 6, f"{rd_data['status']}", 0, 1, 'L')
     
-    # Installment Progress Bar (Text-based)
+    # Installment Progress Bar
     pdf.ln(3)
     pdf.set_font('Arial', 'B', 10)
     pdf.cell(0, 6, 'INSTALLMENT PROGRESS:', 0, 1, 'L')
@@ -461,10 +480,10 @@ def generate_rd_statement_pdf(rd_data, customer_data):
     progress = (rd_data['installments_paid'] / rd_data['total_installments']) * 100
     pdf.cell(0, 6, f"Progress: {rd_data['installments_paid']} / {rd_data['total_installments']} installments paid ({progress:.1f}%)", 0, 1, 'L')
     
-    # Visual progress bar (using characters)
+    # Visual progress bar - using ASCII characters
     bar_length = 50
     filled = int((progress / 100) * bar_length)
-    bar = '=' * filled + '-' * (bar_length - filled)  # NEW - works with fpdf
+    bar = '=' * filled + '-' * (bar_length - filled)
     pdf.cell(0, 6, f"[{bar}]", 0, 1, 'L')
     
     # Footer

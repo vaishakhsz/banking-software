@@ -940,8 +940,14 @@ def sb_accounts():
                         # Prepare data for display
                         txn_data = []
                         for txn in txns:
+                            # Convert date string to datetime if needed
+                            if isinstance(txn[1], str):
+                                date_obj = datetime.strptime(txn[1], '%Y-%m-%d %H:%M:%S')
+                            else:
+                                date_obj = txn[1]
+                            
                             txn_data.append({
-                                'Date': txn[1],
+                                'Date': date_obj,
                                 'Type': txn[2],
                                 'Description': txn[5],
                                 'Credit': txn[3] if txn[2] == 'CREDIT' else 0,
@@ -991,8 +997,14 @@ def sb_accounts():
                             # Format transactions for PDF
                             pdf_txns = []
                             for txn in txns:
+                                # Convert date string to datetime if needed
+                                if isinstance(txn[1], str):
+                                    date_obj = datetime.strptime(txn[1], '%Y-%m-%d %H:%M:%S')
+                                else:
+                                    date_obj = txn[1]
+                                
                                 pdf_txns.append({
-                                    'date': txn[1].strftime('%d-%b-%Y'),
+                                    'date': date_obj.strftime('%d-%b-%Y'),
                                     'type': txn[2],
                                     'description': txn[5],
                                     'credit': txn[3] if txn[2] == 'CREDIT' else 0,

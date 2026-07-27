@@ -190,7 +190,6 @@ class BankPDF(FPDF):
         self.set_font('Arial', 'B', 12)
         self.cell(0, 6, 'BALARAMAPURAM', 0, 1, 'C')
         self.set_font('Arial', '', 10)
-        self.cell(0, 8, 'Savings Bank Account Statement', 0, 1, 'C')
         self.set_font('Arial', '', 10)
         self.cell(0, 5, '-------------------------------------------', 0, 1, 'C')
         self.ln(3)
@@ -210,6 +209,10 @@ def generate_statement_pdf(account_data, transactions, customer_data, from_date,
     
     # Customer Details Section - without rupee symbol for PDF compatibility
     pdf.set_font('Arial', 'B', 11)
+
+    pdf.cell(0, 10, 'Savings Bank Account Statement', 0, 1, 'C')
+    pdf.ln(5)
+    
     pdf.cell(0, 6, f"CUSTOMER ID: {customer_data['customer_id']}", 0, 1, 'L')
     pdf.cell(0, 6, f"CUSTOMER NAME: {customer_data['customer_name']}", 0, 1, 'L')
     pdf.cell(0, 6, f"ACCOUNT NUMBER: {account_data['account_number']}", 0, 1, 'L')

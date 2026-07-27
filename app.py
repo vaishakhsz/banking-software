@@ -181,6 +181,7 @@ def create_default_admin():
         c.commit()
     c.close()
 
+# ==================== PDF GENERATION ====================
 class BankPDF(FPDF):
     def header(self):
         # Bank Name Header
@@ -205,7 +206,7 @@ def generate_statement_pdf(account_data, transactions, customer_data, from_date,
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Customer Details Section - without rupee symbol
+    # Customer Details Section - without rupee symbol for PDF compatibility
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 6, f"CUSTOMER ID: {customer_data['customer_id']}", 0, 1, 'L')
     pdf.cell(0, 6, f"CUSTOMER NAME: {customer_data['customer_name']}", 0, 1, 'L')
@@ -256,6 +257,46 @@ def generate_statement_pdf(account_data, transactions, customer_data, from_date,
     pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'L')
     
     return pdf
+
+def generate_report_pdf(rt, data, fn):
+    if FPDF is None: 
+        return None
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    if rt == 'trial_balance':
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(0, 10, 'TRIAL BALANCE', 0, 1, 'C')
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(0, 5, f'As on: {data["date"]}', 0, 1, 'C')
+        pdf.ln(10)
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(10, 7, 'S.No', 1)
+        pdf.cell(90, 7, 'Account Head', 1)
+        pdf.cell(45, 7, 'Debit', 1, 0, 'R')
+        pdf.cell(45, 7, 'Credit', 1, 1, 'R')
+        pdf.set_font('Arial', '', 9)
+        td_pdf = 0
+        tc_pdf = 0
+        for i, e in enumerate(data['entries'], 1):
+            pdf.cell(10, 6, str(i), 1)
+            pdf.cell(90, 6, e['account_head'], 1)
+            pdf.cell(45, 6, f"{e['debit']:,.2f}", 1, 0, 'R')
+            pdf.cell(45, 6, f"{e['credit']:,.2f}", 1, 1, 'R')
+            td_pdf += e['debit']
+            tc_pdf += e['credit']
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(100, 7, 'TOTAL', 1)
+        pdf.cell(45, 7, f"{td_pdf:,.2f}", 1, 0, 'R')
+        pdf.cell(45, 7, f"{tc_pdf:,.2f}", 1, 1, 'R')
+    pdf.output(fn)
+    return fn
+
+def init_session_state():
+    if 'user' not in st.session_state: 
+        st.session_state.user = None
+    if 'page' not in st.session_state: 
+        st.session_state.page = 'dashboard'
 
 # ==================== MODERN ENTERPRISE CSS ====================
 def load_enterprise_css():
@@ -980,7 +1021,7 @@ def sb_accounts():
                                 'total_interest': total_interest,
                                 'total_amount': balance + total_interest,
                                 'interest_rate': interest_rate,
-                                'interest_calculated': 0  # Add actual interest calculation if needed
+                                'interest_calculated': 0
                             }
                             
                             customer_data = {

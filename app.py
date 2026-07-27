@@ -1057,11 +1057,23 @@ def sb_accounts():
                             )
                             
                             if pdf:
-                                # Save to bytes
-                                pdf_output = pdf.output(dest='S').encode('latin1')
+                                # Save to bytes - FIXED: Use proper method to get PDF bytes
+                                import tempfile
+                                import os
+                                
+                                # Create a temporary file
+                                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                                    pdf.output(tmp_file.name)
+                                    tmp_file.flush()
+                                    # Read the file content
+                                    with open(tmp_file.name, 'rb') as f:
+                                        pdf_bytes = f.read()
+                                    # Clean up
+                                    os.unlink(tmp_file.name)
+                                
                                 st.download_button(
                                     label="📥 Download Statement PDF",
-                                    data=pdf_output,
+                                    data=pdf_bytes,
                                     file_name=f"Statement_{account_number}_{datetime.now().strftime('%Y%m%d')}.pdf",
                                     mime="application/pdf",
                                     use_container_width=True

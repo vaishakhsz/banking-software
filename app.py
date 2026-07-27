@@ -212,9 +212,9 @@ def generate_statement_pdf(account_data, transactions, customer_data, from_date,
     pdf.cell(0, 6, f"CUSTOMER NAME: {customer_data['customer_name']}", 0, 1, 'L')
     pdf.cell(0, 6, f"ACCOUNT NUMBER: {account_data['account_number']}", 0, 1, 'L')
     pdf.cell(0, 6, f"INTEREST RATE: {account_data['interest_rate']}%", 0, 1, 'L')
-    pdf.cell(0, 6, f"TOTAL DEPOSITS: Rs. {account_data['total_deposits']:,.2f}", 0, 1, 'L')
+   
     pdf.cell(0, 6, f"TOTAL INTEREST EARNED: Rs. {account_data['total_interest']:,.2f}", 0, 1, 'L')
-    pdf.cell(0, 6, f"TOTAL AMOUNT (Deposits + Interest): Rs. {account_data['total_amount']:,.2f}", 0, 1, 'L')
+    
     pdf.cell(0, 6, f"STATEMENT PERIOD: {from_date} to {to_date}", 0, 1, 'L')
     pdf.ln(5)
     

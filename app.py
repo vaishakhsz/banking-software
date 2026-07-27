@@ -294,11 +294,94 @@ def generate_report_pdf(rt, data, fn):
     pdf.output(fn)
     return fn
 
+def generate_fd_statement_pdf(fd_data, customer_data):
+    if FPDF is None:
+        return None
+    
+    pdf = BankPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'FIXED DEPOSIT RECEIPT', 0, 1, 'C')
+    pdf.ln(5)
+    
+    # Customer Details Section
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 6, f"CUSTOMER ID: {customer_data['customer_id']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"CUSTOMER NAME: {customer_data['customer_name']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"ADDRESS: {customer_data.get('address', 'N/A')}", 0, 1, 'L')
+    pdf.cell(0, 6, f"PHONE: {customer_data.get('phone', 'N/A')}", 0, 1, 'L')
+    pdf.ln(3)
+    
+    # FD Details Section
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 6, 'FIXED DEPOSIT DETAILS', 0, 1, 'L')
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(60, 6, 'FD Number:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{fd_data['fd_number']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Account Number:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{fd_data['account_number']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Principal Amount:', 0, 0, 'L')
+    pdf.cell(0, 6, f"Rs. {fd_data['principal']:,.2f}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Interest Rate:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{fd_data['interest_rate']}% per annum", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Tenure:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{fd_data['tenure_months']} months", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Start Date:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{fd_data['start_date']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Maturity Date:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{fd_data['maturity_date']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Maturity Amount:', 0, 0, 'L')
+    pdf.cell(0, 6, f"Rs. {fd_data['maturity_amount']:,.2f}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Total Interest Earned:', 0, 0, 'L')
+    pdf.cell(0, 6, f"Rs. {fd_data.get('total_interest', fd_data['maturity_amount'] - fd_data['principal']):,.2f}", 0, 1, 'L')
+    
+    if fd_data.get('nominee_name'):
+        pdf.cell(60, 6, 'Nominee Name:', 0, 0, 'L')
+        pdf.cell(0, 6, f"{fd_data['nominee_name']}", 0, 1, 'L')
+    
+    if fd_data.get('nominee_relation'):
+        pdf.cell(60, 6, 'Nominee Relation:', 0, 0, 'L')
+        pdf.cell(0, 6, f"{fd_data['nominee_relation']}", 0, 1, 'L')
+    
+    pdf.cell(60, 6, 'Status:', 0, 0, 'L')
+    pdf.cell(0, 6, f"{fd_data['status']}", 0, 1, 'L')
+    
+    # Footer
+    pdf.ln(5)
+    pdf.set_font('Arial', 'I', 9)
+    pdf.cell(0, 5, 'This is a system generated receipt.', 0, 1, 'C')
+    pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}", 0, 1, 'C')
+    
+    # Terms and Conditions
+    pdf.ln(3)
+    pdf.set_font('Arial', 'I', 8)
+    pdf.cell(0, 4, 'Terms & Conditions:', 0, 1, 'L')
+    pdf.cell(0, 4, '1. Fixed Deposit is subject to terms and conditions of the bank.', 0, 1, 'L')
+    pdf.cell(0, 4, '2. Premature withdrawal is subject to applicable penalties.', 0, 1, 'L')
+    pdf.cell(0, 4, '3. TDS will be applicable as per Income Tax rules.', 0, 1, 'L')
+    pdf.cell(0, 4, '4. Please keep this receipt for future reference.', 0, 1, 'L')
+    
+    return pdf
+    
+
 def init_session_state():
     if 'user' not in st.session_state: 
         st.session_state.user = None
     if 'page' not in st.session_state: 
         st.session_state.page = 'dashboard'
+
+
 
 # ==================== MODERN ENTERPRISE CSS ====================
 def load_enterprise_css():

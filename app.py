@@ -1609,7 +1609,7 @@ def fixed_deposits():
     
     with t1:
         st.markdown('<div class="section-card"><h3>Open Fixed Deposit</h3>', unsafe_allow_html=True)
-        custs = c.execute("SELECT c.id,c.customer_id,c.first_name||' '||c.last_name FROM customers c JOIN accounts a ON c.id=a.customer_id WHERE a.account_type='SB' AND c.kyc_status='VERIFIED' AND a.status='ACTIVE'").fetchall()
+        custs = c.execute("SELECT c.id,c.customer_id,c.first_name||' '||c.last_name FROM customers c JOIN accounts a ON c.id=a.customer_id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
         if custs:
             sel = st.selectbox("Select Customer", [f"{x[1]} - {x[2]}" for x in custs])
             if sel:
@@ -1624,6 +1624,7 @@ def fixed_deposits():
                     with d2: 
                         sd = st.date_input("Start Date", date.today(), key="fs")
                         nom = st.text_input("Nominee Name")
+                        nom_rel = st.text_input("Nominee Relation")
                     
                     md = sd + timedelta(days=t*30)
                     ma = calculate_fd_maturity(p, r, t)
@@ -1636,7 +1637,7 @@ def fixed_deposits():
                         an = generate_account_number('FD')
                         c.execute("INSERT INTO accounts (account_number,customer_id,account_type,balance,interest_rate) VALUES (?,?,'FD',0.00,?)", (an, cust[0], r))
                         aid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-                        c.execute("INSERT INTO fixed_deposits (fd_number,account_id,principal_amount,interest_rate,start_date,maturity_date,maturity_amount,tenure_months,nominee_name) VALUES (?,?,?,?,?,?,?,?,?)", (fdn, aid, p, r, sd, md, ma, t, nom))
+                        c.execute("INSERT INTO fixed_deposits (fd_number,account_id,principal_amount,interest_rate,start_date,maturity_date,maturity_amount,tenure_months,nominee_name,nominee_relation) VALUES (?,?,?,?,?,?,?,?,?,?)", (fdn, aid, p, r, sd, md, ma, t, nom, nom_rel))
                         c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,'CREDIT',?,?,'FD','FD_DEPOSIT','RECEIPT',?,?)", (generate_id('TXN'), aid, p, p, generate_voucher_number('RECEIPT'), uid))
                         c.commit()
                         st.success(f"✅ FD Successfully Opened! FD ID: {fdn}")
@@ -1645,9 +1646,108 @@ def fixed_deposits():
         
     with t2:
         st.markdown('<div class="section-card"><h3>Active Fixed Deposits</h3>', unsafe_allow_html=True)
-        fds = c.execute("SELECT fd.fd_number,c.first_name||' '||c.last_name,fd.principal_amount,fd.interest_rate,fd.start_date,fd.maturity_date,fd.maturity_amount FROM fixed_deposits fd JOIN accounts a ON fd.account_id=a.id JOIN customers c ON a.customer_id=c.id WHERE fd.status='ACTIVE' ORDER BY fd.maturity_date").fetchall()
+        fds = c.execute("""
+            SELECT fd.id, fd.fd_number, c.first_name||' '||c.last_name, 
+                   fd.principal_amount, fd.interest_rate, fd.start_date, 
+                   fd.maturity_date, fd.maturity_amount, fd.tenure_months, 
+                   fd.nominee_name, fd.nominee_relation, fd.status, c.id as customer_id,
+                   a.account_number
+            FROM fixed_deposits fd 
+            JOIN accounts a ON fd.account_id=a.id 
+            JOIN customers c ON a.customer_id=c.id 
+            WHERE fd.status='ACTIVE' 
+            ORDER BY fd.maturity_date
+        """).fetchall()
+        
         if fds: 
-            st.dataframe(pd.DataFrame(fds, columns=['FD Ref', 'Customer', 'Principal', 'Rate', 'Start Date', 'Maturity Date', 'Maturity Value']).style.format({'Principal': '₹{:,.2f}', 'Maturity Value': '₹{:,.2f}'}), use_container_width=True)
+            # Display as dataframe
+            df_data = []
+            for fd in fds:
+                df_data.append({
+                    'FD Ref': fd[1],
+                    'Customer': fd[2],
+                    'Principal (₹)': fd[3],
+                    'Rate': f"{fd[4]:.2f}%",
+                    'Start Date': fd[5],
+                    'Maturity Date': fd[6],
+                    'Maturity Value (₹)': fd[7],
+                    'Tenure': f"{fd[8]} months",
+                    'Nominee': fd[9] or 'N/A',
+                    'Status': fd[11]
+                })
+            
+            if df_data:
+                st.dataframe(pd.DataFrame(df_data).style.format({
+                    'Principal (₹)': '₹{:,.2f}',
+                    'Maturity Value (₹)': '₹{:,.2f}'
+                }), use_container_width=True)
+                
+                # Print FD Receipt Button
+                st.markdown("---")
+                st.subheader("📄 Print FD Receipt")
+                
+                # Select FD for printing
+                fd_options = [f"{fd[1]} - {fd[2]} (₹{fd[7]:,.2f})" for fd in fds]
+                selected_fd = st.selectbox("Select FD to print receipt", fd_options, key="fd_print")
+                
+                if selected_fd and st.button("🖨️ Print FD Receipt (PDF)", use_container_width=True, type="primary"):
+                    # Find the selected FD
+                    fd_idx = fd_options.index(selected_fd)
+                    fd = fds[fd_idx]
+                    
+                    # Prepare customer data
+                    customer_data = {
+                        'customer_id': fd[12],  # customer_id
+                        'customer_name': fd[2],  # customer name
+                    }
+                    
+                    # Get customer address and phone
+                    cust_info = c.execute("SELECT address, phone FROM customers WHERE id=?", (fd[12],)).fetchone()
+                    if cust_info:
+                        customer_data['address'] = cust_info[0] or 'N/A'
+                        customer_data['phone'] = cust_info[1] or 'N/A'
+                    
+                    # Prepare FD data
+                    fd_data = {
+                        'fd_number': fd[1],
+                        'account_number': fd[13],
+                        'principal': fd[3],
+                        'interest_rate': fd[4],
+                        'start_date': fd[5].strftime('%d-%b-%Y'),
+                        'maturity_date': fd[6].strftime('%d-%b-%Y'),
+                        'maturity_amount': fd[7],
+                        'tenure_months': fd[8],
+                        'nominee_name': fd[9],
+                        'nominee_relation': fd[10],
+                        'status': fd[11],
+                        'total_interest': fd[7] - fd[3]
+                    }
+                    
+                    # Generate PDF
+                    pdf = generate_fd_statement_pdf(fd_data, customer_data)
+                    
+                    if pdf:
+                        # Save to bytes using temporary file
+                        import tempfile
+                        import os
+                        
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                            pdf.output(tmp_file.name)
+                            tmp_file.flush()
+                            with open(tmp_file.name, 'rb') as f:
+                                pdf_bytes = f.read()
+                            os.unlink(tmp_file.name)
+                        
+                        st.download_button(
+                            label="📥 Download FD Receipt PDF",
+                            data=pdf_bytes,
+                            file_name=f"FD_Receipt_{fd[1]}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                        st.success("✅ FD Receipt generated successfully!")
+                    else:
+                        st.error("PDF generation library not available. Please install fpdf.")
         else: 
             st.info("No active FDs found in the system.")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1655,7 +1755,14 @@ def fixed_deposits():
     with t3:
         st.markdown('<div class="section-card"><h3>Upcoming FD Maturities (Next 30 Days)</h3>', unsafe_allow_html=True)
         today = date.today()
-        mat = c.execute("SELECT fd.fd_number,c.first_name||' '||c.last_name,fd.maturity_amount,fd.maturity_date FROM fixed_deposits fd JOIN accounts a ON fd.account_id=a.id JOIN customers c ON a.customer_id=c.id WHERE fd.maturity_date BETWEEN ? AND ? AND fd.status='ACTIVE'", (today, today+timedelta(days=30))).fetchall()
+        mat = c.execute("""
+            SELECT fd.fd_number, c.first_name||' '||c.last_name, 
+                   fd.maturity_amount, fd.maturity_date 
+            FROM fixed_deposits fd 
+            JOIN accounts a ON fd.account_id=a.id 
+            JOIN customers c ON a.customer_id=c.id 
+            WHERE fd.maturity_date BETWEEN ? AND ? AND fd.status='ACTIVE'
+        """, (today, today+timedelta(days=30))).fetchall()
         if mat: 
             st.warning(f"🔔 {len(mat)} accounts are maturing soon")
             st.dataframe(pd.DataFrame(mat, columns=['FD Ref', 'Customer', 'Maturity Value', 'Maturity Date']).style.format({'Maturity Value': '₹{:,.2f}'}), use_container_width=True)

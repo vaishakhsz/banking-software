@@ -2218,57 +2218,90 @@ def balance_sheet():
     st.markdown('<div class="section-card"><h3>Corporate Balance Sheet</h3>', unsafe_allow_html=True)
     
     if st.button("Generate Balance Sheet", use_container_width=True, type="primary", key="bs"):
+        # ============ ASSETS (What bank owns/receivables) ============
+        # Cash in hand from transactions
         cash = c.execute("SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END),0) FROM transactions WHERE reference_type='CASH'").fetchone()[0]
+        
+        # Income received is an asset
+        total_income = c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
+        
+        # JV debit entries represent assets (Bank Account, Investments, etc.)
+        jv_debit_breakdown = c.execute("SELECT je.account_head, SUM(je.debit_amount) as total FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.debit_amount > 0 GROUP BY je.account_head").fetchall()
+        jv_assets = sum(e[1] for e in jv_debit_breakdown) if jv_debit_breakdown else 0
+        
+        total_assets = cash + jv_assets + total_income
+        
+        # ============ LIABILITIES (What bank owes to others) ============
+        # Customer deposits are liabilities
         sb_bal = c.execute("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         fd_bal = c.execute("SELECT COALESCE(SUM(principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
         rd_bal = c.execute("SELECT COALESCE(SUM(monthly_amount*installments_paid),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
         
-        jv_assets = c.execute("SELECT COALESCE(SUM(je.debit_amount),0) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED'").fetchone()[0] or 0
-        jv_liabilities = c.execute("SELECT COALESCE(SUM(je.credit_amount),0) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED'").fetchone()[0] or 0
-        
-        total_income = c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
-        total_expenses = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
-        
+        # Interest payable
         sb_int = c.execute("SELECT COALESCE(SUM(total_interest_earned),0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         fd_int = c.execute("SELECT COALESCE(SUM(maturity_amount-principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
         rd_int = c.execute("SELECT COALESCE(SUM(maturity_amount-(monthly_amount*installments_paid)),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
         
-        total_assets = cash + sb_bal + fd_bal + rd_bal + jv_assets + total_income
-        total_liabilities = sb_int + fd_int + rd_int + sb_bal + fd_bal + rd_bal + jv_liabilities + total_expenses
+        # Expenses are liabilities
+        total_expenses = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
+        
+        # JV credit entries represent liabilities/equity (Capital Account, Loans, etc.)
+        jv_credit_breakdown = c.execute("SELECT je.account_head, SUM(je.credit_amount) as total FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.credit_amount > 0 GROUP BY je.account_head").fetchall()
+        jv_liabilities = sum(e[1] for e in jv_credit_breakdown) if jv_credit_breakdown else 0
+        
+        total_liabilities = sb_bal + fd_bal + rd_bal + sb_int + fd_int + rd_int + total_expenses + jv_liabilities
+        
+        # Capital = Assets - Liabilities
         capital = total_assets - total_liabilities
         
-        jv_debit_breakdown = c.execute("SELECT je.account_head, SUM(je.debit_amount) as total FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.debit_amount > 0 GROUP BY je.account_head").fetchall()
-        jv_credit_breakdown = c.execute("SELECT je.account_head, SUM(je.credit_amount) as total FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.credit_amount > 0 GROUP BY je.account_head").fetchall()
-        
-        assets_data = [{'name': 'Cash in Hand', 'amount': cash}, {'name': 'SB Deposits (Asset)', 'amount': sb_bal}, {'name': 'FD Deposits (Asset)', 'amount': fd_bal}, {'name': 'RD Deposits (Asset)', 'amount': rd_bal}]
+        # ============ PREPARE DISPLAY DATA ============
+        assets_data = []
+        if cash > 0:
+            assets_data.append({'name': 'Cash in Hand', 'amount': cash})
         for jv_entry in jv_debit_breakdown:
-            if jv_entry[1] > 0: assets_data.append({'name': f'JV: {jv_entry[0]}', 'amount': jv_entry[1]})
-        if total_income > 0: assets_data.append({'name': 'Total Income Received', 'amount': total_income})
+            if jv_entry[1] > 0:
+                assets_data.append({'name': f'JV: {jv_entry[0]}', 'amount': jv_entry[1]})
+        if total_income > 0:
+            assets_data.append({'name': 'Total Income Received', 'amount': total_income})
         
-        liabilities_data = [{'name': 'SB Interest Payable', 'amount': sb_int}, {'name': 'FD Interest Payable', 'amount': fd_int}, {'name': 'RD Interest Payable', 'amount': rd_int}, {'name': 'SB Deposits (Liability)', 'amount': sb_bal}, {'name': 'FD Deposits (Liability)', 'amount': fd_bal}, {'name': 'RD Deposits (Liability)', 'amount': rd_bal}]
+        liabilities_data = []
+        if sb_bal > 0:
+            liabilities_data.append({'name': 'SB Deposits', 'amount': sb_bal})
+        if fd_bal > 0:
+            liabilities_data.append({'name': 'FD Deposits', 'amount': fd_bal})
+        if rd_bal > 0:
+            liabilities_data.append({'name': 'RD Deposits', 'amount': rd_bal})
+        if sb_int > 0:
+            liabilities_data.append({'name': 'SB Interest Payable', 'amount': sb_int})
+        if fd_int > 0:
+            liabilities_data.append({'name': 'FD Interest Payable', 'amount': fd_int})
+        if rd_int > 0:
+            liabilities_data.append({'name': 'RD Interest Payable', 'amount': rd_int})
+        if total_expenses > 0:
+            liabilities_data.append({'name': 'Total Expenses', 'amount': total_expenses})
         for jv_entry in jv_credit_breakdown:
-            if jv_entry[1] > 0: liabilities_data.append({'name': f'JV: {jv_entry[0]}', 'amount': jv_entry[1]})
-        if total_expenses > 0: liabilities_data.append({'name': 'Total Expenses', 'amount': total_expenses})
+            if jv_entry[1] > 0:
+                liabilities_data.append({'name': f'JV: {jv_entry[0]}', 'amount': jv_entry[1]})
         
+        # ============ DISPLAY ============
         st.markdown("<br>", unsafe_allow_html=True)
         p1, p2 = st.columns(2)
         
         with p1:
             st.markdown(f'<div class="dash-card" style="text-align: left;"><h3 style="color:#0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom:10px;">ASSETS</h3>', unsafe_allow_html=True)
             for item in assets_data:
-                if item['amount'] != 0:
-                    st.markdown(f'<p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>{item["name"]}:</span> <b>Rs{item["amount"]:,.2f}</b></p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>{item["name"]}:</span> <b>Rs{item["amount"]:,.2f}</b></p>', unsafe_allow_html=True)
             st.markdown(f'<hr style="border-color:#e2e8f0;"><p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Assets:</b> <b>Rs{total_assets:,.2f}</b></p></div>', unsafe_allow_html=True)
             
         with p2:
             st.markdown(f'<div class="dash-card" style="text-align: left;"><h3 style="color:#0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom:10px;">LIABILITIES</h3>', unsafe_allow_html=True)
             for item in liabilities_data:
-                if item['amount'] != 0:
-                    st.markdown(f'<p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>{item["name"]}:</span> <b>Rs{item["amount"]:,.2f}</b></p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>{item["name"]}:</span> <b>Rs{item["amount"]:,.2f}</b></p>', unsafe_allow_html=True)
             st.markdown(f'<hr style="border-color:#e2e8f0;"><p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Liabilities:</b> <b>Rs{total_liabilities:,.2f}</b></p></div>', unsafe_allow_html=True)
             
         st.markdown(f'<div class="dash-card" style="background: linear-gradient(135deg, #0f2027, #2c5364); color: white;"><h3 style="color:white; margin:0;">TOTAL CAPITAL / EQUITY</h3><h2 style="color:white; margin: 10px 0;">Rs{capital:,.2f}</h2></div>', unsafe_allow_html=True)
         
+        # Show JV breakdown for verification
         if jv_debit_breakdown or jv_credit_breakdown:
             st.markdown("---")
             st.markdown("#### Journal Voucher Impact Details")
@@ -2282,18 +2315,26 @@ def balance_sheet():
                 for entry in jv_credit_breakdown:
                     st.markdown(f"- {entry[0]}: Rs{entry[1]:,.2f}")
         
+        # Check if balanced
         balance_difference = total_assets - (total_liabilities + capital)
         if abs(balance_difference) < 0.01:
             st.success(f"Balance Sheet is perfectly aligned.")
         else:
             st.warning(f"Balance Sheet difference: Rs{abs(balance_difference):,.2f}")
         
+        # Summary explanation
+        st.markdown("---")
+        st.info(f"""
+        **Balance Sheet Summary:**
+        - **Assets** (Rs{total_assets:,.2f}) = Cash + JV Assets + Income
+        - **Liabilities** (Rs{total_liabilities:,.2f}) = Customer Deposits + Interest Payable + JV Liabilities + Expenses
+        - **Capital** (Rs{capital:,.2f}) = Assets - Liabilities
+        - Customer deposits (SB+FD+RD = Rs{sb_bal+fd_bal+rd_bal:,.2f}) are LIABILITIES because the bank owes this money back to customers
+        """)
+        
         st.markdown("---")
         if st.button("Print Balance Sheet (PDF)", use_container_width=True, type="primary"):
-            pdf_assets = [item for item in assets_data if item['amount'] != 0]
-            pdf_liabilities = [item for item in liabilities_data if item['amount'] != 0]
-            
-            pdf_data = {'assets': pdf_assets, 'liabilities': pdf_liabilities, 'capital': capital, 'as_on': date.today().strftime('%d-%m-%Y')}
+            pdf_data = {'assets': assets_data, 'liabilities': liabilities_data, 'capital': capital, 'as_on': date.today().strftime('%d-%m-%Y')}
             pdf = generate_balance_sheet_pdf(pdf_data)
             
             if pdf:

@@ -1761,6 +1761,7 @@ def fixed_deposits():
     c.close()
 
 # ==================== RECURRING DEPOSITS ====================
+# ==================== RECURRING DEPOSITS ====================
 def recurring_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1990,24 +1991,31 @@ def recurring_deposits():
         else:
             st.info("No active recurring deposits")
     
-    # Tab 3: Pay Installment
+    # Tab 3: Pay Installment - FIXED: Properly fetch SB balance
     with tab3:
         st.markdown("### 💳 Pay RD Installment")
         
+        # First, get all pending RDs with their SB account balances
         pending_rds = c.execute("""
-            SELECT rd.id, rd.rd_number, 
-                   c.id as customer_id,
-                   c.first_name||' '||c.last_name as customer,
-                   a.id as sb_account_id, 
-                   a.account_number as sb_account,
-                   a.balance as sb_balance,
-                   rd.monthly_amount, rd.installments_paid, 
-                   rd.total_installments, rd.interest_rate,
-                   rd.start_date, rd.maturity_date,
-                   rd.maturity_amount
+            SELECT 
+                rd.id, 
+                rd.rd_number, 
+                c.id as customer_id,
+                c.first_name||' '||c.last_name as customer,
+                a.id as sb_account_id, 
+                a.account_number as sb_account,
+                COALESCE(a.balance, 0) as sb_balance,
+                rd.monthly_amount, 
+                rd.installments_paid, 
+                rd.total_installments, 
+                rd.interest_rate,
+                rd.start_date, 
+                rd.maturity_date,
+                rd.maturity_amount
             FROM recurring_deposits rd
             JOIN accounts a ON rd.account_id = a.id
             JOIN customers c ON a.customer_id = c.id
+            LEFT JOIN accounts sb ON c.id = sb.customer_id AND sb.account_type = 'SB' AND sb.status = 'ACTIVE'
             WHERE rd.status='ACTIVE' AND rd.installments_paid < rd.total_installments
             ORDER BY rd.created_at
         """).fetchall()
@@ -2023,14 +2031,14 @@ def recurring_deposits():
             remaining = total - paid
             
             rd_options.append({
-                'display': f"{rd_number} - {customer} | {paid}/{total} paid | Next: Rs{monthly:,.2f}",
+                'display': f"{rd_number} - {customer} | {paid}/{total} paid | SB Balance: Rs{sb_balance:,.2f} | Next: Rs{monthly:,.2f}",
                 'rd_id': rd_id,
                 'rd_number': rd_number,
                 'customer_id': cust_id,
                 'customer': customer,
                 'sb_account_id': sb_acc_id,
                 'sb_account': sb_acc,
-                'sb_balance': sb_balance,
+                'sb_balance': sb_balance if sb_acc_id else 0,
                 'monthly_amount': monthly,
                 'installments_paid': paid,
                 'total_installments': total,
@@ -2056,7 +2064,7 @@ def recurring_deposits():
             |-------|-------|
             | **RD Number** | {selected_rd['rd_number']} |
             | **Customer** | {selected_rd['customer']} |
-            | **SB Account** | {selected_rd['sb_account']} |
+            | **SB Account** | {selected_rd['sb_account'] if selected_rd['sb_account'] else 'No SB Account Found!'} |
             | **SB Balance** | Rs {selected_rd['sb_balance']:,.2f} |
             | **Monthly Amount** | Rs {selected_rd['monthly_amount']:,.2f} |
             | **Installments Paid** | {selected_rd['installments_paid']}/{selected_rd['total_installments']} |
@@ -2066,6 +2074,9 @@ def recurring_deposits():
             | **Maturity Date** | {selected_rd['maturity_date']} |
             | **Maturity Amount** | Rs {selected_rd['maturity_amount']:,.2f} |
             """)
+            
+            if not selected_rd['sb_account']:
+                st.error("❌ This customer does not have an active SB account! Please open an SB account first.")
             
             st.info(f"📊 **Next Installment Amount: Rs {selected_rd['monthly_amount']:,.2f}**")
             
@@ -2078,8 +2089,14 @@ def recurring_deposits():
                     key="rd_payment_mode"
                 )
                 
-                if payment_mode == "SB Transfer (Debit from SB)" and selected_rd['monthly_amount'] > selected_rd['sb_balance']:
-                    st.error(f"❌ Insufficient balance! Available: Rs {selected_rd['sb_balance']:,.2f}")
+                if payment_mode == "SB Transfer (Debit from SB)":
+                    if selected_rd['sb_account']:
+                        if selected_rd['monthly_amount'] > selected_rd['sb_balance']:
+                            st.error(f"❌ Insufficient balance! Available: Rs {selected_rd['sb_balance']:,.2f}")
+                        else:
+                            st.success(f"✅ Sufficient balance: Rs {selected_rd['sb_balance']:,.2f}")
+                    else:
+                        st.error("❌ No SB account found! Please open an SB account first.")
             
             with col2:
                 st.markdown("### 💰 Payment Summary")
@@ -2089,9 +2106,19 @@ def recurring_deposits():
                 - Remaining after payment: **{selected_rd['remaining_installments'] - 1}**
                 """)
             
-            if st.button("💳 Pay Installment", use_container_width=True, type="primary"):
-                if payment_mode == "SB Transfer (Debit from SB)" and selected_rd['monthly_amount'] > selected_rd['sb_balance']:
-                    st.error("❌ Insufficient balance!")
+            # Check if payment can be made
+            can_pay = True
+            if payment_mode == "SB Transfer (Debit from SB)":
+                if not selected_rd['sb_account']:
+                    can_pay = False
+                    st.error("❌ Cannot pay: No SB account found!")
+                elif selected_rd['monthly_amount'] > selected_rd['sb_balance']:
+                    can_pay = False
+                    st.error("❌ Cannot pay: Insufficient balance!")
+            
+            if st.button("💳 Pay Installment", use_container_width=True, type="primary", disabled=not can_pay):
+                if not can_pay:
+                    st.error("❌ Please fix the issues above before paying!")
                 else:
                     conn = get_db()
                     try:
@@ -2308,7 +2335,6 @@ def recurring_deposits():
             st.info("Please complete an RD first to populate the data.")
     
     c.close()
-
 # ==================== TRANSACTIONS ====================
 def transactions():
     c = get_db()

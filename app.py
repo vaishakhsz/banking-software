@@ -2040,7 +2040,7 @@ def journal_vouchers():
         custs = []
     cust_options = ["None (General Voucher)"] + [f"{c[1]} - {c[2]}" for c in custs]
     
-    t1, t2 = st.tabs(["📝 Create JV", "📋 Manage Vouchers"])
+    t1, t2 = st.tabs(["Create JV", "Manage Vouchers"])
     
     with t1:
         st.markdown('<div class="section-card"><h3>Create New Journal Voucher</h3>', unsafe_allow_html=True)
@@ -2071,12 +2071,14 @@ def journal_vouchers():
                 tc_v += cr
                 entries.append({'h': h, 'd': d, 'c': cr})
                 
-            st.info(f"**Total Debit:** ₹{td_v:,.2f} &nbsp;|&nbsp; **Total Credit:** ₹{tc_v:,.2f}")
+            st.info(f"**Total Debit:** Rs.{td_v:,.2f} | **Total Credit:** Rs.{tc_v:,.2f}")
             if abs(td_v - tc_v) > 0.01: 
-                st.error(f"Mismatch Detected: Difference of ₹{abs(td_v - tc_v):,.2f}")
+                st.error(f"Mismatch Detected: Difference of Rs.{abs(td_v - tc_v):,.2f}")
                 
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.form_submit_button("Generate Voucher", use_container_width=True, type="primary"):
+            submitted = st.form_submit_button("Generate Voucher", use_container_width=True, type="primary")
+            
+            if submitted:
                 if abs(td_v - tc_v) > 0.01: 
                     st.error("Voucher must be perfectly balanced!")
                 else:
@@ -2091,94 +2093,113 @@ def journal_vouchers():
                         if e['d'] > 0 or e['c'] > 0: 
                             c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount) VALUES (?,?,?,?)", (vid, e['h'], e['d'], e['c']))
                     c.commit()
-                    st.success(f"✅ Voucher Drafted! Reference: {vn}")
+                    
+                    # Store voucher info in session state for download outside form
+                    st.session_state.last_voucher = {
+                        'voucher_number': vn,
+                        'voucher_date': vd.strftime('%d %b %Y'),
+                        'description': desc,
+                        'is_balanced': True,
+                        'entries': [{'account_head': e['h'], 'debit_amount': e['d'], 'credit_amount': e['c']} for e in entries]
+                    }
+                    
+                    st.success(f"Voucher Drafted! Reference: {vn}")
                     st.balloons()
+                    st.rerun()
+        
         st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Download button OUTSIDE the form
+        if 'last_voucher' in st.session_state:
+            vd_data = st.session_state.last_voucher
+            st.markdown("---")
+            st.markdown(f"### Download Voucher: {vd_data['voucher_number']}")
+            
+            # Generate PDF
+            entries_data = vd_data['entries']
+            pdf_file = generate_journal_voucher_pdf(
+                {
+                    'voucher_number': vd_data['voucher_number'],
+                    'voucher_date': vd_data['voucher_date'],
+                    'description': vd_data['description'],
+                    'is_balanced': vd_data['is_balanced']
+                }, 
+                entries_data
+            )
+            
+            if pdf_file:
+                with open(pdf_file, 'rb') as f:
+                    st.download_button(
+                        f"Download PDF - {vd_data['voucher_number']}", 
+                        f.read(), 
+                        pdf_file, 
+                        "application/pdf", 
+                        key=f"dl_{vd_data['voucher_number']}"
+                    )
+            
+            if st.button("Clear & Create New Voucher", key="clear_voucher"):
+                del st.session_state.last_voucher
+                st.rerun()
         
     with t2:
         st.markdown('<div class="section-card"><h3>Journal Voucher Directory</h3>', unsafe_allow_html=True)
         try:
-            vouchers = c.execute("SELECT jv.id,jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=jv.customer_id), 'General') as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+            vouchers = c.execute("SELECT jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=jv.customer_id), 'General') as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
         except:
-            vouchers = c.execute("SELECT jv.id,jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,'General' as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+            vouchers = c.execute("SELECT jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,'General' as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
         
         if vouchers:
             for v in vouchers:
-                sc = {'DRAFT': '🟡 DRAFT', 'POSTED': '🟢 POSTED', 'CANCELLED': '🔴 CANCELLED'}
-                cust_label = f" | 👤 {v[6]}" if v[6] != 'General' else ""
-                with st.expander(f"{sc.get(v[5],'⚪')} &nbsp;|&nbsp; {v[1]} &nbsp;|&nbsp; Date: {v[2]} &nbsp;|&nbsp; ₹{v[4]:,.2f}{cust_label}"):
-                    st.markdown(f"**Narration:** {v[3]}")
-                    if v[6] != 'General':
-                        st.markdown(f"**Customer:** {v[6]}")
-                    entries = c.execute("SELECT account_head,debit_amount,credit_amount FROM journal_entries WHERE voucher_id=(SELECT id FROM journal_vouchers WHERE voucher_number=?)", (v[1],)).fetchall()
-                    if entries:
-                        st.dataframe(pd.DataFrame(entries, columns=['Ledger Head', 'Debit (Dr)', 'Credit (Cr)']).style.format({'Debit (Dr)': '₹{:,.2f}', 'Credit (Cr)': '₹{:,.2f}'}), use_container_width=True)
-                        
-                        # Print Voucher Button
-                        if st.button(f"🖨️ Print Voucher {v[1]}", key=f"print_{v[1]}", use_container_width=True):
-                            voucher_data = {
-                                'voucher_number': v[1],
-                                'voucher_date': v[2].strftime('%d-%m-%Y') if isinstance(v[2], (date, datetime)) else v[2],
-                                'description': v[3],
-                                'status': v[5],
-                                'customer_name': v[6] if v[6] != 'General' else None
-                            }
-                            
-                            entries_data = []
-                            for entry in entries:
-                                entries_data.append({
-                                    'account_head': entry[0],
-                                    'debit': entry[1],
-                                    'credit': entry[2]
-                                })
-                            
-                            pdf = generate_journal_voucher_pdf(voucher_data, entries_data)
-                            
-                            if pdf:
-                                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                                    pdf.output(tmp_file.name)
-                                    tmp_file.flush()
-                                    with open(tmp_file.name, 'rb') as f:
-                                        pdf_bytes = f.read()
-                                    os.unlink(tmp_file.name)
-                                
-                                st.download_button(
-                                    label="📥 Download Voucher PDF",
-                                    data=pdf_bytes,
-                                    file_name=f"Voucher_{v[1]}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                                    mime="application/pdf",
-                                    use_container_width=True
-                                )
-                                st.success("✅ Voucher PDF generated successfully!")
-                        
-                        # Delete Voucher
-                        if v[5] == 'DRAFT':
-                            st.markdown("---")
-                            st.warning("⚠️ Delete Voucher")
-                            if st.button(f"🗑️ Delete Voucher {v[1]}", key=f"del_{v[1]}", use_container_width=True):
-                                if st.button("⚠️ Confirm Delete", key=f"confirm_del_{v[1]}", use_container_width=True):
-                                    delete_record('journal_vouchers', 'voucher_number', v[1], 'Journal Voucher')
+                sc = {'DRAFT': 'DRAFT', 'POSTED': 'POSTED', 'CANCELLED': 'CANCELLED'}
+                status_icon = {'DRAFT': '🟡', 'POSTED': '🟢', 'CANCELLED': '🔴'}
+                cust_label = f" | Customer: {v[5]}" if v[5] != 'General' else ""
+                with st.expander(f"{status_icon.get(v[4], '⚪')} | {v[0]} | Date: {v[1]} | Rs.{v[3]:,.2f}{cust_label}"):
+                    st.markdown(f"**Narration:** {safe_text(v[2])}")
+                    if v[5] != 'General':
+                        st.markdown(f"**Customer:** {safe_text(v[5])}")
                     
-                    if v[5] == 'DRAFT':
+                    entries = c.execute("SELECT account_head,debit_amount,credit_amount FROM journal_entries WHERE voucher_id=(SELECT id FROM journal_vouchers WHERE voucher_number=?)", (v[0],)).fetchall()
+                    if entries: 
+                        entries_data = [{'account_head': e[0], 'debit_amount': e[1], 'credit_amount': e[2]} for e in entries]
+                        st.dataframe(pd.DataFrame(entries_data, columns=['Ledger Head', 'Debit (Dr)', 'Credit (Cr)']).style.format({'Debit (Dr)': '₹{:,.2f}', 'Credit (Cr)': '₹{:,.2f}'}), use_container_width=True)
+                        
+                        # Download PDF button for each voucher (OUTSIDE form)
+                        voucher_data = {
+                            'voucher_number': v[0],
+                            'voucher_date': v[1],
+                            'description': v[2],
+                            'is_balanced': True
+                        }
+                        pdf_file = generate_journal_voucher_pdf(voucher_data, entries_data)
+                        if pdf_file:
+                            with open(pdf_file, 'rb') as f:
+                                st.download_button(
+                                    f"Download PDF - {v[0]}", 
+                                    f.read(), 
+                                    pdf_file, 
+                                    "application/pdf", 
+                                    key=f"dl_{v[0]}"
+                                )
+                        
+                    if v[4] == 'DRAFT':
                         st.divider()
-                        f1, f2, f3 = st.columns(3)
+                        f1, f2 = st.columns(2)
                         with f1:
-                            if st.button("✅ Post Ledger", key=f"po_{v[1]}", use_container_width=True, type="primary"):
-                                c.execute("UPDATE journal_vouchers SET status='POSTED',posted_by=?,posted_at=CURRENT_TIMESTAMP WHERE voucher_number=?", (uid, v[1]))
+                            if st.button("Post Ledger", key=f"po_{v[0]}", use_container_width=True, type="primary"):
+                                c.execute("UPDATE journal_vouchers SET status='POSTED',posted_by=?,posted_at=CURRENT_TIMESTAMP WHERE voucher_number=?", (uid, v[0]))
                                 c.commit()
                                 st.success("Voucher Posted successfully!")
                                 st.rerun()
                         with f2:
-                            if st.button("❌ Cancel Voucher", key=f"ca_{v[1]}", use_container_width=True):
-                                c.execute("UPDATE journal_vouchers SET status='CANCELLED' WHERE voucher_number=?", (v[1],))
+                            if st.button("Cancel Voucher", key=f"ca_{v[0]}", use_container_width=True):
+                                c.execute("UPDATE journal_vouchers SET status='CANCELLED' WHERE voucher_number=?", (v[0],))
                                 c.commit()
                                 st.warning("Voucher Cancelled!")
                                 st.rerun()
-        else:
+        else: 
             st.info("No journal vouchers available.")
         st.markdown('</div>', unsafe_allow_html=True)
     c.close()
-
 # ==================== INCOME & EXPENSES ====================
 def income_expenses():
     if st.session_state.user['role'] not in ['admin','staff']: 

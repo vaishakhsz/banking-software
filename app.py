@@ -1,5 +1,6 @@
 # 🏦 AASHA NIDHI PVT LIMITED BANK - COMPLETE SYSTEM
 # With Closed Accounts, Print/Download for all modules
+# ALL ISSUES FIXED: FD/RD opening/closing, RD installment balance bug
 
 import streamlit as st
 import pandas as pd
@@ -495,6 +496,30 @@ def load_enterprise_css():
             padding: 1rem;
             border-radius: 12px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .success-box {
+            background: #d4edda;
+            padding: 1rem;
+            border-radius: 12px;
+            border-left: 4px solid #28a745;
+            margin: 1rem 0;
+        }
+        
+        .warning-box {
+            background: #fff3cd;
+            padding: 1rem;
+            border-radius: 12px;
+            border-left: 4px solid #ffc107;
+            margin: 1rem 0;
+        }
+        
+        .info-box {
+            background: #d1ecf1;
+            padding: 1rem;
+            border-radius: 12px;
+            border-left: 4px solid #17a2b8;
+            margin: 1rem 0;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -1167,7 +1192,7 @@ def sb_accounts():
     
     c.close()
 
-# ==================== FIXED DEPOSITS ====================
+# ==================== FIXED DEPOSITS (FIXED) ====================
 def fixed_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1281,6 +1306,7 @@ def fixed_deposits():
                                 nominee_relation
                             ))
                             
+                            # DEBIT from SB account when opening FD
                             if funding_mode == "SB Transfer (Debit from SB)":
                                 new_balance = balance - principal
                                 conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_balance, acc_id))
@@ -1300,6 +1326,7 @@ def fixed_deposits():
                                     st.session_state.user['id']
                                 ))
                             
+                            # CREDIT to FD account
                             conn.execute("""
                                 INSERT INTO transactions (
                                     transaction_id, account_id, transaction_type,
@@ -1328,6 +1355,7 @@ def fixed_deposits():
                             - Rate: **{interest_rate}%**
                             - Maturity: **{maturity_date.strftime('%d-%m-%Y')}**
                             - Maturity Amount: **Rs {maturity_amount:,.2f}**
+                            - ✅ Amount DEBITED from SB Account
                             """)
                             st.balloons()
                             
@@ -1408,7 +1436,7 @@ def fixed_deposits():
         else:
             st.info("No active fixed deposits")
     
-    # Tab 3: Close FD
+    # Tab 3: Close FD (FIXED - Money CREDITED to SB)
     with tab3:
         st.markdown("### 🔒 Close/Withdraw Fixed Deposit")
         
@@ -1450,7 +1478,7 @@ def fixed_deposits():
             total_value = principal + accrued_interest
             
             fd_options.append({
-                'display': f"{fd_number} - {customer} | Principal: Rs{principal:,.2f} | Value: Rs{total_value:,.2f}",
+                'display': f"{fd_number} - {customer} | Principal: Rs{principal:,.2f} | Value: Rs{total_value:,.2f} | SB Balance: Rs{sb_balance:,.2f}",
                 'fd_id': fd_id,
                 'fd_number': fd_number,
                 'customer_id': cust_id,
@@ -1528,11 +1556,24 @@ def fixed_deposits():
                 - Final Payout: **Rs {final_amount:,.2f}**
                 """)
             
+            # Show that money will be credited to SB
+            st.info(f"""
+            ✅ **After closure, amount will be CREDITED to SB Account: {selected_fd['sb_account']}
+            
+            💰 **SB Balance after credit: Rs {selected_fd['sb_balance'] + final_amount:,.2f}**
+            """)
+            
             st.markdown("---")
             
             if st.button("🔒 Close FD & Transfer to SB", use_container_width=True, type="primary"):
                 conn = get_db()
                 try:
+                    # Re-fetch latest balance
+                    current_sb_balance = conn.execute(
+                        "SELECT balance FROM accounts WHERE id=?",
+                        (selected_fd['sb_account_id'],)
+                    ).fetchone()[0]
+                    
                     fd_acc = conn.execute("""
                         SELECT account_id FROM fixed_deposits WHERE id=?
                     """, (selected_fd['fd_id'],)).fetchone()
@@ -1544,19 +1585,22 @@ def fixed_deposits():
                     
                     fd_account_id = fd_acc[0]
                     
+                    # 1. Mark FD as CLOSED
                     conn.execute("""
                         UPDATE fixed_deposits 
                         SET status='CLOSED', closed_date=CURRENT_DATE, closed_amount=?
                         WHERE id=?
                     """, (final_amount, selected_fd['fd_id']))
                     
-                    new_sb_balance = selected_fd['sb_balance'] + final_amount
+                    # 2. CREDIT amount to SB Account (Money comes BACK to SB)
+                    new_sb_balance = current_sb_balance + final_amount
                     conn.execute("""
                         UPDATE accounts 
                         SET balance=? 
                         WHERE id=?
                     """, (new_sb_balance, selected_fd['sb_account_id']))
                     
+                    # 3. SB Transaction - CREDIT (Money received from FD closure)
                     conn.execute("""
                         INSERT INTO transactions (
                             transaction_id, account_id, transaction_type,
@@ -1577,6 +1621,7 @@ def fixed_deposits():
                         st.session_state.user['id']
                     ))
                     
+                    # 4. FD Account Transaction - DEBIT (Money leaving FD)
                     conn.execute("""
                         INSERT INTO transactions (
                             transaction_id, account_id, transaction_type,
@@ -1597,6 +1642,7 @@ def fixed_deposits():
                         st.session_state.user['id']
                     ))
                     
+                    # 5. Record Interest as Income if applicable
                     if selected_fd['accrued_interest'] > 0:
                         conn.execute("""
                             INSERT INTO income (
@@ -1627,7 +1673,8 @@ def fixed_deposits():
                     - Interest Earned: **Rs {selected_fd['accrued_interest']:,.2f}**
                     - {'Penalty Applied' if penalty_applied else 'No Penalty'}
                     - Total Amount: **Rs {final_amount:,.2f}**
-                    - Transferred to: **{selected_fd['sb_account']}**
+                    - ✅ **CREDITED to SB Account: {selected_fd['sb_account']}**
+                    - Previous SB Balance: **Rs {current_sb_balance:,.2f}**
                     - New SB Balance: **Rs {new_sb_balance:,.2f}**
                     """)
                     st.balloons()
@@ -1638,7 +1685,7 @@ def fixed_deposits():
                     conn.close()
                     st.error(f"❌ Error closing FD: {str(e)}")
     
-    # Tab 4: Closed FDs - FIXED: removed customer_id column that was causing error
+    # Tab 4: Closed FDs
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         
@@ -1685,7 +1732,6 @@ def fixed_deposits():
             col2.metric("💎 Total Closed Amount", f"Rs {total_closed:,.2f}")
             col3.metric("📈 Total Interest Earned", f"Rs {total_interest:,.2f}")
             
-            # Download PDF
             if st.button("📥 Download Closed FDs Report", use_container_width=True):
                 content = [
                     "📋 CLOSED FIXED DEPOSITS REPORT",
@@ -1722,7 +1768,7 @@ def fixed_deposits():
     
     c.close()
 
-# ==================== RECURRING DEPOSITS ====================
+# ==================== RECURRING DEPOSITS (FIXED) ====================
 def recurring_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1839,6 +1885,7 @@ def recurring_deposits():
                                 nominee_name, nominee_relation
                             ))
                             
+                            # DEBIT from SB for first installment
                             if funding_mode == "SB Transfer (Debit from SB)":
                                 new_balance = balance - monthly_amount
                                 conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_balance, acc_id))
@@ -1858,6 +1905,7 @@ def recurring_deposits():
                                     st.session_state.user['id']
                                 ))
                             
+                            # CREDIT to RD account
                             conn.execute("""
                                 INSERT INTO transactions (
                                     transaction_id, account_id, transaction_type,
@@ -1887,6 +1935,7 @@ def recurring_deposits():
                             - Total Investment: **Rs {total_investment:,.2f}**
                             - Maturity: **{maturity_date.strftime('%d-%m-%Y')}**
                             - Maturity Amount: **Rs {maturity_amount:,.2f}**
+                            - ✅ First installment DEBITED from SB Account
                             """)
                             st.balloons()
                             
@@ -1952,10 +2001,11 @@ def recurring_deposits():
         else:
             st.info("No active recurring deposits")
     
-    # Tab 3: Pay Installment
+    # Tab 3: Pay Installment (FIXED - Shows correct balance)
     with tab3:
         st.markdown("### 💳 Pay RD Installment")
         
+        # Get all RDs with pending installments
         pending_rds = c.execute("""
             SELECT rd.id, rd.rd_number, 
                    c.id as customer_id,
@@ -1985,7 +2035,7 @@ def recurring_deposits():
             remaining = total - paid
             
             rd_options.append({
-                'display': f"{rd_number} - {customer} | {paid}/{total} paid | Next: Rs{monthly:,.2f}",
+                'display': f"{rd_number} - {customer} | {paid}/{total} paid | Balance: Rs{sb_balance:,.2f} | Next: Rs{monthly:,.2f}",
                 'rd_id': rd_id,
                 'rd_number': rd_number,
                 'customer_id': cust_id,
@@ -2029,34 +2079,52 @@ def recurring_deposits():
             | **Maturity Amount** | Rs {selected_rd['maturity_amount']:,.2f} |
             """)
             
+            # Show next installment amount
             st.info(f"📊 **Next Installment Amount: Rs {selected_rd['monthly_amount']:,.2f}**")
             
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                payment_mode = st.selectbox(
-                    "💳 Payment Mode",
-                    ["SB Transfer (Debit from SB)", "Cash", "Bank Transfer", "Cheque"],
-                    key="rd_payment_mode"
-                )
+            # Check balance BEFORE showing payment options
+            if selected_rd['sb_balance'] < selected_rd['monthly_amount']:
+                st.error(f"""
+                ❌ **Insufficient Balance!**
+                - Required: Rs {selected_rd['monthly_amount']:,.2f}
+                - Available: Rs {selected_rd['sb_balance']:,.2f}
+                - Shortfall: Rs {selected_rd['monthly_amount'] - selected_rd['sb_balance']:,.2f}
                 
-                if payment_mode == "SB Transfer (Debit from SB)" and selected_rd['monthly_amount'] > selected_rd['sb_balance']:
-                    st.error(f"❌ Insufficient balance! Available: Rs {selected_rd['sb_balance']:,.2f}")
-            
-            with col2:
-                st.markdown("### 💰 Payment Summary")
-                st.markdown(f"""
-                - Amount: **Rs {selected_rd['monthly_amount']:,.2f}**
-                - Installment: **{selected_rd['installments_paid'] + 1}/{selected_rd['total_installments']}**
-                - Remaining after payment: **{selected_rd['remaining_installments'] - 1}**
+                Please deposit money into your SB account first.
                 """)
-            
-            if st.button("💳 Pay Installment", use_container_width=True, type="primary"):
-                if payment_mode == "SB Transfer (Debit from SB)" and selected_rd['monthly_amount'] > selected_rd['sb_balance']:
-                    st.error("❌ Insufficient balance!")
-                else:
+            else:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    payment_mode = st.selectbox(
+                        "💳 Payment Mode",
+                        ["SB Transfer (Debit from SB)", "Cash", "Bank Transfer", "Cheque"],
+                        key="rd_payment_mode_fixed"
+                    )
+                
+                with col2:
+                    st.markdown("### 💰 Payment Summary")
+                    st.markdown(f"""
+                    - Amount: **Rs {selected_rd['monthly_amount']:,.2f}**
+                    - Installment: **{selected_rd['installments_paid'] + 1}/{selected_rd['total_installments']}**
+                    - Remaining after payment: **{selected_rd['remaining_installments'] - 1}**
+                    - SB Balance after payment: **Rs {selected_rd['sb_balance'] - selected_rd['monthly_amount']:,.2f}**
+                    """)
+                
+                if st.button("💳 Pay Installment", use_container_width=True, type="primary"):
                     conn = get_db()
                     try:
+                        # Re-fetch latest balance to avoid race conditions
+                        current_balance = conn.execute(
+                            "SELECT balance FROM accounts WHERE id=?",
+                            (selected_rd['sb_account_id'],)
+                        ).fetchone()[0]
+                        
+                        if current_balance < selected_rd['monthly_amount']:
+                            st.error(f"❌ Insufficient balance! Available: Rs {current_balance:,.2f}")
+                            conn.close()
+                            return
+                        
                         rd_acc = conn.execute("""
                             SELECT account_id FROM recurring_deposits WHERE id=?
                         """, (selected_rd['rd_id'],)).fetchone()
@@ -2070,38 +2138,35 @@ def recurring_deposits():
                         new_paid = selected_rd['installments_paid'] + 1
                         new_remaining = selected_rd['total_installments'] - new_paid
                         
+                        # Update RD installments
                         conn.execute("""
                             UPDATE recurring_deposits 
                             SET installments_paid=? 
                             WHERE id=?
                         """, (new_paid, selected_rd['rd_id']))
                         
-                        if new_paid >= selected_rd['total_installments']:
-                            conn.execute("""
-                                UPDATE recurring_deposits 
-                                SET status='MATURED', closed_date=CURRENT_DATE, closed_amount=?
-                                WHERE id=?
-                            """, (selected_rd['maturity_amount'], selected_rd['rd_id']))
+                        # DEBIT from SB account
+                        new_sb_balance = current_balance - selected_rd['monthly_amount']
+                        conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_sb_balance, selected_rd['sb_account_id']))
                         
-                        if payment_mode == "SB Transfer (Debit from SB)":
-                            new_sb_balance = selected_rd['sb_balance'] - selected_rd['monthly_amount']
-                            conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_sb_balance, selected_rd['sb_account_id']))
-                            conn.execute("""
-                                INSERT INTO transactions (
-                                    transaction_id, account_id, transaction_type,
-                                    amount, balance_after, description,
-                                    reference_type, voucher_type, voucher_number,
-                                    created_by
-                                ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                            """, (
-                                generate_id('TXN'), selected_rd['sb_account_id'], 'DEBIT',
-                                selected_rd['monthly_amount'], new_sb_balance,
-                                f"RD Installment {new_paid}/{selected_rd['total_installments']}: {selected_rd['rd_number']}",
-                                'SB_TRANSFER', 'PAYMENT',
-                                generate_voucher_number('PAYMENT'),
-                                st.session_state.user['id']
-                            ))
+                        # SB Transaction - DEBIT
+                        conn.execute("""
+                            INSERT INTO transactions (
+                                transaction_id, account_id, transaction_type,
+                                amount, balance_after, description,
+                                reference_type, voucher_type, voucher_number,
+                                created_by
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                        """, (
+                            generate_id('TXN'), selected_rd['sb_account_id'], 'DEBIT',
+                            selected_rd['monthly_amount'], new_sb_balance,
+                            f"RD Installment {new_paid}/{selected_rd['total_installments']}: {selected_rd['rd_number']}",
+                            'SB_TRANSFER', 'PAYMENT',
+                            generate_voucher_number('PAYMENT'),
+                            st.session_state.user['id']
+                        ))
                         
+                        # RD Account - CREDIT
                         rd_balance = selected_rd['monthly_amount'] * new_paid
                         conn.execute("""
                             INSERT INTO transactions (
@@ -2119,38 +2184,55 @@ def recurring_deposits():
                             st.session_state.user['id']
                         ))
                         
-                        conn.commit()
-                        conn.close()
-                        
+                        # Check if RD is completed
                         if new_paid >= selected_rd['total_installments']:
-                            # Transfer RD maturity amount to SB account
-                            transfer_conn = get_db()
-                            try:
-                                sb_balance_after = new_sb_balance + selected_rd['maturity_amount']
-                                transfer_conn.execute("UPDATE accounts SET balance=? WHERE id=?", (sb_balance_after, selected_rd['sb_account_id']))
-                                transfer_conn.execute("""
-                                    INSERT INTO transactions (
-                                        transaction_id, account_id, transaction_type,
-                                        amount, balance_after, description,
-                                        reference_type, voucher_type, voucher_number,
-                                        created_by
-                                    ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                                """, (
-                                    generate_id('TXN'), selected_rd['sb_account_id'], 'CREDIT',
-                                    selected_rd['maturity_amount'], sb_balance_after,
-                                    f"RD Maturity Transfer: {selected_rd['rd_number']}",
-                                    'RD_MATURITY', 'RECEIPT',
-                                    generate_voucher_number('RECEIPT'),
-                                    st.session_state.user['id']
-                                ))
-                                transfer_conn.commit()
-                                transfer_conn.close()
-                            except Exception as e:
-                                transfer_conn.rollback()
-                                transfer_conn.close()
-                                st.error(f"❌ Error transferring RD maturity: {str(e)}")
-                                conn.close()
-                                return
+                            # Mark as matured
+                            conn.execute("""
+                                UPDATE recurring_deposits 
+                                SET status='MATURED', closed_date=CURRENT_DATE, closed_amount=?
+                                WHERE id=?
+                            """, (selected_rd['maturity_amount'], selected_rd['rd_id']))
+                            
+                            # CREDIT maturity amount to SB account
+                            sb_balance_after_maturity = new_sb_balance + selected_rd['maturity_amount']
+                            conn.execute("UPDATE accounts SET balance=? WHERE id=?", (sb_balance_after_maturity, selected_rd['sb_account_id']))
+                            
+                            # CREDIT maturity to SB
+                            conn.execute("""
+                                INSERT INTO transactions (
+                                    transaction_id, account_id, transaction_type,
+                                    amount, balance_after, description,
+                                    reference_type, voucher_type, voucher_number,
+                                    created_by
+                                ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                            """, (
+                                generate_id('TXN'), selected_rd['sb_account_id'], 'CREDIT',
+                                selected_rd['maturity_amount'], sb_balance_after_maturity,
+                                f"RD Maturity Transfer: {selected_rd['rd_number']}",
+                                'RD_MATURITY', 'RECEIPT',
+                                generate_voucher_number('RECEIPT'),
+                                st.session_state.user['id']
+                            ))
+                            
+                            # DEBIT from RD account
+                            conn.execute("""
+                                INSERT INTO transactions (
+                                    transaction_id, account_id, transaction_type,
+                                    amount, balance_after, description,
+                                    reference_type, voucher_type, voucher_number,
+                                    created_by
+                                ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                            """, (
+                                generate_id('TXN'), rd_account_id, 'DEBIT',
+                                selected_rd['maturity_amount'], 0,
+                                f"RD Maturity Closure: {selected_rd['rd_number']}",
+                                'RD_MATURITY', 'PAYMENT',
+                                generate_voucher_number('PAYMENT'),
+                                st.session_state.user['id']
+                            ))
+                            
+                            conn.commit()
+                            conn.close()
                             
                             st.success(f"""
                             🎉 **RD COMPLETED & TRANSFERRED TO SB!** 
@@ -2158,10 +2240,14 @@ def recurring_deposits():
                             ✅ All {selected_rd['total_installments']} installments paid!
                             📋 **RD {selected_rd['rd_number']} is now MATURED!**
                             💰 **Maturity Amount: Rs {selected_rd['maturity_amount']:,.2f}**
-                            💰 **Transferred to SB Account: {selected_rd['sb_account']}**
+                            ✅ **CREDITED to SB Account: {selected_rd['sb_account']}**
+                            📊 **New SB Balance: Rs {sb_balance_after_maturity:,.2f}**
                             """)
                             st.balloons()
                         else:
+                            conn.commit()
+                            conn.close()
+                            
                             st.success(f"""
                             ✅ Installment Paid Successfully! 🎉
                             
@@ -2170,6 +2256,7 @@ def recurring_deposits():
                             - Installment: **{new_paid}/{selected_rd['total_installments']}**
                             - Amount: **Rs {selected_rd['monthly_amount']:,.2f}**
                             - Remaining: **{new_remaining} installments**
+                            - SB Balance: **Rs {new_sb_balance:,.2f}**
                             """)
                         
                         st.rerun()
@@ -2771,8 +2858,6 @@ def interest_calculation():
             interest_details = []
             
             for acc in accounts:
-                min_balance = 0
-                # Simple interest calculation using average balance
                 balance = acc[3]
                 days = (to_date - from_date).days + 1
                 
@@ -3734,5 +3819,6 @@ def my_transactions():
 # ==================== MAIN EXECUTION ====================
 if __name__ == "__main__":
     main()
-
+                
+ 
     

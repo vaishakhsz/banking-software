@@ -2642,6 +2642,7 @@ def trial_balance():
     c.close()
 
 # ==================== BALANCE SHEET ====================
+# ==================== BALANCE SHEET ====================
 def balance_sheet():
     if st.session_state.user['role'] not in ['admin', 'staff']: 
         st.error("Unauthorized"); return
@@ -2650,35 +2651,92 @@ def balance_sheet():
     st.markdown('<div class="section-card"><h3>Corporate Balance Sheet</h3>', unsafe_allow_html=True)
     
     if st.button("Generate Balance Sheet", use_container_width=True, type="primary", key="bs"):
+        # ASSETS
         cash = c.execute("SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END),0) FROM transactions WHERE reference_type='CASH'").fetchone()[0]
+        
+        # Total deposits (assets = money we have)
         sb_bal = c.execute("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
+        fd_bal = c.execute("SELECT COALESCE(SUM(principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
+        rd_bal = c.execute("SELECT COALESCE(SUM(monthly_amount*installments_paid),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
+        
+        # Other assets from journal entries
+        other_assets = c.execute("""
+            SELECT COALESCE(SUM(je.debit_amount),0) - COALESCE(SUM(je.credit_amount),0)
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id=jv.id 
+            WHERE jv.status='POSTED' 
+            AND (je.account_head LIKE '%Asset%' OR je.account_head LIKE '%Receivable%' OR je.account_head LIKE '%Investment%')
+        """).fetchone()[0] or 0
+        
+        # Income received (adds to assets)
+        total_income = c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
+        
+        total_assets = cash + sb_bal + fd_bal + rd_bal + other_assets + total_income
+        
+        # LIABILITIES
         sb_int = c.execute("SELECT COALESCE(SUM(total_interest_earned),0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         
         if sb_int == 0: 
             sb_int = c.execute("SELECT COALESCE(SUM(credit_amount),0) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE je.account_head LIKE '%SB Account%' AND jv.status='POSTED'").fetchone()[0]
-            
-        fd = c.execute("SELECT COALESCE(SUM(principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
-        rd = c.execute("SELECT COALESCE(SUM(monthly_amount*installments_paid),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
+        
         fd_int = c.execute("SELECT COALESCE(SUM(maturity_amount-principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
+        rd_int = c.execute("SELECT COALESCE(SUM(maturity_amount-(monthly_amount*installments_paid)),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
         
-        ta = cash + sb_bal + fd + rd
-        tl = sb_int + fd_int + fd + rd + sb_bal
-        cap = ta - tl
+        # Other liabilities from journal entries
+        other_liabilities = c.execute("""
+            SELECT COALESCE(SUM(je.credit_amount),0) - COALESCE(SUM(je.debit_amount),0)
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id=jv.id 
+            WHERE jv.status='POSTED' 
+            AND (je.account_head LIKE '%Liability%' OR je.account_head LIKE '%Payable%' OR je.account_head LIKE '%Loan%')
+            AND je.account_head NOT LIKE '%SB Account%'
+        """).fetchone()[0] or 0
         
+        # Expenses paid (reduces assets, could be liability)
+        total_expenses = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
+        
+        # Journal entry expenses
+        jv_expenses = c.execute("""
+            SELECT COALESCE(SUM(je.debit_amount),0)
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id=jv.id 
+            WHERE jv.status='POSTED' 
+            AND (je.account_head LIKE '%Expense%' OR je.account_head LIKE '%Interest Paid%')
+        """).fetchone()[0] or 0
+        
+        total_liabilities = sb_int + fd_int + rd_int + sb_bal + fd_bal + rd_bal + other_liabilities + total_expenses + jv_expenses
+        
+        # Capital / Equity
+        capital = total_assets - total_liabilities
+        
+        # Prepare data for display
         assets_data = [
             {'name': 'Cash in Hand', 'amount': cash},
-            {'name': 'SB Receivables', 'amount': sb_bal},
-            {'name': 'FD Receivables', 'amount': fd},
-            {'name': 'RD Receivables', 'amount': rd}
+            {'name': 'SB Deposits (Asset)', 'amount': sb_bal},
+            {'name': 'FD Deposits (Asset)', 'amount': fd_bal},
+            {'name': 'RD Deposits (Asset)', 'amount': rd_bal},
         ]
+        
+        if other_assets != 0:
+            assets_data.append({'name': 'Other Assets (JV)', 'amount': other_assets})
+        if total_income > 0:
+            assets_data.append({'name': 'Total Income Received', 'amount': total_income})
         
         liabilities_data = [
             {'name': 'SB Interest Payable', 'amount': sb_int},
             {'name': 'FD Interest Payable', 'amount': fd_int},
-            {'name': 'SB Deposits', 'amount': sb_bal},
-            {'name': 'FD Deposits', 'amount': fd},
-            {'name': 'RD Deposits', 'amount': rd}
+            {'name': 'RD Interest Payable', 'amount': rd_int},
+            {'name': 'SB Deposits (Liability)', 'amount': sb_bal},
+            {'name': 'FD Deposits (Liability)', 'amount': fd_bal},
+            {'name': 'RD Deposits (Liability)', 'amount': rd_bal},
         ]
+        
+        if other_liabilities != 0:
+            liabilities_data.append({'name': 'Other Liabilities (JV)', 'amount': other_liabilities})
+        if total_expenses > 0:
+            liabilities_data.append({'name': 'Total Expenses', 'amount': total_expenses})
+        if jv_expenses > 0:
+            liabilities_data.append({'name': 'JV Expenses', 'amount': jv_expenses})
         
         st.markdown("<br>", unsafe_allow_html=True)
         p1, p2 = st.columns(2)
@@ -2686,12 +2744,12 @@ def balance_sheet():
             st.markdown(f"""
             <div class="dash-card" style="text-align: left;">
                 <h3 style="color:#0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom:10px;">ASSETS</h3>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>Cash in Hand:</span> <b>Rs{cash:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>SB Receivables:</span> <b>Rs{sb_bal:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>FD Receivables:</span> <b>Rs{fd:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>RD Receivables:</span> <b>Rs{rd:,.2f}</b></p>
+            """, unsafe_allow_html=True)
+            for item in assets_data:
+                st.markdown(f"""<p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>{item['name']}:</span> <b>Rs{item['amount']:,.2f}</b></p>""", unsafe_allow_html=True)
+            st.markdown(f"""
                 <hr style="border-color:#e2e8f0;">
-                <p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Assets:</b> <b>Rs{ta:,.2f}</b></p>
+                <p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Assets:</b> <b>Rs{total_assets:,.2f}</b></p>
             </div>
             """, unsafe_allow_html=True)
             
@@ -2699,32 +2757,33 @@ def balance_sheet():
             st.markdown(f"""
             <div class="dash-card" style="text-align: left;">
                 <h3 style="color:#0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom:10px;">LIABILITIES</h3>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>SB Interest Pay.:</span> <b>Rs{sb_int:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>FD Interest Pay.:</span> <b>Rs{fd_int:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>SB Deposits:</span> <b>Rs{sb_bal:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>FD Deposits:</span> <b>Rs{fd:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>RD Deposits:</span> <b>Rs{rd:,.2f}</b></p>
+            """, unsafe_allow_html=True)
+            for item in liabilities_data:
+                st.markdown(f"""<p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>{item['name']}:</span> <b>Rs{item['amount']:,.2f}</b></p>""", unsafe_allow_html=True)
+            st.markdown(f"""
                 <hr style="border-color:#e2e8f0;">
-                <p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Liabilities:</b> <b>Rs{tl:,.2f}</b></p>
+                <p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Liabilities:</b> <b>Rs{total_liabilities:,.2f}</b></p>
             </div>
             """, unsafe_allow_html=True)
             
         st.markdown(f"""
         <div class="dash-card" style="background: linear-gradient(135deg, #0f2027, #2c5364); color: white;">
             <h3 style="color:white; margin:0;">TOTAL CAPITAL / EQUITY</h3>
-            <h2 style="color:white; margin: 10px 0;">Rs{cap:,.2f}</h2>
+            <h2 style="color:white; margin: 10px 0;">Rs{capital:,.2f}</h2>
         </div>
         """, unsafe_allow_html=True)
         
-        if abs(ta - (tl + cap)) < 0.01:
+        if abs(total_assets - (total_liabilities + capital)) < 0.01:
             st.success(f"Balance Sheet is perfectly aligned.")
+        else:
+            st.warning(f"Balance Sheet difference: Rs{abs(total_assets - (total_liabilities + capital)):,.2f}")
         
         st.markdown("---")
         if st.button("Print Balance Sheet (PDF)", use_container_width=True, type="primary"):
             pdf_data = {
                 'assets': assets_data,
                 'liabilities': liabilities_data,
-                'capital': cap,
+                'capital': capital,
                 'as_on': date.today().strftime('%d-%m-%Y')
             }
             pdf = generate_balance_sheet_pdf(pdf_data)

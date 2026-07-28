@@ -115,6 +115,8 @@ def init_database():
             status TEXT DEFAULT 'ACTIVE',
             nominee_name TEXT,
             nominee_relation TEXT,
+            closed_date DATE,
+            closed_amount DECIMAL(15,2),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (account_id) REFERENCES accounts (id)
         )''')
@@ -1636,7 +1638,7 @@ def fixed_deposits():
                     conn.close()
                     st.error(f"❌ Error closing FD: {str(e)}")
     
-    # Tab 4: Closed FDs
+    # Tab 4: Closed FDs - FIXED: removed customer_id column that was causing error
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         
@@ -2077,9 +2079,9 @@ def recurring_deposits():
                         if new_paid >= selected_rd['total_installments']:
                             conn.execute("""
                                 UPDATE recurring_deposits 
-                                SET status='MATURED' 
+                                SET status='MATURED', closed_date=CURRENT_DATE, closed_amount=?
                                 WHERE id=?
-                            """, (selected_rd['rd_id'],))
+                            """, (selected_rd['maturity_amount'], selected_rd['rd_id']))
                         
                         if payment_mode == "SB Transfer (Debit from SB)":
                             new_sb_balance = selected_rd['sb_balance'] - selected_rd['monthly_amount']
@@ -2121,12 +2123,42 @@ def recurring_deposits():
                         conn.close()
                         
                         if new_paid >= selected_rd['total_installments']:
+                            # Transfer RD maturity amount to SB account
+                            transfer_conn = get_db()
+                            try:
+                                sb_balance_after = new_sb_balance + selected_rd['maturity_amount']
+                                transfer_conn.execute("UPDATE accounts SET balance=? WHERE id=?", (sb_balance_after, selected_rd['sb_account_id']))
+                                transfer_conn.execute("""
+                                    INSERT INTO transactions (
+                                        transaction_id, account_id, transaction_type,
+                                        amount, balance_after, description,
+                                        reference_type, voucher_type, voucher_number,
+                                        created_by
+                                    ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                                """, (
+                                    generate_id('TXN'), selected_rd['sb_account_id'], 'CREDIT',
+                                    selected_rd['maturity_amount'], sb_balance_after,
+                                    f"RD Maturity Transfer: {selected_rd['rd_number']}",
+                                    'RD_MATURITY', 'RECEIPT',
+                                    generate_voucher_number('RECEIPT'),
+                                    st.session_state.user['id']
+                                ))
+                                transfer_conn.commit()
+                                transfer_conn.close()
+                            except Exception as e:
+                                transfer_conn.rollback()
+                                transfer_conn.close()
+                                st.error(f"❌ Error transferring RD maturity: {str(e)}")
+                                conn.close()
+                                return
+                            
                             st.success(f"""
-                            🎉 **RD COMPLETED!** 
+                            🎉 **RD COMPLETED & TRANSFERRED TO SB!** 
                             
                             ✅ All {selected_rd['total_installments']} installments paid!
                             📋 **RD {selected_rd['rd_number']} is now MATURED!**
                             💰 **Maturity Amount: Rs {selected_rd['maturity_amount']:,.2f}**
+                            💰 **Transferred to SB Account: {selected_rd['sb_account']}**
                             """)
                             st.balloons()
                         else:
@@ -2157,7 +2189,9 @@ def recurring_deposits():
                    rd.monthly_amount, rd.installments_paid,
                    rd.total_installments, rd.interest_rate,
                    rd.start_date, rd.maturity_date,
-                   rd.maturity_amount, rd.status
+                   rd.maturity_amount, rd.status,
+                   rd.closed_date,
+                   rd.closed_amount
             FROM recurring_deposits rd
             JOIN accounts a ON rd.account_id = a.id
             JOIN customers c ON a.customer_id = c.id
@@ -2168,13 +2202,15 @@ def recurring_deposits():
         if closed_rds:
             df = pd.DataFrame(closed_rds, columns=[
                 'RD No', 'Customer', 'Monthly', 'Paid', 'Total',
-                'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 'Status'
+                'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 
+                'Status', 'Closed Date', 'Closed Amount'
             ])
             
             st.dataframe(
                 df.style.format({
                     'Monthly': 'Rs {:,.2f}',
                     'Maturity Amount': 'Rs {:,.2f}',
+                    'Closed Amount': 'Rs {:,.2f}',
                     'Rate': '{:.2f}%'
                 }),
                 use_container_width=True
@@ -2182,10 +2218,12 @@ def recurring_deposits():
             
             total_monthly = df['Monthly'].sum()
             total_maturity = df['Maturity Amount'].sum()
+            total_closed = df['Closed Amount'].sum()
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             col1.metric("💰 Total Monthly Deposits", f"Rs {total_monthly:,.2f}")
             col2.metric("💎 Total Maturity Amount", f"Rs {total_maturity:,.2f}")
+            col3.metric("💎 Total Closed Amount", f"Rs {total_closed:,.2f}")
             
             if st.button("📥 Download Closed RDs Report", use_container_width=True):
                 content = [
@@ -2211,6 +2249,8 @@ def recurring_deposits():
                     Start Date: {rd[6]}
                     Maturity Date: {rd[7]}
                     Maturity Amount: Rs {rd[8]:,.2f}
+                    Closed Date: {rd[10]}
+                    Closed Amount: Rs {rd[11]:,.2f}
                     """)
                 
                 pdf_file = create_pdf("Closed Recurring Deposits Report", content, "closed_rds")

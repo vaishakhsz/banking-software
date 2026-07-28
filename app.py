@@ -1891,6 +1891,7 @@ def journal_vouchers():
     c.close()
 
 # ==================== INCOME & EXPENSES ====================
+# ==================== INCOME & EXPENSES ====================
 def income_expenses():
     if st.session_state.user['role'] not in ['admin','staff']: 
         st.error("Unauthorized"); return
@@ -1905,7 +1906,8 @@ def income_expenses():
     cust_options = ["None (General Entry)"] + [f"{c[1]} - {c[2]}" for c in custs]
     
     with t1:
-        st.markdown('<div class="section-card"><h3>Register New Income</h3>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card"><h3>Register New Income (Credit Entry)</h3>', unsafe_allow_html=True)
+        st.info("Income is recorded as CREDIT entry. The corresponding DEBIT will be to Cash/Bank Account.")
         with st.form("if"):
             d1, d2 = st.columns(2)
             with d1: 
@@ -1914,7 +1916,8 @@ def income_expenses():
                 sel_cust = st.selectbox("Related Customer (Optional)", cust_options, key="inc_cust")
             with d2: 
                 dt = st.date_input("Date", date.today(), key="id")
-                desc = st.text_area("Description")
+                mode = st.selectbox("Payment Mode", ["CASH", "BANK", "CHEQUE"], key="inc_mode")
+                desc = st.text_area("Description / Narration")
             
             customer_id = None
             if sel_cust != "None (General Entry)":
@@ -1922,17 +1925,30 @@ def income_expenses():
                 if idx >= 0: customer_id = custs[idx][0]
             
             st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Show journal entry preview
+            st.markdown("**Journal Entry Preview:**")
+            st.markdown(f"""
+            | Account Head | Debit (Dr) | Credit (Cr) |
+            |-------------|------------|-------------|
+            | Cash/Bank ({mode}) | Rs{amt:,.2f} | - |
+            | {it} | - | Rs{amt:,.2f} |
+            """)
+            
             if st.form_submit_button("Record Income", use_container_width=True, type="primary"):
                 try:
-                    c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", (generate_id('INC'), it, amt, desc, dt, uid, customer_id))
+                    c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", 
+                             (generate_id('INC'), it, amt, desc, dt, uid, customer_id))
                 except:
-                    c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", (generate_id('INC'), it, amt, desc, dt, uid))
+                    c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", 
+                             (generate_id('INC'), it, amt, desc, dt, uid))
                 c.commit()
-                st.success(f"Successfully recorded Income: Rs{amt:,.2f}")
+                st.success(f"Successfully recorded Income: Rs{amt:,.2f} | Mode: {mode}")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t2:
-        st.markdown('<div class="section-card"><h3>Register New Expense</h3>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card"><h3>Register New Expense (Debit Entry)</h3>', unsafe_allow_html=True)
+        st.info("Expense is recorded as DEBIT entry. The corresponding CREDIT will be to Cash/Bank Account.")
         with st.form("ef"):
             d1, d2 = st.columns(2)
             with d1: 
@@ -1941,7 +1957,8 @@ def income_expenses():
                 sel_cust = st.selectbox("Related Customer (Optional)", cust_options, key="exp_cust")
             with d2: 
                 dt = st.date_input("Date", date.today(), key="ed")
-                desc = st.text_area("Description")
+                mode = st.selectbox("Payment Mode", ["CASH", "BANK", "CHEQUE"], key="exp_mode")
+                desc = st.text_area("Description / Narration")
             
             customer_id = None
             if sel_cust != "None (General Entry)":
@@ -1949,42 +1966,178 @@ def income_expenses():
                 if idx >= 0: customer_id = custs[idx][0]
             
             st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Show journal entry preview
+            st.markdown("**Journal Entry Preview:**")
+            st.markdown(f"""
+            | Account Head | Debit (Dr) | Credit (Cr) |
+            |-------------|------------|-------------|
+            | {et} | Rs{amt:,.2f} | - |
+            | Cash/Bank ({mode}) | - | Rs{amt:,.2f} |
+            """)
+            
             if st.form_submit_button("Record Expense", use_container_width=True, type="primary"):
                 try:
-                    c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", (generate_id('EXP'), et, amt, desc, dt, uid, customer_id))
+                    c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by,customer_id) VALUES (?,?,?,?,?,?,?)", 
+                             (generate_id('EXP'), et, amt, desc, dt, uid, customer_id))
                 except:
-                    c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", (generate_id('EXP'), et, amt, desc, dt, uid))
+                    c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", 
+                             (generate_id('EXP'), et, amt, desc, dt, uid))
                 c.commit()
-                st.success(f"Successfully recorded Expense: Rs{amt:,.2f}")
+                st.success(f"Successfully recorded Expense: Rs{amt:,.2f} | Mode: {mode}")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t3:
-        st.markdown('<div class="section-card"><h3>Income Ledger</h3>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card"><h3>Income Ledger (Credit Entries)</h3>', unsafe_allow_html=True)
+        
+        # Summary cards
+        total_income = c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Income", f"Rs{total_income:,.2f}")
+        with col2:
+            interest_income = c.execute("SELECT COALESCE(SUM(amount),0) FROM income WHERE income_type='Interest Earned'").fetchone()[0]
+            st.metric("Interest Income", f"Rs{interest_income:,.2f}")
+        with col3:
+            other_income = c.execute("SELECT COALESCE(SUM(amount),0) FROM income WHERE income_type!='Interest Earned'").fetchone()[0]
+            st.metric("Other Income", f"Rs{other_income:,.2f}")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Income by type
+        income_by_type = c.execute("""
+            SELECT income_type, COALESCE(SUM(amount),0) 
+            FROM income 
+            GROUP BY income_type 
+            ORDER BY SUM(amount) DESC
+        """).fetchall()
+        
+        if income_by_type:
+            st.markdown("#### Income by Category")
+            df_type = pd.DataFrame(income_by_type, columns=['Income Type', 'Amount (Cr)'])
+            st.dataframe(df_type.style.format({'Amount (Cr)': 'Rs{:,.2f}'}), use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Detailed income list
         try:
-            inc_data = c.execute("SELECT id, income_id, income_type, amount, description, date, COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=income.customer_id), 'General') as customer_name FROM income ORDER BY date DESC LIMIT 100").fetchall()
+            inc_data = c.execute("""
+                SELECT id, income_id, income_type, amount, description, date, 
+                       COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=income.customer_id), 'General') as customer_name 
+                FROM income ORDER BY date DESC LIMIT 100
+            """).fetchall()
         except:
-            inc_data = c.execute("SELECT id, income_id, income_type, amount, description, date, 'General' as customer_name FROM income ORDER BY date DESC LIMIT 100").fetchall()
+            inc_data = c.execute("""
+                SELECT id, income_id, income_type, amount, description, date, 'General' as customer_name 
+                FROM income ORDER BY date DESC LIMIT 100
+            """).fetchall()
+            
         if inc_data:
-            df = pd.DataFrame(inc_data, columns=['ID','Income ID', 'Type', 'Amount', 'Description', 'Date', 'Customer'])
+            st.markdown("#### Detailed Income Transactions")
+            df = pd.DataFrame(inc_data, columns=['ID','Income ID', 'Type', 'Amount (Cr)', 'Description', 'Date', 'Customer'])
             df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%d-%m-%Y')
-            st.dataframe(df.style.format({'Amount': 'Rs{:,.2f}'}), use_container_width=True, height=400)
+            st.dataframe(df.style.format({'Amount (Cr)': 'Rs{:,.2f}'}), use_container_width=True, height=400)
+            
+            # Delete option
+            st.markdown("---")
+            with st.expander("Delete Income Record"):
+                st.warning("Delete Income Record (This action cannot be undone)")
+                del_inc = st.selectbox("Select Income to Delete", [f"{i[1]} - {i[2]} - Rs{i[3]:,.2f}" for i in inc_data], key="del_inc")
+                if del_inc and st.button("Delete Income", use_container_width=True, key="del_inc_btn"):
+                    idx = [f"{i[1]} - {i[2]} - Rs{i[3]:,.2f}" for i in inc_data].index(del_inc)
+                    inc_id = inc_data[idx][0]
+                    if st.button("Confirm Delete", use_container_width=True, key="confirm_del_inc"):
+                        delete_record('income', 'id', inc_id, 'Income Record')
         else:
             st.info("No income records found.")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t4:
-        st.markdown('<div class="section-card"><h3>Expense Ledger</h3>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card"><h3>Expense Ledger (Debit Entries)</h3>', unsafe_allow_html=True)
+        
+        # Summary cards
+        total_expenses = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Expenses", f"Rs{total_expenses:,.2f}")
+        with col2:
+            salary_exp = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_type='Salary & Wages'").fetchone()[0]
+            st.metric("Salary & Wages", f"Rs{salary_exp:,.2f}")
+        with col3:
+            other_exp = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_type!='Salary & Wages'").fetchone()[0]
+            st.metric("Other Expenses", f"Rs{other_exp:,.2f}")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Expenses by type
+        expense_by_type = c.execute("""
+            SELECT expense_type, COALESCE(SUM(amount),0) 
+            FROM expenses 
+            GROUP BY expense_type 
+            ORDER BY SUM(amount) DESC
+        """).fetchall()
+        
+        if expense_by_type:
+            st.markdown("#### Expenses by Category")
+            df_type = pd.DataFrame(expense_by_type, columns=['Expense Type', 'Amount (Dr)'])
+            st.dataframe(df_type.style.format({'Amount (Dr)': 'Rs{:,.2f}'}), use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Detailed expense list
         try:
-            exp_data = c.execute("SELECT id, expense_id, expense_type, amount, description, date, COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=expenses.customer_id), 'General') as customer_name FROM expenses ORDER BY date DESC LIMIT 100").fetchall()
+            exp_data = c.execute("""
+                SELECT id, expense_id, expense_type, amount, description, date, 
+                       COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=expenses.customer_id), 'General') as customer_name 
+                FROM expenses ORDER BY date DESC LIMIT 100
+            """).fetchall()
         except:
-            exp_data = c.execute("SELECT id, expense_id, expense_type, amount, description, date, 'General' as customer_name FROM expenses ORDER BY date DESC LIMIT 100").fetchall()
+            exp_data = c.execute("""
+                SELECT id, expense_id, expense_type, amount, description, date, 'General' as customer_name 
+                FROM expenses ORDER BY date DESC LIMIT 100
+            """).fetchall()
+            
         if exp_data:
-            df = pd.DataFrame(exp_data, columns=['ID','Expense ID', 'Type', 'Amount', 'Description', 'Date', 'Customer'])
+            st.markdown("#### Detailed Expense Transactions")
+            df = pd.DataFrame(exp_data, columns=['ID','Expense ID', 'Type', 'Amount (Dr)', 'Description', 'Date', 'Customer'])
             df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%d-%m-%Y')
-            st.dataframe(df.style.format({'Amount': 'Rs{:,.2f}'}), use_container_width=True, height=400)
+            st.dataframe(df.style.format({'Amount (Dr)': 'Rs{:,.2f}'}), use_container_width=True, height=400)
+            
+            # Delete option
+            st.markdown("---")
+            with st.expander("Delete Expense Record"):
+                st.warning("Delete Expense Record (This action cannot be undone)")
+                del_exp = st.selectbox("Select Expense to Delete", [f"{e[1]} - {e[2]} - Rs{e[3]:,.2f}" for e in exp_data], key="del_exp")
+                if del_exp and st.button("Delete Expense", use_container_width=True, key="del_exp_btn"):
+                    idx = [f"{e[1]} - {e[2]} - Rs{e[3]:,.2f}" for e in exp_data].index(del_exp)
+                    exp_id = exp_data[idx][0]
+                    if st.button("Confirm Delete", use_container_width=True, key="confirm_del_exp"):
+                        delete_record('expenses', 'id', exp_id, 'Expense Record')
         else:
             st.info("No expense records found.")
         st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Income vs Expense Summary
+    st.markdown("---")
+    st.markdown("### Income vs Expense Summary")
+    
+    total_inc = c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
+    total_exp = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
+    net = total_inc - total_exp
+    
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        st.metric("Total Income (Cr)", f"Rs{total_inc:,.2f}")
+    with s2:
+        st.metric("Total Expenses (Dr)", f"Rs{total_exp:,.2f}")
+    with s3:
+        if net >= 0:
+            st.metric("Net Surplus", f"Rs{net:,.2f}", delta="Profit")
+        else:
+            st.metric("Net Deficit", f"Rs{abs(net):,.2f}", delta="Loss", delta_color="inverse")
+    
     c.close()
 
 # ==================== INTEREST CALCULATION ====================

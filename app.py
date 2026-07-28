@@ -893,7 +893,9 @@ def fixed_deposits():
             col2.metric("💎 Total Closed Amount", f"Rs {total_closed:,.2f}")
             col3.metric("📈 Total Interest Earned", f"Rs {total_interest:,.2f}")
             
-            Download PDF button            if st.button("📥 Download Closed FDs Report", use_container_width=True):
+            #Download PDF button            
+            if st.button("📥 Download Closed FDs Report", use_container_width=True):
+                
                 content = [
                     "📋 CLOSED FIXED DEPOSITS REPORT",
                     "=" * 50,

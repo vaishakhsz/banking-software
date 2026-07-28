@@ -427,10 +427,11 @@ def generate_journal_voucher_pdf(voucher_data, entries_data):
     pdf.ln(5)
     
     pdf.set_font('Arial', 'B', 10)
-    pdf.cell(10, 7, 'S.No', 1)
-    pdf.cell(80, 7, 'Account Head', 1)
-    pdf.cell(45, 7, 'Debit (Dr)', 1, 0, 'R')
-    pdf.cell(45, 7, 'Credit (Cr)', 1, 1, 'R')
+    pdf.cell(8, 7, 'S.No', 1)
+    pdf.cell(60, 7, 'Account Head', 1)
+    pdf.cell(25, 7, 'Category', 1)
+    pdf.cell(35, 7, 'Debit (Dr)', 1, 0, 'R')
+    pdf.cell(35, 7, 'Credit (Cr)', 1, 1, 'R')
     
     pdf.set_font('Arial', '', 9)
     total_dr = 0
@@ -439,18 +440,20 @@ def generate_journal_voucher_pdf(voucher_data, entries_data):
         debit = entry.get('debit_amount', entry.get('debit', 0))
         credit = entry.get('credit_amount', entry.get('credit', 0))
         account_head = entry.get('account_head', entry.get('head', 'N/A'))
+        category = entry.get('category', '') or entry.get('sub_category', '')
         
-        pdf.cell(10, 6, str(idx), 1)
-        pdf.cell(80, 6, account_head, 1)
-        pdf.cell(45, 6, f"{debit:,.2f}", 1, 0, 'R')
-        pdf.cell(45, 6, f"{credit:,.2f}", 1, 1, 'R')
+        pdf.cell(8, 6, str(idx), 1)
+        pdf.cell(60, 6, account_head[:30] if len(account_head) > 30 else account_head, 1)
+        pdf.cell(25, 6, category[:20] if len(str(category)) > 20 else str(category), 1)
+        pdf.cell(35, 6, f"{debit:,.2f}", 1, 0, 'R')
+        pdf.cell(35, 6, f"{credit:,.2f}", 1, 1, 'R')
         total_dr += debit
         total_cr += credit
     
     pdf.set_font('Arial', 'B', 10)
-    pdf.cell(90, 7, 'TOTAL', 1)
-    pdf.cell(45, 7, f"{total_dr:,.2f}", 1, 0, 'R')
-    pdf.cell(45, 7, f"{total_cr:,.2f}", 1, 1, 'R')
+    pdf.cell(93, 7, 'TOTAL', 1)
+    pdf.cell(35, 7, f"{total_dr:,.2f}", 1, 0, 'R')
+    pdf.cell(35, 7, f"{total_cr:,.2f}", 1, 1, 'R')
     
     if abs(total_dr - total_cr) < 0.01:
         pdf.set_font('Arial', 'B', 11)
@@ -466,8 +469,14 @@ def generate_journal_voucher_pdf(voucher_data, entries_data):
     pdf.set_font('Arial', 'I', 9)
     pdf.cell(0, 5, 'This is a system generated voucher.', 0, 1, 'C')
     pdf.cell(0, 5, f"Generated on: {get_ist_time()}", 0, 1, 'C')
+    
+    # Add account classification legend
+    pdf.ln(3)
+    pdf.set_font('Arial', 'I', 7)
+    pdf.cell(0, 4, 'Account Classification Legend:', 0, 1, 'L')
+    pdf.cell(0, 4, '• ASSETS & EXPENSES - Debit (Dr) | • LIABILITIES, EQUITY & INCOME - Credit (Cr)', 0, 1, 'L')
+    
     return pdf
-
 def generate_profit_loss_pdf(data, from_date, to_date):
     if FPDF is None:
         return None
@@ -1701,12 +1710,162 @@ def transactions():
     c.close()
 
 # ==================== JOURNAL VOUCHERS ====================
+# ==================== JOURNAL VOUCHERS ====================
 def journal_vouchers():
     if st.session_state.user['role'] not in ['admin', 'staff']: 
         st.error("Unauthorized"); return
         
     c = get_db()
     uid = st.session_state.user['id']
+    
+    # ==================== CHART OF ACCOUNTS ====================
+    def get_chart_of_accounts():
+        """Returns structured chart of accounts with classifications"""
+        return {
+            'ASSETS': {
+                'Current Assets': [
+                    'Cash in Hand',
+                    'Cash at Bank',
+                    'Cheque in Hand',
+                    'Accounts Receivable',
+                    'Interest Receivable',
+                    'Prepaid Expenses',
+                    'Short-term Investments'
+                ],
+                'Fixed Assets': [
+                    'Building',
+                    'Furniture & Fixtures',
+                    'Computer Equipment',
+                    'Office Equipment',
+                    'Vehicles',
+                    'Land',
+                    'Leasehold Improvements'
+                ]
+            },
+            'LIABILITIES': {
+                'Current Liabilities': [
+                    'SB Deposits (Customer Money)',
+                    'FD Deposits (Customer Money)',
+                    'RD Deposits (Customer Money)',
+                    'Accounts Payable',
+                    'Interest Payable',
+                    'Accrued Expenses',
+                    'Unearned Revenue',
+                    'TDS Payable',
+                    'GST Payable',
+                    'Salary Payable'
+                ],
+                'Long-term Liabilities': [
+                    'Long-term Loans',
+                    'Bonds Payable',
+                    'Deferred Tax Liability'
+                ]
+            },
+            'EQUITY': {
+                'Capital': [
+                    'Capital / Retained Earnings',
+                    'Owner\'s Equity',
+                    'Reserves & Surplus'
+                ]
+            },
+            'INCOME': {
+                'Operating Income': [
+                    'Interest Earned (SB)',
+                    'Interest Earned (FD)',
+                    'Interest Earned (RD)',
+                    'Fees & Charges',
+                    'Commission Income',
+                    'Service Charges',
+                    'Processing Fees',
+                    'Late Payment Fees'
+                ],
+                'Other Income': [
+                    'Other Income',
+                    'Miscellaneous Income',
+                    'Profit on Sale of Assets',
+                    'Gain on Exchange'
+                ]
+            },
+            'EXPENSES': {
+                'Operating Expenses': [
+                    'Salary & Wages',
+                    'Rent & Utilities',
+                    'Office Expenses',
+                    'Postage & Courier',
+                    'Telephone & Internet',
+                    'Printing & Stationery',
+                    'Insurance',
+                    'Maintenance & Repairs',
+                    'Security Services',
+                    'Professional Fees'
+                ],
+                'Administrative Expenses': [
+                    'Administrative Expenses',
+                    'Legal & Professional Fees',
+                    'Audit Fees',
+                    'Director\'s Fees',
+                    'Travelling & Conveyance',
+                    'Entertainment',
+                    'Training & Development',
+                    'Membership & Subscriptions'
+                ],
+                'Financial Expenses': [
+                    'Interest Paid (SB)',
+                    'Interest Paid (FD)',
+                    'Interest Paid (RD)',
+                    'Bank Charges',
+                    'Transaction Fees',
+                    'TDS on Interest'
+                ],
+                'Other Expenses': [
+                    'Other Expenses',
+                    'Depreciation',
+                    'Bad Debts',
+                    'Loss on Sale of Assets',
+                    'Donations',
+                    'Penalties & Fines'
+                ]
+            }
+        }
+    
+    def get_account_type(account_head):
+        """Get the classification type for a given account head"""
+        chart = get_chart_of_accounts()
+        for category, sub_categories in chart.items():
+            for sub_cat, accounts in sub_categories.items():
+                if account_head in accounts:
+                    return category[:-1]  # Remove 's' from category name
+        return 'Unknown'
+    
+    def get_account_list():
+        """Get all account heads with their full path"""
+        chart = get_chart_of_accounts()
+        accounts = []
+        for category, sub_categories in chart.items():
+            for sub_cat, account_list in sub_categories.items():
+                for account in account_list:
+                    accounts.append({
+                        'display': f"{category} → {sub_cat} → {account}",
+                        'head': account,
+                        'category': category,
+                        'sub_category': sub_cat
+                    })
+        return accounts
+    
+    def get_accounts_by_category(category):
+        """Get all account heads for a specific category"""
+        chart = get_chart_of_accounts()
+        if category in chart:
+            accounts = []
+            for sub_cat, account_list in chart[category].items():
+                for account in account_list:
+                    accounts.append({
+                        'display': f"{sub_cat} → {account}",
+                        'head': account,
+                        'sub_category': sub_cat
+                    })
+            return accounts
+        return []
     
     try:
         custs = c.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers ORDER BY customer_id").fetchall()
@@ -1718,6 +1877,18 @@ def journal_vouchers():
     
     with t1:
         st.markdown('<div class="section-card"><h3>Create New Journal Voucher</h3>', unsafe_allow_html=True)
+        
+        # Show Chart of Accounts for reference
+        with st.expander("📚 View Chart of Accounts (Reference)"):
+            chart = get_chart_of_accounts()
+            for category, sub_categories in chart.items():
+                st.markdown(f"**{category}**")
+                for sub_cat, accounts in sub_categories.items():
+                    st.markdown(f"  - *{sub_cat}*")
+                    for account in accounts:
+                        st.markdown(f"    - {account}")
+                st.markdown("---")
+        
         with st.form("jv"):
             vd = st.date_input("Voucher Date", date.today(), key="jvd")
             desc = st.text_area("Voucher Narration / Description")
@@ -1735,21 +1906,104 @@ def journal_vouchers():
             tc_v = 0
             
             st.markdown("<hr>", unsafe_allow_html=True)
+            
+            # Display account selection guide
+            st.info("""
+            **📋 Account Selection Guide:**
+            - **ASSETS** (Dr): Cash, Bank, Receivables, Fixed Assets
+            - **LIABILITIES** (Cr): Deposits, Payables, Accruals
+            - **EQUITY** (Cr): Capital, Reserves
+            - **INCOME** (Cr): Interest, Fees, Commission
+            - **EXPENSES** (Dr): Salaries, Rent, Utilities, Operational Costs
+            """)
+            
             for i in range(int(n)):
                 st.markdown(f"**Entry line {i+1}**")
-                e1, e2, e3 = st.columns([2, 1, 1])
-                with e1: h = st.text_input(f"Account Head", key=f"jh{i}", placeholder="e.g., Cash, Bank, Capital, Expense")
-                with e2: d = st.number_input(f"Debit (Dr)", min_value=0.0, step=100.0, key=f"jd{i}")
-                with e3: cr = st.number_input(f"Credit (Cr)", min_value=0.0, step=100.0, key=f"jc{i}")
+                e1, e2, e3, e4 = st.columns([2, 1, 1, 1.5])
+                
+                with e1:
+                    # Get category selection
+                    category = st.selectbox(
+                        f"Category", 
+                        ['Select Category...', 'ASSETS', 'LIABILITIES', 'EQUITY', 'INCOME', 'EXPENSES'],
+                        key=f"cat_{i}"
+                    )
+                    
+                    # Get account based on category
+                    if category != 'Select Category...':
+                        accounts = get_accounts_by_category(category)
+                        account_options = ['Select Account...'] + [acc['display'] for acc in accounts]
+                        selected_account = st.selectbox(
+                            f"Account Head",
+                            account_options,
+                            key=f"acc_{i}"
+                        )
+                        
+                        if selected_account != 'Select Account...':
+                            # Extract the actual account head
+                            acc_idx = account_options.index(selected_account) - 1
+                            h = accounts[acc_idx]['head']
+                            actual_category = category
+                            st.caption(f"📌 {actual_category[:-1]} | {accounts[acc_idx]['sub_category']}")
+                        else:
+                            h = ""
+                    else:
+                        h = st.text_input(f"Account Head (Manual Entry)", key=f"jh{i}", placeholder="e.g., Custom Account")
+                        if h:
+                            st.caption("⚠️ Custom account - verify classification")
+                
+                with e2:
+                    d = st.number_input(f"Debit (Dr)", min_value=0.0, step=100.0, key=f"jd{i}")
+                with e3:
+                    cr = st.number_input(f"Credit (Cr)", min_value=0.0, step=100.0, key=f"jc{i}")
+                with e4:
+                    if h and h not in ['Select Category...', 'Select Account...']:
+                        acct_type = get_account_type(h)
+                        if acct_type in ['ASSET', 'EXPENSE']:
+                            st.info("💳 Dr")
+                        elif acct_type in ['LIABILITY', 'EQUITY', 'INCOME']:
+                            st.info("💳 Cr")
+                        else:
+                            st.warning("⚠️ Unknown")
+                
                 td_v += d
                 tc_v += cr
-                entries.append({'h': h, 'd': d, 'c': cr})
                 
+                # Store entry with category info
+                if category != 'Select Category...' and selected_account != 'Select Account...':
+                    entries.append({
+                        'h': h, 
+                        'd': d, 
+                        'c': cr,
+                        'category': category,
+                        'sub_category': accounts[acc_idx]['sub_category'] if selected_account != 'Select Account...' else 'Manual'
+                    })
+                else:
+                    entries.append({'h': h, 'd': d, 'c': cr, 'category': 'Manual', 'sub_category': 'Manual'})
+            
             st.info(f"**Total Debit:** Rs.{td_v:,.2f} | **Total Credit:** Rs.{tc_v:,.2f}")
             if abs(td_v - tc_v) > 0.01: 
                 st.error(f"Mismatch Detected: Difference of Rs.{abs(td_v - tc_v):,.2f}")
                 
             st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Preview entries in a table
+            valid_entries = [e for e in entries if (e['d'] > 0 or e['c'] > 0) and e['h'].strip()]
+            if valid_entries:
+                st.markdown("#### Preview Entries")
+                preview_data = []
+                for e in valid_entries:
+                    acct_type = get_account_type(e['h']) if e['h'] else 'Unknown'
+                    preview_data.append({
+                        'Account Head': e['h'],
+                        'Category': e.get('category', 'Manual'),
+                        'Type': acct_type,
+                        'Debit (Dr)': e['d'],
+                        'Credit (Cr)': e['c']
+                    })
+                df_preview = pd.DataFrame(preview_data)
+                st.dataframe(df_preview.style.format({'Debit (Dr)': 'Rs{:,.2f}', 'Credit (Cr)': 'Rs{:,.2f}'}), use_container_width=True)
+            
             submitted = st.form_submit_button("Generate Voucher", use_container_width=True, type="primary")
             
             if submitted:
@@ -1769,8 +2023,11 @@ def journal_vouchers():
                     entries_saved = 0
                     for e in entries:
                         if (e['d'] > 0 or e['c'] > 0) and e['h'].strip():
-                            c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount) VALUES (?,?,?,?)", 
-                                     (vid, e['h'].strip(), e['d'], e['c']))
+                            # Store the category info as part of the description or as a separate field
+                            # Since we don't have a category column, we'll store it in description
+                            category_info = f"Category: {e.get('category', 'Manual')}"
+                            c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount,description) VALUES (?,?,?,?,?)", 
+                                     (vid, e['h'].strip(), e['d'], e['c'], category_info))
                             entries_saved += 1
                     
                     c.commit()
@@ -1781,7 +2038,13 @@ def journal_vouchers():
                         'description': desc,
                         'status': 'DRAFT',
                         'is_balanced': True,
-                        'entries': [{'account_head': e['h'].strip(), 'debit_amount': e['d'], 'credit_amount': e['c']} for e in entries if e['h'].strip() and (e['d'] > 0 or e['c'] > 0)]
+                        'entries': [{
+                            'account_head': e['h'].strip(), 
+                            'debit_amount': e['d'], 
+                            'credit_amount': e['c'],
+                            'category': e.get('category', 'Manual'),
+                            'sub_category': e.get('sub_category', 'Manual')
+                        } for e in entries if e['h'].strip() and (e['d'] > 0 or e['c'] > 0)]
                     }
                     
                     st.success(f"Voucher Drafted! Reference: {vn} | Entries saved: {entries_saved}")
@@ -1816,27 +2079,74 @@ def journal_vouchers():
         
     with t2:
         st.markdown('<div class="section-card"><h3>Journal Voucher Directory</h3>', unsafe_allow_html=True)
+        
+        # Filter options
+        st.markdown("#### Filter Vouchers")
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            status_filter = st.selectbox("Status", ["All", "DRAFT", "POSTED", "CANCELLED"], key="jv_status_filter")
+        with f2:
+            date_filter = st.date_input("From Date", date.today() - timedelta(days=30), key="jv_date_from")
+        with f3:
+            date_to = st.date_input("To Date", date.today(), key="jv_date_to")
+        
         try:
-            vouchers = c.execute("SELECT jv.id, jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=jv.customer_id), 'General') as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+            query = """
+                SELECT jv.id, jv.voucher_number, jv.voucher_date, jv.description, jv.total_amount, jv.status, 
+                       COALESCE((SELECT first_name||' '||last_name FROM customers WHERE id=jv.customer_id), 'General') as customer_name,
+                       jv.created_at
+                FROM journal_vouchers jv 
+                WHERE DATE(jv.voucher_date) BETWEEN ? AND ?
+            """
+            params = [date_filter, date_to]
+            
+            if status_filter != "All":
+                query += " AND jv.status = ?"
+                params.append(status_filter)
+            
+            query += " ORDER BY jv.created_at DESC"
+            
+            vouchers = c.execute(query, params).fetchall()
         except:
-            vouchers = c.execute("SELECT jv.id, jv.voucher_number,jv.voucher_date,jv.description,jv.total_amount,jv.status,'General' as customer_name FROM journal_vouchers jv ORDER BY jv.created_at DESC").fetchall()
+            vouchers = []
         
         if vouchers:
+            # Summary stats
+            total_draft = sum(1 for v in vouchers if v[5] == 'DRAFT')
+            total_posted = sum(1 for v in vouchers if v[5] == 'POSTED')
+            total_amount = sum(v[4] for v in vouchers if v[5] == 'POSTED')
+            
+            s1, s2, s3 = st.columns(3)
+            with s1: st.metric("Total Vouchers", len(vouchers))
+            with s2: st.metric("Draft", total_draft)
+            with s3: st.metric("Posted (Value)", f"Rs{total_amount:,.2f}")
+            
+            st.markdown("---")
+            
             for v in vouchers:
-                status_icon = {'DRAFT': '(D)', 'POSTED': '(P)', 'CANCELLED': '(C)'}
+                status_icon = {'DRAFT': '📝', 'POSTED': '✅', 'CANCELLED': '❌'}
+                status_color = {'DRAFT': '#f59e0b', 'POSTED': '#22c55e', 'CANCELLED': '#ef4444'}
                 cust_label = f" | Customer: {v[6]}" if v[6] != 'General' else ""
-                with st.expander(f"{status_icon.get(v[5], '(?)')} | {v[1]} | Date: {v[2]} | Rs.{v[4]:,.2f}{cust_label}"):
+                
+                with st.expander(f"{status_icon.get(v[5], '📄')} | {v[1]} | Date: {v[2]} | Rs.{v[4]:,.2f}{cust_label}"):
                     st.markdown(f"**Narration:** {safe_text(v[3])}")
                     if v[6] != 'General':
                         st.markdown(f"**Customer:** {safe_text(v[6])}")
                     
-                    entries = c.execute("""SELECT account_head, debit_amount, credit_amount FROM journal_entries WHERE voucher_id=? ORDER BY id""", (v[0],)).fetchall()
+                    entries = c.execute("""SELECT account_head, debit_amount, credit_amount, description FROM journal_entries WHERE voucher_id=? ORDER BY id""", (v[0],)).fetchall()
                     
                     if entries:
                         st.markdown("**Voucher Entries:**")
                         entries_data = []
                         for e in entries:
-                            entries_data.append({'Ledger Head': e[0] if e[0] and e[0].strip() else 'N/A', 'Debit (Dr)': e[1], 'Credit (Cr)': e[2]})
+                            # Extract category from description if available
+                            category_info = e[3] if e[3] else 'N/A'
+                            entries_data.append({
+                                'Account Head': e[0] if e[0] and e[0].strip() else 'N/A',
+                                'Category': category_info,
+                                'Debit (Dr)': e[1],
+                                'Credit (Cr)': e[2]
+                            })
                         
                         df_entries = pd.DataFrame(entries_data)
                         st.dataframe(df_entries.style.format({'Debit (Dr)': 'Rs{:,.2f}', 'Credit (Cr)': 'Rs{:,.2f}'}), use_container_width=True)
@@ -1846,13 +2156,17 @@ def journal_vouchers():
                         st.markdown(f"**Total Debit:** Rs{total_dr:,.2f} | **Total Credit:** Rs{total_cr:,.2f}")
                         
                         if abs(total_dr - total_cr) < 0.01:
-                            st.success("Voucher is balanced")
+                            st.success("✅ Voucher is balanced")
                         else:
-                            st.error(f"Mismatch: Rs{abs(total_dr - total_cr):,.2f}")
+                            st.error(f"❌ Mismatch: Rs{abs(total_dr - total_cr):,.2f}")
                         
                         pdf_entries = []
                         for e in entries:
-                            pdf_entries.append({'account_head': e[0] if e[0] and e[0].strip() else 'N/A', 'debit_amount': e[1], 'credit_amount': e[2]})
+                            pdf_entries.append({
+                                'account_head': e[0] if e[0] and e[0].strip() else 'N/A', 
+                                'debit_amount': e[1], 
+                                'credit_amount': e[2]
+                            })
                         
                         voucher_data = {'voucher_number': v[1], 'voucher_date': v[2], 'description': v[3], 'status': v[5], 'is_balanced': True}
                         if v[6] != 'General':
@@ -1874,19 +2188,19 @@ def journal_vouchers():
                         st.divider()
                         f1, f2 = st.columns(2)
                         with f1:
-                            if st.button("Post Ledger", key=f"po_{v[1]}", use_container_width=True, type="primary"):
+                            if st.button("✅ Post Ledger", key=f"po_{v[1]}", use_container_width=True, type="primary"):
                                 c.execute("UPDATE journal_vouchers SET status='POSTED',posted_by=?,posted_at=CURRENT_TIMESTAMP WHERE id=?", (uid, v[0]))
                                 c.commit()
                                 st.success("Voucher Posted successfully!")
                                 st.rerun()
                         with f2:
-                            if st.button("Cancel Voucher", key=f"ca_{v[1]}", use_container_width=True):
+                            if st.button("❌ Cancel Voucher", key=f"ca_{v[1]}", use_container_width=True):
                                 c.execute("UPDATE journal_vouchers SET status='CANCELLED' WHERE id=?", (v[0],))
                                 c.commit()
                                 st.warning("Voucher Cancelled!")
                                 st.rerun()
         else: 
-            st.info("No journal vouchers available.")
+            st.info("No journal vouchers available for the selected criteria.")
         st.markdown('</div>', unsafe_allow_html=True)
     c.close()
 

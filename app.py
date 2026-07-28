@@ -461,11 +461,6 @@ def trial_balance():
         rd_int_asset=c.execute("SELECT COALESCE(SUM(maturity_amount-(monthly_amount*installments_paid)),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
         if rd_int_asset>0:td.append({'head':'RD Interest Receivable','cat':'Asset','dr':rd_int_asset,'cr':0})
         
-        # JV Debit entries
-        jv_dr=c.execute("SELECT je.account_head,SUM(je.debit_amount) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.debit_amount>0 GROUP BY je.account_head").fetchall()
-        for e in jv_dr:
-            if e[1]>0:td.append({'head':f"JV:{e[0]}",'cat':'Asset','dr':e[1],'cr':0})
-        
         # === LIABILITIES (Credit) ===
         # SB Deposits
         sbs=c.execute("SELECT a.account_number,c.first_name||' '||c.last_name,a.balance FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
@@ -483,43 +478,49 @@ def trial_balance():
         # RD Interest Payable (Liability)
         if rd_int_asset>0:td.append({'head':'RD Interest Payable','cat':'Liability','dr':0,'cr':rd_int_asset})
         
-        # JV Credit entries
-        jv_cr=c.execute("SELECT je.account_head,SUM(je.credit_amount) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.credit_amount>0 GROUP BY je.account_head").fetchall()
-        for e in jv_cr:
-            if e[1]>0:td.append({'head':f"JV:{e[0]}",'cat':'Liability','dr':0,'cr':e[1]})
+        # === CALCULATE TOTALS ===
+        tdr=sum(i['dr'] for i in td)
+        tcr=sum(i['cr'] for i in td)
         
-        # === INCOME ===
-        for it in ['Interest Earned','Fees & Charges','Commission Income','Other Income']:
-            amt=c.execute("SELECT COALESCE(SUM(amount),0) FROM income WHERE income_type=?",(it,)).fetchone()[0]
-            if amt>0:td.append({'head':it,'cat':'Income','dr':0,'cr':amt})
-        
-        # === EXPENSES ===
-        for et in ['Salary & Wages','Rent & Utilities','Operating Expenses','Administrative Expenses','Other Expenses']:
-            amt=c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_type=?",(et,)).fetchone()[0]
-            if amt>0:td.append({'head':et,'cat':'Expense','dr':amt,'cr':0})
-        
-        # === BALANCING ===
-        tdr=sum(i['dr'] for i in td);tcr=sum(i['cr'] for i in td)
+        # === ADD CAPITAL AS BALANCING FIGURE ===
         if abs(tdr-tcr)>0.01:
             diff=tdr-tcr
-            if diff>0:td.append({'head':'Capital/Equity','cat':'Capital','dr':0,'cr':diff})
-            else:td.append({'head':'Capital/Equity','cat':'Capital','dr':-diff,'cr':0})
+            if diff>0:
+                td.append({'head':'Capital/Equity','cat':'Capital','dr':0,'cr':diff})
+            else:
+                td.append({'head':'Capital/Equity','cat':'Capital','dr':-diff,'cr':0})
         
         if td:
             df=pd.DataFrame(td)
-            tdr=df['dr'].sum();tcr=df['cr'].sum()
+            
+            # Calculate final totals after adding capital
+            final_tdr=sum(i['dr'] for i in td)
+            final_tcr=sum(i['cr'] for i in td)
+            
+            # Display metrics
             m1,m2,m3,m4=st.columns(4)
             m1.metric("Assets(Dr)",f"Rs{sum(i['dr'] for i in td if i['cat']=='Asset'):,.2f}")
             m2.metric("Liabilities(Cr)",f"Rs{sum(i['cr'] for i in td if i['cat']=='Liability'):,.2f}")
             m3.metric("Income(Cr)",f"Rs{sum(i['cr'] for i in td if i['cat']=='Income'):,.2f}")
             m4.metric("Expenses(Dr)",f"Rs{sum(i['dr'] for i in td if i['cat']=='Expense'):,.2f}")
+            
+            # Display capital separately
+            capital_amount = next((i['cr'] for i in td if i['cat']=='Capital' and i['cr']>0), 
+                                 next((i['dr'] for i in td if i['cat']=='Capital' and i['dr']>0), 0))
+            st.info(f"**Capital/Equity: Rs{capital_amount:,.2f}**")
+            
             st.dataframe(df[['head','cat','dr','cr']].rename(columns={'head':'Account Head','cat':'Category','dr':'Debit(Dr)','cr':'Credit(Cr)'}).style.format({'Debit(Dr)':'Rs{:,.2f}','Credit(Cr)':'Rs{:,.2f}'}),use_container_width=True,height=600)
-            st.markdown(f"**Total Dr:Rs{tdr:,.2f} | Total Cr:Rs{tcr:,.2f}**")
-            if abs(tdr-tcr)<0.01:st.success("PERFECTLY BALANCED!")
-            else:st.error(f"Diff:Rs{abs(tdr-tcr):,.2f}")
+            
+            st.markdown(f"**Total Dr:Rs{final_tdr:,.2f} | Total Cr:Rs{final_tcr:,.2f}**")
+            
+            if abs(final_tdr-final_tcr)<0.01:
+                st.success("✅ PERFECTLY BALANCED!")
+                st.markdown(f"**Assets(Rs{sum(i['dr'] for i in td if i['cat']=='Asset'):,.2f}) = Liabilities(Rs{sum(i['cr'] for i in td if i['cat']=='Liability'):,.2f}) + Capital(Rs{capital_amount:,.2f})**")
+            else:
+                st.error(f"⚠️ Difference: Rs{abs(final_tdr-final_tcr):,.2f}")
+            
             st.download_button("Download CSV",df.to_csv(index=False),"trial_balance.csv")
     c.close()
-
 # ==================== BALANCE SHEET (BALANCED) ====================
 # ==================== BALANCE SHEET (BALANCED) ====================
 def balance_sheet():
@@ -551,15 +552,6 @@ def balance_sheet():
         rd_int_asset=c.execute("SELECT COALESCE(SUM(maturity_amount-(monthly_amount*installments_paid)),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
         if rd_int_asset>0:assets.append({'name':'RD Interest Receivable','amount':rd_int_asset});ta+=rd_int_asset
         
-        # Income Receivable
-        total_inc=c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
-        if total_inc>0:assets.append({'name':'Income Receivable','amount':total_inc});ta+=total_inc
-        
-        # JV Debit entries
-        jv_dr=c.execute("SELECT je.account_head,SUM(je.debit_amount) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.debit_amount>0 GROUP BY je.account_head").fetchall()
-        for e in jv_dr:
-            if e[1]>0:assets.append({'name':f'JV:{e[0]}','amount':e[1]});ta+=e[1]
-        
         # === LIABILITIES ===
         # SB Deposits
         sb_total=c.execute("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
@@ -575,36 +567,30 @@ def balance_sheet():
         # RD Interest Payable (Liability)
         if rd_int_asset>0:liabilities.append({'name':'RD Interest Payable','amount':rd_int_asset});tl+=rd_int_asset
         
-        # Expenses Payable
-        total_exp=c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
-        if total_exp>0:liabilities.append({'name':'Expenses Payable','amount':total_exp});tl+=total_exp
-        
-        # JV Credit entries
-        jv_cr=c.execute("SELECT je.account_head,SUM(je.credit_amount) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.credit_amount>0 GROUP BY je.account_head").fetchall()
-        for e in jv_cr:
-            if e[1]>0:liabilities.append({'name':f'JV:{e[0]}','amount':e[1]});tl+=e[1]
-        
-        # Capital = Assets - Liabilities
-        capital=ta-tl
+        # Calculate Capital = Assets - Liabilities
+        capital = ta - tl
         
         # Display
         col1,col2=st.columns(2)
         with col1:
             st.markdown("### ASSETS (What Bank Owns/Will Receive)")
-            for item in assets:st.markdown(f"- {item['name']}:Rs{item['amount']:,.2f}")
-            st.markdown(f"**Total Assets:Rs{ta:,.2f}**")
+            for item in assets:
+                st.markdown(f"- {item['name']}: Rs{item['amount']:,.2f}")
+            st.markdown(f"**Total Assets: Rs{ta:,.2f}**")
+        
         with col2:
             st.markdown("### LIABILITIES (What Bank Owes)")
-            for item in liabilities:st.markdown(f"- {item['name']}:Rs{item['amount']:,.2f}")
-            st.markdown(f"**Total Liabilities:Rs{tl:,.2f}**")
+            for item in liabilities:
+                st.markdown(f"- {item['name']}: Rs{item['amount']:,.2f}")
+            st.markdown(f"**Total Liabilities: Rs{tl:,.2f}**")
         
-        st.markdown(f"### CAPITAL/EQUITY:Rs{capital:,.2f}")
+        st.markdown(f"### CAPITAL/EQUITY: Rs{capital:,.2f}")
         
         # Balance check
-        if abs(ta-(tl+capital))<0.01:
-            st.success(f"PERFECTLY BALANCED!\n\nAssets(Rs{ta:,.2f}) = Liabilities(Rs{tl:,.2f}) + Capital(Rs{capital:,.2f})")
+        if abs(ta - (tl + capital)) < 0.01:
+            st.success(f"✅ PERFECTLY BALANCED!\n\n**Assets(Rs{ta:,.2f}) = Liabilities(Rs{tl:,.2f}) + Capital(Rs{capital:,.2f})**")
         else:
-            st.error(f"Difference:Rs{abs(ta-(tl+capital)):,.2f}")
+            st.error(f"⚠️ Difference: Rs{abs(ta-(tl+capital)):,.2f}")
         
         # Explanation
         st.info(f"""

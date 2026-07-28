@@ -24,208 +24,215 @@ except ImportError:
 
 # ==================== DATABASE SETUP ====================
 # ==================== DATABASE SETUP ====================
+# ==================== DATABASE SETUP ====================
 def init_database():
-    conn = sqlite3.connect('banking_system.db')
-    c = conn.cursor()
-    
-    # Users table
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        role TEXT NOT NULL,
-        is_active BOOLEAN DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    
-    # Customers table
-    c.execute('''CREATE TABLE IF NOT EXISTS customers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        customer_id TEXT UNIQUE NOT NULL,
-        user_id INTEGER,
-        first_name TEXT NOT NULL,
-        last_name TEXT NOT NULL,
-        date_of_birth DATE NOT NULL,
-        gender TEXT,
-        email TEXT UNIQUE NOT NULL,
-        phone TEXT NOT NULL,
-        address TEXT,
-        city TEXT,
-        state TEXT,
-        pincode TEXT,
-        pan_number TEXT UNIQUE,
-        aadhar_number TEXT UNIQUE,
-        kyc_status TEXT DEFAULT 'PENDING',
-        kyc_verified_by INTEGER,
-        kyc_verified_at TIMESTAMP,
-        pan_document BLOB,
-        aadhar_document BLOB,
-        photo BLOB,
-        signature BLOB,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users (id)
-    )''')
-    
-    # Accounts table
-    c.execute('''CREATE TABLE IF NOT EXISTS accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        account_number TEXT UNIQUE NOT NULL,
-        customer_id INTEGER NOT NULL,
-        account_type TEXT NOT NULL,
-        balance DECIMAL(15,2) DEFAULT 0.00,
-        status TEXT DEFAULT 'ACTIVE',
-        interest_rate DECIMAL(5,2),
-        last_interest_calculation DATE,
-        total_interest_earned DECIMAL(15,2) DEFAULT 0.00,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (customer_id) REFERENCES customers (id)
-    )''')
-    
-    # Fixed Deposits table
-    c.execute('''CREATE TABLE IF NOT EXISTS fixed_deposits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fd_number TEXT UNIQUE NOT NULL,
-        account_id INTEGER NOT NULL,
-        principal_amount DECIMAL(15,2) NOT NULL,
-        interest_rate DECIMAL(5,2) NOT NULL,
-        start_date DATE NOT NULL,
-        maturity_date DATE NOT NULL,
-        maturity_amount DECIMAL(15,2),
-        tenure_months INTEGER NOT NULL,
-        status TEXT DEFAULT 'ACTIVE',
-        nominee_name TEXT,
-        nominee_relation TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (account_id) REFERENCES accounts (id)
-    )''')
-    
-    # Add missing columns to fixed_deposits if they don't exist
     try:
-        c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date DATE")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-    
-    try:
-        c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_amount DECIMAL(15,2)")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-    
-    # Recurring Deposits table
-    c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rd_number TEXT UNIQUE NOT NULL,
-        account_id INTEGER NOT NULL,
-        monthly_amount DECIMAL(15,2) NOT NULL,
-        interest_rate DECIMAL(5,2) NOT NULL,
-        start_date DATE NOT NULL,
-        maturity_date DATE NOT NULL,
-        maturity_amount DECIMAL(15,2),
-        tenure_months INTEGER NOT NULL,
-        installments_paid INTEGER DEFAULT 0,
-        total_installments INTEGER NOT NULL,
-        status TEXT DEFAULT 'ACTIVE',
-        nominee_name TEXT,
-        nominee_relation TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (account_id) REFERENCES accounts (id)
-    )''')
-    
-    # Transactions table
-    c.execute('''CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        transaction_id TEXT UNIQUE NOT NULL,
-        account_id INTEGER NOT NULL,
-        transaction_type TEXT NOT NULL,
-        amount DECIMAL(15,2) NOT NULL,
-        balance_after DECIMAL(15,2) NOT NULL,
-        description TEXT,
-        reference_type TEXT,
-        reference_id TEXT,
-        voucher_type TEXT,
-        voucher_number TEXT,
-        created_by INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (account_id) REFERENCES accounts (id),
-        FOREIGN KEY (created_by) REFERENCES users (id)
-    )''')
-    
-    # Journal Vouchers table
-    c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        voucher_number TEXT UNIQUE NOT NULL,
-        voucher_date DATE NOT NULL,
-        description TEXT,
-        total_amount DECIMAL(15,2) NOT NULL,
-        status TEXT DEFAULT 'DRAFT',
-        created_by INTEGER,
-        posted_by INTEGER,
-        posted_at TIMESTAMP,
-        customer_id INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (created_by) REFERENCES users (id),
-        FOREIGN KEY (customer_id) REFERENCES customers (id)
-    )''')
-    
-    # Journal Entries table
-    c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        voucher_id INTEGER NOT NULL,
-        account_id INTEGER,
-        account_head TEXT,
-        debit_amount DECIMAL(15,2) DEFAULT 0.00,
-        credit_amount DECIMAL(15,2) DEFAULT 0.00,
-        description TEXT,
-        FOREIGN KEY (voucher_id) REFERENCES journal_vouchers (id)
-    )''')
-    
-    # Interest Calculations table
-    c.execute('''CREATE TABLE IF NOT EXISTS interest_calculations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        account_id INTEGER NOT NULL,
-        calculation_date DATE NOT NULL,
-        principal_amount DECIMAL(15,2) NOT NULL,
-        interest_rate DECIMAL(5,2) NOT NULL,
-        interest_earned DECIMAL(15,2) NOT NULL,
-        days_calculated INTEGER NOT NULL,
-        customer_id INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (account_id) REFERENCES accounts (id),
-        FOREIGN KEY (customer_id) REFERENCES customers (id)
-    )''')
-    
-    # Expenses table
-    c.execute('''CREATE TABLE IF NOT EXISTS expenses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        expense_id TEXT UNIQUE NOT NULL,
-        expense_type TEXT NOT NULL,
-        amount DECIMAL(15,2) NOT NULL,
-        description TEXT,
-        date DATE NOT NULL,
-        customer_id INTEGER,
-        created_by INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (created_by) REFERENCES users (id),
-        FOREIGN KEY (customer_id) REFERENCES customers (id)
-    )''')
-    
-    # Income table
-    c.execute('''CREATE TABLE IF NOT EXISTS income (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        income_id TEXT UNIQUE NOT NULL,
-        income_type TEXT NOT NULL,
-        amount DECIMAL(15,2) NOT NULL,
-        description TEXT,
-        date DATE NOT NULL,
-        customer_id INTEGER,
-        created_by INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (created_by) REFERENCES users (id),
-        FOREIGN KEY (customer_id) REFERENCES customers (id)
-    )''')
-    
-    conn.commit()
-    conn.close()
-
+        conn = sqlite3.connect('banking_system.db')
+        c = conn.cursor()
+        
+        # Users table
+        c.execute('''CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL,
+            is_active BOOLEAN DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        
+        # Customers table
+        c.execute('''CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id TEXT UNIQUE NOT NULL,
+            user_id INTEGER,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            date_of_birth DATE NOT NULL,
+            gender TEXT,
+            email TEXT UNIQUE NOT NULL,
+            phone TEXT NOT NULL,
+            address TEXT,
+            city TEXT,
+            state TEXT,
+            pincode TEXT,
+            pan_number TEXT UNIQUE,
+            aadhar_number TEXT UNIQUE,
+            kyc_status TEXT DEFAULT 'PENDING',
+            kyc_verified_by INTEGER,
+            kyc_verified_at TIMESTAMP,
+            pan_document BLOB,
+            aadhar_document BLOB,
+            photo BLOB,
+            signature BLOB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )''')
+        
+        # Accounts table
+        c.execute('''CREATE TABLE IF NOT EXISTS accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_number TEXT UNIQUE NOT NULL,
+            customer_id INTEGER NOT NULL,
+            account_type TEXT NOT NULL,
+            balance DECIMAL(15,2) DEFAULT 0.00,
+            status TEXT DEFAULT 'ACTIVE',
+            interest_rate DECIMAL(5,2),
+            last_interest_calculation DATE,
+            total_interest_earned DECIMAL(15,2) DEFAULT 0.00,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers (id)
+        )''')
+        
+        # Fixed Deposits table
+        c.execute('''CREATE TABLE IF NOT EXISTS fixed_deposits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fd_number TEXT UNIQUE NOT NULL,
+            account_id INTEGER NOT NULL,
+            principal_amount DECIMAL(15,2) NOT NULL,
+            interest_rate DECIMAL(5,2) NOT NULL,
+            start_date DATE NOT NULL,
+            maturity_date DATE NOT NULL,
+            maturity_amount DECIMAL(15,2),
+            tenure_months INTEGER NOT NULL,
+            status TEXT DEFAULT 'ACTIVE',
+            nominee_name TEXT,
+            nominee_relation TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (account_id) REFERENCES accounts (id)
+        )''')
+        
+        # Add missing columns to fixed_deposits if they don't exist
+        try:
+            c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date DATE")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                print(f"Note: {e}")
+        
+        try:
+            c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_amount DECIMAL(15,2)")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                print(f"Note: {e}")
+        
+        # Recurring Deposits table
+        c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rd_number TEXT UNIQUE NOT NULL,
+            account_id INTEGER NOT NULL,
+            monthly_amount DECIMAL(15,2) NOT NULL,
+            interest_rate DECIMAL(5,2) NOT NULL,
+            start_date DATE NOT NULL,
+            maturity_date DATE NOT NULL,
+            maturity_amount DECIMAL(15,2),
+            tenure_months INTEGER NOT NULL,
+            installments_paid INTEGER DEFAULT 0,
+            total_installments INTEGER NOT NULL,
+            status TEXT DEFAULT 'ACTIVE',
+            nominee_name TEXT,
+            nominee_relation TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (account_id) REFERENCES accounts (id)
+        )''')
+        
+        # Transactions table
+        c.execute('''CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transaction_id TEXT UNIQUE NOT NULL,
+            account_id INTEGER NOT NULL,
+            transaction_type TEXT NOT NULL,
+            amount DECIMAL(15,2) NOT NULL,
+            balance_after DECIMAL(15,2) NOT NULL,
+            description TEXT,
+            reference_type TEXT,
+            reference_id TEXT,
+            voucher_type TEXT,
+            voucher_number TEXT,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (account_id) REFERENCES accounts (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )''')
+        
+        # Journal Vouchers table
+        c.execute('''CREATE TABLE IF NOT EXISTS journal_vouchers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            voucher_number TEXT UNIQUE NOT NULL,
+            voucher_date DATE NOT NULL,
+            description TEXT,
+            total_amount DECIMAL(15,2) NOT NULL,
+            status TEXT DEFAULT 'DRAFT',
+            created_by INTEGER,
+            posted_by INTEGER,
+            posted_at TIMESTAMP,
+            customer_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users (id),
+            FOREIGN KEY (customer_id) REFERENCES customers (id)
+        )''')
+        
+        # Journal Entries table
+        c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            voucher_id INTEGER NOT NULL,
+            account_id INTEGER,
+            account_head TEXT,
+            debit_amount DECIMAL(15,2) DEFAULT 0.00,
+            credit_amount DECIMAL(15,2) DEFAULT 0.00,
+            description TEXT,
+            FOREIGN KEY (voucher_id) REFERENCES journal_vouchers (id)
+        )''')
+        
+        # Interest Calculations table
+        c.execute('''CREATE TABLE IF NOT EXISTS interest_calculations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL,
+            calculation_date DATE NOT NULL,
+            principal_amount DECIMAL(15,2) NOT NULL,
+            interest_rate DECIMAL(5,2) NOT NULL,
+            interest_earned DECIMAL(15,2) NOT NULL,
+            days_calculated INTEGER NOT NULL,
+            customer_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (account_id) REFERENCES accounts (id),
+            FOREIGN KEY (customer_id) REFERENCES customers (id)
+        )''')
+        
+        # Expenses table
+        c.execute('''CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            expense_id TEXT UNIQUE NOT NULL,
+            expense_type TEXT NOT NULL,
+            amount DECIMAL(15,2) NOT NULL,
+            description TEXT,
+            date DATE NOT NULL,
+            customer_id INTEGER,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users (id),
+            FOREIGN KEY (customer_id) REFERENCES customers (id)
+        )''')
+        
+        # Income table
+        c.execute('''CREATE TABLE IF NOT EXISTS income (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            income_id TEXT UNIQUE NOT NULL,
+            income_type TEXT NOT NULL,
+            amount DECIMAL(15,2) NOT NULL,
+            description TEXT,
+            date DATE NOT NULL,
+            customer_id INTEGER,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users (id),
+            FOREIGN KEY (customer_id) REFERENCES customers (id)
+        )''')
+        
+        conn.commit()
+        conn.close()
+        
+    except Exception as e:
+        print(f"Database initialization error: {e}")
+        raise
 # ==================== UTILITY FUNCTIONS ====================
 def get_db():
     return sqlite3.connect('banking_system.db')

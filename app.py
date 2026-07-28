@@ -1892,6 +1892,7 @@ def journal_vouchers():
 
 # ==================== INCOME & EXPENSES ====================
 # ==================== INCOME & EXPENSES ====================
+# ==================== INCOME & EXPENSES ====================
 def income_expenses():
     if st.session_state.user['role'] not in ['admin','staff']: 
         st.error("Unauthorized"); return
@@ -1942,8 +1943,16 @@ def income_expenses():
                 except:
                     c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", 
                              (generate_id('INC'), it, amt, desc, dt, uid))
+                
+                # Create corresponding transaction entry (Debit to Cash/Bank)
+                txn_id = generate_id('TXN')
+                c.execute("""
+                    INSERT INTO transactions (transaction_id, account_id, transaction_type, amount, balance_after, description, reference_type, voucher_type, voucher_number, created_by) 
+                    VALUES (?, 0, 'CREDIT', ?, ?, ?, ?, 'RECEIPT', ?, ?)
+                """, (txn_id, amt, amt, f"Income: {it} - {desc}", mode, generate_voucher_number('RECEIPT'), uid))
+                
                 c.commit()
-                st.success(f"Successfully recorded Income: Rs{amt:,.2f} | Mode: {mode}")
+                st.success(f"Successfully recorded Income: Rs{amt:,.2f} | Mode: {mode} | Cash/Bank updated")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t2:
@@ -1983,8 +1992,16 @@ def income_expenses():
                 except:
                     c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", 
                              (generate_id('EXP'), et, amt, desc, dt, uid))
+                
+                # Create corresponding transaction entry (Credit to Cash/Bank)
+                txn_id = generate_id('TXN')
+                c.execute("""
+                    INSERT INTO transactions (transaction_id, account_id, transaction_type, amount, balance_after, description, reference_type, voucher_type, voucher_number, created_by) 
+                    VALUES (?, 0, 'DEBIT', ?, ?, ?, ?, 'PAYMENT', ?, ?)
+                """, (txn_id, amt, -amt, f"Expense: {et} - {desc}", mode, generate_voucher_number('PAYMENT'), uid))
+                
                 c.commit()
-                st.success(f"Successfully recorded Expense: Rs{amt:,.2f} | Mode: {mode}")
+                st.success(f"Successfully recorded Expense: Rs{amt:,.2f} | Mode: {mode} | Cash/Bank updated")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t3:
@@ -1995,7 +2012,7 @@ def income_expenses():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Income", f"Rs{total_income:,.2f}")
+            st.metric("Total Income (Cr)", f"Rs{total_income:,.2f}")
         with col2:
             interest_income = c.execute("SELECT COALESCE(SUM(amount),0) FROM income WHERE income_type='Interest Earned'").fetchone()[0]
             st.metric("Interest Income", f"Rs{interest_income:,.2f}")
@@ -2061,7 +2078,7 @@ def income_expenses():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Expenses", f"Rs{total_expenses:,.2f}")
+            st.metric("Total Expenses (Dr)", f"Rs{total_expenses:,.2f}")
         with col2:
             salary_exp = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_type='Salary & Wages'").fetchone()[0]
             st.metric("Salary & Wages", f"Rs{salary_exp:,.2f}")
@@ -2120,23 +2137,24 @@ def income_expenses():
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Income vs Expense Summary
-    st.markdown("---")
-    st.markdown("### Income vs Expense Summary")
-    
     total_inc = c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
     total_exp = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
     net = total_inc - total_exp
     
-    s1, s2, s3 = st.columns(3)
-    with s1:
-        st.metric("Total Income (Cr)", f"Rs{total_inc:,.2f}")
-    with s2:
-        st.metric("Total Expenses (Dr)", f"Rs{total_exp:,.2f}")
-    with s3:
-        if net >= 0:
-            st.metric("Net Surplus", f"Rs{net:,.2f}", delta="Profit")
-        else:
-            st.metric("Net Deficit", f"Rs{abs(net):,.2f}", delta="Loss", delta_color="inverse")
+    if total_inc > 0 or total_exp > 0:
+        st.markdown("---")
+        st.markdown("### Income vs Expense Summary")
+        
+        s1, s2, s3 = st.columns(3)
+        with s1:
+            st.metric("Total Income (Cr)", f"Rs{total_inc:,.2f}")
+        with s2:
+            st.metric("Total Expenses (Dr)", f"Rs{total_exp:,.2f}")
+        with s3:
+            if net >= 0:
+                st.metric("Net Surplus", f"Rs{net:,.2f}", delta="Profit")
+            else:
+                st.metric("Net Deficit", f"Rs{abs(net):,.2f}", delta="Loss", delta_color="inverse")
     
     c.close()
 

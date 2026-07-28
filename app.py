@@ -149,7 +149,7 @@ def delete_record(table, id_column, id_value, table_display):
     try:
         c.execute(f"DELETE FROM {table} WHERE {id_column}=?", (id_value,))
         c.commit()
-        st.success(f"✅ {table_display} deleted successfully!")
+        st.success(f"Success: {table_display} deleted successfully!")
         st.rerun()
     except Exception as e:
         st.error(f"Error deleting: {str(e)}")
@@ -495,11 +495,11 @@ def generate_journal_voucher_pdf(voucher_data, entries_data):
     if abs(total_dr - total_cr) < 0.01:
         pdf.set_font('Arial', 'B', 11)
         pdf.set_text_color(0, 128, 0)
-        pdf.cell(0, 7, '✓ VOUCHER IS BALANCED', 0, 1, 'C')
+        pdf.cell(0, 7, '[OK] VOUCHER IS BALANCED', 0, 1, 'C')
     else:
         pdf.set_font('Arial', 'B', 11)
         pdf.set_text_color(255, 0, 0)
-        pdf.cell(0, 7, f'✗ MISMATCH: Rs. {abs(total_dr - total_cr):,.2f}', 0, 1, 'C')
+        pdf.cell(0, 7, f'[!!] MISMATCH: Rs. {abs(total_dr - total_cr):,.2f}', 0, 1, 'C')
     
     pdf.set_text_color(0, 0, 0)
     pdf.ln(5)
@@ -625,7 +625,7 @@ def generate_balance_sheet_pdf(data):
     if abs(total_assets - liabilities_plus_capital) < 0.01:
         pdf.set_font('Arial', 'B', 11)
         pdf.set_text_color(0, 128, 0)
-        pdf.cell(0, 7, '✓ BALANCE SHEET IS BALANCED', 0, 1, 'C')
+        pdf.cell(0, 7, '[OK] BALANCE SHEET IS BALANCED', 0, 1, 'C')
     
     pdf.set_text_color(0, 0, 0)
     pdf.ln(5)
@@ -674,11 +674,11 @@ def generate_trial_balance_pdf(data):
     if abs(total_dr - total_cr) < 0.01:
         pdf.set_font('Arial', 'B', 11)
         pdf.set_text_color(0, 128, 0)
-        pdf.cell(0, 7, '✓ TRIAL BALANCE IS BALANCED', 0, 1, 'C')
+        pdf.cell(0, 7, '[OK] TRIAL BALANCE IS BALANCED', 0, 1, 'C')
     else:
         pdf.set_font('Arial', 'B', 11)
         pdf.set_text_color(255, 0, 0)
-        pdf.cell(0, 7, f'✗ MISMATCH: Rs. {abs(total_dr - total_cr):,.2f}', 0, 1, 'C')
+        pdf.cell(0, 7, f'[!!] MISMATCH: Rs. {abs(total_dr - total_cr):,.2f}', 0, 1, 'C')
     
     pdf.set_text_color(0, 0, 0)
     pdf.ln(5)
@@ -1077,7 +1077,7 @@ def dashboard():
 
 # ==================== CUSTOMER MANAGEMENT ====================
 def customer_mgmt():
-    t1, t2, t3, t4 = st.tabs(["➕ Register New Customer", "📋 View Customers", "✏️ Edit Customer (KYC Rejected)", "✏️ Edit Any Customer"])
+    t1, t2, t3, t4 = st.tabs(["Register New Customer", "View Customers", "Edit Customer (KYC Rejected)", "Edit Any Customer"])
     
     with t1:
         st.markdown('<div class="section-card"><h3>Register New Customer</h3>', unsafe_allow_html=True)
@@ -1116,7 +1116,7 @@ def customer_mgmt():
                         conn.execute("INSERT INTO customers (customer_id,first_name,last_name,date_of_birth,email,phone,address,city,state,pincode,pan_number,aadhar_number,pan_document,aadhar_document) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (cid, fn, ln, dob, email, phone, addr, city, state, pin, pan, aadhar, pan_doc.read(), aadhar_doc.read()))
                         conn.commit()
                         conn.close()
-                        st.success(f"✅ Customer successfully registered! ID: {cid}")
+                        st.success(f"Customer successfully registered! ID: {cid}")
                         st.balloons()
                     except Exception as e:
                         st.error(f"Database Error: {str(e)}")
@@ -1132,12 +1132,12 @@ def customer_mgmt():
             
             # Delete Customer
             st.markdown("---")
-            st.warning("⚠️ Delete Customer (This action cannot be undone)")
+            st.warning("Delete Customer (This action cannot be undone)")
             del_cust = st.selectbox("Select Customer to Delete", [f"{c[1]} - {c[2]} {c[3]}" for c in custs], key="del_cust")
-            if del_cust and st.button("🗑️ Delete Customer", use_container_width=True, key="del_cust_btn"):
+            if del_cust and st.button("Delete Customer", use_container_width=True, key="del_cust_btn"):
                 idx = [f"{c[1]} - {c[2]} {c[3]}" for c in custs].index(del_cust)
                 cust_id = custs[idx][0]
-                if st.button("⚠️ Confirm Delete", use_container_width=True, key="confirm_del_cust"):
+                if st.button("Confirm Delete", use_container_width=True, key="confirm_del_cust"):
                     delete_record('customers', 'id', cust_id, 'Customer')
         else:
             st.info("No customers registered yet.")
@@ -1205,7 +1205,7 @@ def customer_mgmt():
                             
                             conn.execute(update_query, params)
                             conn.commit()
-                            st.success(f"✅ Customer {cust[1]} updated successfully!")
+                            st.success(f"Customer {cust[1]} updated successfully!")
                             st.balloons()
                             st.rerun()
                         except Exception as e:
@@ -1229,11 +1229,11 @@ def customer_mgmt():
                 with st.form("edit_cust_any"):
                     current_kyc = cust[12]
                     if current_kyc == 'VERIFIED':
-                        st.success(f"✅ Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
+                        st.success(f"Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
                     elif current_kyc == 'PENDING':
-                        st.warning(f"⚠️ Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
+                        st.warning(f"Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
                     else:
-                        st.error(f"❌ Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
+                        st.error(f"Editing Customer ID: {cust[1]} | Current KYC Status: {current_kyc}")
                     
                     c1, c2 = st.columns(2)
                     with c1:
@@ -1298,7 +1298,7 @@ def customer_mgmt():
                             
                             conn.execute(update_query, params)
                             conn.commit()
-                            st.success(f"✅ Customer {cust[1]} updated successfully!")
+                            st.success(f"Customer {cust[1]} updated successfully!")
                             st.balloons()
                             st.rerun()
                         except Exception as e:
@@ -1316,23 +1316,23 @@ def kyc_verify():
     
     st.markdown('<div class="section-card"><h3>KYC Approval Center</h3>', unsafe_allow_html=True)
     if not pending:
-        st.markdown('<div class="alert alert-success">✅ All customer accounts are verified!</div>', unsafe_allow_html=True)
+        st.markdown('<div class="alert alert-success">All customer accounts are verified!</div>', unsafe_allow_html=True)
     else:
         for cust in pending:
-            with st.expander(f"📄 {cust[3]} {cust[4]} (ID: {cust[2]}) - Pending Verification", expanded=False):
+            with st.expander(f"{cust[3]} {cust[4]} (ID: {cust[2]}) - Pending Verification", expanded=False):
                 st.markdown(f"**Name:** {cust[3]} {cust[4]} | **Email:** {cust[7]} | **Phone:** {cust[8]} | **PAN:** {cust[12]}")
                 b1, b2, b3 = st.columns([1, 1, 2])
                 with b1:
-                    if st.button("✅ Approve KYC", key=f"a_{cust[0]}", use_container_width=True, type="primary"):
+                    if st.button("Approve KYC", key=f"a_{cust[0]}", use_container_width=True, type="primary"):
                         c.execute("UPDATE customers SET kyc_status='VERIFIED',kyc_verified_by=?,kyc_verified_at=CURRENT_TIMESTAMP WHERE id=?", (st.session_state.user['id'], cust[0]))
                         c.commit()
-                        st.success("✅ KYC Approved Successfully!")
+                        st.success("KYC Approved Successfully!")
                         st.rerun()
                 with b2:
-                    if st.button("❌ Reject KYC", key=f"r_{cust[0]}", use_container_width=True):
+                    if st.button("Reject KYC", key=f"r_{cust[0]}", use_container_width=True):
                         c.execute("UPDATE customers SET kyc_status='REJECTED' WHERE id=?", (cust[0],))
                         c.commit()
-                        st.error("❌ KYC Rejected! Customer can edit and resubmit.")
+                        st.error("KYC Rejected! Customer can edit and resubmit.")
                         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
     c.close()
@@ -1347,12 +1347,12 @@ def create_sb():
     
     st.markdown('<div class="section-card"><h3>Open Savings Account</h3>', unsafe_allow_html=True)
     if not custs:
-        st.markdown('<div class="alert alert-success">✅ All customers already have an SB account!</div>', unsafe_allow_html=True)
+        st.markdown('<div class="alert alert-success">All customers already have an SB account!</div>', unsafe_allow_html=True)
     else:
         cust_list = []
         for x in custs:
             kyc_status = c.execute("SELECT kyc_status FROM customers WHERE id=?", (x[0],)).fetchone()[0]
-            status_icon = "✅" if kyc_status == 'VERIFIED' else "⚠️" if kyc_status == 'PENDING' else "❌"
+            status_icon = "OK" if kyc_status == 'VERIFIED' else "!!" if kyc_status == 'PENDING' else "XX"
             cust_list.append(f"{x[1]} - {x[2]} (KYC: {status_icon} {kyc_status})")
         
         sel = st.selectbox("Select Customer", cust_list)
@@ -1362,23 +1362,23 @@ def create_sb():
             kyc_status = c.execute("SELECT kyc_status FROM customers WHERE id=?", (cust[0],)).fetchone()[0]
             
             if kyc_status == 'VERIFIED':
-                st.success("✅ Customer KYC is VERIFIED")
+                st.success("Customer KYC is VERIFIED")
             elif kyc_status == 'PENDING':
-                st.warning("⚠️ Customer KYC is PENDING - Account can still be opened")
+                st.warning("Customer KYC is PENDING - Account can still be opened")
             else:
-                st.warning("⚠️ Customer KYC is REJECTED - Account can still be opened")
+                st.warning("Customer KYC is REJECTED - Account can still be opened")
             
             with st.form("sb"):
                 c1, c2 = st.columns(2)
                 with c1: rate = st.number_input("Interest Rate (%)", 0.0, 10.0, 3.5, 0.25)
-                with c2: bal = st.number_input("Opening Balance (₹)", 0.0, step=100.0)
+                with c2: bal = st.number_input("Opening Balance (Rs)", 0.0, step=100.0)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.form_submit_button("Create Account", use_container_width=True, type="primary"):
                     an = generate_account_number('SB')
                     c.execute("INSERT INTO accounts (account_number,customer_id,account_type,balance,interest_rate,last_interest_calculation,total_interest_earned) VALUES (?,?,'SB',?,?,DATE('now'),0.00)", (an, cust[0], bal, rate))
                     c.commit()
-                    st.success(f"✅ Savings Account Created! Account Number: {an}")
+                    st.success(f"Savings Account Created! Account Number: {an}")
                     st.balloons()
     st.markdown('</div>', unsafe_allow_html=True)
     c.close()
@@ -1386,7 +1386,7 @@ def create_sb():
 # ==================== SB ACCOUNTS ====================
 def sb_accounts():
     c = get_db()
-    t1, t2, t3, t4 = st.tabs(["📋 Account List", "💸 Transact", "📜 Statement", "📈 Deposits Summary"])
+    t1, t2, t3, t4 = st.tabs(["Account List", "Transact", "Statement", "Deposits Summary"])
     role = st.session_state.user['role']
     uid = st.session_state.user['id']
     
@@ -1395,17 +1395,17 @@ def sb_accounts():
         q = "SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND " + ("c.user_id=?" if role == 'customer' else "1=1")
         accs = c.execute(q, (uid,) if role == 'customer' else ()).fetchall()
         if accs:
-            data = [{'Account Number': a[1], 'Customer Name': a[2], 'Total Deposits (₹)': a[3], 'Rate': f"{a[4]:.2f}%", 'Interest Earned (₹)': a[5], 'Total Amount (₹)': a[3]+a[5]} for a in accs]
-            st.dataframe(pd.DataFrame(data).style.format({'Total Deposits (₹)': '₹{:,.2f}', 'Interest Earned (₹)': '₹{:,.2f}', 'Total Amount (₹)': '₹{:,.2f}'}), use_container_width=True, height=350)
+            data = [{'Account Number': a[1], 'Customer Name': a[2], 'Total Deposits (Rs)': a[3], 'Rate': f"{a[4]:.2f}%", 'Interest Earned (Rs)': a[5], 'Total Amount (Rs)': a[3]+a[5]} for a in accs]
+            st.dataframe(pd.DataFrame(data).style.format({'Total Deposits (Rs)': '₹{:,.2f}', 'Interest Earned (Rs)': '₹{:,.2f}', 'Total Amount (Rs)': '₹{:,.2f}'}), use_container_width=True, height=350)
             
             # Delete Account
             st.markdown("---")
-            st.warning("⚠️ Delete Account (This action cannot be undone)")
+            st.warning("Delete Account (This action cannot be undone)")
             del_acc = st.selectbox("Select Account to Delete", [f"{a[1]} - {a[2]}" for a in accs], key="del_sb_acc")
-            if del_acc and st.button("🗑️ Delete Account", use_container_width=True, key="del_sb_acc_btn"):
+            if del_acc and st.button("Delete Account", use_container_width=True, key="del_sb_acc_btn"):
                 idx = [f"{a[1]} - {a[2]}" for a in accs].index(del_acc)
                 acc_id = accs[idx][0]
-                if st.button("⚠️ Confirm Delete", use_container_width=True, key="confirm_del_sb_acc"):
+                if st.button("Confirm Delete", use_container_width=True, key="confirm_del_sb_acc"):
                     delete_record('accounts', 'id', acc_id, 'SB Account')
         else:
             st.info("No active accounts found.")
@@ -1416,14 +1416,14 @@ def sb_accounts():
         q2 = "SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND " + ("c.user_id=?" if role == 'customer' else "1=1")
         accs = c.execute(q2, (uid,) if role == 'customer' else ()).fetchall()
         if accs:
-            sel = st.selectbox("Select Account", [f"{a[1]} - {a[2]} (Total Amount: ₹{a[3]+a[4]:,.2f})" for a in accs])
+            sel = st.selectbox("Select Account", [f"{a[1]} - {a[2]} (Total Amount: Rs{a[3]+a[4]:,.2f})" for a in accs])
             if sel:
-                idx = [f"{a[1]} - {a[2]} (Total Amount: ₹{a[3]+a[4]:,.2f})" for a in accs].index(sel)
+                idx = [f"{a[1]} - {a[2]} (Total Amount: Rs{a[3]+a[4]:,.2f})" for a in accs].index(sel)
                 acc = accs[idx]
                 st.markdown("<br>", unsafe_allow_html=True)
                 tt = st.radio("Transaction Type", ["Deposit", "Withdraw"], horizontal=True)
                 with st.form("tx"):
-                    amt = st.number_input("Amount (₹)", min_value=0.01, step=100.0)
+                    amt = st.number_input("Amount (Rs)", min_value=0.01, step=100.0)
                     c1, c2 = st.columns(2)
                     with c1: desc = st.text_input("Description / Notes")
                     with c2: mode = st.selectbox("Transaction Mode", ["CASH", "TRANSFER", "CHEQUE"])
@@ -1432,7 +1432,7 @@ def sb_accounts():
                     if st.form_submit_button("Process Transaction", use_container_width=True, type="primary"):
                         at = "DEPOSIT" if tt == "Deposit" else "WITHDRAWAL"
                         if at == "WITHDRAWAL" and amt > acc[3]:
-                            st.error("❌ Insufficient Funds for this withdrawal!")
+                            st.error("Insufficient Funds for this withdrawal!")
                         else:
                             nb = acc[3]+amt if at == "DEPOSIT" else acc[3]-amt
                             tdb = "CREDIT" if at == "DEPOSIT" else "DEBIT"
@@ -1441,7 +1441,7 @@ def sb_accounts():
                             c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)", (generate_id('TXN'), acc[0], tdb, amt, nb, desc, mode, vt, generate_voucher_number(vt), uid))
                             c.execute("UPDATE accounts SET balance=? WHERE id=?", (nb, acc[0]))
                             c.commit()
-                            st.success(f"✅ Transaction Successful! New Total Amount: ₹{nb+acc[4]:,.2f}")
+                            st.success(f"Transaction Successful! New Total Amount: Rs{nb+acc[4]:,.2f}")
                             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -1505,16 +1505,16 @@ def sb_accounts():
                         st.markdown("#### Account Summary")
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
-                            st.metric("Total Deposits", f"₹{balance:,.2f}")
+                            st.metric("Total Deposits", f"Rs{balance:,.2f}")
                         with col2:
-                            st.metric("Total Interest", f"₹{total_interest:,.2f}")
+                            st.metric("Total Interest", f"Rs{total_interest:,.2f}")
                         with col3:
                             st.metric("Interest Rate", f"{interest_rate}%")
                         with col4:
-                            st.metric("Total Amount", f"₹{balance + total_interest:,.2f}")
+                            st.metric("Total Amount", f"Rs{balance + total_interest:,.2f}")
                         
                         st.markdown("---")
-                        if st.button("🖨️ Print Statement (PDF)", use_container_width=True, type="primary"):
+                        if st.button("Print Statement (PDF)", use_container_width=True, type="primary"):
                             pdf_data = {
                                 'account_number': account_number,
                                 'total_deposits': balance,
@@ -1562,13 +1562,13 @@ def sb_accounts():
                                     os.unlink(tmp_file.name)
                                 
                                 st.download_button(
-                                    label="📥 Download Statement PDF",
+                                    label="Download Statement PDF",
                                     data=pdf_bytes,
                                     file_name=f"Statement_{account_number}_{datetime.now().strftime('%Y%m%d')}.pdf",
                                     mime="application/pdf",
                                     use_container_width=True
                                 )
-                                st.success("✅ Statement generated successfully!")
+                                st.success("Statement generated successfully!")
                             else:
                                 st.error("PDF generation library not available.")
                     else:
@@ -1585,9 +1585,9 @@ def sb_accounts():
             data = [{'Account': a[0], 'Customer': a[1], 'Total Deposits': a[2], 'Rate': f"{a[3]:.2f}%", 'Interest': a[4], 'Total Amount': a[2]+a[4]} for a in accs]
             
             m1, m2, m3 = st.columns(3)
-            with m1: st.metric("Total Deposits", f"₹{sum(d['Total Deposits'] for d in data):,.2f}")
-            with m2: st.metric("Total Interest", f"₹{sum(d['Interest'] for d in data):,.2f}")
-            with m3: st.metric("Gross Total", f"₹{sum(d['Total Amount'] for d in data):,.2f}")
+            with m1: st.metric("Total Deposits", f"Rs{sum(d['Total Deposits'] for d in data):,.2f}")
+            with m2: st.metric("Total Interest", f"Rs{sum(d['Interest'] for d in data):,.2f}")
+            with m3: st.metric("Gross Total", f"Rs{sum(d['Total Amount'] for d in data):,.2f}")
             
             st.markdown("<br>", unsafe_allow_html=True)
             st.dataframe(pd.DataFrame(data).style.format({'Total Deposits': '₹{:,.2f}', 'Interest': '₹{:,.2f}', 'Total Amount': '₹{:,.2f}'}), use_container_width=True)
@@ -1598,7 +1598,7 @@ def sb_accounts():
 def fixed_deposits():
     c = get_db()
     uid = st.session_state.user['id']
-    t1, t2, t3 = st.tabs(["💎 Open FD", "📋 Active FDs", "🔔 Maturity Alerts"])
+    t1, t2, t3 = st.tabs(["Open FD", "Active FDs", "Maturity Alerts"])
     
     with t1:
         st.markdown('<div class="section-card"><h3>Open Fixed Deposit</h3>', unsafe_allow_html=True)
@@ -1611,7 +1611,7 @@ def fixed_deposits():
                 with st.form("fd"):
                     d1, d2 = st.columns(2)
                     with d1: 
-                        p = st.number_input("Principal Amount (₹)", min_value=1000.0, step=1000.0, value=10000.0)
+                        p = st.number_input("Principal Amount (Rs)", min_value=1000.0, step=1000.0, value=10000.0)
                         t = st.selectbox("Tenure (Months)", [1, 3, 6, 9, 12, 18, 24, 36, 48, 60])
                         r = st.number_input("Interest Rate (%)", 3.0, 10.0, 6.5, 0.25)
                     with d2: 
@@ -1622,7 +1622,7 @@ def fixed_deposits():
                     md = sd + relativedelta(months=t)
                     ma = calculate_fd_maturity(p, r, t)
                     
-                    st.info(f"Calculated Maturity Date: **{md.strftime('%d-%m-%Y')}** | Maturity Value: **₹{ma:,.2f}**")
+                    st.info(f"Calculated Maturity Date: **{md.strftime('%d-%m-%Y')}** | Maturity Value: **Rs{ma:,.2f}**")
                     st.markdown("<br>", unsafe_allow_html=True)
                     
                     if st.form_submit_button("Open Fixed Deposit", use_container_width=True, type="primary"):
@@ -1633,7 +1633,7 @@ def fixed_deposits():
                         c.execute("INSERT INTO fixed_deposits (fd_number,account_id,principal_amount,interest_rate,start_date,maturity_date,maturity_amount,tenure_months,nominee_name,nominee_relation) VALUES (?,?,?,?,?,?,?,?,?,?)", (fdn, aid, p, r, sd, md, ma, t, nom, nom_rel))
                         c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,'CREDIT',?,?,'FD','FD_DEPOSIT','RECEIPT',?,?)", (generate_id('TXN'), aid, p, p, generate_voucher_number('RECEIPT'), uid))
                         c.commit()
-                        st.success(f"✅ FD Successfully Opened! FD ID: {fdn}")
+                        st.success(f"FD Successfully Opened! FD ID: {fdn}")
                         st.balloons()
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -1677,11 +1677,11 @@ def fixed_deposits():
                 df_data.append({
                     'FD Ref': fd[1],
                     'Customer': fd[2],
-                    'Principal (₹)': fd[3],
+                    'Principal (Rs)': fd[3],
                     'Rate': f"{fd[4]:.2f}%",
                     'Start Date': start_date.strftime('%d-%m-%Y') if start_date else 'N/A',
                     'Maturity Date': maturity_date.strftime('%d-%m-%Y') if maturity_date else 'N/A',
-                    'Maturity Value (₹)': fd[7],
+                    'Maturity Value (Rs)': fd[7],
                     'Tenure': f"{fd[8]} months",
                     'Nominee': fd[9] or 'N/A',
                     'Status': fd[11]
@@ -1689,27 +1689,27 @@ def fixed_deposits():
             
             if df_data:
                 st.dataframe(pd.DataFrame(df_data).style.format({
-                    'Principal (₹)': '₹{:,.2f}',
-                    'Maturity Value (₹)': '₹{:,.2f}'
+                    'Principal (Rs)': '₹{:,.2f}',
+                    'Maturity Value (Rs)': '₹{:,.2f}'
                 }), use_container_width=True)
                 
                 # Delete FD
                 st.markdown("---")
-                st.warning("⚠️ Delete Fixed Deposit (This action cannot be undone)")
+                st.warning("Delete Fixed Deposit (This action cannot be undone)")
                 del_fd = st.selectbox("Select FD to Delete", [f"{fd[1]} - {fd[2]}" for fd in fds], key="del_fd")
-                if del_fd and st.button("🗑️ Delete FD", use_container_width=True, key="del_fd_btn"):
+                if del_fd and st.button("Delete FD", use_container_width=True, key="del_fd_btn"):
                     idx = [f"{fd[1]} - {fd[2]}" for fd in fds].index(del_fd)
                     fd_id = fds[idx][0]
-                    if st.button("⚠️ Confirm Delete", use_container_width=True, key="confirm_del_fd"):
+                    if st.button("Confirm Delete", use_container_width=True, key="confirm_del_fd"):
                         delete_record('fixed_deposits', 'id', fd_id, 'Fixed Deposit')
                 
                 st.markdown("---")
-                st.subheader("📄 Print FD Receipt")
+                st.subheader("Print FD Receipt")
                 
-                fd_options = [f"{fd[1]} - {fd[2]} (₹{fd[7]:,.2f})" for fd in fds]
+                fd_options = [f"{fd[1]} - {fd[2]} (Rs{fd[7]:,.2f})" for fd in fds]
                 selected_fd = st.selectbox("Select FD to print receipt", fd_options, key="fd_print")
                 
-                if selected_fd and st.button("🖨️ Print FD Receipt (PDF)", use_container_width=True, type="primary"):
+                if selected_fd and st.button("Print FD Receipt (PDF)", use_container_width=True, type="primary"):
                     fd_idx = fd_options.index(selected_fd)
                     fd = fds[fd_idx]
                     
@@ -1768,13 +1768,13 @@ def fixed_deposits():
                             os.unlink(tmp_file.name)
                         
                         st.download_button(
-                            label="📥 Download FD Receipt PDF",
+                            label="Download FD Receipt PDF",
                             data=pdf_bytes,
                             file_name=f"FD_Receipt_{fd[1]}_{datetime.now().strftime('%Y%m%d')}.pdf",
                             mime="application/pdf",
                             use_container_width=True
                         )
-                        st.success("✅ FD Receipt generated successfully!")
+                        st.success("FD Receipt generated successfully!")
                     else:
                         st.error("PDF generation library not available.")
         else:
@@ -1793,7 +1793,7 @@ def fixed_deposits():
             WHERE fd.maturity_date BETWEEN ? AND ? AND fd.status='ACTIVE'
         """, (today, today+timedelta(days=30))).fetchall()
         if mat:
-            st.warning(f"🔔 {len(mat)} accounts are maturing soon")
+            st.warning(f"{len(mat)} accounts are maturing soon")
             mat_data = []
             for m in mat:
                 maturity_date = m[3]
@@ -1812,7 +1812,7 @@ def fixed_deposits():
                 })
             st.dataframe(pd.DataFrame(mat_data).style.format({'Maturity Value': '₹{:,.2f}'}), use_container_width=True)
         else:
-            st.success("✅ No imminent maturities to process.")
+            st.success("No imminent maturities to process.")
         st.markdown('</div>', unsafe_allow_html=True)
     c.close()
 
@@ -1820,7 +1820,7 @@ def fixed_deposits():
 def recurring_deposits():
     c = get_db()
     uid = st.session_state.user['id']
-    t1, t2, t3 = st.tabs(["🔄 Open RD", "📋 Active RDs", "💸 Pay Installment"])
+    t1, t2, t3 = st.tabs(["Open RD", "Active RDs", "Pay Installment"])
     
     with t1:
         st.markdown('<div class="section-card"><h3>Open Recurring Deposit</h3>', unsafe_allow_html=True)
@@ -1833,7 +1833,7 @@ def recurring_deposits():
                 with st.form("rd"):
                     d1, d2 = st.columns(2)
                     with d1: 
-                        m = st.number_input("Monthly Installment (₹)", min_value=100.0, step=100.0, value=1000.0)
+                        m = st.number_input("Monthly Installment (Rs)", min_value=100.0, step=100.0, value=1000.0)
                         t = st.selectbox("Tenure (Months)", [3, 6, 9, 12, 18, 24, 36, 48, 60])
                         r = st.number_input("Interest Rate (%)", 3.0, 10.0, 6.0, 0.25)
                     with d2: 
@@ -1844,7 +1844,7 @@ def recurring_deposits():
                     md = sd + relativedelta(months=t)
                     ma = calculate_rd_maturity(m, r, t)
                     
-                    st.info(f"Calculated Maturity Date: **{md.strftime('%d-%m-%Y')}** | Maturity Value: **₹{ma:,.2f}**")
+                    st.info(f"Calculated Maturity Date: **{md.strftime('%d-%m-%Y')}** | Maturity Value: **Rs{ma:,.2f}**")
                     st.markdown("<br>", unsafe_allow_html=True)
                     
                     if st.form_submit_button("Open Recurring Deposit", use_container_width=True, type="primary"):
@@ -1856,7 +1856,7 @@ def recurring_deposits():
                         c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,'CREDIT',?,?,'RD Install 1','RD_INSTALLMENT','RECEIPT',?,?)", (generate_id('TXN'), aid, m, m, generate_voucher_number('RECEIPT'), uid))
                         c.execute("UPDATE recurring_deposits SET installments_paid=1 WHERE rd_number=?", (rdn,))
                         c.commit()
-                        st.success(f"✅ RD Successfully Opened! RD ID: {rdn}")
+                        st.success(f"RD Successfully Opened! RD ID: {rdn}")
                         st.balloons()
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -1903,38 +1903,38 @@ def recurring_deposits():
                 df_data.append({
                     'RD Ref': rd[1],
                     'Customer': rd[2],
-                    'Monthly (₹)': rd[3],
+                    'Monthly (Rs)': rd[3],
                     'Rate': f"{rd[4]:.2f}%",
                     'Start Date': start_date.strftime('%d-%m-%Y') if start_date else 'N/A',
                     'Maturity Date': maturity_date.strftime('%d-%m-%Y') if maturity_date else 'N/A',
-                    'Maturity Value (₹)': rd[7],
+                    'Maturity Value (Rs)': rd[7],
                     'Progress': f"{rd[9]}/{rd[10]} ({progress:.0f}%)",
                     'Status': rd[13]
                 })
             
             if df_data:
                 st.dataframe(pd.DataFrame(df_data).style.format({
-                    'Monthly (₹)': '₹{:,.2f}',
-                    'Maturity Value (₹)': '₹{:,.2f}'
+                    'Monthly (Rs)': '₹{:,.2f}',
+                    'Maturity Value (Rs)': '₹{:,.2f}'
                 }), use_container_width=True)
                 
                 # Delete RD
                 st.markdown("---")
-                st.warning("⚠️ Delete Recurring Deposit (This action cannot be undone)")
+                st.warning("Delete Recurring Deposit (This action cannot be undone)")
                 del_rd = st.selectbox("Select RD to Delete", [f"{rd[1]} - {rd[2]}" for rd in rds], key="del_rd")
-                if del_rd and st.button("🗑️ Delete RD", use_container_width=True, key="del_rd_btn"):
+                if del_rd and st.button("Delete RD", use_container_width=True, key="del_rd_btn"):
                     idx = [f"{rd[1]} - {rd[2]}" for rd in rds].index(del_rd)
                     rd_id = rds[idx][0]
-                    if st.button("⚠️ Confirm Delete", use_container_width=True, key="confirm_del_rd"):
+                    if st.button("Confirm Delete", use_container_width=True, key="confirm_del_rd"):
                         delete_record('recurring_deposits', 'id', rd_id, 'Recurring Deposit')
                 
                 st.markdown("---")
-                st.subheader("📄 Print RD Receipt")
+                st.subheader("Print RD Receipt")
                 
-                rd_options = [f"{rd[1]} - {rd[2]} (₹{rd[7]:,.2f})" for rd in rds]
+                rd_options = [f"{rd[1]} - {rd[2]} (Rs{rd[7]:,.2f})" for rd in rds]
                 selected_rd = st.selectbox("Select RD to print receipt", rd_options, key="rd_print")
                 
-                if selected_rd and st.button("🖨️ Print RD Receipt (PDF)", use_container_width=True, type="primary"):
+                if selected_rd and st.button("Print RD Receipt (PDF)", use_container_width=True, type="primary"):
                     rd_idx = rd_options.index(selected_rd)
                     rd = rds[rd_idx]
                     
@@ -1994,13 +1994,13 @@ def recurring_deposits():
                             os.unlink(tmp_file.name)
                         
                         st.download_button(
-                            label="📥 Download RD Receipt PDF",
+                            label="Download RD Receipt PDF",
                             data=pdf_bytes,
                             file_name=f"RD_Receipt_{rd[1]}_{datetime.now().strftime('%Y%m%d')}.pdf",
                             mime="application/pdf",
                             use_container_width=True
                         )
-                        st.success("✅ RD Receipt generated successfully!")
+                        st.success("RD Receipt generated successfully!")
                     else:
                         st.error("PDF generation library not available.")
         else:
@@ -2024,7 +2024,7 @@ def recurring_deposits():
                 idx = [f"{r[1]} - {r[2]} (Paid: {r[4]}/{r[5]})" for r in rds].index(sel)
                 rd = rds[idx]
                 with st.form("pr"):
-                    amt = st.number_input("Installment Amount (₹)", value=float(rd[3]), min_value=float(rd[3]))
+                    amt = st.number_input("Installment Amount (Rs)", value=float(rd[3]), min_value=float(rd[3]))
                     st.markdown("<br>", unsafe_allow_html=True)
                     if st.form_submit_button("Pay Installment", use_container_width=True, type="primary"):
                         c.execute("INSERT INTO transactions (transaction_id,account_id,transaction_type,amount,balance_after,description,reference_type,voucher_type,voucher_number,created_by) VALUES (?,?,'CREDIT',?,?,?,'RD_INSTALLMENT','RECEIPT',?,?)", (generate_id('TXN'), rd[6], amt, amt, f"RD Installment {rd[4]+1} of {rd[5]}", generate_voucher_number('RECEIPT'), uid))
@@ -2033,7 +2033,7 @@ def recurring_deposits():
                         if np >= rd[5]: 
                             c.execute("UPDATE recurring_deposits SET status='MATURED' WHERE id=?", (rd[0],))
                         c.commit()
-                        st.success(f"✅ Installment Paid Successfully! Progress: {np}/{rd[5]}")
+                        st.success(f"Installment Paid Successfully! Progress: {np}/{rd[5]}")
                         st.rerun()
         else:
             st.info("All installments are up to date!")
@@ -2044,7 +2044,7 @@ def recurring_deposits():
 def transactions():
     c = get_db()
     uid = st.session_state.user['id']
-    st.markdown('<div class="section-card"><h3>💳 Global Transactions Ledger</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>Global Transactions Ledger</h3>', unsafe_allow_html=True)
     
     d1, d2, d3, d4 = st.columns(4)
     with d1: at = st.selectbox("Account Segment", ["All", "SB", "FD", "RD"])
@@ -2075,12 +2075,12 @@ def transactions():
         
         # Delete Transaction
         st.markdown("---")
-        st.warning("⚠️ Delete Transaction (This action cannot be undone)")
-        del_txn = st.selectbox("Select Transaction to Delete", [f"{t[1]} - {t[2]} - ₹{t[6]:,.2f}" for t in txns], key="del_txn")
-        if del_txn and st.button("🗑️ Delete Transaction", use_container_width=True, key="del_txn_btn"):
-            idx = [f"{t[1]} - {t[2]} - ₹{t[6]:,.2f}" for t in txns].index(del_txn)
+        st.warning("Delete Transaction (This action cannot be undone)")
+        del_txn = st.selectbox("Select Transaction to Delete", [f"{t[1]} - {t[2]} - Rs{t[6]:,.2f}" for t in txns], key="del_txn")
+        if del_txn and st.button("Delete Transaction", use_container_width=True, key="del_txn_btn"):
+            idx = [f"{t[1]} - {t[2]} - Rs{t[6]:,.2f}" for t in txns].index(del_txn)
             txn_id = txns[idx][0]
-            if st.button("⚠️ Confirm Delete", use_container_width=True, key="confirm_del_txn"):
+            if st.button("Confirm Delete", use_container_width=True, key="confirm_del_txn"):
                 delete_record('transactions', 'id', txn_id, 'Transaction')
     else:
         st.info("No transactions found for the given criteria.")
@@ -2200,7 +2200,7 @@ def journal_vouchers():
                     os.unlink(tmp_file.name)
                 
                 st.download_button(
-                    label=f"📥 Download PDF - {vd_data['voucher_number']}",
+                    label=f"Download PDF - {vd_data['voucher_number']}",
                     data=pdf_bytes,
                     file_name=f"JV_{vd_data['voucher_number']}.pdf",
                     mime="application/pdf",
@@ -2220,9 +2220,9 @@ def journal_vouchers():
         
         if vouchers:
             for v in vouchers:
-                status_icon = {'DRAFT': '🟡', 'POSTED': '🟢', 'CANCELLED': '🔴'}
+                status_icon = {'DRAFT': '(D)', 'POSTED': '(P)', 'CANCELLED': '(C)'}
                 cust_label = f" | Customer: {v[5]}" if v[5] != 'General' else ""
-                with st.expander(f"{status_icon.get(v[4], '⚪')} | {v[0]} | Date: {v[1]} | Rs.{v[3]:,.2f}{cust_label}"):
+                with st.expander(f"{status_icon.get(v[4], '(?)')} | {v[0]} | Date: {v[1]} | Rs.{v[3]:,.2f}{cust_label}"):
                     st.markdown(f"**Narration:** {safe_text(v[2])}")
                     if v[5] != 'General':
                         st.markdown(f"**Customer:** {safe_text(v[5])}")
@@ -2253,7 +2253,7 @@ def journal_vouchers():
                                 os.unlink(tmp_file.name)
                             
                             st.download_button(
-                                label=f"📥 Download PDF - {v[0]}",
+                                label=f"Download PDF - {v[0]}",
                                 data=pdf_bytes,
                                 file_name=f"JV_{v[0]}.pdf",
                                 mime="application/pdf",
@@ -2286,7 +2286,7 @@ def income_expenses():
         st.error("Unauthorized"); return
     c = get_db()
     uid = st.session_state.user['id']
-    t1, t2, t3, t4 = st.tabs(["💰 Record Income", "📉 Record Expense", "📋 View Income", "📋 View Expenses"])
+    t1, t2, t3, t4 = st.tabs(["Record Income", "Record Expense", "View Income", "View Expenses"])
     
     try:
         custs = c.execute("SELECT id, customer_id, first_name||' '||last_name FROM customers ORDER BY customer_id").fetchall()
@@ -2300,7 +2300,7 @@ def income_expenses():
             d1, d2 = st.columns(2)
             with d1: 
                 it = st.selectbox("Income Type", ["Interest Earned", "Fees & Charges", "Commission Income", "Other Income"])
-                amt = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
+                amt = st.number_input("Amount (Rs)", min_value=1.0, step=100.0)
                 sel_cust = st.selectbox("Related Customer (Optional)", cust_options, key="inc_cust")
             with d2: 
                 dt = st.date_input("Date", date.today(), key="id")
@@ -2319,7 +2319,7 @@ def income_expenses():
                 except:
                     c.execute("INSERT INTO income (income_id,income_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", (generate_id('INC'), it, amt, desc, dt, uid))
                 c.commit()
-                st.success(f"✅ Successfully recorded Income: ₹{amt:,.2f}")
+                st.success(f"Successfully recorded Income: Rs{amt:,.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t2:
@@ -2328,7 +2328,7 @@ def income_expenses():
             d1, d2 = st.columns(2)
             with d1: 
                 et = st.selectbox("Expense Type", ["Salary & Wages", "Rent & Utilities", "Operating Expenses", "Administrative Expenses", "Other Expenses"])
-                amt = st.number_input("Amount (₹)", min_value=1.0, step=100.0)
+                amt = st.number_input("Amount (Rs)", min_value=1.0, step=100.0)
                 sel_cust = st.selectbox("Related Customer (Optional)", cust_options, key="exp_cust")
             with d2: 
                 dt = st.date_input("Date", date.today(), key="ed")
@@ -2347,7 +2347,7 @@ def income_expenses():
                 except:
                     c.execute("INSERT INTO expenses (expense_id,expense_type,amount,description,date,created_by) VALUES (?,?,?,?,?,?)", (generate_id('EXP'), et, amt, desc, dt, uid))
                 c.commit()
-                st.success(f"✅ Successfully recorded Expense: ₹{amt:,.2f}")
+                st.success(f"Successfully recorded Expense: Rs{amt:,.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t3:
@@ -2363,12 +2363,12 @@ def income_expenses():
             
             # Delete Income
             st.markdown("---")
-            st.warning("⚠️ Delete Income Record")
-            del_inc = st.selectbox("Select Income to Delete", [f"{i[1]} - {i[2]} - ₹{i[3]:,.2f}" for i in inc_data], key="del_inc")
-            if del_inc and st.button("🗑️ Delete Income", use_container_width=True, key="del_inc_btn"):
-                idx = [f"{i[1]} - {i[2]} - ₹{i[3]:,.2f}" for i in inc_data].index(del_inc)
+            st.warning("Delete Income Record")
+            del_inc = st.selectbox("Select Income to Delete", [f"{i[1]} - {i[2]} - Rs{i[3]:,.2f}" for i in inc_data], key="del_inc")
+            if del_inc and st.button("Delete Income", use_container_width=True, key="del_inc_btn"):
+                idx = [f"{i[1]} - {i[2]} - Rs{i[3]:,.2f}" for i in inc_data].index(del_inc)
                 inc_id = inc_data[idx][0]
-                if st.button("⚠️ Confirm Delete", use_container_width=True, key="confirm_del_inc"):
+                if st.button("Confirm Delete", use_container_width=True, key="confirm_del_inc"):
                     delete_record('income', 'id', inc_id, 'Income')
         else:
             st.info("No income records found.")
@@ -2387,12 +2387,12 @@ def income_expenses():
             
             # Delete Expense
             st.markdown("---")
-            st.warning("⚠️ Delete Expense Record")
-            del_exp = st.selectbox("Select Expense to Delete", [f"{e[1]} - {e[2]} - ₹{e[3]:,.2f}" for e in exp_data], key="del_exp")
-            if del_exp and st.button("🗑️ Delete Expense", use_container_width=True, key="del_exp_btn"):
-                idx = [f"{e[1]} - {e[2]} - ₹{e[3]:,.2f}" for e in exp_data].index(del_exp)
+            st.warning("Delete Expense Record")
+            del_exp = st.selectbox("Select Expense to Delete", [f"{e[1]} - {e[2]} - Rs{e[3]:,.2f}" for e in exp_data], key="del_exp")
+            if del_exp and st.button("Delete Expense", use_container_width=True, key="del_exp_btn"):
+                idx = [f"{e[1]} - {e[2]} - Rs{e[3]:,.2f}" for e in exp_data].index(del_exp)
                 exp_id = exp_data[idx][0]
-                if st.button("⚠️ Confirm Delete", use_container_width=True, key="confirm_del_exp"):
+                if st.button("Confirm Delete", use_container_width=True, key="confirm_del_exp"):
                     delete_record('expenses', 'id', exp_id, 'Expense')
         else:
             st.info("No expense records found.")
@@ -2406,7 +2406,7 @@ def interest_calc():
         
     c = get_db()
     uid = st.session_state.user['id']
-    t1, t2, t3, t4 = st.tabs(["⚙️ Calculate & Post (All)", "👤 Calculate by Customer", "📜 History", "📉 Impact Check"])
+    t1, t2, t3, t4 = st.tabs(["Calculate & Post (All)", "Calculate by Customer", "History", "Impact Check"])
     
     with t1:
         st.markdown('<div class="section-card"><h3>Calculate Interest - All SB Accounts</h3>', unsafe_allow_html=True)
@@ -2417,7 +2417,7 @@ def interest_calc():
         if cfd > ctd:
             st.error("Invalid date range selected.")
         else:
-            st.info(f"Targeting: {cfd.strftime('%d-%m-%Y')} → {ctd.strftime('%d-%m-%Y')} ({(ctd-cfd).days+1} days)")
+            st.info(f"Targeting: {cfd.strftime('%d-%m-%Y')} -> {ctd.strftime('%d-%m-%Y')} ({(ctd-cfd).days+1} days)")
             
         accs = c.execute("SELECT a.id,a.account_number,c.first_name||' '||c.last_name,a.balance,a.interest_rate,COALESCE(a.total_interest_earned,0) FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
         
@@ -2428,7 +2428,7 @@ def interest_calc():
                 if st.button("Calculate & Post Interest", use_container_width=True, type="primary", key="cp"):
                     s, r = calculate_and_post_sb_interest(uid, cfd, ctd)
                     if s == "SUCCESS" and len(r) > 0:
-                        st.success(f"✅ Successfully posted ₹{sum(x['interest'] for x in r):,.2f} in interest!")
+                        st.success(f"Successfully posted Rs{sum(x['interest'] for x in r):,.2f} in interest!")
                         st.balloons()
                     else:
                         st.info(s if s != "SUCCESS" else "No interest to post for this period.")
@@ -2471,7 +2471,7 @@ def interest_calc():
                         if st.button("Calculate & Post Interest", use_container_width=True, type="primary", key="cp_cust"):
                             s, r = calculate_and_post_sb_interest(uid, cfd, ctd, selected_customer_id)
                             if s == "SUCCESS" and len(r) > 0:
-                                st.success(f"✅ Posted ₹{sum(x['interest'] for x in r):,.2f} interest for {selected_customer_name}")
+                                st.success(f"Posted Rs{sum(x['interest'] for x in r):,.2f} interest for {selected_customer_name}")
                                 st.balloons()
                             else:
                                 st.info(s if s != "SUCCESS" else f"No interest to post for {selected_customer_name}")
@@ -2502,12 +2502,12 @@ def interest_calc():
             
             # Delete Interest Record
             st.markdown("---")
-            st.warning("⚠️ Delete Interest Record")
-            del_int = st.selectbox("Select Interest Record to Delete", [f"{i[1]} - {i[2]} - ₹{i[5]:,.2f}" for i in h], key="del_int")
-            if del_int and st.button("🗑️ Delete Interest Record", use_container_width=True, key="del_int_btn"):
-                idx = [f"{i[1]} - {i[2]} - ₹{i[5]:,.2f}" for i in h].index(del_int)
+            st.warning("Delete Interest Record")
+            del_int = st.selectbox("Select Interest Record to Delete", [f"{i[1]} - {i[2]} - Rs{i[5]:,.2f}" for i in h], key="del_int")
+            if del_int and st.button("Delete Interest Record", use_container_width=True, key="del_int_btn"):
+                idx = [f"{i[1]} - {i[2]} - Rs{i[5]:,.2f}" for i in h].index(del_int)
                 int_id = h[idx][0]
-                if st.button("⚠️ Confirm Delete", use_container_width=True, key="confirm_del_int"):
+                if st.button("Confirm Delete", use_container_width=True, key="confirm_del_int"):
                     delete_record('interest_calculations', 'id', int_id, 'Interest Calculation')
         else:
             st.info("No interest calculation history available.")
@@ -2523,10 +2523,10 @@ def interest_calc():
                     jd[j[0]] = {'date': j[1], 'desc': j[2], 'amt': j[3], 'entries': []}
                 jd[j[0]]['entries'].append({'head': j[4], 'debit': j[5], 'credit': j[6]})
             for vn, d in jd.items():
-                with st.expander(f"📄 {vn} | Date: {d['date']} | Total: ₹{d['amt']:,.2f}"):
+                with st.expander(f"JV {vn} | Date: {d['date']} | Total: Rs{d['amt']:,.2f}"):
                     for e in d['entries']: 
-                        st.markdown(f"**{e['head']}**: Dr ₹{e['debit']:,.2f} | Cr ₹{e['credit']:,.2f}")
-            st.success(f"✅ Total TB Impact: ₹{sum(d['amt'] for d in jd.values()):,.2f}")
+                        st.markdown(f"**{e['head']}**: Dr Rs{e['debit']:,.2f} | Cr Rs{e['credit']:,.2f}")
+            st.success(f"Total TB Impact: Rs{sum(d['amt'] for d in jd.values()):,.2f}")
         else:
             st.info("No mapped Journal Vouchers found.")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -2538,7 +2538,7 @@ def trial_balance():
         st.error("Unauthorized"); return
     c = get_db()
     
-    st.markdown('<div class="section-card"><h3>⚖️ Corporate Trial Balance</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>Corporate Trial Balance</h3>', unsafe_allow_html=True)
     if st.button("Generate Ledger Balances", use_container_width=True, type="primary", key="tb"):
         td = []
         cash = c.execute("SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END),0) FROM transactions WHERE reference_type='CASH'").fetchone()[0]
@@ -2582,10 +2582,10 @@ def trial_balance():
             
             st.markdown("<br>", unsafe_allow_html=True)
             m1, m2, m3, m4 = st.columns(4)
-            with m1: st.metric("Total Assets", f"₹{sum(i['dr'] for i in td if i['cat']=='Asset'):,.2f}")
-            with m2: st.metric("Total Liabilities", f"₹{sum(i['cr'] for i in td if i['cat']=='Liability'):,.2f}")
-            with m3: st.metric("Gross Income", f"₹{sum(i['cr'] for i in td if i['cat']=='Income'):,.2f}")
-            with m4: st.metric("Gross Expenses", f"₹{sum(i['dr'] for i in td if i['cat']=='Expense'):,.2f}")
+            with m1: st.metric("Total Assets", f"Rs{sum(i['dr'] for i in td if i['cat']=='Asset'):,.2f}")
+            with m2: st.metric("Total Liabilities", f"Rs{sum(i['cr'] for i in td if i['cat']=='Liability'):,.2f}")
+            with m3: st.metric("Gross Income", f"Rs{sum(i['cr'] for i in td if i['cat']=='Income'):,.2f}")
+            with m4: st.metric("Gross Expenses", f"Rs{sum(i['dr'] for i in td if i['cat']=='Expense'):,.2f}")
             
             st.divider()
             
@@ -2600,19 +2600,19 @@ def trial_balance():
             st.divider()
             
             n1, n2, n3 = st.columns(3)
-            with n1: st.metric("Gross Debit Total", f"₹{dft:,.2f}")
-            with n2: st.metric("Gross Credit Total", f"₹{cft:,.2f}")
+            with n1: st.metric("Gross Debit Total", f"Rs{dft:,.2f}")
+            with n2: st.metric("Gross Credit Total", f"Rs{cft:,.2f}")
             with n3:
                 if abs(dft - cft) < 0.01:
-                    st.success("✅ ACCOUNTS FULLY BALANCED")
+                    st.success("ACCOUNTS FULLY BALANCED")
                 else:
-                    st.error(f"Mismatch Detected: ₹{abs(dft-cft):,.2f}")
+                    st.error(f"Mismatch Detected: Rs{abs(dft-cft):,.2f}")
                     
             st.markdown("<br>", unsafe_allow_html=True)
-            st.download_button("📥 Download Trial Balance as CSV", df.to_csv(index=False), "trial_balance.csv", "text/csv", key="dtb", use_container_width=True)
+            st.download_button("Download Trial Balance as CSV", df.to_csv(index=False), "trial_balance.csv", "text/csv", key="dtb", use_container_width=True)
             
             st.markdown("---")
-            if st.button("🖨️ Print Trial Balance (PDF)", use_container_width=True, type="primary"):
+            if st.button("Print Trial Balance (PDF)", use_container_width=True, type="primary"):
                 tb_data = {
                     'entries': [{'account_head': row['head'], 'debit': row['dr'], 'credit': row['cr']} for _, row in df.iterrows()],
                     'as_on': date.today().strftime('%d-%m-%Y')
@@ -2628,13 +2628,13 @@ def trial_balance():
                         os.unlink(tmp_file.name)
                     
                     st.download_button(
-                        label="📥 Download Trial Balance PDF",
+                        label="Download Trial Balance PDF",
                         data=pdf_bytes,
                         file_name=f"Trial_Balance_{datetime.now().strftime('%Y%m%d')}.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
-                    st.success("✅ Trial Balance PDF generated successfully!")
+                    st.success("Trial Balance PDF generated successfully!")
         else:
             st.info("No ledger entries found to construct Trial Balance.")
             
@@ -2647,7 +2647,7 @@ def balance_sheet():
         st.error("Unauthorized"); return
         
     c = get_db()
-    st.markdown('<div class="section-card"><h3>📊 Corporate Balance Sheet</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>Corporate Balance Sheet</h3>', unsafe_allow_html=True)
     
     if st.button("Generate Balance Sheet", use_container_width=True, type="primary", key="bs"):
         cash = c.execute("SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END),0) FROM transactions WHERE reference_type='CASH'").fetchone()[0]
@@ -2686,12 +2686,12 @@ def balance_sheet():
             st.markdown(f"""
             <div class="dash-card" style="text-align: left;">
                 <h3 style="color:#0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom:10px;">ASSETS</h3>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>💰 Cash in Hand:</span> <b>₹{cash:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>🏦 SB Receivables:</span> <b>₹{sb_bal:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>💎 FD Receivables:</span> <b>₹{fd:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>🔄 RD Receivables:</span> <b>₹{rd:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>Cash in Hand:</span> <b>Rs{cash:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>SB Receivables:</span> <b>Rs{sb_bal:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>FD Receivables:</span> <b>Rs{fd:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>RD Receivables:</span> <b>Rs{rd:,.2f}</b></p>
                 <hr style="border-color:#e2e8f0;">
-                <p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Assets:</b> <b>₹{ta:,.2f}</b></p>
+                <p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Assets:</b> <b>Rs{ta:,.2f}</b></p>
             </div>
             """, unsafe_allow_html=True)
             
@@ -2699,28 +2699,28 @@ def balance_sheet():
             st.markdown(f"""
             <div class="dash-card" style="text-align: left;">
                 <h3 style="color:#0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom:10px;">LIABILITIES</h3>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>📈 SB Interest Pay.:</span> <b>₹{sb_int:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>📈 FD Interest Pay.:</span> <b>₹{fd_int:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>🏦 SB Deposits:</span> <b>₹{sb_bal:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>💎 FD Deposits:</span> <b>₹{fd:,.2f}</b></p>
-                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>🔄 RD Deposits:</span> <b>₹{rd:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>SB Interest Pay.:</span> <b>Rs{sb_int:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>FD Interest Pay.:</span> <b>Rs{fd_int:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>SB Deposits:</span> <b>Rs{sb_bal:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>FD Deposits:</span> <b>Rs{fd:,.2f}</b></p>
+                <p style="font-size: 1rem; color:#334155; display:flex; justify-content:space-between;"><span>RD Deposits:</span> <b>Rs{rd:,.2f}</b></p>
                 <hr style="border-color:#e2e8f0;">
-                <p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Liabilities:</b> <b>₹{tl:,.2f}</b></p>
+                <p style="font-size: 1.2rem; color:#0f172a; display:flex; justify-content:space-between;"><b>Total Liabilities:</b> <b>Rs{tl:,.2f}</b></p>
             </div>
             """, unsafe_allow_html=True)
             
         st.markdown(f"""
         <div class="dash-card" style="background: linear-gradient(135deg, #0f2027, #2c5364); color: white;">
             <h3 style="color:white; margin:0;">TOTAL CAPITAL / EQUITY</h3>
-            <h2 style="color:white; margin: 10px 0;">₹{cap:,.2f}</h2>
+            <h2 style="color:white; margin: 10px 0;">Rs{cap:,.2f}</h2>
         </div>
         """, unsafe_allow_html=True)
         
         if abs(ta - (tl + cap)) < 0.01:
-            st.success(f"✅ Balance Sheet is perfectly aligned.")
+            st.success(f"Balance Sheet is perfectly aligned.")
         
         st.markdown("---")
-        if st.button("🖨️ Print Balance Sheet (PDF)", use_container_width=True, type="primary"):
+        if st.button("Print Balance Sheet (PDF)", use_container_width=True, type="primary"):
             pdf_data = {
                 'assets': assets_data,
                 'liabilities': liabilities_data,
@@ -2738,13 +2738,13 @@ def balance_sheet():
                     os.unlink(tmp_file.name)
                 
                 st.download_button(
-                    label="📥 Download Balance Sheet PDF",
+                    label="Download Balance Sheet PDF",
                     data=pdf_bytes,
                     file_name=f"Balance_Sheet_{datetime.now().strftime('%Y%m%d')}.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
-                st.success("✅ Balance Sheet PDF generated successfully!")
+                st.success("Balance Sheet PDF generated successfully!")
             
     st.markdown('</div>', unsafe_allow_html=True)
     c.close()
@@ -2754,7 +2754,7 @@ def profit_loss():
     if st.session_state.user['role'] not in ['admin','staff']: 
         st.error("Unauthorized"); return
     c = get_db()
-    st.markdown('<div class="section-card"><h3>💵 Profit & Loss Statement</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>Profit & Loss Statement</h3>', unsafe_allow_html=True)
     d1, d2 = st.columns(2)
     with d1: fd = st.date_input("Period Start", date.today().replace(month=1, day=1), key="plf")
     with d2: td = st.date_input("Period End", date.today(), key="plt")
@@ -2788,30 +2788,30 @@ def profit_loss():
             st.markdown('<div class="dash-card" style="text-align: left;"><h3 style="color:#0f172a;">INCOME</h3>', unsafe_allow_html=True)
             for item, amt in inc: 
                 if amt > 0:
-                    st.markdown(f"<p style='display:flex; justify-content:space-between; margin:5px 0;'><span>{item}:</span> <b>₹{amt:,.2f}</b></p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='display:flex; justify-content:space-between; margin:5px 0;'><span>{item}:</span> <b>Rs{amt:,.2f}</b></p>", unsafe_allow_html=True)
                     income_data.append({'name': item, 'amount': amt})
             if not income_data:
                 income_data.append({'name': 'No Income', 'amount': 0})
-            st.markdown(f'<hr><p style="display:flex; justify-content:space-between; font-size:1.1rem; color:#0f172a;"><b>Total Income:</b> <b>₹{ti:,.2f}</b></p></div>', unsafe_allow_html=True)
+            st.markdown(f'<hr><p style="display:flex; justify-content:space-between; font-size:1.1rem; color:#0f172a;"><b>Total Income:</b> <b>Rs{ti:,.2f}</b></p></div>', unsafe_allow_html=True)
             
         with q2:
             st.markdown('<div class="dash-card" style="text-align: left;"><h3 style="color:#0f172a;">EXPENSES</h3>', unsafe_allow_html=True)
             for item, amt in exp:
                 if amt > 0:
-                    st.markdown(f"<p style='display:flex; justify-content:space-between; margin:5px 0;'><span>{item}:</span> <b>₹{amt:,.2f}</b></p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='display:flex; justify-content:space-between; margin:5px 0;'><span>{item}:</span> <b>Rs{amt:,.2f}</b></p>", unsafe_allow_html=True)
                     expense_data.append({'name': item, 'amount': amt})
             if not expense_data:
                 expense_data.append({'name': 'No Expenses', 'amount': 0})
-            st.markdown(f'<hr><p style="display:flex; justify-content:space-between; font-size:1.1rem; color:#0f172a;"><b>Total Expenses:</b> <b>₹{te:,.2f}</b></p></div>', unsafe_allow_html=True)
+            st.markdown(f'<hr><p style="display:flex; justify-content:space-between; font-size:1.1rem; color:#0f172a;"><b>Total Expenses:</b> <b>Rs{te:,.2f}</b></p></div>', unsafe_allow_html=True)
             
         st.markdown("<br>", unsafe_allow_html=True)
         if net >= 0:
-            st.success(f"### Net Profit: ₹{net:,.2f}")
+            st.success(f"### Net Profit: Rs{net:,.2f}")
         else:
-            st.error(f"### Net Loss: ₹{abs(net):,.2f}")
+            st.error(f"### Net Loss: Rs{abs(net):,.2f}")
         
         st.markdown("---")
-        if st.button("🖨️ Print Profit & Loss Statement (PDF)", use_container_width=True, type="primary"):
+        if st.button("Print Profit & Loss Statement (PDF)", use_container_width=True, type="primary"):
             pdf_data = {
                 'income': income_data,
                 'expenses': expense_data
@@ -2827,13 +2827,13 @@ def profit_loss():
                     os.unlink(tmp_file.name)
                 
                 st.download_button(
-                    label="📥 Download Profit & Loss PDF",
+                    label="Download Profit & Loss PDF",
                     data=pdf_bytes,
                     file_name=f"Profit_Loss_{datetime.now().strftime('%Y%m%d')}.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
-                st.success("✅ Profit & Loss PDF generated successfully!")
+                st.success("Profit & Loss PDF generated successfully!")
             
     st.markdown('</div>', unsafe_allow_html=True)
     c.close()
@@ -2844,7 +2844,7 @@ def reports():
         st.error("Unauthorized"); return
         
     c = get_db()
-    st.markdown('<div class="section-card"><h3>📋 Reporting Engine</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><h3>Reporting Engine</h3>', unsafe_allow_html=True)
     rt = st.selectbox("Select Report Template", ["Customer List", "Interest Report", "Daily Transactions"])
     
     st.markdown("<hr>", unsafe_allow_html=True)
@@ -2884,7 +2884,7 @@ def reports():
     
     if report_data:
         st.markdown("---")
-        if st.button("🖨️ Print Report (PDF)", use_container_width=True, type="primary"):
+        if st.button("Print Report (PDF)", use_container_width=True, type="primary"):
             pdf = generate_report_pdf(report_data, rt, report_title)
             
             if pdf:
@@ -2896,13 +2896,13 @@ def reports():
                     os.unlink(tmp_file.name)
                 
                 st.download_button(
-                    label="📥 Download Report PDF",
+                    label="Download Report PDF",
                     data=pdf_bytes,
                     file_name=f"{report_title.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
-                st.success("✅ Report PDF generated successfully!")
+                st.success("Report PDF generated successfully!")
             
     st.markdown('</div>', unsafe_allow_html=True)
     c.close()
@@ -2917,7 +2917,7 @@ def my_details():
         st.markdown(f"""
         <div class="dash-card" style="background: linear-gradient(135deg, #0f2027, #2c5364); color: white; text-align: left; padding: 2rem;">
             <h2 style="color: white; margin-bottom: 0.5rem;">{cust[3]} {cust[4]}</h2>
-            <p style="color: #cbd5e1; font-size: 1rem; margin:0;">📋 ID: {cust[2]} &nbsp;|&nbsp; 📧 {cust[7]} &nbsp;|&nbsp; 📱 {cust[8]}</p>
+            <p style="color: #cbd5e1; font-size: 1rem; margin:0;">ID: {cust[2]} | {cust[7]} | {cust[8]}</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2929,8 +2929,8 @@ def my_details():
                 st.markdown(f"""
                 <div style="background:#f8fafc; padding:1.2rem; border-radius:12px; margin:0.5rem 0; border-left:4px solid #203a43; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
                     <h4 style="margin: 0 0 10px 0; color:#0f172a;">Account: {a[0]}</h4>
-                    <p style="margin: 0; color:#334155;">Total Deposits: <b>₹{a[1]:,.2f}</b> &nbsp;|&nbsp; Interest Earned: <b>₹{a[2]:,.2f}</b></p>
-                    <p style="margin: 5px 0 0 0; color:#0f172a; font-size:1.1rem;">Total Amount: <b>₹{mv:,.2f}</b></p>
+                    <p style="margin: 0; color:#334155;">Total Deposits: <b>Rs{a[1]:,.2f}</b> | Interest Earned: <b>Rs{a[2]:,.2f}</b></p>
+                    <p style="margin: 5px 0 0 0; color:#0f172a; font-size:1.1rem;">Total Amount: <b>Rs{mv:,.2f}</b></p>
                 </div>
                 """, unsafe_allow_html=True)
         else: 

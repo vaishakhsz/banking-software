@@ -1202,6 +1202,7 @@ def sb_accounts():
     c.close()
 
 # ==================== FIXED DEPOSITS ====================
+# ==================== FIXED DEPOSITS ====================
 def fixed_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1442,25 +1443,31 @@ def fixed_deposits():
         else:
             st.info("No active fixed deposits")
     
-    # Tab 3: Close FD
+    # Tab 3: Close FD - FIXED: Properly get SB account and balance
     with tab3:
         st.markdown("### 🔒 Close/Withdraw Fixed Deposit")
         
+        # Get active FDs with their SB account details
         active_fds = c.execute("""
-            SELECT fd.id, fd.fd_number, 
-                   c.id as customer_id,
-                   c.first_name||' '||c.last_name as customer,
-                   a.id as sb_account_id, 
-                   a.account_number as sb_account,
-                   a.balance as sb_balance,
-                   fd.principal_amount, fd.interest_rate, 
-                   fd.start_date, fd.maturity_date,
-                   fd.maturity_amount,
-                   julianday('now') - julianday(fd.start_date) as days_elapsed,
-                   julianday(fd.maturity_date) - julianday(fd.start_date) as total_days
+            SELECT 
+                fd.id, 
+                fd.fd_number, 
+                c.id as customer_id,
+                c.first_name||' '||c.last_name as customer,
+                sb.id as sb_account_id,
+                sb.account_number as sb_account,
+                COALESCE(sb.balance, 0) as sb_balance,
+                fd.principal_amount, 
+                fd.interest_rate, 
+                fd.start_date, 
+                fd.maturity_date,
+                fd.maturity_amount,
+                julianday('now') - julianday(fd.start_date) as days_elapsed,
+                julianday(fd.maturity_date) - julianday(fd.start_date) as total_days
             FROM fixed_deposits fd
             JOIN accounts a ON fd.account_id = a.id
             JOIN customers c ON a.customer_id = c.id
+            LEFT JOIN accounts sb ON c.id = sb.customer_id AND sb.account_type = 'SB' AND sb.status = 'ACTIVE'
             WHERE fd.status='ACTIVE'
             ORDER BY fd.maturity_date
         """).fetchall()
@@ -1469,6 +1476,9 @@ def fixed_deposits():
             st.info("No active fixed deposits to close")
             c.close()
             return
+        
+        # Debug: Show what we found
+        st.info(f"📊 Found {len(active_fds)} active FDs")
         
         fd_options = []
         for fd in active_fds:
@@ -1483,15 +1493,18 @@ def fixed_deposits():
             
             total_value = principal + accrued_interest
             
+            # Check if SB account exists
+            has_sb = sb_acc_id is not None
+            
             fd_options.append({
-                'display': f"{fd_number} - {customer} | Principal: Rs{principal:,.2f} | Value: Rs{total_value:,.2f}",
+                'display': f"{fd_number} - {customer} | {'✅' if has_sb else '❌'} SB: {sb_acc if sb_acc else 'No SB'} | Balance: Rs{sb_balance:,.2f} | Principal: Rs{principal:,.2f} | Value: Rs{total_value:,.2f}",
                 'fd_id': fd_id,
                 'fd_number': fd_number,
                 'customer_id': cust_id,
                 'customer': customer,
                 'sb_account_id': sb_acc_id,
-                'sb_account': sb_acc,
-                'sb_balance': sb_balance,
+                'sb_account': sb_acc if sb_acc else 'No SB Account',
+                'sb_balance': sb_balance if sb_acc_id else 0,
                 'principal': principal,
                 'rate': rate,
                 'start_date': start,
@@ -1501,7 +1514,8 @@ def fixed_deposits():
                 'total_value': total_value,
                 'days_elapsed': int(days_elapsed) if days_elapsed > 0 else 0,
                 'total_days': int(total_days) if total_days > 0 else 0,
-                'is_matured': datetime.strptime(maturity, '%Y-%m-%d').date() <= date.today()
+                'is_matured': datetime.strptime(maturity, '%Y-%m-%d').date() <= date.today(),
+                'has_sb': has_sb
             })
         
         selected_fd = st.selectbox(
@@ -1512,6 +1526,13 @@ def fixed_deposits():
         
         if selected_fd:
             st.markdown("---")
+            
+            # Show SB account status
+            if selected_fd['has_sb']:
+                st.success(f"✅ SB Account Found: {selected_fd['sb_account']} (Balance: Rs {selected_fd['sb_balance']:,.2f})")
+            else:
+                st.error("❌ No active SB account found for this customer! Please open an SB account first.")
+            
             st.markdown(f"""
             ### 📋 FD Details
             
@@ -1564,115 +1585,136 @@ def fixed_deposits():
             
             st.markdown("---")
             
-            if st.button("🔒 Close FD & Transfer to SB", use_container_width=True, type="primary"):
-                conn = get_db()
-                try:
-                    fd_acc = conn.execute("""
-                        SELECT account_id FROM fixed_deposits WHERE id=?
-                    """, (selected_fd['fd_id'],)).fetchone()
-                    
-                    if not fd_acc:
-                        st.error("❌ FD not found!")
-                        conn.close()
-                        return
-                    
-                    fd_account_id = fd_acc[0]
-                    
-                    conn.execute("""
-                        UPDATE fixed_deposits 
-                        SET status='CLOSED', closed_date=CURRENT_DATE, closed_amount=?
-                        WHERE id=?
-                    """, (final_amount, selected_fd['fd_id']))
-                    
-                    new_sb_balance = selected_fd['sb_balance'] + final_amount
-                    conn.execute("""
-                        UPDATE accounts 
-                        SET balance=? 
-                        WHERE id=?
-                    """, (new_sb_balance, selected_fd['sb_account_id']))
-                    
-                    conn.execute("""
-                        INSERT INTO transactions (
-                            transaction_id, account_id, transaction_type,
-                            amount, balance_after, description,
-                            reference_type, voucher_type, voucher_number,
-                            created_by
-                        ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """, (
-                        generate_id('TXN'), 
-                        selected_fd['sb_account_id'], 
-                        'CREDIT',
-                        final_amount, 
-                        new_sb_balance,
-                        f"FD Closure: {selected_fd['fd_number']} (Interest: Rs{selected_fd['accrued_interest']:,.2f})",
-                        'FD_CLOSURE', 
-                        'RECEIPT',
-                        generate_voucher_number('RECEIPT'),
-                        st.session_state.user['id']
-                    ))
-                    
-                    conn.execute("""
-                        INSERT INTO transactions (
-                            transaction_id, account_id, transaction_type,
-                            amount, balance_after, description,
-                            reference_type, voucher_type, voucher_number,
-                            created_by
-                        ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """, (
-                        generate_id('TXN'), 
-                        fd_account_id, 
-                        'DEBIT',
-                        final_amount, 
-                        0,
-                        f"FD Closure: {selected_fd['fd_number']}",
-                        'FD_CLOSURE', 
-                        'PAYMENT',
-                        generate_voucher_number('PAYMENT'),
-                        st.session_state.user['id']
-                    ))
-                    
-                    if selected_fd['accrued_interest'] > 0:
+            # Check if closure can be done
+            can_close = True
+            if not selected_fd['has_sb']:
+                can_close = False
+                st.error("❌ Cannot close: No SB account found to transfer funds!")
+            
+            if st.button("🔒 Close FD & Transfer to SB", use_container_width=True, type="primary", disabled=not can_close):
+                if not can_close:
+                    st.error("❌ Please fix the issues above before closing!")
+                else:
+                    conn = get_db()
+                    try:
+                        fd_acc = conn.execute("""
+                            SELECT account_id FROM fixed_deposits WHERE id=?
+                        """, (selected_fd['fd_id'],)).fetchone()
+                        
+                        if not fd_acc:
+                            st.error("❌ FD not found!")
+                            conn.close()
+                            return
+                        
+                        fd_account_id = fd_acc[0]
+                        
+                        # Update FD status
                         conn.execute("""
-                            INSERT INTO income (
-                                income_id, income_type, amount,
-                                description, date, customer_id,
+                            UPDATE fixed_deposits 
+                            SET status='CLOSED', closed_date=CURRENT_DATE, closed_amount=?
+                            WHERE id=?
+                        """, (final_amount, selected_fd['fd_id']))
+                        
+                        # Get current SB balance
+                        sb_balance_result = conn.execute("""
+                            SELECT balance FROM accounts WHERE id=?
+                        """, (selected_fd['sb_account_id'],)).fetchone()
+                        current_sb_balance = sb_balance_result[0] if sb_balance_result else 0
+                        
+                        new_sb_balance = current_sb_balance + final_amount
+                        conn.execute("""
+                            UPDATE accounts 
+                            SET balance=? 
+                            WHERE id=?
+                        """, (new_sb_balance, selected_fd['sb_account_id']))
+                        
+                        # Credit to SB account
+                        conn.execute("""
+                            INSERT INTO transactions (
+                                transaction_id, account_id, transaction_type,
+                                amount, balance_after, description,
+                                reference_type, voucher_type, voucher_number,
                                 created_by
-                            ) VALUES (?,?,?,?,?,?,?)
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?)
                         """, (
-                            generate_id('INC'),
-                            'Interest Earned',
-                            selected_fd['accrued_interest'],
-                            f"FD Interest: {selected_fd['fd_number']}",
-                            date.today(),
-                            selected_fd['customer_id'],
+                            generate_id('TXN'), 
+                            selected_fd['sb_account_id'], 
+                            'CREDIT',
+                            final_amount, 
+                            new_sb_balance,
+                            f"FD Closure: {selected_fd['fd_number']} (Interest: Rs{selected_fd['accrued_interest']:,.2f})",
+                            'FD_CLOSURE', 
+                            'RECEIPT',
+                            generate_voucher_number('RECEIPT'),
                             st.session_state.user['id']
                         ))
-                    
-                    conn.commit()
-                    conn.close()
-                    
-                    st.success(f"""
-                    ✅ **FD Closed Successfully!** 🎉
-                    
-                    📋 **Closure Summary:**
-                    - FD Number: **{selected_fd['fd_number']}**
-                    - Customer: **{selected_fd['customer']}**
-                    - Principal: **Rs {selected_fd['principal']:,.2f}**
-                    - Interest Earned: **Rs {selected_fd['accrued_interest']:,.2f}**
-                    - {'Penalty Applied' if penalty_applied else 'No Penalty'}
-                    - Total Amount: **Rs {final_amount:,.2f}**
-                    - Transferred to: **{selected_fd['sb_account']}**
-                    - New SB Balance: **Rs {new_sb_balance:,.2f}**
-                    """)
-                    st.balloons()
-                    st.rerun()
-                    
-                except Exception as e:
-                    conn.rollback()
-                    conn.close()
-                    st.error(f"❌ Error closing FD: {str(e)}")
+                        
+                        # Debit from FD account
+                        conn.execute("""
+                            INSERT INTO transactions (
+                                transaction_id, account_id, transaction_type,
+                                amount, balance_after, description,
+                                reference_type, voucher_type, voucher_number,
+                                created_by
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                        """, (
+                            generate_id('TXN'), 
+                            fd_account_id, 
+                            'DEBIT',
+                            final_amount, 
+                            0,
+                            f"FD Closure: {selected_fd['fd_number']}",
+                            'FD_CLOSURE', 
+                            'PAYMENT',
+                            generate_voucher_number('PAYMENT'),
+                            st.session_state.user['id']
+                        ))
+                        
+                        # Record interest income
+                        if selected_fd['accrued_interest'] > 0:
+                            conn.execute("""
+                                INSERT INTO income (
+                                    income_id, income_type, amount,
+                                    description, date, customer_id,
+                                    created_by
+                                ) VALUES (?,?,?,?,?,?,?)
+                            """, (
+                                generate_id('INC'),
+                                'Interest Earned',
+                                selected_fd['accrued_interest'],
+                                f"FD Interest: {selected_fd['fd_number']}",
+                                date.today(),
+                                selected_fd['customer_id'],
+                                st.session_state.user['id']
+                            ))
+                        
+                        conn.commit()
+                        conn.close()
+                        
+                        st.success(f"""
+                        ✅ **FD Closed Successfully!** 🎉
+                        
+                        📋 **Closure Summary:**
+                        - FD Number: **{selected_fd['fd_number']}**
+                        - Customer: **{selected_fd['customer']}**
+                        - Principal: **Rs {selected_fd['principal']:,.2f}**
+                        - Interest Earned: **Rs {selected_fd['accrued_interest']:,.2f}**
+                        - {'Penalty Applied' if penalty_applied else 'No Penalty'}
+                        - Total Amount: **Rs {final_amount:,.2f}**
+                        - Transferred to: **{selected_fd['sb_account']}**
+                        - New SB Balance: **Rs {new_sb_balance:,.2f}**
+                        """)
+                        st.balloons()
+                        st.rerun()
+                        
+                    except Exception as e:
+                        conn.rollback()
+                        conn.close()
+                        st.error(f"❌ Error closing FD: {str(e)}")
+                        import traceback
+                        st.error(traceback.format_exc())
     
-    # Tab 4: Closed FDs - FIXED: Using COALESCE for safety
+    # Tab 4: Closed FDs
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         

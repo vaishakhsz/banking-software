@@ -1223,7 +1223,7 @@ def sb_accounts():
                     amt = st.number_input("Amount (Rs)", min_value=0.01, step=100.0)
                     c1, c2 = st.columns(2)
                     with c1: desc = st.text_input("Description / Notes")
-                    with c2: mode = st.selectbox("Transaction Mode", ["CASH", "TRANSFER", "CHEQUE"])
+                    with c2: mode = st.selectbox("Transaction Mode", ["CASH", "BANK", "CHEQUE"])
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     if st.form_submit_button("Process Transaction", use_container_width=True, type="primary"):

@@ -82,6 +82,18 @@ def generate_account_number(t):
 def generate_voucher_number(v): 
     return f"{'PMT' if v=='PAYMENT' else 'RCT' if v=='RECEIPT' else 'JNL'}{datetime.now().strftime('%Y%m%d%H%M')}{str(uuid.uuid4().int)[:4]}"
 
+def safe_text(text):
+    """Safely convert any value to string, handling None and other types"""
+    if text is None:
+        return "N/A"
+    try:
+        return str(text)
+    except:
+        return "Error displaying text"
+
+def calculate_fd_maturity(p, r, m): 
+    return round(p * (1 + r/400) ** (m/3), 2)
+
 def calculate_fd_maturity(p, r, m): 
     return round(p * (1 + r/400) ** (m/3), 2)
 

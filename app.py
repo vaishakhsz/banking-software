@@ -23,6 +23,7 @@ except ImportError:
         FPDF = None
 
 # ==================== DATABASE SETUP ====================
+# ==================== DATABASE SETUP ====================
 def init_database():
     conn = sqlite3.connect('banking_system.db')
     c = conn.cursor()
@@ -94,11 +95,20 @@ def init_database():
         status TEXT DEFAULT 'ACTIVE',
         nominee_name TEXT,
         nominee_relation TEXT,
-        closed_date DATE,
-        closed_amount DECIMAL(15,2),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (account_id) REFERENCES accounts (id)
     )''')
+    
+    # Add missing columns to fixed_deposits if they don't exist
+    try:
+        c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date DATE")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    
+    try:
+        c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_amount DECIMAL(15,2)")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     
     # Recurring Deposits table
     c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (
@@ -1762,6 +1772,16 @@ def fixed_deposits():
             st.info("No closed fixed deposits found")
     
     c.close()
+    # Add missing columns to fixed_deposits if they don't exist
+try:
+    c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date DATE")
+except sqlite3.OperationalError:
+    pass  # Column already exists
+
+try:
+    c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_amount DECIMAL(15,2)")
+except sqlite3.OperationalError:
+    pass  # Column already exists
 
 # ==================== RECURRING DEPOSITS WITH PAYMENT ====================
 def recurring_deposits():

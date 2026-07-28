@@ -429,6 +429,7 @@ def interest_calculation():
     c.close()
 
 # ==================== TRIAL BALANCE (BALANCED) ====================
+# ==================== TRIAL BALANCE (BALANCED) ====================
 def trial_balance():
     if st.session_state.user['role'] not in ['admin','staff']:st.error("Unauthorized");return
     c=get_db()
@@ -452,9 +453,13 @@ def trial_balance():
         for rd in rds:
             if rd[2]>0:td.append({'head':f"RD:{rd[0]}({rd[1]})",'cat':'Asset','dr':rd[2],'cr':0})
         
-        # FD Interest Receivable (Asset - bank will earn this)
+        # FD Interest Receivable (Asset)
         fd_int_asset=c.execute("SELECT COALESCE(SUM(maturity_amount-principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
         if fd_int_asset>0:td.append({'head':'FD Interest Receivable','cat':'Asset','dr':fd_int_asset,'cr':0})
+        
+        # RD Interest Receivable (Asset)
+        rd_int_asset=c.execute("SELECT COALESCE(SUM(maturity_amount-(monthly_amount*installments_paid)),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
+        if rd_int_asset>0:td.append({'head':'RD Interest Receivable','cat':'Asset','dr':rd_int_asset,'cr':0})
         
         # JV Debit entries
         jv_dr=c.execute("SELECT je.account_head,SUM(je.debit_amount) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.debit_amount>0 GROUP BY je.account_head").fetchall()
@@ -472,13 +477,11 @@ def trial_balance():
         for si in sb_ints:
             if si[2]>0:td.append({'head':f"SB Int:{si[0]}({si[1]})",'cat':'Liability','dr':0,'cr':si[2]})
         
-        # FD Interest Payable (Liability - bank owes this interest)
-        fd_int_liability=c.execute("SELECT COALESCE(SUM(maturity_amount-principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
-        if fd_int_liability>0:td.append({'head':'FD Interest Payable','cat':'Liability','dr':0,'cr':fd_int_liability})
+        # FD Interest Payable (Liability)
+        if fd_int_asset>0:td.append({'head':'FD Interest Payable','cat':'Liability','dr':0,'cr':fd_int_asset})
         
-        # RD Interest Payable
-        rd_int_total=c.execute("SELECT COALESCE(SUM(maturity_amount-(monthly_amount*installments_paid)),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
-        if rd_int_total>0:td.append({'head':'RD Interest Payable','cat':'Liability','dr':0,'cr':rd_int_total})
+        # RD Interest Payable (Liability)
+        if rd_int_asset>0:td.append({'head':'RD Interest Payable','cat':'Liability','dr':0,'cr':rd_int_asset})
         
         # JV Credit entries
         jv_cr=c.execute("SELECT je.account_head,SUM(je.credit_amount) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.credit_amount>0 GROUP BY je.account_head").fetchall()
@@ -518,6 +521,7 @@ def trial_balance():
     c.close()
 
 # ==================== BALANCE SHEET (BALANCED) ====================
+# ==================== BALANCE SHEET (BALANCED) ====================
 def balance_sheet():
     if st.session_state.user['role'] not in ['admin','staff']:st.error("Unauthorized");return
     c=get_db()
@@ -526,13 +530,16 @@ def balance_sheet():
         assets=[];ta=0;liabilities=[];tl=0
         
         # === ASSETS ===
+        # Cash balances
         for mode,name in [('CASH','Cash in Hand'),('BANK','Cash in Bank'),('CHEQUE','Cash(Cheque)')]:
             bal=c.execute("SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END),0) FROM transactions WHERE reference_type=?",(mode,)).fetchone()[0]
             if bal>0:assets.append({'name':name,'amount':bal});ta+=bal
         
+        # FD Principal (Asset)
         fd_total=c.execute("SELECT COALESCE(SUM(principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
         if fd_total>0:assets.append({'name':'FD Deposits Held','amount':fd_total});ta+=fd_total
         
+        # RD Paid (Asset)
         rd_total=c.execute("SELECT COALESCE(SUM(monthly_amount*installments_paid),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
         if rd_total>0:assets.append({'name':'RD Deposits Held','amount':rd_total});ta+=rd_total
         
@@ -540,58 +547,84 @@ def balance_sheet():
         fd_int_asset=c.execute("SELECT COALESCE(SUM(maturity_amount-principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
         if fd_int_asset>0:assets.append({'name':'FD Interest Receivable','amount':fd_int_asset});ta+=fd_int_asset
         
+        # RD Interest Receivable (Asset)
+        rd_int_asset=c.execute("SELECT COALESCE(SUM(maturity_amount-(monthly_amount*installments_paid)),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
+        if rd_int_asset>0:assets.append({'name':'RD Interest Receivable','amount':rd_int_asset});ta+=rd_int_asset
+        
+        # Income Receivable
         total_inc=c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
         if total_inc>0:assets.append({'name':'Income Receivable','amount':total_inc});ta+=total_inc
         
+        # JV Debit entries
         jv_dr=c.execute("SELECT je.account_head,SUM(je.debit_amount) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.debit_amount>0 GROUP BY je.account_head").fetchall()
         for e in jv_dr:
             if e[1]>0:assets.append({'name':f'JV:{e[0]}','amount':e[1]});ta+=e[1]
         
         # === LIABILITIES ===
+        # SB Deposits
         sb_total=c.execute("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         if sb_total>0:liabilities.append({'name':'SB Deposits','amount':sb_total});tl+=sb_total
         
+        # SB Interest Payable
         sb_int=c.execute("SELECT COALESCE(SUM(total_interest_earned),0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         if sb_int>0:liabilities.append({'name':'SB Interest Payable','amount':sb_int});tl+=sb_int
         
         # FD Interest Payable (Liability)
-        fd_int_liability=c.execute("SELECT COALESCE(SUM(maturity_amount-principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
-        if fd_int_liability>0:liabilities.append({'name':'FD Interest Payable','amount':fd_int_liability});tl+=fd_int_liability
+        if fd_int_asset>0:liabilities.append({'name':'FD Interest Payable','amount':fd_int_asset});tl+=fd_int_asset
         
-        rd_int_total=c.execute("SELECT COALESCE(SUM(maturity_amount-(monthly_amount*installments_paid)),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
-        if rd_int_total>0:liabilities.append({'name':'RD Interest Payable','amount':rd_int_total});tl+=rd_int_total
+        # RD Interest Payable (Liability)
+        if rd_int_asset>0:liabilities.append({'name':'RD Interest Payable','amount':rd_int_asset});tl+=rd_int_asset
         
+        # Expenses Payable
         total_exp=c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
         if total_exp>0:liabilities.append({'name':'Expenses Payable','amount':total_exp});tl+=total_exp
         
+        # JV Credit entries
         jv_cr=c.execute("SELECT je.account_head,SUM(je.credit_amount) FROM journal_entries je JOIN journal_vouchers jv ON je.voucher_id=jv.id WHERE jv.status='POSTED' AND je.credit_amount>0 GROUP BY je.account_head").fetchall()
         for e in jv_cr:
             if e[1]>0:liabilities.append({'name':f'JV:{e[0]}','amount':e[1]});tl+=e[1]
         
+        # Capital = Assets - Liabilities
         capital=ta-tl
         
+        # Display
         col1,col2=st.columns(2)
         with col1:
-            st.markdown("### ASSETS")
+            st.markdown("### ASSETS (What Bank Owns/Will Receive)")
             for item in assets:st.markdown(f"- {item['name']}:Rs{item['amount']:,.2f}")
-            st.markdown(f"**Total:Rs{ta:,.2f}**")
+            st.markdown(f"**Total Assets:Rs{ta:,.2f}**")
         with col2:
-            st.markdown("### LIABILITIES")
+            st.markdown("### LIABILITIES (What Bank Owes)")
             for item in liabilities:st.markdown(f"- {item['name']}:Rs{item['amount']:,.2f}")
-            st.markdown(f"**Total:Rs{tl:,.2f}**")
-        st.markdown(f"### CAPITAL:Rs{capital:,.2f}")
+            st.markdown(f"**Total Liabilities:Rs{tl:,.2f}**")
         
-        if abs(ta-(tl+capital))<0.01:st.success(f"BALANCED! Assets(Rs{ta:,.2f})=Liabilities(Rs{tl:,.2f})+Capital(Rs{capital:,.2f})")
-        else:st.error(f"Diff:Rs{abs(ta-(tl+capital)):,.2f}")
+        st.markdown(f"### CAPITAL/EQUITY:Rs{capital:,.2f}")
         
+        # Balance check
+        if abs(ta-(tl+capital))<0.01:
+            st.success(f"PERFECTLY BALANCED!\n\nAssets(Rs{ta:,.2f}) = Liabilities(Rs{tl:,.2f}) + Capital(Rs{capital:,.2f})")
+        else:
+            st.error(f"Difference:Rs{abs(ta-(tl+capital)):,.2f}")
+        
+        # Explanation
         st.info(f"""
-        **Explanation:**
-        - FD Interest Receivable(Asset)=Rs{fd_int_asset:,.2f} & FD Interest Payable(Liability)=Rs{fd_int_liability:,.2f}
-        - These are equal because bank will receive interest from FD investments and must pay same to customers
-        - Both sides balanced by equal amounts
+        **How Interest Balances:**
+        
+        | Interest Type | Asset Side | Liability Side | Amount |
+        |--------------|------------|----------------|--------|
+        | FD Interest | FD Interest Receivable | FD Interest Payable | Rs{fd_int_asset:,.2f} |
+        | RD Interest | RD Interest Receivable | RD Interest Payable | Rs{rd_int_asset:,.2f} |
+        
+        - **Receivable (Asset)**: Bank will earn/receive this interest from investments
+        - **Payable (Liability)**: Bank owes this same interest to customers
+        - Both sides get equal amounts, maintaining the balance
+        
+        **Deposits Summary:**
+        - SB Deposits: Rs{sb_total:,.2f} (Liability)
+        - FD Deposits: Rs{fd_total:,.2f} (Asset)
+        - RD Deposits: Rs{rd_total:,.2f} (Asset)
         """)
     c.close()
-
 # ==================== PROFIT & LOSS ====================
 def profit_loss():
     if st.session_state.user['role'] not in ['admin','staff']:st.error("Unauthorized");return

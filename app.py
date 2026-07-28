@@ -1,17 +1,15 @@
 # 🏦 AASHA NIDHI PVT LIMITED BANK - COMPLETE SYSTEM
-# With Print/Download functionality for all modules
+# With Closed Accounts, Print/Download for all modules
 
 import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
-from decimal import Decimal
 import uuid
-import os
 import hashlib
 import tempfile
-import io
+import os
 import base64
 
 try:
@@ -22,8 +20,6 @@ except ImportError:
     except ImportError:
         FPDF = None
 
-# ==================== DATABASE SETUP ====================
-# ==================== DATABASE SETUP ====================
 # ==================== DATABASE SETUP ====================
 def init_database():
     try:
@@ -97,22 +93,11 @@ def init_database():
             status TEXT DEFAULT 'ACTIVE',
             nominee_name TEXT,
             nominee_relation TEXT,
+            closed_date DATE,
+            closed_amount DECIMAL(15,2),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (account_id) REFERENCES accounts (id)
         )''')
-        
-        # Add missing columns to fixed_deposits if they don't exist
-        try:
-            c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date DATE")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e):
-                print(f"Note: {e}")
-        
-        try:
-            c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_amount DECIMAL(15,2)")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e):
-                print(f"Note: {e}")
         
         # Recurring Deposits table
         c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (
@@ -229,10 +214,12 @@ def init_database():
         
         conn.commit()
         conn.close()
+        print("Database initialized successfully!")
         
     except Exception as e:
         print(f"Database initialization error: {e}")
         raise
+
 # ==================== UTILITY FUNCTIONS ====================
 def get_db():
     return sqlite3.connect('banking_system.db')
@@ -277,85 +264,68 @@ def calculate_rd_maturity(monthly, rate, months):
 def calculate_sb_interest(balance, rate, days):
     return 0 if balance <= 0 else round((balance * rate * days) / (100 * 365), 2)
 
-def get_minimum_balance(c, account_id, from_date, to_date):
-    try:
-        sb = c.execute("""
-            SELECT balance_after FROM transactions 
-            WHERE account_id=? AND DATE(created_at)<? 
-            ORDER BY created_at DESC LIMIT 1
-        """, (account_id, from_date)).fetchone()
-        
-        sb = sb[0] if sb else (c.execute("SELECT balance FROM accounts WHERE id=?", (account_id,)).fetchone() or [0])[0]
-        
-        txns = c.execute("""
-            SELECT balance_after FROM transactions 
-            WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ? 
-            ORDER BY created_at
-        """, (account_id, from_date, to_date)).fetchall()
-        
-        return min([sb] + [t[0] for t in txns]) if txns else sb
-    except:
-        return (c.execute("SELECT balance FROM accounts WHERE id=?", (account_id,)).fetchone() or [0])[0]
-
-# ==================== PDF GENERATION FUNCTIONS ====================
+# ==================== PDF GENERATION ====================
 def create_pdf(title, content, filename):
     """Generate PDF with proper formatting"""
     if FPDF is None:
         st.warning("⚠️ PDF library not available. Please install fpdf.")
         return None
     
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # Header
-    pdf.set_font('Arial', 'B', 16)
-    pdf.cell(190, 10, 'AASHA NIDHI PVT LIMITED BANK', 0, 1, 'C')
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(190, 6, 'Balaramapuram', 0, 1, 'C')
-    pdf.cell(190, 6, f'Date: {datetime.now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
-    pdf.line(10, 35, 200, 35)
-    
-    # Title
-    pdf.set_font('Arial', 'B', 14)
-    pdf.cell(190, 10, title, 0, 1, 'C')
-    pdf.ln(5)
-    
-    # Content
-    pdf.set_font('Arial', '', 10)
-    y = pdf.get_y()
-    
-    for line in content:
-        pdf.multi_cell(190, 6, line)
-        pdf.ln(2)
-    
-    # Footer
-    pdf.set_y(-30)
-    pdf.set_font('Arial', 'I', 8)
-    pdf.cell(190, 10, f'Generated on: {datetime.now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
-    pdf.cell(190, 10, 'This is a system generated statement', 0, 1, 'C')
-    
-    # Save to temp file
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-    pdf.output(temp_file.name)
-    temp_file.close()
-    
-    return temp_file.name
+    try:
+        pdf = FPDF()
+        pdf.add_page()
+        
+        # Header
+        pdf.set_font('Arial', 'B', 16)
+        pdf.cell(190, 10, 'AASHA NIDHI PVT LIMITED BANK', 0, 1, 'C')
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(190, 6, 'Balaramapuram', 0, 1, 'C')
+        pdf.cell(190, 6, f'Date: {datetime.now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
+        pdf.line(10, 35, 200, 35)
+        
+        # Title
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(190, 10, title, 0, 1, 'C')
+        pdf.ln(5)
+        
+        # Content
+        pdf.set_font('Arial', '', 10)
+        for line in content:
+            pdf.multi_cell(190, 6, line)
+            pdf.ln(2)
+        
+        # Footer
+        pdf.set_y(-30)
+        pdf.set_font('Arial', 'I', 8)
+        pdf.cell(190, 10, f'Generated on: {datetime.now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
+        pdf.cell(190, 10, 'This is a system generated statement', 0, 1, 'C')
+        
+        # Save to temp file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        pdf.output(temp_file.name)
+        temp_file.close()
+        
+        return temp_file.name
+    except Exception as e:
+        st.error(f"PDF generation error: {e}")
+        return None
 
-def create_download_button(data, filename, button_text="📥 Download PDF"):
-    """Create a download button for PDF or CSV"""
-    if isinstance(data, pd.DataFrame):
-        csv = data.to_csv(index=False)
-        b64 = base64.b64encode(csv.encode()).decode()
-        href = f'<a href="data:file/csv;base64,{b64}" download="{filename}.csv">📥 {button_text}</a>'
-        st.markdown(href, unsafe_allow_html=True)
-    else:
-        # PDF or other file
-        b64 = base64.b64encode(open(data, 'rb').read()).decode()
+def create_download_button(file_path, filename, button_text="📥 Download PDF"):
+    """Create a download button for PDF"""
+    if file_path and os.path.exists(file_path):
+        with open(file_path, 'rb') as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode()
         href = f'<a href="data:application/pdf;base64,{b64}" download="{filename}.pdf">📥 {button_text}</a>'
         st.markdown(href, unsafe_allow_html=True)
+        # Clean up temp file
+        try:
+            os.unlink(file_path)
+        except:
+            pass
 
 # ==================== CUSTOMER SELECTOR ====================
-def customer_selector(label="👤 Select Customer", key_prefix="cust", include_kyc_filter=False):
+def customer_selector(label="👤 Select Customer", key_prefix="cust"):
     c = get_db()
     
     query = """
@@ -462,28 +432,6 @@ def load_enterprise_css():
             font-size: 1rem;
         }
         
-        .metric-card {
-            background: white;
-            border-radius: 16px;
-            padding: 1.5rem;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-            border-left: 4px solid #2c5364;
-            transition: transform 0.2s;
-        }
-        
-        .metric-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
-        }
-        
-        .section-card {
-            background: white;
-            border-radius: 16px;
-            padding: 1.5rem;
-            margin-bottom: 1rem;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-        }
-        
         .stButton > button {
             border-radius: 10px !important;
             font-weight: 700 !important;
@@ -545,15 +493,6 @@ def load_enterprise_css():
             padding: 1rem;
             border-radius: 12px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        
-        @media print {
-            .no-print {
-                display: none !important;
-            }
-            .print-only {
-                display: block !important;
-            }
         }
     </style>
     """, unsafe_allow_html=True)
@@ -1226,7 +1165,7 @@ def sb_accounts():
     
     c.close()
 
-# ==================== FIXED DEPOSITS WITH CLOSURE ====================
+# ==================== FIXED DEPOSITS ====================
 def fixed_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1744,6 +1683,7 @@ def fixed_deposits():
             col2.metric("💎 Total Closed Amount", f"Rs {total_closed:,.2f}")
             col3.metric("📈 Total Interest Earned", f"Rs {total_interest:,.2f}")
             
+            # Download PDF
             if st.button("📥 Download Closed FDs Report", use_container_width=True):
                 content = [
                     "📋 CLOSED FIXED DEPOSITS REPORT",
@@ -1779,18 +1719,8 @@ def fixed_deposits():
             st.info("No closed fixed deposits found")
     
     c.close()
-    # Add missing columns to fixed_deposits if they don't exist
-try:
-    c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date DATE")
-except sqlite3.OperationalError:
-    pass  # Column already exists
 
-try:
-    c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_amount DECIMAL(15,2)")
-except sqlite3.OperationalError:
-    pass  # Column already exists
-
-# ==================== RECURRING DEPOSITS WITH PAYMENT ====================
+# ==================== RECURRING DEPOSITS ====================
 def recurring_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1985,7 +1915,6 @@ def recurring_deposits():
                 remaining = total - paid
                 
                 rd_data.append({
-                    'ID': rd_id,
                     'RD No': rd_number,
                     'Customer': customer,
                     'SB Account': sb_acc,
@@ -2021,11 +1950,10 @@ def recurring_deposits():
         else:
             st.info("No active recurring deposits")
     
-    # Tab 3: Pay Installment (NEW)
+    # Tab 3: Pay Installment
     with tab3:
         st.markdown("### 💳 Pay RD Installment")
         
-        # Get RDs with pending installments
         pending_rds = c.execute("""
             SELECT rd.id, rd.rd_number, 
                    c.id as customer_id,
@@ -2049,7 +1977,6 @@ def recurring_deposits():
             c.close()
             return
         
-        # Create selection options
         rd_options = []
         for rd in pending_rds:
             rd_id, rd_number, cust_id, customer, sb_acc_id, sb_acc, sb_balance, monthly, paid, total, rate, start, maturity, maturity_amount = rd
@@ -2128,7 +2055,6 @@ def recurring_deposits():
                 else:
                     conn = get_db()
                     try:
-                        # Get RD account ID
                         rd_acc = conn.execute("""
                             SELECT account_id FROM recurring_deposits WHERE id=?
                         """, (selected_rd['rd_id'],)).fetchone()
@@ -2142,14 +2068,12 @@ def recurring_deposits():
                         new_paid = selected_rd['installments_paid'] + 1
                         new_remaining = selected_rd['total_installments'] - new_paid
                         
-                        # Update RD installments
                         conn.execute("""
                             UPDATE recurring_deposits 
                             SET installments_paid=? 
                             WHERE id=?
                         """, (new_paid, selected_rd['rd_id']))
                         
-                        # If all installments paid, mark as MATURED
                         if new_paid >= selected_rd['total_installments']:
                             conn.execute("""
                                 UPDATE recurring_deposits 
@@ -2157,7 +2081,6 @@ def recurring_deposits():
                                 WHERE id=?
                             """, (selected_rd['rd_id'],))
                         
-                        # Debit from SB account if transfer
                         if payment_mode == "SB Transfer (Debit from SB)":
                             new_sb_balance = selected_rd['sb_balance'] - selected_rd['monthly_amount']
                             conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_sb_balance, selected_rd['sb_account_id']))
@@ -2177,7 +2100,6 @@ def recurring_deposits():
                                 st.session_state.user['id']
                             ))
                         
-                        # Credit RD account
                         rd_balance = selected_rd['monthly_amount'] * new_paid
                         conn.execute("""
                             INSERT INTO transactions (
@@ -2216,7 +2138,6 @@ def recurring_deposits():
                             - Installment: **{new_paid}/{selected_rd['total_installments']}**
                             - Amount: **Rs {selected_rd['monthly_amount']:,.2f}**
                             - Remaining: **{new_remaining} installments**
-                            - Next Payment: **Rs {selected_rd['monthly_amount']:,.2f}**
                             """)
                         
                         st.rerun()
@@ -2359,11 +2280,33 @@ def transactions():
         col3.metric("📊 Net Balance", f"Rs {(total_credit - total_debit):,.2f}")
         
         st.download_button(
-            "📥 Download Transactions",
+            "📥 Download Transactions CSV",
             df.to_csv(index=False),
             f"transactions_{from_date}_{to_date}.csv",
             "text/csv"
         )
+        
+        if st.button("📄 Print/PDF Transactions", use_container_width=True):
+            content = [
+                "📊 TRANSACTIONS REPORT",
+                "=" * 50,
+                f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}",
+                f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                "",
+                f"Total Credits: Rs {total_credit:,.2f}",
+                f"Total Debits: Rs {total_debit:,.2f}",
+                f"Net Balance: Rs {(total_credit - total_debit):,.2f}",
+                "",
+                "DETAILED TRANSACTIONS:",
+                "-" * 50
+            ]
+            
+            for txn in txns:
+                content.append(f"{txn[0]} | {txn[1]} | {txn[3]} | Rs {txn[4]:,.2f} | {txn[6]} | {txn[7]}")
+            
+            pdf_file = create_pdf("Transactions Report", content, "transactions")
+            if pdf_file:
+                create_download_button(pdf_file, "transactions_report", "📥 Download PDF Report")
     else:
         st.info("No transactions in this period")
 
@@ -2675,6 +2618,23 @@ def income_expenses():
             
             total_income = df['Total'].sum()
             st.info(f"💰 Total Income: Rs {total_income:,.2f}")
+            
+            if st.button("📄 Print/PDF Income Summary", use_container_width=True):
+                content = [
+                    "📊 INCOME SUMMARY REPORT",
+                    "=" * 50,
+                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                    f"Total Income: Rs {total_income:,.2f}",
+                    "",
+                    "DETAILED INCOME:",
+                    "-" * 30
+                ]
+                for item in income_data:
+                    content.append(f"{item[0]}: Rs {item[1]:,.2f} ({item[2]} entries)")
+                
+                pdf_file = create_pdf("Income Summary Report", content, "income_summary")
+                if pdf_file:
+                    create_download_button(pdf_file, "income_summary", "📥 Download PDF Report")
         else:
             st.info("No income recorded")
     
@@ -2698,6 +2658,23 @@ def income_expenses():
             
             total_expense = df['Total'].sum()
             st.info(f"💸 Total Expenses: Rs {total_expense:,.2f}")
+            
+            if st.button("📄 Print/PDF Expense Summary", use_container_width=True):
+                content = [
+                    "📊 EXPENSE SUMMARY REPORT",
+                    "=" * 50,
+                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                    f"Total Expenses: Rs {total_expense:,.2f}",
+                    "",
+                    "DETAILED EXPENSES:",
+                    "-" * 30
+                ]
+                for item in expense_data:
+                    content.append(f"{item[0]}: Rs {item[1]:,.2f} ({item[2]} entries)")
+                
+                pdf_file = create_pdf("Expense Summary Report", content, "expense_summary")
+                if pdf_file:
+                    create_download_button(pdf_file, "expense_summary", "📥 Download PDF Report")
         else:
             st.info("No expenses recorded")
     
@@ -2754,11 +2731,13 @@ def interest_calculation():
             interest_details = []
             
             for acc in accounts:
-                min_balance = get_minimum_balance(conn, acc[0], from_date, to_date)
+                min_balance = 0
+                # Simple interest calculation using average balance
+                balance = acc[3]
                 days = (to_date - from_date).days + 1
                 
-                if min_balance > 0 and days > 0:
-                    interest = calculate_sb_interest(min_balance, acc[4] or 3.5, days)
+                if balance > 0 and days > 0:
+                    interest = calculate_sb_interest(balance, acc[4] or 3.5, days)
                     
                     if interest > 0:
                         conn.execute("""
@@ -2774,13 +2753,13 @@ def interest_calculation():
                                 interest_earned, days_calculated,
                                 customer_id
                             ) VALUES (?,DATE('now'),?,?,?,?,?)
-                        """, (acc[0], min_balance, acc[4] or 3.5, interest, days, acc[5]))
+                        """, (acc[0], balance, acc[4] or 3.5, interest, days, acc[5]))
                         
                         total_interest += interest
                         interest_details.append({
                             'Account': acc[1],
                             'Customer': acc[2],
-                            'Min Balance': min_balance,
+                            'Balance': balance,
                             'Rate': acc[4] or 3.5,
                             'Days': days,
                             'Interest': interest
@@ -2793,7 +2772,7 @@ def interest_calculation():
                 df = pd.DataFrame(interest_details)
                 st.dataframe(
                     df.style.format({
-                        'Min Balance': 'Rs {:,.2f}',
+                        'Balance': 'Rs {:,.2f}',
                         'Interest': 'Rs {:,.2f}',
                         'Rate': '{:.2f}%'
                     }),
@@ -3023,7 +3002,7 @@ def trial_balance():
                         
                         pdf_file = create_pdf("Trial Balance Report", content, "trial_balance")
                         if pdf_file:
-                            create_download_button(pdf_file, "trial_balance", "📥 Download PDF")
+                            create_download_button(pdf_file, "trial_balance", "📥 Download PDF Report")
             else:
                 st.error(f"❌ Difference: Rs {abs(final_tdr - final_tcr):,.2f}")
     
@@ -3179,7 +3158,7 @@ def balance_sheet():
                     
                     pdf_file = create_pdf("Balance Sheet Report", content, "balance_sheet")
                     if pdf_file:
-                        create_download_button(pdf_file, "balance_sheet", "📥 Download PDF")
+                        create_download_button(pdf_file, "balance_sheet", "📥 Download PDF Report")
         else:
             st.error(f"❌ Difference: Rs {abs(ta - (tl + capital)):,.2f}")
     
@@ -3301,14 +3280,329 @@ def profit_loss():
                 
                 pdf_file = create_pdf("Profit & Loss Statement", content, "profit_loss")
                 if pdf_file:
-                    create_download_button(pdf_file, "profit_loss", "📥 Download PDF")
+                    create_download_button(pdf_file, "profit_loss", "📥 Download PDF Report")
     
     c.close()
 
 # ==================== REPORTS ====================
 def reports():
-    # Keep existing reports code
-    st.info("Reports - See previous implementation with print functionality")
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("❌ Unauthorized access!")
+        return
+    
+    c = get_db()
+    st.markdown("### 📄 Reports")
+    
+    report_type = st.selectbox(
+        "📊 Select Report",
+        ["Customer List", "Daily Transactions", "Account Statement", "Interest Summary", "FD Summary", "RD Summary"]
+    )
+    
+    if report_type == "Customer List":
+        st.markdown("### 👥 Customer List")
+        customers = c.execute("""
+            SELECT customer_id, first_name, last_name, email, phone, kyc_status, created_at
+            FROM customers
+            ORDER BY created_at DESC
+        """).fetchall()
+        
+        if customers:
+            df = pd.DataFrame(customers, columns=['ID', 'First', 'Last', 'Email', 'Phone', 'KYC', 'Joined'])
+            st.dataframe(df, use_container_width=True)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button("📥 Download CSV", df.to_csv(index=False), "customers_list.csv", "text/csv")
+            with col2:
+                if st.button("📄 Print/PDF Customer List", use_container_width=True):
+                    content = ["👥 CUSTOMER LIST", "=" * 50]
+                    content.append(f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}")
+                    content.append(f"Total Customers: {len(customers)}")
+                    content.append("")
+                    for cust in customers:
+                        content.append(f"ID: {cust[0]} | Name: {cust[1]} {cust[2]} | Email: {cust[3]} | Phone: {cust[4]} | KYC: {cust[5]}")
+                    
+                    pdf_file = create_pdf("Customer List Report", content, "customer_list")
+                    if pdf_file:
+                        create_download_button(pdf_file, "customer_list", "📥 Download PDF Report")
+        else:
+            st.info("No customers found")
+    
+    elif report_type == "Daily Transactions":
+        report_date = st.date_input("📅 Date", date.today())
+        
+        transactions = c.execute("""
+            SELECT t.transaction_id, 
+                   COALESCE(c.first_name||' '||c.last_name, 'System') as customer,
+                   t.transaction_type, t.amount, t.reference_type,
+                   t.description, t.created_at
+            FROM transactions t
+            LEFT JOIN accounts a ON t.account_id = a.id
+            LEFT JOIN customers c ON a.customer_id = c.id
+            WHERE DATE(t.created_at) = ?
+            ORDER BY t.created_at DESC
+        """, (report_date,)).fetchall()
+        
+        if transactions:
+            df = pd.DataFrame(transactions, columns=['Txn ID', 'Customer', 'Type', 'Amount', 'Mode', 'Description', 'Time'])
+            df['Time'] = pd.to_datetime(df['Time']).dt.strftime('%I:%M %p')
+            st.dataframe(df.style.format({'Amount': 'Rs {:,.2f}'}), use_container_width=True)
+            
+            total_credit = df[df['Type'] == 'CREDIT']['Amount'].sum()
+            total_debit = df[df['Type'] == 'DEBIT']['Amount'].sum()
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("💰 Credits", f"Rs {total_credit:,.2f}")
+            col2.metric("💳 Debits", f"Rs {total_debit:,.2f}")
+            col3.metric("📊 Net", f"Rs {(total_credit - total_debit):,.2f}")
+            
+            if st.button("📄 Print/PDF Daily Transactions", use_container_width=True):
+                content = [
+                    f"📊 DAILY TRANSACTIONS REPORT - {report_date.strftime('%d-%m-%Y')}",
+                    "=" * 50,
+                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                    f"Total Transactions: {len(transactions)}",
+                    f"Total Credits: Rs {total_credit:,.2f}",
+                    f"Total Debits: Rs {total_debit:,.2f}",
+                    f"Net: Rs {(total_credit - total_debit):,.2f}",
+                    "",
+                    "TRANSACTION DETAILS:",
+                    "-" * 50
+                ]
+                for txn in transactions:
+                    content.append(f"{txn[0]} | {txn[1]} | {txn[2]} | Rs {txn[3]:,.2f} | {txn[4]} | {txn[6]}")
+                
+                pdf_file = create_pdf("Daily Transactions Report", content, "daily_transactions")
+                if pdf_file:
+                    create_download_button(pdf_file, "daily_transactions", "📥 Download PDF Report")
+        else:
+            st.info("No transactions on this date")
+    
+    elif report_type == "Account Statement":
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
+            "👤 Select Customer",
+            "report_customer"
+        )
+        
+        if cust_id and acc_id:
+            col1, col2 = st.columns(2)
+            with col1:
+                from_date = st.date_input("📅 From", date.today() - timedelta(days=30))
+            with col2:
+                to_date = st.date_input("📅 To", date.today())
+            
+            if st.button("📊 Generate Statement"):
+                txns = c.execute("""
+                    SELECT transaction_id, transaction_type, amount,
+                           balance_after, description, reference_type,
+                           created_at
+                    FROM transactions
+                    WHERE account_id=? AND DATE(created_at) BETWEEN ? AND ?
+                    ORDER BY created_at DESC
+                """, (acc_id, from_date, to_date)).fetchall()
+                
+                if txns:
+                    df = pd.DataFrame(txns, columns=['ID', 'Type', 'Amount', 'Balance', 'Description', 'Mode', 'Date'])
+                    df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%d-%m-%Y %I:%M %p')
+                    st.dataframe(
+                        df.style.format({
+                            'Amount': 'Rs {:,.2f}',
+                            'Balance': 'Rs {:,.2f}'
+                        }),
+                        use_container_width=True
+                    )
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(
+                            "📥 Download Statement CSV",
+                            df.to_csv(index=False),
+                            f"statement_{acc_number}_{from_date}_{to_date}.csv",
+                            "text/csv"
+                        )
+                    with col2:
+                        if st.button("📄 Print/PDF Statement", use_container_width=True):
+                            content = [
+                                f"📋 ACCOUNT STATEMENT - {acc_number}",
+                                "=" * 50,
+                                f"Customer: {cust_name}",
+                                f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}",
+                                f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                                "",
+                                "TRANSACTION DETAILS:",
+                                "-" * 50
+                            ]
+                            for txn in txns:
+                                content.append(f"{txn[0]} | {txn[1]} | Rs {txn[2]:,.2f} | Rs {txn[3]:,.2f} | {txn[4]} | {txn[6]}")
+                            
+                            content.append("")
+                            content.append(f"Opening Balance: Rs {balance:,.2f}")
+                            content.append(f"Closing Balance: Rs {txns[0][3] if txns else balance:,.2f}")
+                            
+                            pdf_file = create_pdf(f"Account Statement - {acc_number}", content, f"statement_{acc_number}")
+                            if pdf_file:
+                                create_download_button(pdf_file, f"statement_{acc_number}", "📥 Download PDF Report")
+                else:
+                    st.info("No transactions in this period")
+    
+    elif report_type == "Interest Summary":
+        st.markdown("### 📊 Interest Summary")
+        interest_data = c.execute("""
+            SELECT c.first_name||' '||c.last_name as customer,
+                   a.account_number,
+                   COALESCE(a.total_interest_earned, 0) as interest_earned,
+                   a.interest_rate
+            FROM customers c
+            JOIN accounts a ON c.id = a.customer_id
+            WHERE a.account_type='SB' AND a.status='ACTIVE'
+            ORDER BY interest_earned DESC
+        """).fetchall()
+        
+        if interest_data:
+            df = pd.DataFrame(interest_data, columns=['Customer', 'Account', 'Interest Earned', 'Rate'])
+            st.dataframe(
+                df.style.format({
+                    'Interest Earned': 'Rs {:,.2f}',
+                    'Rate': '{:.2f}%'
+                }),
+                use_container_width=True
+            )
+            total_interest = df['Interest Earned'].sum()
+            st.info(f"💰 Total Interest Earned: Rs {total_interest:,.2f}")
+            
+            if st.button("📄 Print/PDF Interest Summary", use_container_width=True):
+                content = [
+                    "📊 INTEREST SUMMARY REPORT",
+                    "=" * 50,
+                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                    f"Total Interest Earned: Rs {total_interest:,.2f}",
+                    "",
+                    "DETAILED SUMMARY:",
+                    "-" * 50
+                ]
+                for item in interest_data:
+                    content.append(f"{item[0]} | {item[1]} | Rs {item[2]:,.2f} | {item[3]}%")
+                
+                pdf_file = create_pdf("Interest Summary Report", content, "interest_summary")
+                if pdf_file:
+                    create_download_button(pdf_file, "interest_summary", "📥 Download PDF Report")
+        else:
+            st.info("No interest data available")
+    
+    elif report_type == "FD Summary":
+        st.markdown("### 📊 FD Summary Report")
+        
+        fds = c.execute("""
+            SELECT fd.fd_number, c.first_name||' '||c.last_name as customer,
+                   fd.principal_amount, fd.interest_rate,
+                   fd.start_date, fd.maturity_date,
+                   fd.maturity_amount, fd.status
+            FROM fixed_deposits fd
+            JOIN accounts a ON fd.account_id = a.id
+            JOIN customers c ON a.customer_id = c.id
+            ORDER BY fd.status, fd.maturity_date
+        """).fetchall()
+        
+        if fds:
+            df = pd.DataFrame(fds, columns=['FD No', 'Customer', 'Principal', 'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 'Status'])
+            st.dataframe(
+                df.style.format({
+                    'Principal': 'Rs {:,.2f}',
+                    'Maturity Amount': 'Rs {:,.2f}',
+                    'Rate': '{:.2f}%'
+                }),
+                use_container_width=True
+            )
+            
+            active_fd = df[df['Status'] == 'ACTIVE']['Principal'].sum()
+            closed_fd = df[df['Status'] == 'CLOSED']['Principal'].sum()
+            total_fd = df['Principal'].sum()
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("🟢 Active FD", f"Rs {active_fd:,.2f}")
+            col2.metric("🔴 Closed FD", f"Rs {closed_fd:,.2f}")
+            col3.metric("💰 Total FD", f"Rs {total_fd:,.2f}")
+            
+            if st.button("📄 Print/PDF FD Summary", use_container_width=True):
+                content = [
+                    "📊 FIXED DEPOSITS SUMMARY REPORT",
+                    "=" * 50,
+                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                    f"Total FDs: {len(fds)}",
+                    f"Active FD Amount: Rs {active_fd:,.2f}",
+                    f"Closed FD Amount: Rs {closed_fd:,.2f}",
+                    f"Total FD Amount: Rs {total_fd:,.2f}",
+                    "",
+                    "FD DETAILS:",
+                    "-" * 50
+                ]
+                for fd in fds:
+                    content.append(f"{fd[0]} | {fd[1]} | Rs {fd[2]:,.2f} | {fd[3]}% | {fd[4]} | {fd[5]} | {fd[7]}")
+                
+                pdf_file = create_pdf("FD Summary Report", content, "fd_summary")
+                if pdf_file:
+                    create_download_button(pdf_file, "fd_summary", "📥 Download PDF Report")
+        else:
+            st.info("No fixed deposits found")
+    
+    elif report_type == "RD Summary":
+        st.markdown("### 📊 RD Summary Report")
+        
+        rds = c.execute("""
+            SELECT rd.rd_number, c.first_name||' '||c.last_name as customer,
+                   rd.monthly_amount, rd.installments_paid,
+                   rd.total_installments, rd.interest_rate,
+                   rd.start_date, rd.maturity_date,
+                   rd.maturity_amount, rd.status
+            FROM recurring_deposits rd
+            JOIN accounts a ON rd.account_id = a.id
+            JOIN customers c ON a.customer_id = c.id
+            ORDER BY rd.status, rd.maturity_date
+        """).fetchall()
+        
+        if rds:
+            df = pd.DataFrame(rds, columns=['RD No', 'Customer', 'Monthly', 'Paid', 'Total', 'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 'Status'])
+            st.dataframe(
+                df.style.format({
+                    'Monthly': 'Rs {:,.2f}',
+                    'Maturity Amount': 'Rs {:,.2f}',
+                    'Rate': '{:.2f}%'
+                }),
+                use_container_width=True
+            )
+            
+            active_rd = df[df['Status'] == 'ACTIVE']['Monthly'].sum()
+            matured_rd = df[df['Status'] == 'MATURED']['Monthly'].sum()
+            total_rd = df['Monthly'].sum()
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("🟢 Active RD", f"Rs {active_rd:,.2f}")
+            col2.metric("🔴 Matured RD", f"Rs {matured_rd:,.2f}")
+            col3.metric("💰 Total RD", f"Rs {total_rd:,.2f}")
+            
+            if st.button("📄 Print/PDF RD Summary", use_container_width=True):
+                content = [
+                    "📊 RECURRING DEPOSITS SUMMARY REPORT",
+                    "=" * 50,
+                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                    f"Total RDs: {len(rds)}",
+                    f"Active RD Amount: Rs {active_rd:,.2f}",
+                    f"Matured RD Amount: Rs {matured_rd:,.2f}",
+                    f"Total RD Amount: Rs {total_rd:,.2f}",
+                    "",
+                    "RD DETAILS:",
+                    "-" * 50
+                ]
+                for rd in rds:
+                    content.append(f"{rd[0]} | {rd[1]} | Rs {rd[2]:,.2f} | {rd[3]}/{rd[4]} | {rd[5]}% | {rd[6]} | {rd[7]} | {rd[9]}")
+                
+                pdf_file = create_pdf("RD Summary Report", content, "rd_summary")
+                if pdf_file:
+                    create_download_button(pdf_file, "rd_summary", "📥 Download PDF Report")
+        else:
+            st.info("No recurring deposits found")
+    
+    c.close()
 
 # ==================== MY ACCOUNTS ====================
 def my_accounts():
@@ -3400,3 +3694,5 @@ def my_transactions():
 # ==================== MAIN EXECUTION ====================
 if __name__ == "__main__":
     main()
+
+    

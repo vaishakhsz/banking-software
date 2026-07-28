@@ -1482,13 +1482,6 @@ def fixed_deposits():
         """).fetchall()
         
         if fds:
-            df = pd.DataFrame(fds, columns=[
-                'ID', 'FD No', 'Customer ID', 'Customer', 'SB Account ID', 
-                'SB Account', 'Principal', 'Rate', 'Start Date', 'Maturity Date',
-                'Maturity Amount', 'Status', 'Maturity Status', 'Days Elapsed', 'Total Days'
-            ])
-            
-            # Calculate accrued interest for each FD
             fd_data = []
             for fd in fds:
                 fd_id, fd_number, cust_id, customer, sb_acc_id, sb_acc, principal, rate, start, maturity, maturity_amount, status, maturity_status, days_elapsed, total_days = fd
@@ -1633,9 +1626,11 @@ def fixed_deposits():
             | **Total Value** | Rs {selected_fd['total_value']:,.2f} |
             """)
             
-            # Check maturity status
+            # Check maturity status and set final amount
             if selected_fd['is_matured']:
                 st.success("✅ This FD has matured and is eligible for closure with full interest!")
+                final_amount = selected_fd['total_value']
+                penalty_applied = False
             else:
                 st.warning(f"""
                 ⚠️ **Early Closure Warning:**
@@ -1657,6 +1652,7 @@ def fixed_deposits():
                 # Calculate penalty
                 penalty_amount = (selected_fd['principal'] * penalty_rate * selected_fd['days_elapsed']) / (100 * 365)
                 final_amount = selected_fd['total_value'] - penalty_amount
+                penalty_applied = True
                 
                 st.info(f"""
                 📊 **Early Closure Calculation:**
@@ -1664,8 +1660,6 @@ def fixed_deposits():
                 - Penalty ({penalty_rate}%): **Rs {penalty_amount:,.2f}**
                 - Final Payout: **Rs {final_amount:,.2f}**
                 """)
-            else:
-                final_amount = selected_fd['total_value']
             
             st.markdown("---")
             
@@ -1773,6 +1767,7 @@ def fixed_deposits():
                         - Customer: **{selected_fd['customer']}**
                         - Principal: **Rs {selected_fd['principal']:,.2f}**
                         - Interest Earned: **Rs {selected_fd['accrued_interest']:,.2f}**
+                        - {'Penalty Applied' if penalty_applied else 'No Penalty'}
                         - Total Amount: **Rs {final_amount:,.2f}**
                         - Transferred to: **{selected_fd['sb_account']}**
                         - New SB Balance: **Rs {new_sb_balance:,.2f}**

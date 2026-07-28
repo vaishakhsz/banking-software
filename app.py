@@ -94,9 +94,6 @@ def safe_text(text):
 def calculate_fd_maturity(p, r, m): 
     return round(p * (1 + r/400) ** (m/3), 2)
 
-def calculate_fd_maturity(p, r, m): 
-    return round(p * (1 + r/400) ** (m/3), 2)
-
 def calculate_rd_maturity(m, r, mo): 
     return round(m * (((1 + r/400) ** (mo/3) - 1) / (1 - (1 + r/400) ** (-1/3))), 2)
 
@@ -156,6 +153,55 @@ def delete_record(table, id_column, id_value, table_display):
         st.rerun()
     except Exception as e:
         st.error(f"Error deleting: {str(e)}")
+    finally:
+        c.close()
+
+# ==================== INTEREST CALCULATION FUNCTION ====================
+def calculate_and_post_sb_interest(created_by, from_date, to_date, customer_id=None):
+    """Calculate and post interest for SB accounts"""
+    c = get_db()
+    results = []
+    
+    try:
+        if customer_id:
+            accs = c.execute("SELECT a.id, a.account_number, c.first_name||' '||c.last_name, a.balance, a.interest_rate, COALESCE(a.total_interest_earned, 0), c.id as cust_id FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE' AND c.id=?", (customer_id,)).fetchall()
+        else:
+            accs = c.execute("SELECT a.id, a.account_number, c.first_name||' '||c.last_name, a.balance, a.interest_rate, COALESCE(a.total_interest_earned, 0), c.id as cust_id FROM accounts a JOIN customers c ON a.customer_id=c.id WHERE a.account_type='SB' AND a.status='ACTIVE'").fetchall()
+        
+        for acc in accs:
+            min_bal = get_minimum_balance(c, acc[0], from_date, to_date)
+            if min_bal <= 0:
+                min_bal = acc[3]
+            
+            days = (to_date - from_date).days + 1
+            if days > 0:
+                interest = calculate_sb_interest(min_bal, acc[4] or 3.5, days)
+                
+                if interest > 0:
+                    # Update total interest earned
+                    c.execute("UPDATE accounts SET total_interest_earned = COALESCE(total_interest_earned, 0) + ? WHERE id=?", (interest, acc[0]))
+                    
+                    # Record interest calculation
+                    try:
+                        c.execute("INSERT INTO interest_calculations (account_id, calculation_date, principal_amount, interest_rate, interest_earned, days_calculated, customer_id) VALUES (?, DATE('now'), ?, ?, ?, ?, ?)", 
+                                 (acc[0], min_bal, acc[4] or 3.5, interest, days, acc[6]))
+                    except:
+                        c.execute("INSERT INTO interest_calculations (account_id, calculation_date, principal_amount, interest_rate, interest_earned, days_calculated) VALUES (?, DATE('now'), ?, ?, ?, ?)", 
+                                 (acc[0], min_bal, acc[4] or 3.5, interest, days))
+                    
+                    results.append({
+                        'account': acc[1],
+                        'customer': acc[2],
+                        'min_balance': min_bal,
+                        'interest': interest,
+                        'days': days
+                    })
+        
+        c.commit()
+        return "SUCCESS", results
+    except Exception as e:
+        c.rollback()
+        return f"ERROR: {str(e)}", []
     finally:
         c.close()
 
@@ -415,7 +461,7 @@ def generate_journal_voucher_pdf(voucher_data, entries_data):
     pdf.cell(0, 6, f"Voucher Number: {voucher_data['voucher_number']}", 0, 1, 'L')
     pdf.cell(0, 6, f"Date: {voucher_data['voucher_date']}", 0, 1, 'L')
     pdf.cell(0, 6, f"Description: {voucher_data['description']}", 0, 1, 'L')
-    pdf.cell(0, 6, f"Status: {voucher_data['status']}", 0, 1, 'L')
+    pdf.cell(0, 6, f"Status: {voucher_data.get('status', 'DRAFT')}", 0, 1, 'L')
     if voucher_data.get('customer_name'):
         pdf.cell(0, 6, f"Customer: {voucher_data['customer_name']}", 0, 1, 'L')
     pdf.ln(5)
@@ -430,12 +476,16 @@ def generate_journal_voucher_pdf(voucher_data, entries_data):
     total_dr = 0
     total_cr = 0
     for idx, entry in enumerate(entries_data, 1):
+        debit = entry.get('debit_amount', entry.get('debit', 0))
+        credit = entry.get('credit_amount', entry.get('credit', 0))
+        account_head = entry.get('account_head', entry.get('head', ''))
+        
         pdf.cell(10, 6, str(idx), 1)
-        pdf.cell(80, 6, entry['account_head'], 1)
-        pdf.cell(45, 6, f"{entry['debit']:,.2f}", 1, 0, 'R')
-        pdf.cell(45, 6, f"{entry['credit']:,.2f}", 1, 1, 'R')
-        total_dr += entry['debit']
-        total_cr += entry['credit']
+        pdf.cell(80, 6, account_head, 1)
+        pdf.cell(45, 6, f"{debit:,.2f}", 1, 0, 'R')
+        pdf.cell(45, 6, f"{credit:,.2f}", 1, 1, 'R')
+        total_dr += debit
+        total_cr += credit
     
     pdf.set_font('Arial', 'B', 10)
     pdf.cell(90, 7, 'TOTAL', 1)
@@ -2109,8 +2159,9 @@ def journal_vouchers():
                     # Store voucher info in session state for download outside form
                     st.session_state.last_voucher = {
                         'voucher_number': vn,
-                        'voucher_date': vd.strftime('%d %b %Y'),
+                        'voucher_date': vd.strftime('%d-%m-%Y'),
                         'description': desc,
+                        'status': 'DRAFT',
                         'is_balanced': True,
                         'entries': [{'account_head': e['h'], 'debit_amount': e['d'], 'credit_amount': e['c']} for e in entries]
                     }
@@ -2129,25 +2180,32 @@ def journal_vouchers():
             
             # Generate PDF
             entries_data = vd_data['entries']
-            pdf_file = generate_journal_voucher_pdf(
+            pdf = generate_journal_voucher_pdf(
                 {
                     'voucher_number': vd_data['voucher_number'],
                     'voucher_date': vd_data['voucher_date'],
                     'description': vd_data['description'],
+                    'status': vd_data.get('status', 'DRAFT'),
                     'is_balanced': vd_data['is_balanced']
                 }, 
                 entries_data
             )
             
-            if pdf_file:
-                with open(pdf_file, 'rb') as f:
-                    st.download_button(
-                        f"Download PDF - {vd_data['voucher_number']}", 
-                        f.read(), 
-                        pdf_file, 
-                        "application/pdf", 
-                        key=f"dl_{vd_data['voucher_number']}"
-                    )
+            if pdf:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                    pdf.output(tmp_file.name)
+                    tmp_file.flush()
+                    with open(tmp_file.name, 'rb') as f:
+                        pdf_bytes = f.read()
+                    os.unlink(tmp_file.name)
+                
+                st.download_button(
+                    label=f"📥 Download PDF - {vd_data['voucher_number']}",
+                    data=pdf_bytes,
+                    file_name=f"JV_{vd_data['voucher_number']}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
             
             if st.button("Clear & Create New Voucher", key="clear_voucher"):
                 del st.session_state.last_voucher
@@ -2162,7 +2220,6 @@ def journal_vouchers():
         
         if vouchers:
             for v in vouchers:
-                sc = {'DRAFT': 'DRAFT', 'POSTED': 'POSTED', 'CANCELLED': 'CANCELLED'}
                 status_icon = {'DRAFT': '🟡', 'POSTED': '🟢', 'CANCELLED': '🔴'}
                 cust_label = f" | Customer: {v[5]}" if v[5] != 'General' else ""
                 with st.expander(f"{status_icon.get(v[4], '⚪')} | {v[0]} | Date: {v[1]} | Rs.{v[3]:,.2f}{cust_label}"):
@@ -2180,18 +2237,28 @@ def journal_vouchers():
                             'voucher_number': v[0],
                             'voucher_date': v[1],
                             'description': v[2],
+                            'status': v[4],
                             'is_balanced': True
                         }
-                        pdf_file = generate_journal_voucher_pdf(voucher_data, entries_data)
-                        if pdf_file:
-                            with open(pdf_file, 'rb') as f:
-                                st.download_button(
-                                    f"Download PDF - {v[0]}", 
-                                    f.read(), 
-                                    pdf_file, 
-                                    "application/pdf", 
-                                    key=f"dl_{v[0]}"
-                                )
+                        if v[5] != 'General':
+                            voucher_data['customer_name'] = v[5]
+                        
+                        pdf = generate_journal_voucher_pdf(voucher_data, entries_data)
+                        if pdf:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                                pdf.output(tmp_file.name)
+                                tmp_file.flush()
+                                with open(tmp_file.name, 'rb') as f:
+                                    pdf_bytes = f.read()
+                                os.unlink(tmp_file.name)
+                            
+                            st.download_button(
+                                label=f"📥 Download PDF - {v[0]}",
+                                data=pdf_bytes,
+                                file_name=f"JV_{v[0]}.pdf",
+                                mime="application/pdf",
+                                key=f"dl_{v[0]}"
+                            )
                         
                     if v[4] == 'DRAFT':
                         st.divider()
@@ -2212,6 +2279,7 @@ def journal_vouchers():
             st.info("No journal vouchers available.")
         st.markdown('</div>', unsafe_allow_html=True)
     c.close()
+
 # ==================== INCOME & EXPENSES ====================
 def income_expenses():
     if st.session_state.user['role'] not in ['admin','staff']: 
@@ -2874,7 +2942,6 @@ def my_details():
 
 if __name__ == "__main__":
     main()
-
 
 
 

@@ -2312,6 +2312,7 @@ def trial_balance():
     st.markdown('</div>', unsafe_allow_html=True)
     c.close()
 
+
 # ==================== BALANCE SHEET ====================
 def balance_sheet():
     if st.session_state.user['role'] not in ['admin', 'staff']: 
@@ -2335,10 +2336,16 @@ def balance_sheet():
             FROM transactions WHERE reference_type='BANK'
         """).fetchone()[0]
         
+        # Cash from CHEQUE transactions
+        cash_cheque = c.execute("""
+            SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END),0) 
+            FROM transactions WHERE reference_type='CHEQUE'
+        """).fetchone()[0]
+        
         # Income received is an asset
         total_income = c.execute("SELECT COALESCE(SUM(amount),0) FROM income").fetchone()[0]
         
-        # JV debit entries represent assets (Bank Account, Investments, etc.)
+        # JV debit entries represent assets
         jv_debit_breakdown = c.execute("""
             SELECT je.account_head, SUM(je.debit_amount) as total 
             FROM journal_entries je 
@@ -2348,7 +2355,7 @@ def balance_sheet():
         """).fetchall()
         jv_assets = sum(e[1] for e in jv_debit_breakdown) if jv_debit_breakdown else 0
         
-        total_assets = cash_in_hand + cash_in_bank + jv_assets + total_income
+        total_assets = cash_in_hand + cash_in_bank + cash_cheque + jv_assets + total_income
         
         # ============ LIABILITIES (What bank owes to others) ============
         
@@ -2386,6 +2393,8 @@ def balance_sheet():
             assets_data.append({'name': 'Cash in Hand', 'amount': cash_in_hand})
         if cash_in_bank > 0:
             assets_data.append({'name': 'Cash in Bank', 'amount': cash_in_bank})
+        if cash_cheque > 0:
+            assets_data.append({'name': 'Cash (Cheque)', 'amount': cash_cheque})
         for jv_entry in jv_debit_breakdown:
             if jv_entry[1] > 0:
                 assets_data.append({'name': f'JV: {jv_entry[0]}', 'amount': jv_entry[1]})
@@ -2455,18 +2464,30 @@ def balance_sheet():
         else:
             st.warning(f"Balance Sheet difference: Rs{abs(balance_difference):,.2f}")
         
-        # Summary
+        # Transaction mode breakdown
+        st.markdown("---")
+        st.markdown("#### Transaction Mode Breakdown")
+        tx_col1, tx_col2, tx_col3 = st.columns(3)
+        with tx_col1:
+            st.metric("CASH Transactions", f"Rs{cash_in_hand:,.2f}")
+        with tx_col2:
+            st.metric("BANK Transactions", f"Rs{cash_in_bank:,.2f}")
+        with tx_col3:
+            st.metric("CHEQUE Transactions", f"Rs{cash_cheque:,.2f}")
+        
+        # Summary explanation
         total_deposits = sb_bal + fd_bal + rd_bal
+        total_cash = cash_in_hand + cash_in_bank + cash_cheque
         st.markdown("---")
         st.info(f"""
         **Balance Sheet Explanation:**
-        - **Cash in Hand + Cash in Bank = Rs{cash_in_hand + cash_in_bank:,.2f}** (actual money bank holds)
+        - **Total Cash Available = Rs{total_cash:,.2f}** (Cash in Hand + Cash in Bank + Cheques)
         - **Customer Deposits = Rs{total_deposits:,.2f}** (money bank owes to customers)
-        - When customers deposit money via BANK/CASH, both Assets AND Liabilities increase equally
+        - When customers deposit money, both Assets (Cash) AND Liabilities (Deposits) increase equally
         - **Capital = Rs{capital:,.2f}** represents owner's equity (Assets - Liabilities)
         """)
         
-        # Show JV breakdown
+        # Show JV breakdown for verification
         if jv_debit_breakdown or jv_credit_breakdown:
             st.markdown("---")
             st.markdown("#### Journal Voucher Impact")
@@ -2480,30 +2501,31 @@ def balance_sheet():
                 for entry in jv_credit_breakdown:
                     st.markdown(f"- {entry[0]}: Rs{entry[1]:,.2f}")
         
-        # Transaction breakdown
-        st.markdown("---")
-        st.markdown("#### Transaction Mode Breakdown")
-        tx_col1, tx_col2, tx_col3 = st.columns(3)
-        with tx_col1:
-            st.metric("CASH Transactions", f"Rs{cash_in_hand:,.2f}")
-        with tx_col2:
-            st.metric("BANK Transactions", f"Rs{cash_in_bank:,.2f}")
-        with tx_col3:
-            st.metric("CHEQUE Transactions", f"Rs{c.execute('SELECT COALESCE(SUM(CASE WHEN transaction_type=CHR(67)||CHR(82)||CHR(69)||CHR(68)||CHR(73)||CHR(84) THEN amount ELSE -amount END),0) FROM transactions WHERE reference_type=CHR(67)||CHR(72)||CHR(69)||CHR(81)||CHR(85)||CHR(69)').fetchone()[0]:,.2f}")
-        
         st.markdown("---")
         if st.button("Print Balance Sheet (PDF)", use_container_width=True, type="primary"):
-            pdf_data = {'assets': assets_data, 'liabilities': liabilities_data, 'capital': capital, 'as_on': date.today().strftime('%d-%m-%Y')}
+            pdf_data = {
+                'assets': assets_data, 
+                'liabilities': liabilities_data, 
+                'capital': capital, 
+                'as_on': date.today().strftime('%d-%m-%Y')
+            }
             pdf = generate_balance_sheet_pdf(pdf_data)
             
             if pdf:
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
                     pdf.output(tmp_file.name)
                     tmp_file.flush()
-                    with open(tmp_file.name, 'rb') as f: pdf_bytes = f.read()
+                    with open(tmp_file.name, 'rb') as f: 
+                        pdf_bytes = f.read()
                     os.unlink(tmp_file.name)
                 
-                st.download_button(label="Download Balance Sheet PDF", data=pdf_bytes, file_name=f"Balance_Sheet_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
+                st.download_button(
+                    label="Download Balance Sheet PDF", 
+                    data=pdf_bytes, 
+                    file_name=f"Balance_Sheet_{datetime.now().strftime('%Y%m%d')}.pdf", 
+                    mime="application/pdf", 
+                    use_container_width=True
+                )
                 st.success("Balance Sheet PDF generated successfully!")
             
     st.markdown('</div>', unsafe_allow_html=True)

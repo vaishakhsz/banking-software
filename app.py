@@ -1667,7 +1667,9 @@ def journal_vouchers():
                 st.error(f"Mismatch Detected: Difference of Rs.{abs(td_v - tc_v):,.2f}")
                 
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.form_submit_button("Generate Voucher", use_container_width=True, type="primary"):
+            submitted = st.form_submit_button("Generate Voucher", use_container_width=True, type="primary")
+            
+            if submitted:
                 if abs(td_v - tc_v) > 0.01: 
                     st.error("Voucher must be perfectly balanced!")
                 else:
@@ -1682,24 +1684,53 @@ def journal_vouchers():
                         if e['d'] > 0 or e['c'] > 0: 
                             c.execute("INSERT INTO journal_entries (voucher_id,account_head,debit_amount,credit_amount) VALUES (?,?,?,?)", (vid, e['h'], e['d'], e['c']))
                     c.commit()
-                    st.success(f"Voucher Drafted! Reference: {vn}")
                     
-                    # Generate PDF
-                    voucher_data = {
+                    # Store voucher info in session state for download outside form
+                    st.session_state.last_voucher = {
                         'voucher_number': vn,
                         'voucher_date': vd.strftime('%d %b %Y'),
                         'description': desc,
-                        'is_balanced': True
+                        'is_balanced': True,
+                        'entries': [{'account_head': e['h'], 'debit_amount': e['d'], 'credit_amount': e['c']} for e in entries]
                     }
-                    entries_data = [{'account_head': e['h'], 'debit_amount': e['d'], 'credit_amount': e['c']} for e in entries]
                     
-                    pdf_file = generate_journal_voucher_pdf(voucher_data, entries_data)
-                    if pdf_file:
-                        with open(pdf_file, 'rb') as f:
-                            st.download_button("Download Voucher PDF", f.read(), pdf_file, "application/pdf", key=f"dl_{vn}")
-                    
+                    st.success(f"Voucher Drafted! Reference: {vn}")
                     st.balloons()
+                    st.rerun()
+        
         st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Download button OUTSIDE the form
+        if 'last_voucher' in st.session_state:
+            vd_data = st.session_state.last_voucher
+            st.markdown("---")
+            st.markdown(f"### Download Voucher: {vd_data['voucher_number']}")
+            
+            # Generate PDF
+            entries_data = vd_data['entries']
+            pdf_file = generate_journal_voucher_pdf(
+                {
+                    'voucher_number': vd_data['voucher_number'],
+                    'voucher_date': vd_data['voucher_date'],
+                    'description': vd_data['description'],
+                    'is_balanced': vd_data['is_balanced']
+                }, 
+                entries_data
+            )
+            
+            if pdf_file:
+                with open(pdf_file, 'rb') as f:
+                    st.download_button(
+                        f"Download PDF - {vd_data['voucher_number']}", 
+                        f.read(), 
+                        pdf_file, 
+                        "application/pdf", 
+                        key=f"dl_{vd_data['voucher_number']}"
+                    )
+            
+            if st.button("Clear & Create New Voucher", key="clear_voucher"):
+                del st.session_state.last_voucher
+                st.rerun()
         
     with t2:
         st.markdown('<div class="section-card"><h3>Journal Voucher Directory</h3>', unsafe_allow_html=True)
@@ -1723,7 +1754,7 @@ def journal_vouchers():
                         entries_data = [{'account_head': e[0], 'debit_amount': e[1], 'credit_amount': e[2]} for e in entries]
                         st.dataframe(pd.DataFrame(entries_data, columns=['Ledger Head', 'Debit (Dr)', 'Credit (Cr)']).style.format({'Debit (Dr)': '₹{:,.2f}', 'Credit (Cr)': '₹{:,.2f}'}), use_container_width=True)
                         
-                        # Download PDF button for each voucher
+                        # Download PDF button for each voucher (OUTSIDE form)
                         voucher_data = {
                             'voucher_number': v[0],
                             'voucher_date': v[1],
@@ -1733,7 +1764,13 @@ def journal_vouchers():
                         pdf_file = generate_journal_voucher_pdf(voucher_data, entries_data)
                         if pdf_file:
                             with open(pdf_file, 'rb') as f:
-                                st.download_button(f"Download PDF", f.read(), pdf_file, "application/pdf", key=f"dl_{v[0]}")
+                                st.download_button(
+                                    f"Download PDF - {v[0]}", 
+                                    f.read(), 
+                                    pdf_file, 
+                                    "application/pdf", 
+                                    key=f"dl_{v[0]}"
+                                )
                         
                     if v[4] == 'DRAFT':
                         st.divider()

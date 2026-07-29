@@ -756,6 +756,181 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
         raise e
 
 # ==================== RETRIEVAL ACCOUNT PAGE ====================
+# ==================== RETRIEVAL ACCOUNT FUNCTIONS ====================
+
+def get_retrieval_account(customer_id):
+    """Get or create a retrieval account for a customer"""
+    conn = get_db()
+    try:
+        # Check if retrieval account exists
+        acc = conn.execute("""
+            SELECT id, account_number, balance 
+            FROM retrieval_accounts 
+            WHERE customer_id = ? AND status = 'ACTIVE'
+        """, (customer_id,)).fetchone()
+        
+        if acc:
+            conn.close()
+            return acc[0], acc[1], acc[2]
+        
+        # Create new retrieval account
+        account_number = f"RET{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
+        
+        conn.execute("""
+            INSERT INTO retrieval_accounts (account_number, customer_id, balance)
+            VALUES (?, ?, 0)
+        """, (account_number, customer_id))
+        
+        acc_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+        conn.close()
+        
+        return acc_id, account_number, 0
+    except Exception as e:
+        conn.close()
+        raise e
+
+def add_to_retrieval_account(customer_id, deposit_type, deposit_number, principal, interest, maturity_date):
+    """Add matured deposit to retrieval account"""
+    conn = get_db()
+    
+    try:
+        # Get or create retrieval account
+        acc_id, acc_number, current_balance = get_retrieval_account(customer_id)
+        
+        total_amount = principal + interest
+        
+        new_balance = current_balance + total_amount
+        conn.execute("""
+            UPDATE retrieval_accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_balance, acc_id))
+        
+        deposit_id = generate_id('MAT')
+        conn.execute("""
+            INSERT INTO matured_deposits (
+                deposit_id, customer_id, original_deposit_type,
+                original_deposit_number, principal_amount, interest_earned,
+                total_amount, maturity_date, deposited_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATE('now'))
+        """, (deposit_id, customer_id, deposit_type, deposit_number, 
+              principal, interest, total_amount, maturity_date))
+        
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), acc_id, 'CREDIT',
+            total_amount, new_balance,
+            f"{deposit_type} Maturity: {deposit_number}",
+            'MATURITY', 'RECEIPT',
+            generate_voucher_number('RECEIPT'),
+            st.session_state.user['id']
+        ))
+        
+        conn.commit()
+        conn.close()
+        return acc_number, new_balance
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise e
+
+def transfer_to_sb(customer_id, amount, sb_account_id):
+    """Transfer from retrieval account to SB account"""
+    conn = get_db()
+    
+    try:
+        # Get retrieval account
+        ret_acc = conn.execute("""
+            SELECT id, account_number, balance 
+            FROM retrieval_accounts 
+            WHERE customer_id = ? AND status = 'ACTIVE'
+        """, (customer_id,)).fetchone()
+        
+        if not ret_acc:
+            conn.close()
+            return None, "No retrieval account found"
+        
+        if ret_acc[2] < amount:
+            conn.close()
+            return None, "Insufficient balance in retrieval account"
+        
+        # Get SB account balance
+        sb_acc = conn.execute("""
+            SELECT balance FROM accounts WHERE id = ?
+        """, (sb_account_id,)).fetchone()
+        
+        if not sb_acc:
+            conn.close()
+            return None, "SB account not found"
+        
+        # Update retrieval account (debit)
+        new_ret_balance = ret_acc[2] - amount
+        conn.execute("""
+            UPDATE retrieval_accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_ret_balance, ret_acc[0]))
+        
+        # Update SB account (credit)
+        new_sb_balance = sb_acc[0] + amount
+        conn.execute("""
+            UPDATE accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_sb_balance, sb_account_id))
+        
+        # Transaction: Debit from retrieval
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), ret_acc[0], 'DEBIT',
+            amount, new_ret_balance,
+            "Transfer to SB Account",
+            'TRANSFER', 'PAYMENT',
+            generate_voucher_number('PAYMENT'),
+            st.session_state.user['id']
+        ))
+        
+        # Transaction: Credit to SB
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), sb_account_id, 'CREDIT',
+            amount, new_sb_balance,
+            "Transfer from Retrieval Account",
+            'TRANSFER', 'RECEIPT',
+            generate_voucher_number('RECEIPT'),
+            st.session_state.user['id']
+        ))
+        
+        conn.commit()
+        conn.close()
+        return new_ret_balance, new_sb_balance
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise e
+
+# ==================== RETRIEVAL ACCOUNT PAGE ====================
 def retrieval_account():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -809,15 +984,15 @@ def retrieval_account():
                 
                 if txns:
                     st.markdown("### 📊 Recent Transactions")
-                    # Convert to DataFrame with proper null handling
+                    # Create formatted list for display
                     txn_data = []
                     for txn in txns:
                         txn_data.append({
                             'Txn ID': txn[0],
                             'Type': txn[1],
-                            'Amount': f"Rs {txn[2]:,.2f}" if txn[2] is not None else "Rs 0.00",
-                            'Balance': f"Rs {txn[3]:,.2f}" if txn[3] is not None else "Rs 0.00",
-                            'Description': txn[4] or 'N/A',
+                            'Amount': f"Rs {float(txn[2]):,.2f}" if txn[2] is not None else "Rs 0.00",
+                            'Balance': f"Rs {float(txn[3]):,.2f}" if txn[3] is not None else "Rs 0.00",
+                            'Description': txn[4] if txn[4] else 'N/A',
                             'Date': datetime.strptime(txn[5], '%Y-%m-%d %H:%M:%S').strftime('%d-%m-%Y %I:%M %p') if txn[5] else 'N/A'
                         })
                     df = pd.DataFrame(txn_data)
@@ -840,7 +1015,7 @@ def retrieval_account():
             try:
                 matured = c.execute("""
                     SELECT 
-                        id, deposit_id,
+                        deposit_id,
                         original_deposit_type,
                         original_deposit_number,
                         principal_amount,
@@ -857,57 +1032,76 @@ def retrieval_account():
                 """, (cust_id,)).fetchall()
                 
                 if matured:
-                    # Convert to DataFrame with proper null handling
+                    # Build data with proper formatting
                     matured_data = []
+                    total_principal = 0
+                    total_interest = 0
+                    total_amount = 0
+                    active_total = 0
+                    withdrawn_total = 0
+                    
                     for m in matured:
+                        principal = float(m[3]) if m[3] is not None else 0
+                        interest = float(m[4]) if m[4] is not None else 0
+                        total = float(m[5]) if m[5] is not None else 0
+                        status = m[8] if m[8] else 'ACTIVE'
+                        
+                        total_principal += principal
+                        total_interest += interest
+                        total_amount += total
+                        if status == 'ACTIVE':
+                            active_total += total
+                        else:
+                            withdrawn_total += total
+                        
                         matured_data.append({
-                            'ID': m[0],
-                            'Deposit ID': m[1],
-                            'Type': m[2],
-                            'Deposit No': m[3],
-                            'Principal': m[4] if m[4] is not None else 0,
-                            'Interest Earned': m[5] if m[5] is not None else 0,
-                            'Total Amount': m[6] if m[6] is not None else 0,
-                            'Maturity Date': m[7] if m[7] else 'N/A',
-                            'Deposited Date': m[8] if m[8] else 'N/A',
-                            'Status': m[9] if m[9] else 'N/A',
-                            'Withdrawn Date': m[10] if m[10] else 'N/A',
-                            'Withdrawn Amount': m[11] if m[11] is not None else 0
+                            'Deposit ID': m[0],
+                            'Type': m[1],
+                            'Deposit No': m[2],
+                            'Principal': f"Rs {principal:,.2f}",
+                            'Interest Earned': f"Rs {interest:,.2f}",
+                            'Total Amount': f"Rs {total:,.2f}",
+                            'Maturity Date': m[6] if m[6] else 'N/A',
+                            'Deposited Date': m[7] if m[7] else 'N/A',
+                            'Status': '🟢 Active' if status == 'ACTIVE' else '🔴 Withdrawn',
+                            'Withdrawn Date': m[9] if m[9] else 'N/A',
+                            'Withdrawn Amount': f"Rs {float(m[10]):,.2f}" if m[10] is not None else "Rs 0.00"
                         })
                     
                     df = pd.DataFrame(matured_data)
-                    
-                    total_principal = df['Principal'].sum()
-                    total_interest = df['Interest Earned'].sum()
-                    total_amount = df['Total Amount'].sum()
-                    active = df[df['Status'] == 'ACTIVE']['Total Amount'].sum()
-                    withdrawn = df[df['Status'] == 'WITHDRAWN']['Total Amount'].sum()
                     
                     col1, col2, col3, col4, col5 = st.columns(5)
                     col1.metric("📊 Total", f"{len(matured)}")
                     col2.metric("💰 Principal", f"Rs {total_principal:,.2f}")
                     col3.metric("📈 Interest", f"Rs {total_interest:,.2f}")
-                    col4.metric("🟢 Active", f"Rs {active:,.2f}")
-                    col5.metric("🔴 Withdrawn", f"Rs {withdrawn:,.2f}")
+                    col4.metric("🟢 Active", f"Rs {active_total:,.2f}")
+                    col5.metric("🔴 Withdrawn", f"Rs {withdrawn_total:,.2f}")
                     
                     st.markdown("---")
-                    
-                    # Format the dataframe for display
-                    display_df = df.copy()
-                    display_df['Principal'] = display_df['Principal'].apply(lambda x: f"Rs {x:,.2f}")
-                    display_df['Interest Earned'] = display_df['Interest Earned'].apply(lambda x: f"Rs {x:,.2f}")
-                    display_df['Total Amount'] = display_df['Total Amount'].apply(lambda x: f"Rs {x:,.2f}")
-                    display_df['Withdrawn Amount'] = display_df['Withdrawn Amount'].apply(lambda x: f"Rs {x:,.2f}" if x > 0 else "Rs 0.00")
-                    
-                    st.dataframe(display_df[['Deposit ID', 'Type', 'Deposit No', 'Principal', 'Interest Earned', 
-                                            'Total Amount', 'Maturity Date', 'Deposited Date', 'Status', 
-                                            'Withdrawn Date', 'Withdrawn Amount']], use_container_width=True)
+                    st.dataframe(df, use_container_width=True)
                     
                     col1, col2 = st.columns(2)
                     with col1:
+                        # Create CSV with raw data
+                        raw_data = []
+                        for m in matured:
+                            raw_data.append({
+                                'Deposit ID': m[0],
+                                'Type': m[1],
+                                'Deposit No': m[2],
+                                'Principal': float(m[3]) if m[3] is not None else 0,
+                                'Interest Earned': float(m[4]) if m[4] is not None else 0,
+                                'Total Amount': float(m[5]) if m[5] is not None else 0,
+                                'Maturity Date': m[6] if m[6] else '',
+                                'Deposited Date': m[7] if m[7] else '',
+                                'Status': m[8] if m[8] else 'ACTIVE',
+                                'Withdrawn Date': m[9] if m[9] else '',
+                                'Withdrawn Amount': float(m[10]) if m[10] is not None else 0
+                            })
+                        raw_df = pd.DataFrame(raw_data)
                         st.download_button(
                             "📥 Download Matured Deposits CSV",
-                            df.to_csv(index=False),
+                            raw_df.to_csv(index=False),
                             "matured_deposits.csv",
                             "text/csv"
                         )

@@ -1203,6 +1203,7 @@ def sb_accounts():
 
 # ==================== FIXED DEPOSITS ====================
 # ==================== FIXED DEPOSITS - COMPLETE FIX ====================
+# ==================== FIXED DEPOSITS - COMPLETE FIX ====================
 def fixed_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1211,7 +1212,7 @@ def fixed_deposits():
     c = get_db()
     tab1, tab2, tab3, tab4 = st.tabs(["📝 Open FD", "📊 Active FDs", "🔒 Close FD", "📋 Closed FDs"])
     
-    # Tab 1: Open FD (keep as is)
+    # Tab 1: Open FD
     with tab1:
         st.markdown("### 📝 Open Fixed Deposit")
         
@@ -1443,7 +1444,7 @@ def fixed_deposits():
         else:
             st.info("No active fixed deposits")
     
-    # Tab 3: Close FD - FIXED to properly save closed data
+    # Tab 3: Close FD
     with tab3:
         st.markdown("### 🔒 Close/Withdraw Fixed Deposit")
         
@@ -1453,6 +1454,8 @@ def fixed_deposits():
                 fd.fd_number, 
                 c.id as customer_id,
                 c.first_name||' '||c.last_name as customer,
+                fd.account_id as fd_account_id,
+                a.account_number as fd_account_number,
                 sb.id as sb_account_id,
                 sb.account_number as sb_account,
                 COALESCE(sb.balance, 0) as sb_balance,
@@ -1478,7 +1481,7 @@ def fixed_deposits():
         
         fd_options = []
         for fd in active_fds:
-            fd_id, fd_number, cust_id, customer, sb_acc_id, sb_acc, sb_balance, principal, rate, start, maturity, maturity_amount, days_elapsed, total_days = fd
+            fd_id, fd_number, cust_id, customer, fd_account_id, fd_account_number, sb_acc_id, sb_acc, sb_balance, principal, rate, start, maturity, maturity_amount, days_elapsed, total_days = fd
             
             if days_elapsed > 0 and total_days > 0:
                 accrued_interest = (principal * rate * days_elapsed) / (100 * 365)
@@ -1496,6 +1499,8 @@ def fixed_deposits():
                 'fd_number': fd_number,
                 'customer_id': cust_id,
                 'customer': customer,
+                'fd_account_id': fd_account_id,
+                'fd_account_number': fd_account_number,
                 'sb_account_id': sb_acc_id,
                 'sb_account': sb_acc if sb_acc else 'No SB Account',
                 'sb_balance': sb_balance if sb_acc_id else 0,
@@ -1533,6 +1538,7 @@ def fixed_deposits():
             |-------|-------|
             | **FD Number** | {selected_fd['fd_number']} |
             | **Customer** | {selected_fd['customer']} |
+            | **FD Account** | {selected_fd['fd_account_number']} |
             | **SB Account** | {selected_fd['sb_account']} |
             | **SB Balance** | Rs {selected_fd['sb_balance']:,.2f} |
             | **Principal** | Rs {selected_fd['principal']:,.2f} |
@@ -1579,6 +1585,12 @@ def fixed_deposits():
             st.markdown("---")
             
             # Ask if user wants to transfer to SB or keep in FD account
+            st.info("💡 **What happens to the amount?**")
+            st.markdown("""
+            - **Transfer to SB Account**: Money moves to your Savings Bank account
+            - **Keep in FD Account (as Savings)**: Money stays in the same account, but it becomes a regular savings account (you can withdraw anytime)
+            """)
+            
             transfer_option = st.radio(
                 "💰 What would you like to do with the matured amount?",
                 ["Transfer to SB Account", "Keep in FD Account (as Savings)"],
@@ -1588,7 +1600,7 @@ def fixed_deposits():
             can_close = True
             if not selected_fd['has_sb'] and transfer_option == "Transfer to SB Account":
                 can_close = False
-                st.error("❌ Cannot transfer to SB: No SB account found!")
+                st.error("❌ Cannot transfer to SB: No SB account found! Please choose 'Keep in FD Account (as Savings)'")
             
             if st.button("🔒 Close FD", use_container_width=True, type="primary", disabled=not can_close):
                 if not can_close:
@@ -1596,18 +1608,7 @@ def fixed_deposits():
                 else:
                     conn = get_db()
                     try:
-                        fd_acc = conn.execute("""
-                            SELECT account_id FROM fixed_deposits WHERE id=?
-                        """, (selected_fd['fd_id'],)).fetchone()
-                        
-                        if not fd_acc:
-                            st.error("❌ FD not found!")
-                            conn.close()
-                            return
-                        
-                        fd_account_id = fd_acc[0]
-                        
-                        # Update FD status - THIS IS CRITICAL
+                        # Update FD status - set to CLOSED
                         conn.execute("""
                             UPDATE fixed_deposits 
                             SET status='CLOSED', 
@@ -1643,19 +1644,23 @@ def fixed_deposits():
                                 'CREDIT',
                                 final_amount, 
                                 new_sb_balance,
-                                f"FD Closure Transfer: {selected_fd['fd_number']}",
+                                f"FD Closure - Transferred to SB: {selected_fd['fd_number']}",
                                 'FD_CLOSURE', 
                                 'RECEIPT',
                                 generate_voucher_number('RECEIPT'),
                                 st.session_state.user['id']
                             ))
+                            
+                            transfer_message = f"💰 **Transferred to SB Account: {selected_fd['sb_account']}**"
                         else:
-                            # Keep in FD account - convert to savings
+                            # Keep in FD account - convert to SAVINGS
+                            # Update the account type to SAVINGS and set balance
                             conn.execute("""
                                 UPDATE accounts 
-                                SET balance=?, account_type='SAVINGS'
+                                SET account_type='SAVINGS', 
+                                    balance=?
                                 WHERE id=?
-                            """, (final_amount, fd_account_id))
+                            """, (final_amount, selected_fd['fd_account_id']))
                             
                             conn.execute("""
                                 INSERT INTO transactions (
@@ -1666,7 +1671,7 @@ def fixed_deposits():
                                 ) VALUES (?,?,?,?,?,?,?,?,?,?)
                             """, (
                                 generate_id('TXN'), 
-                                fd_account_id, 
+                                selected_fd['fd_account_id'], 
                                 'CREDIT',
                                 final_amount, 
                                 final_amount,
@@ -1676,27 +1681,8 @@ def fixed_deposits():
                                 generate_voucher_number('RECEIPT'),
                                 st.session_state.user['id']
                             ))
-                        
-                        # Debit from FD account
-                        conn.execute("""
-                            INSERT INTO transactions (
-                                transaction_id, account_id, transaction_type,
-                                amount, balance_after, description,
-                                reference_type, voucher_type, voucher_number,
-                                created_by
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                        """, (
-                            generate_id('TXN'), 
-                            fd_account_id, 
-                            'DEBIT',
-                            final_amount, 
-                            0,
-                            f"FD Closure: {selected_fd['fd_number']}",
-                            'FD_CLOSURE', 
-                            'PAYMENT',
-                            generate_voucher_number('PAYMENT'),
-                            st.session_state.user['id']
-                        ))
+                            
+                            transfer_message = f"💰 **Kept in Account: {selected_fd['fd_account_number']} (Now a Savings Account)**"
                         
                         # Record interest income
                         if selected_fd['accrued_interest'] > 0:
@@ -1729,7 +1715,7 @@ def fixed_deposits():
                         - Interest Earned: **Rs {selected_fd['accrued_interest']:,.2f}**
                         - {'Penalty Applied' if penalty_applied else 'No Penalty'}
                         - Total Amount: **Rs {final_amount:,.2f}**
-                        - Action: **{transfer_option}**
+                        - {transfer_message}
                         """)
                         st.balloons()
                         st.rerun()
@@ -1741,17 +1727,16 @@ def fixed_deposits():
                         import traceback
                         st.error(traceback.format_exc())
     
-    # Tab 4: Closed FDs - FIXED to show ALL closed FDs regardless of account status
+    # Tab 4: Closed FDs - FIXED to show ALL closed FDs
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         
         try:
-            # Show count of all closed FDs
             check_query = "SELECT COUNT(*) FROM fixed_deposits WHERE status = 'CLOSED'"
             count = c.execute(check_query).fetchone()[0]
             st.info(f"📊 Found {count} closed FDs in database")
             
-            # Get ALL closed FDs - SIMPLE query, no JOIN needed for basic data
+            # Get ALL closed FDs
             closed_fds = c.execute("""
                 SELECT 
                     fd.fd_number, 
@@ -1763,18 +1748,22 @@ def fixed_deposits():
                     fd.closed_date,
                     COALESCE(fd.closed_amount, fd.maturity_amount) as closed_amount,
                     COALESCE(fd.closed_amount, fd.maturity_amount) - fd.principal_amount as interest_earned,
-                    fd.status
+                    fd.status,
+                    a.account_number,
+                    a.account_type,
+                    a.balance as current_balance
                 FROM fixed_deposits fd
+                LEFT JOIN accounts a ON fd.account_id = a.id
                 WHERE fd.status = 'CLOSED'
                 ORDER BY fd.closed_date DESC
             """).fetchall()
             
             if closed_fds:
-                # Create DataFrame
                 df = pd.DataFrame(closed_fds, columns=[
                     'FD No', 'Principal', 'Rate', 
                     'Start Date', 'Maturity Date', 'Maturity Amount',
-                    'Closed Date', 'Closed Amount', 'Interest Earned', 'Status'
+                    'Closed Date', 'Closed Amount', 'Interest Earned', 
+                    'Status', 'Account Number', 'Account Type', 'Current Balance'
                 ])
                 
                 total_principal = df['Principal'].sum()
@@ -1795,7 +1784,8 @@ def fixed_deposits():
                         'Maturity Amount': 'Rs {:,.2f}',
                         'Closed Amount': 'Rs {:,.2f}',
                         'Interest Earned': 'Rs {:,.2f}',
-                        'Rate': '{:.2f}%'
+                        'Rate': '{:.2f}%',
+                        'Current Balance': 'Rs {:,.2f}'
                     }),
                     use_container_width=True
                 )
@@ -1836,6 +1826,9 @@ def fixed_deposits():
                             Closed Date: {fd[6] if fd[6] else 'N/A'}
                             Amount Paid: Rs {fd[7]:,.2f}
                             Interest Earned: Rs {fd[8]:,.2f}
+                            Account: {fd[10] if fd[10] else 'N/A'}
+                            Account Type: {fd[11] if fd[11] else 'N/A'}
+                            Current Balance: Rs {fd[12]:,.2f}
                             """)
                         
                         pdf_file = create_pdf("Closed Fixed Deposits Report", content, "closed_fds")
@@ -1846,18 +1839,19 @@ def fixed_deposits():
                 st.markdown("""
                 ### 📝 How FDs Get Closed:
                 1. **Manual Closure**: Staff can close an FD from the "Close FD" tab
-                2. **Transfer**: Closed amount is transferred to SB or kept as Savings
+                2. **Transfer**: Money is transferred to SB Account or kept as Savings
                 3. **Records**: All closed FDs appear here with full details
                 """)
                 
-                # Show debug info
                 if st.checkbox("🔍 Show Debug Info"):
                     all_fds = c.execute("""
-                        SELECT id, fd_number, status, closed_date, closed_amount 
-                        FROM fixed_deposits
+                        SELECT fd.id, fd.fd_number, fd.status, fd.closed_date, fd.closed_amount,
+                               a.account_number, a.account_type, a.balance
+                        FROM fixed_deposits fd
+                        LEFT JOIN accounts a ON fd.account_id = a.id
                     """).fetchall()
                     if all_fds:
-                        debug_df = pd.DataFrame(all_fds, columns=['ID', 'FD Number', 'Status', 'Closed Date', 'Closed Amount'])
+                        debug_df = pd.DataFrame(all_fds, columns=['ID', 'FD Number', 'Status', 'Closed Date', 'Closed Amount', 'Account Number', 'Account Type', 'Balance'])
                         st.dataframe(debug_df)
                     else:
                         st.info("No FDs found in database at all")
@@ -1868,7 +1862,7 @@ def fixed_deposits():
             st.error(traceback.format_exc())
     
     c.close()
-
+# ==================== RECURRING DEPOSITS - COMPLETE FIX ====================
 # ==================== RECURRING DEPOSITS - COMPLETE FIX ====================
 def recurring_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
@@ -1878,7 +1872,7 @@ def recurring_deposits():
     c = get_db()
     tab1, tab2, tab3, tab4 = st.tabs(["📝 Open RD", "📊 Active RDs", "💳 Pay Installment", "📋 Closed RDs"])
     
-    # Tab 1: Open RD (keep as is)
+    # Tab 1: Open RD
     with tab1:
         st.markdown("### 📝 Open Recurring Deposit")
         
@@ -2098,7 +2092,7 @@ def recurring_deposits():
         else:
             st.info("No active recurring deposits")
     
-    # Tab 3: Pay Installment - FIXED to ask for transfer option on maturity
+    # Tab 3: Pay Installment - FIXED with transfer option
     with tab3:
         st.markdown("### 💳 Pay RD Installment")
         
@@ -2108,6 +2102,8 @@ def recurring_deposits():
                 rd.rd_number, 
                 c.id as customer_id,
                 c.first_name||' '||c.last_name as customer,
+                rd.account_id as rd_account_id,
+                a.account_number as rd_account_number,
                 sb.id as sb_account_id,
                 sb.account_number as sb_account,
                 COALESCE(sb.balance, 0) as sb_balance,
@@ -2133,17 +2129,20 @@ def recurring_deposits():
         
         rd_options = []
         for rd in pending_rds:
-            rd_id, rd_number, cust_id, customer, sb_acc_id, sb_acc, sb_balance, monthly, paid, total, rate, start, maturity, maturity_amount = rd
+            rd_id, rd_number, cust_id, customer, rd_account_id, rd_account_number, sb_acc_id, sb_acc, sb_balance, monthly, paid, total, rate, start, maturity, maturity_amount = rd
             
             remaining = total - paid
             has_sb = sb_acc_id is not None
+            is_last = (paid + 1) == total
             
             rd_options.append({
-                'display': f"{rd_number} - {customer} | {'✅' if has_sb else '❌'} SB: {sb_acc if sb_acc else 'No SB'} | Balance: Rs{sb_balance:,.2f} | {paid}/{total} paid | Next: Rs{monthly:,.2f}",
+                'display': f"{rd_number} - {customer} | {'✅' if has_sb else '❌'} SB: {sb_acc if sb_acc else 'No SB'} | Balance: Rs{sb_balance:,.2f} | {paid}/{total} paid | {'⭐ LAST' if is_last else f'Next: Rs{monthly:,.2f}'}",
                 'rd_id': rd_id,
                 'rd_number': rd_number,
                 'customer_id': cust_id,
                 'customer': customer,
+                'rd_account_id': rd_account_id,
+                'rd_account_number': rd_account_number,
                 'sb_account_id': sb_acc_id,
                 'sb_account': sb_acc if sb_acc else 'No SB Account',
                 'sb_balance': sb_balance if sb_acc_id else 0,
@@ -2156,7 +2155,7 @@ def recurring_deposits():
                 'maturity_date': maturity,
                 'maturity_amount': maturity_amount,
                 'has_sb': has_sb,
-                'is_last_installment': (paid + 1) == total
+                'is_last_installment': is_last
             })
         
         selected_rd = st.selectbox(
@@ -2180,6 +2179,7 @@ def recurring_deposits():
             |-------|-------|
             | **RD Number** | {selected_rd['rd_number']} |
             | **Customer** | {selected_rd['customer']} |
+            | **RD Account** | {selected_rd['rd_account_number']} |
             | **SB Account** | {selected_rd['sb_account']} |
             | **SB Balance** | Rs {selected_rd['sb_balance']:,.2f} |
             | **Monthly Amount** | Rs {selected_rd['monthly_amount']:,.2f} |
@@ -2191,14 +2191,23 @@ def recurring_deposits():
             | **Maturity Amount** | Rs {selected_rd['maturity_amount']:,.2f} |
             """)
             
-            # If this is the last installment, ask for transfer option
+            # If this is the last installment, show transfer option
             if selected_rd['is_last_installment']:
                 st.warning("⚠️ **This is the LAST installment!** The RD will mature after this payment.")
+                st.info("💡 **What happens to the maturity amount?**")
+                st.markdown("""
+                - **Transfer to SB Account**: Money moves to your Savings Bank account
+                - **Keep in RD Account (as Savings)**: Money stays in the same account, but it becomes a regular savings account (you can withdraw anytime)
+                """)
+                
                 transfer_option = st.radio(
-                    "💰 What would you like to do with the matured amount?",
+                    "💰 What would you like to do with the maturity amount?",
                     ["Transfer to SB Account", "Keep in RD Account (as Savings)"],
                     horizontal=True
                 )
+                
+                if not selected_rd['has_sb'] and transfer_option == "Transfer to SB Account":
+                    st.error("❌ Cannot transfer to SB: No SB account found! Please choose 'Keep in RD Account (as Savings)'")
             else:
                 transfer_option = "Transfer to SB Account"  # Default for non-last installments
             
@@ -2238,6 +2247,10 @@ def recurring_deposits():
                 elif selected_rd['monthly_amount'] > selected_rd['sb_balance']:
                     can_pay = False
                     st.error(f"❌ Cannot pay: Insufficient balance! Available: Rs {selected_rd['sb_balance']:,.2f}")
+            
+            if selected_rd['is_last_installment'] and transfer_option == "Transfer to SB Account" and not selected_rd['has_sb']:
+                can_pay = False
+                st.error("❌ Cannot transfer to SB: No SB account found!")
             
             if st.button("💳 Pay Installment", use_container_width=True, type="primary", disabled=not can_pay):
                 if not can_pay:
@@ -2345,7 +2358,7 @@ def recurring_deposits():
                                     """, (
                                         generate_id('TXN'), selected_rd['sb_account_id'], 'CREDIT',
                                         selected_rd['maturity_amount'], sb_balance_after,
-                                        f"RD Maturity Transfer: {selected_rd['rd_number']}",
+                                        f"RD Maturity Transfer to SB: {selected_rd['rd_number']}",
                                         'RD_MATURITY', 'RECEIPT',
                                         generate_voucher_number('RECEIPT'),
                                         st.session_state.user['id']
@@ -2353,10 +2366,11 @@ def recurring_deposits():
                                     
                                     transfer_message = f"💰 **Transferred to SB Account: {selected_rd['sb_account']}**"
                                 else:
-                                    # Keep in RD account - convert to savings
+                                    # Keep in RD account - convert to SAVINGS
                                     transfer_conn.execute("""
                                         UPDATE accounts 
-                                        SET balance=?, account_type='SAVINGS'
+                                        SET account_type='SAVINGS', 
+                                            balance=?
                                         WHERE id=?
                                     """, (selected_rd['maturity_amount'], rd_account_id))
                                     
@@ -2376,7 +2390,7 @@ def recurring_deposits():
                                         st.session_state.user['id']
                                     ))
                                     
-                                    transfer_message = f"💰 **Kept in RD Account (now Savings)**"
+                                    transfer_message = f"💰 **Kept in Account: {selected_rd['rd_account_number']} (Now a Savings Account)**"
                                 
                                 transfer_conn.commit()
                                 transfer_conn.close()
@@ -2415,17 +2429,16 @@ def recurring_deposits():
                         import traceback
                         st.error(traceback.format_exc())
     
-    # Tab 4: Closed RDs - FIXED to show ALL closed RDs regardless of account status
+    # Tab 4: Closed RDs - FIXED to show ALL closed RDs with account info
     with tab4:
         st.markdown("### 📋 Closed/Completed Recurring Deposits")
         
         try:
-            # Show count of all closed RDs
             check_query = "SELECT COUNT(*) FROM recurring_deposits WHERE status IN ('MATURED', 'CLOSED')"
             count = c.execute(check_query).fetchone()[0]
             st.info(f"📊 Found {count} closed/completed RDs in database")
             
-            # Get ALL closed/matured RDs - SIMPLE query, no JOIN needed
+            # Get ALL closed/matured RDs with account info
             closed_rds = c.execute("""
                 SELECT 
                     rd.rd_number,
@@ -2443,8 +2456,12 @@ def recurring_deposits():
                         WHEN rd.status = 'MATURED' THEN '✅ MATURED'
                         WHEN rd.status = 'CLOSED' THEN '🔒 CLOSED'
                         ELSE rd.status
-                    END as status_display
+                    END as status_display,
+                    a.account_number,
+                    a.account_type,
+                    a.balance as current_balance
                 FROM recurring_deposits rd
+                LEFT JOIN accounts a ON rd.account_id = a.id
                 WHERE rd.status IN ('MATURED', 'CLOSED')
                 ORDER BY rd.closed_date DESC, rd.maturity_date DESC
             """).fetchall()
@@ -2454,7 +2471,8 @@ def recurring_deposits():
                 df = pd.DataFrame(closed_rds, columns=[
                     'RD No', 'Monthly', 'Paid', 'Total',
                     'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 
-                    'Status', 'Closed Date', 'Closed Amount', 'Status Display'
+                    'Status', 'Closed Date', 'Closed Amount', 'Status Display',
+                    'Account Number', 'Account Type', 'Current Balance'
                 ])
                 
                 total_principal = df['Monthly'].sum()
@@ -2475,7 +2493,8 @@ def recurring_deposits():
                         'Monthly': 'Rs {:,.2f}',
                         'Maturity Amount': 'Rs {:,.2f}',
                         'Closed Amount': 'Rs {:,.2f}',
-                        'Rate': '{:.2f}%'
+                        'Rate': '{:.2f}%',
+                        'Current Balance': 'Rs {:,.2f}'
                     }),
                     use_container_width=True
                 )
@@ -2503,7 +2522,8 @@ def recurring_deposits():
                             'Monthly': 'Rs {:,.2f}',
                             'Maturity Amount': 'Rs {:,.2f}',
                             'Closed Amount': 'Rs {:,.2f}',
-                            'Rate': '{:.2f}%'
+                            'Rate': '{:.2f}%',
+                            'Current Balance': 'Rs {:,.2f}'
                         }),
                         use_container_width=True
                     )
@@ -2545,6 +2565,9 @@ def recurring_deposits():
                             Status: {rd[11]}
                             Closed Date: {rd[9] if rd[9] else 'N/A'}
                             Closed Amount: Rs {rd[10]:,.2f}
+                            Account: {rd[12] if rd[12] else 'N/A'}
+                            Account Type: {rd[13] if rd[13] else 'N/A'}
+                            Current Balance: Rs {rd[14]:,.2f}
                             """)
                         
                         pdf_file = create_pdf("Closed Recurring Deposits Report", content, "closed_rds")
@@ -2561,11 +2584,13 @@ def recurring_deposits():
                 
                 if st.checkbox("🔍 Show Debug Info"):
                     all_rds = c.execute("""
-                        SELECT id, rd_number, status, closed_date, closed_amount 
-                        FROM recurring_deposits
+                        SELECT rd.id, rd.rd_number, rd.status, rd.closed_date, rd.closed_amount,
+                               a.account_number, a.account_type, a.balance
+                        FROM recurring_deposits rd
+                        LEFT JOIN accounts a ON rd.account_id = a.id
                     """).fetchall()
                     if all_rds:
-                        debug_df = pd.DataFrame(all_rds, columns=['ID', 'RD Number', 'Status', 'Closed Date', 'Closed Amount'])
+                        debug_df = pd.DataFrame(all_rds, columns=['ID', 'RD Number', 'Status', 'Closed Date', 'Closed Amount', 'Account Number', 'Account Type', 'Balance'])
                         st.dataframe(debug_df)
                     else:
                         st.info("No RDs found in database at all")

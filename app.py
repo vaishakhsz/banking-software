@@ -1701,18 +1701,21 @@ def fixed_deposits():
                         st.error(traceback.format_exc())
     
     # Tab 4: Closed FDs
+        # Tab 4: Closed FDs - FIXED to show even when account is inactive
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         
         try:
+            # Check for closed FDs regardless of account status
             check_query = "SELECT COUNT(*) FROM fixed_deposits WHERE status = 'CLOSED'"
             count = c.execute(check_query).fetchone()[0]
             st.info(f"📊 Found {count} closed FDs in database")
             
+            # Get ALL closed FDs - using LEFT JOIN and not filtering account status
             closed_fds = c.execute("""
                 SELECT 
                     fd.fd_number, 
-                    c.first_name||' '||c.last_name as customer,
+                    COALESCE(c.first_name||' '||c.last_name, 'Customer Not Found') as customer,
                     fd.principal_amount, 
                     fd.interest_rate,
                     fd.start_date, 
@@ -1723,13 +1726,14 @@ def fixed_deposits():
                     COALESCE(fd.closed_amount, fd.maturity_amount) - fd.principal_amount as interest_earned,
                     fd.status
                 FROM fixed_deposits fd
-                JOIN accounts a ON fd.account_id = a.id
-                JOIN customers c ON a.customer_id = c.id
+                LEFT JOIN accounts a ON fd.account_id = a.id
+                LEFT JOIN customers c ON a.customer_id = c.id
                 WHERE fd.status = 'CLOSED'
                 ORDER BY fd.closed_date DESC
             """).fetchall()
             
             if closed_fds:
+                # Create DataFrame
                 df = pd.DataFrame(closed_fds, columns=[
                     'FD No', 'Customer', 'Principal', 'Rate', 
                     'Start Date', 'Maturity Date', 'Maturity Amount',
@@ -1811,9 +1815,14 @@ def fixed_deposits():
                 """)
                 
                 if st.checkbox("🔍 Show Debug Info"):
-                    all_fds = c.execute("SELECT id, fd_number, status, closed_date, closed_amount FROM fixed_deposits").fetchall()
+                    all_fds = c.execute("""
+                        SELECT fd.id, fd.fd_number, fd.status, fd.closed_date, fd.closed_amount,
+                               a.id as acc_id, a.status as acc_status
+                        FROM fixed_deposits fd
+                        LEFT JOIN accounts a ON fd.account_id = a.id
+                    """).fetchall()
                     if all_fds:
-                        debug_df = pd.DataFrame(all_fds, columns=['ID', 'FD Number', 'Status', 'Closed Date', 'Closed Amount'])
+                        debug_df = pd.DataFrame(all_fds, columns=['ID', 'FD Number', 'Status', 'Closed Date', 'Closed Amount', 'Account ID', 'Account Status'])
                         st.dataframe(debug_df)
                     else:
                         st.info("No FDs found in database at all")
@@ -1822,8 +1831,6 @@ def fixed_deposits():
             st.error(f"❌ Error loading closed FDs: {str(e)}")
             import traceback
             st.error(traceback.format_exc())
-    
-    c.close()
 
 # ==================== RECURRING DEPOSITS ====================
 def recurring_deposits():
@@ -2324,18 +2331,21 @@ def recurring_deposits():
                         st.error(traceback.format_exc())
     
     # Tab 4: Closed RDs
+        # Tab 4: Closed RDs - FIXED to show even when account is inactive
     with tab4:
         st.markdown("### 📋 Closed/Completed Recurring Deposits")
         
         try:
+            # Check for closed RDs regardless of account status
             check_query = "SELECT COUNT(*) FROM recurring_deposits WHERE status IN ('MATURED', 'CLOSED')"
             count = c.execute(check_query).fetchone()[0]
             st.info(f"📊 Found {count} closed/completed RDs in database")
             
+            # Get ALL closed/matured RDs - using LEFT JOIN and not filtering account status
             closed_rds = c.execute("""
                 SELECT 
                     rd.rd_number,
-                    c.first_name||' '||c.last_name as customer,
+                    COALESCE(c.first_name||' '||c.last_name, 'Customer Not Found') as customer,
                     rd.monthly_amount, 
                     rd.installments_paid,
                     rd.total_installments, 
@@ -2352,13 +2362,14 @@ def recurring_deposits():
                         ELSE rd.status
                     END as status_display
                 FROM recurring_deposits rd
-                JOIN accounts a ON rd.account_id = a.id
-                JOIN customers c ON a.customer_id = c.id
+                LEFT JOIN accounts a ON rd.account_id = a.id
+                LEFT JOIN customers c ON a.customer_id = c.id
                 WHERE rd.status IN ('MATURED', 'CLOSED')
                 ORDER BY rd.closed_date DESC, rd.maturity_date DESC
             """).fetchall()
             
             if closed_rds:
+                # Create DataFrame
                 df = pd.DataFrame(closed_rds, columns=[
                     'RD No', 'Customer', 'Monthly', 'Paid', 'Total',
                     'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 
@@ -2469,9 +2480,14 @@ def recurring_deposits():
                 """)
                 
                 if st.checkbox("🔍 Show Debug Info"):
-                    all_rds = c.execute("SELECT id, rd_number, status, closed_date, closed_amount FROM recurring_deposits").fetchall()
+                    all_rds = c.execute("""
+                        SELECT rd.id, rd.rd_number, rd.status, rd.closed_date, rd.closed_amount,
+                               a.id as acc_id, a.status as acc_status
+                        FROM recurring_deposits rd
+                        LEFT JOIN accounts a ON rd.account_id = a.id
+                    """).fetchall()
                     if all_rds:
-                        debug_df = pd.DataFrame(all_rds, columns=['ID', 'RD Number', 'Status', 'Closed Date', 'Closed Amount'])
+                        debug_df = pd.DataFrame(all_rds, columns=['ID', 'RD Number', 'Status', 'Closed Date', 'Closed Amount', 'Account ID', 'Account Status'])
                         st.dataframe(debug_df)
                     else:
                         st.info("No RDs found in database at all")
@@ -2480,8 +2496,6 @@ def recurring_deposits():
             st.error(f"❌ Error loading closed RDs: {str(e)}")
             import traceback
             st.error(traceback.format_exc())
-    
-    c.close()
 
 # ==================== TRANSACTIONS ====================
 def transactions():

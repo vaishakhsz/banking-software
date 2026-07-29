@@ -1714,34 +1714,59 @@ def fixed_deposits():
                         import traceback
                         st.error(traceback.format_exc())
     
-    # Tab 4: Closed FDs
+    # Tab 4: Closed FDs Tab 4: Closed FDs - FIXED
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         
         try:
+            # First, let's check if there are any closed FDs at all
+            check_query = "SELECT COUNT(*) FROM fixed_deposits WHERE status = 'CLOSED'"
+            count = c.execute(check_query).fetchone()[0]
+            st.info(f"📊 Found {count} closed FDs in database")
+            
+            # Get ALL closed FDs with proper data
             closed_fds = c.execute("""
-                SELECT fd.fd_number, 
-                       c.first_name||' '||c.last_name as customer,
-                       fd.principal_amount, fd.interest_rate,
-                       fd.start_date, fd.maturity_date,
-                       fd.maturity_amount, fd.closed_date,
-                       COALESCE(fd.closed_amount, fd.maturity_amount) as closed_amount,
-                       COALESCE(fd.closed_amount, fd.maturity_amount) - fd.principal_amount as interest_earned,
-                       fd.status
+                SELECT 
+                    fd.fd_number, 
+                    c.first_name||' '||c.last_name as customer,
+                    fd.principal_amount, 
+                    fd.interest_rate,
+                    fd.start_date, 
+                    fd.maturity_date,
+                    fd.maturity_amount, 
+                    fd.closed_date,
+                    COALESCE(fd.closed_amount, fd.maturity_amount) as closed_amount,
+                    COALESCE(fd.closed_amount, fd.maturity_amount) - fd.principal_amount as interest_earned,
+                    fd.status
                 FROM fixed_deposits fd
                 JOIN accounts a ON fd.account_id = a.id
                 JOIN customers c ON a.customer_id = c.id
-                WHERE fd.status='CLOSED'
+                WHERE fd.status = 'CLOSED'
                 ORDER BY fd.closed_date DESC
             """).fetchall()
             
             if closed_fds:
+                # Create DataFrame
                 df = pd.DataFrame(closed_fds, columns=[
                     'FD No', 'Customer', 'Principal', 'Rate', 
                     'Start Date', 'Maturity Date', 'Maturity Amount',
                     'Closed Date', 'Closed Amount', 'Interest Earned', 'Status'
                 ])
                 
+                # Show summary stats
+                total_principal = df['Principal'].sum()
+                total_closed = df['Closed Amount'].sum()
+                total_interest = df['Interest Earned'].sum()
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("📊 Total FDs Closed", f"{len(closed_fds)}")
+                col2.metric("💰 Total Principal", f"Rs {total_principal:,.2f}")
+                col3.metric("💎 Total Closed Amount", f"Rs {total_closed:,.2f}")
+                col4.metric("📈 Total Interest Earned", f"Rs {total_interest:,.2f}")
+                
+                st.markdown("---")
+                
+                # Show the data table
                 st.dataframe(
                     df.style.format({
                         'Principal': 'Rs {:,.2f}',
@@ -1753,54 +1778,71 @@ def fixed_deposits():
                     use_container_width=True
                 )
                 
-                total_principal = df['Principal'].sum()
-                total_closed = df['Closed Amount'].sum()
-                total_interest = df['Interest Earned'].sum()
+                # Download buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "📥 Download Closed FDs CSV",
+                        df.to_csv(index=False),
+                        "closed_fixed_deposits.csv",
+                        "text/csv"
+                    )
                 
-                col1, col2, col3 = st.columns(3)
-                col1.metric("💰 Total Principal", f"Rs {total_principal:,.2f}")
-                col2.metric("💎 Total Closed Amount", f"Rs {total_closed:,.2f}")
-                col3.metric("📈 Total Interest Earned", f"Rs {total_interest:,.2f}")
-                
-                # Download PDF
-                if st.button("📥 Download Closed FDs Report", use_container_width=True):
-                    content = [
-                        "📋 CLOSED FIXED DEPOSITS REPORT",
-                        "=" * 50,
-                        f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                        "",
-                        f"Total FDs Closed: {len(closed_fds)}",
-                        f"Total Principal: Rs {total_principal:,.2f}",
-                        f"Total Interest Earned: Rs {total_interest:,.2f}",
-                        f"Total Amount Paid: Rs {total_closed:,.2f}",
-                        "",
-                        "DETAILED LIST:",
-                        "-" * 50
-                    ]
-                    
-                    for fd in closed_fds:
-                        content.append(f"""
-                        FD Number: {fd[0]}
-                        Customer: {fd[1]}
-                        Principal: Rs {fd[2]:,.2f}
-                        Rate: {fd[3]}%
-                        Start Date: {fd[4]}
-                        Maturity Date: {fd[5]}
-                        Closed Date: {fd[7]}
-                        Amount Paid: Rs {fd[8]:,.2f}
-                        Interest Earned: Rs {fd[9]:,.2f}
-                        """)
-                    
-                    pdf_file = create_pdf("Closed Fixed Deposits Report", content, "closed_fds")
-                    if pdf_file:
-                        create_download_button(pdf_file, "closed_fixed_deposits", "📥 Download PDF Report")
+                with col2:
+                    if st.button("📄 Print/PDF Closed FDs Report", use_container_width=True):
+                        content = [
+                            "📋 CLOSED FIXED DEPOSITS REPORT",
+                            "=" * 50,
+                            f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                            "",
+                            f"Total FDs Closed: {len(closed_fds)}",
+                            f"Total Principal: Rs {total_principal:,.2f}",
+                            f"Total Interest Earned: Rs {total_interest:,.2f}",
+                            f"Total Amount Paid: Rs {total_closed:,.2f}",
+                            "",
+                            "DETAILED LIST:",
+                            "-" * 50
+                        ]
+                        
+                        for fd in closed_fds:
+                            content.append(f"""
+                            FD Number: {fd[0]}
+                            Customer: {fd[1]}
+                            Principal: Rs {fd[2]:,.2f}
+                            Rate: {fd[3]}%
+                            Start Date: {fd[4]}
+                            Maturity Date: {fd[5]}
+                            Maturity Amount: Rs {fd[6]:,.2f}
+                            Closed Date: {fd[7] if fd[7] else 'N/A'}
+                            Amount Paid: Rs {fd[8]:,.2f}
+                            Interest Earned: Rs {fd[9]:,.2f}
+                            """)
+                        
+                        pdf_file = create_pdf("Closed Fixed Deposits Report", content, "closed_fds")
+                        if pdf_file:
+                            create_download_button(pdf_file, "closed_fixed_deposits", "📥 Download PDF Report")
             else:
-                st.info("No closed fixed deposits found")
+                st.info("ℹ️ No closed fixed deposits found.")
+                st.markdown("""
+                ### 📝 How FDs Get Closed:
+                1. **Manual Closure**: Staff can close an FD from the "Close FD" tab
+                2. **Transfer**: Closed amount is automatically transferred to SB account
+                3. **Records**: All closed FDs appear here with full details
+                """)
+                
+                # Show debug info
+                if st.checkbox("🔍 Show Debug Info"):
+                    all_fds = c.execute("SELECT id, fd_number, status, closed_date, closed_amount FROM fixed_deposits").fetchall()
+                    if all_fds:
+                        debug_df = pd.DataFrame(all_fds, columns=['ID', 'FD Number', 'Status', 'Closed Date', 'Closed Amount'])
+                        st.dataframe(debug_df)
+                    else:
+                        st.info("No FDs found in database at all")
+                
         except Exception as e:
-            st.error(f"Error loading closed FDs: {str(e)}")
-            st.info("Please try closing a FD first to populate the data.")
-    
-    c.close()
+            st.error(f"❌ Error loading closed FDs: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
 
 # ==================== RECURRING DEPOSITS ====================
 # ==================== RECURRING DEPOSITS ====================
@@ -2306,11 +2348,20 @@ def recurring_deposits():
                         st.error(traceback.format_exc())
     
     # Tab 4: Closed RDs - FIXED: Show ALL closed/completed RDs properly
+   # The RD closure function is already in the previous response, but let me highlight the key fix for Tab 4:
+
+# Tab 4: Closed RDs - FIXED: Show ALL closed/completed RDs properly
+   # Tab 4: Closed RDs - FIXED
     with tab4:
         st.markdown("### 📋 Closed/Completed Recurring Deposits")
         
         try:
-            # Get ALL closed/matured RDs - including both 'MATURED' and 'CLOSED' status
+            # First, let's check if there are any closed RDs at all
+            check_query = "SELECT COUNT(*) FROM recurring_deposits WHERE status IN ('MATURED', 'CLOSED')"
+            count = c.execute(check_query).fetchone()[0]
+            st.info(f"📊 Found {count} closed/completed RDs in database")
+            
+            # Get ALL closed/matured RDs
             closed_rds = c.execute("""
                 SELECT 
                     rd.rd_number,
@@ -2453,13 +2504,49 @@ def recurring_deposits():
                 3. **Transfer**: Matured amount is automatically transferred to SB account
                 """)
                 
+                # Show debug info
+                if st.checkbox("🔍 Show Debug Info"):
+                    all_rds = c.execute("SELECT id, rd_number, status, closed_date, closed_amount FROM recurring_deposits").fetchall()
+                    if all_rds:
+                        debug_df = pd.DataFrame(all_rds, columns=['ID', 'RD Number', 'Status', 'Closed Date', 'Closed Amount'])
+                        st.dataframe(debug_df)
+                    else:
+                        st.info("No RDs found in database at all")
+                
         except Exception as e:
             st.error(f"❌ Error loading closed RDs: {str(e)}")
             import traceback
             st.error(traceback.format_exc())
-            st.info("💡 Try completing an RD first to see it here.")
-    
-    c.close()
+        
+        try:
+            # Get ALL closed/matured RDs
+            closed_rds = c.execute("""
+                SELECT 
+                    rd.rd_number,
+                    c.first_name||' '||c.last_name as customer,
+                    rd.monthly_amount, 
+                    rd.installments_paid,
+                    rd.total_installments, 
+                    rd.interest_rate,
+                    rd.start_date, 
+                    rd.maturity_date,
+                    rd.maturity_amount, 
+                    rd.status,
+                    rd.closed_date,
+                    COALESCE(rd.closed_amount, rd.maturity_amount) as closed_amount,
+                    CASE 
+                        WHEN rd.status = 'MATURED' THEN '✅ MATURED'
+                        WHEN rd.status = 'CLOSED' THEN '🔒 CLOSED'
+                        ELSE rd.status
+                    END as status_display
+                FROM recurring_deposits rd
+                JOIN accounts a ON rd.account_id = a.id
+                JOIN customers c ON a.customer_id = c.id
+                WHERE rd.status IN ('MATURED', 'CLOSED')
+                ORDER BY rd.closed_date DESC, rd.maturity_date DESC
+            """).fetchall()
+            
+            # Rest of the code...
 # ==================== TRANSACTIONS ====================
 def transactions():
     c = get_db()

@@ -581,6 +581,181 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
         raise e
 
 # ==================== RETRIEVAL ACCOUNT PAGE ====================
+# ==================== RETRIEVAL ACCOUNT FUNCTIONS ====================
+
+def get_retrieval_account(customer_id):
+    """Get or create a retrieval account for a customer"""
+    conn = get_db()
+    try:
+        # Check if retrieval account exists
+        acc = conn.execute("""
+            SELECT id, account_number, balance 
+            FROM retrieval_accounts 
+            WHERE customer_id = ? AND status = 'ACTIVE'
+        """, (customer_id,)).fetchone()
+        
+        if acc:
+            conn.close()
+            return acc[0], acc[1], acc[2]
+        
+        # Create new retrieval account
+        account_number = f"RET{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
+        
+        conn.execute("""
+            INSERT INTO retrieval_accounts (account_number, customer_id, balance)
+            VALUES (?, ?, 0)
+        """, (account_number, customer_id))
+        
+        acc_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+        conn.close()
+        
+        return acc_id, account_number, 0
+    except Exception as e:
+        conn.close()
+        raise e
+
+def add_to_retrieval_account(customer_id, deposit_type, deposit_number, principal, interest, maturity_date):
+    """Add matured deposit to retrieval account"""
+    conn = get_db()
+    
+    try:
+        # Get or create retrieval account
+        acc_id, acc_number, current_balance = get_retrieval_account(customer_id)
+        
+        total_amount = principal + interest
+        
+        new_balance = current_balance + total_amount
+        conn.execute("""
+            UPDATE retrieval_accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_balance, acc_id))
+        
+        deposit_id = generate_id('MAT')
+        conn.execute("""
+            INSERT INTO matured_deposits (
+                deposit_id, customer_id, original_deposit_type,
+                original_deposit_number, principal_amount, interest_earned,
+                total_amount, maturity_date, deposited_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATE('now'))
+        """, (deposit_id, customer_id, deposit_type, deposit_number, 
+              principal, interest, total_amount, maturity_date))
+        
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), acc_id, 'CREDIT',
+            total_amount, new_balance,
+            f"{deposit_type} Maturity: {deposit_number}",
+            'MATURITY', 'RECEIPT',
+            generate_voucher_number('RECEIPT'),
+            st.session_state.user['id']
+        ))
+        
+        conn.commit()
+        conn.close()
+        return acc_number, new_balance
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise e
+
+def transfer_to_sb(customer_id, amount, sb_account_id):
+    """Transfer from retrieval account to SB account"""
+    conn = get_db()
+    
+    try:
+        # Get retrieval account
+        ret_acc = conn.execute("""
+            SELECT id, account_number, balance 
+            FROM retrieval_accounts 
+            WHERE customer_id = ? AND status = 'ACTIVE'
+        """, (customer_id,)).fetchone()
+        
+        if not ret_acc:
+            conn.close()
+            return None, "No retrieval account found"
+        
+        if ret_acc[2] < amount:
+            conn.close()
+            return None, "Insufficient balance in retrieval account"
+        
+        # Get SB account balance
+        sb_acc = conn.execute("""
+            SELECT balance FROM accounts WHERE id = ?
+        """, (sb_account_id,)).fetchone()
+        
+        if not sb_acc:
+            conn.close()
+            return None, "SB account not found"
+        
+        # Update retrieval account (debit)
+        new_ret_balance = ret_acc[2] - amount
+        conn.execute("""
+            UPDATE retrieval_accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_ret_balance, ret_acc[0]))
+        
+        # Update SB account (credit)
+        new_sb_balance = sb_acc[0] + amount
+        conn.execute("""
+            UPDATE accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_sb_balance, sb_account_id))
+        
+        # Transaction: Debit from retrieval
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), ret_acc[0], 'DEBIT',
+            amount, new_ret_balance,
+            "Transfer to SB Account",
+            'TRANSFER', 'PAYMENT',
+            generate_voucher_number('PAYMENT'),
+            st.session_state.user['id']
+        ))
+        
+        # Transaction: Credit to SB
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), sb_account_id, 'CREDIT',
+            amount, new_sb_balance,
+            "Transfer from Retrieval Account",
+            'TRANSFER', 'RECEIPT',
+            generate_voucher_number('RECEIPT'),
+            st.session_state.user['id']
+        ))
+        
+        conn.commit()
+        conn.close()
+        return new_ret_balance, new_sb_balance
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise e
+
+# ==================== RETRIEVAL ACCOUNT PAGE ====================
 def retrieval_account():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")

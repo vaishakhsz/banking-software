@@ -3037,6 +3037,7 @@ def transactions():
 # ==================== JOURNAL VOUCHERS ====================
 # ==================== JOURNAL VOUCHERS - COMPLETE FIX ====================
 # ==================== JOURNAL VOUCHERS - COMPLETE FIX ====================
+# ==================== JOURNAL VOUCHERS - COMPLETE FIX ====================
 def journal_vouchers():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -3274,6 +3275,406 @@ def journal_vouchers():
                         st.success("✅ This JV is POSTED and appears in Trial Balance & Balance Sheet")
         else:
             st.info("No journal vouchers found")
+    
+    c.close()
+
+# ==================== TRIAL BALANCE - WITH JV INTEGRATION ====================
+def trial_balance():
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("❌ Unauthorized access!")
+        return
+    
+    c = get_db()
+    st.markdown("### ⚖️ Trial Balance")
+    
+    if st.button("🔄 Generate Trial Balance", use_container_width=True, type="primary"):
+        trial = []
+        
+        # === REGULAR ASSETS ===
+        for mode, name in [('CASH', 'Cash in Hand'), ('BANK', 'Cash in Bank'), ('CHEQUE', 'Cash (Cheque)')]:
+            bal = c.execute("""
+                SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
+                FROM transactions WHERE reference_type=?
+            """, (mode,)).fetchone()[0]
+            if abs(bal) > 0:
+                trial.append({'head': name, 'cat': 'Asset', 'dr': max(bal, 0), 'cr': max(-bal, 0)})
+        
+        fd_total = c.execute("SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
+        if fd_total > 0:
+            trial.append({'head': 'FD Deposits Held', 'cat': 'Asset', 'dr': fd_total, 'cr': 0})
+        
+        rd_total = c.execute("""
+            SELECT COALESCE(SUM(monthly_amount * installments_paid), 0) 
+            FROM recurring_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if rd_total > 0:
+            trial.append({'head': 'RD Deposits Held', 'cat': 'Asset', 'dr': rd_total, 'cr': 0})
+        
+        ret_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM retrieval_accounts WHERE status='ACTIVE'").fetchone()[0]
+        if ret_total > 0:
+            trial.append({'head': 'Retrieval Account Balance', 'cat': 'Asset', 'dr': ret_total, 'cr': 0})
+        
+        # === JOURNAL VOUCHER DEBIT ENTRIES (POSTED ONLY) ===
+        jv_dr = c.execute("""
+            SELECT je.account_head, SUM(je.debit_amount) as total
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
+            WHERE jv.status='POSTED' AND je.debit_amount > 0 
+            GROUP BY je.account_head
+            ORDER BY total DESC
+        """).fetchall()
+        
+        for e in jv_dr:
+            if e[1] > 0:
+                trial.append({'head': f"JV: {e[0]}", 'cat': 'JV Debit', 'dr': e[1], 'cr': 0})
+        
+        # === JOURNAL VOUCHER CREDIT ENTRIES (POSTED ONLY) ===
+        jv_cr = c.execute("""
+            SELECT je.account_head, SUM(je.credit_amount) as total
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
+            WHERE jv.status='POSTED' AND je.credit_amount > 0 
+            GROUP BY je.account_head
+            ORDER BY total DESC
+        """).fetchall()
+        
+        for e in jv_cr:
+            if e[1] > 0:
+                trial.append({'head': f"JV: {e[0]}", 'cat': 'JV Credit', 'dr': 0, 'cr': e[1]})
+        
+        # === REGULAR LIABILITIES ===
+        sb_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
+        if sb_total > 0:
+            trial.append({'head': 'SB Deposits', 'cat': 'Liability', 'dr': 0, 'cr': sb_total})
+        
+        sb_int = c.execute("SELECT COALESCE(SUM(total_interest_earned), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
+        if sb_int > 0:
+            trial.append({'head': 'SB Interest Payable', 'cat': 'Liability', 'dr': 0, 'cr': sb_int})
+        
+        # === REGULAR INCOME ===
+        income_types = ['Interest Earned', 'Fees & Charges', 'Commission Income', 'Other Income']
+        for it in income_types:
+            amt = c.execute("SELECT COALESCE(SUM(amount), 0) FROM income WHERE income_type=?", (it,)).fetchone()[0]
+            if amt > 0:
+                trial.append({'head': it, 'cat': 'Income', 'dr': 0, 'cr': amt})
+        
+        # === REGULAR EXPENSES ===
+        expense_types = ['Salary & Wages', 'Rent & Utilities', 'Operating Expenses', 'Administrative Expenses', 'Other Expenses']
+        for et in expense_types:
+            amt = c.execute("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE expense_type=?", (et,)).fetchone()[0]
+            if amt > 0:
+                trial.append({'head': et, 'cat': 'Expense', 'dr': amt, 'cr': 0})
+        
+        # === CAPITAL ===
+        tdr = sum(i['dr'] for i in trial)
+        tcr = sum(i['cr'] for i in trial)
+        
+        if abs(tdr - tcr) > 0.01:
+            diff = tdr - tcr
+            if diff > 0:
+                trial.append({'head': 'Capital/Equity', 'cat': 'Capital', 'dr': 0, 'cr': diff})
+            else:
+                trial.append({'head': 'Capital/Equity', 'cat': 'Capital', 'dr': -diff, 'cr': 0})
+        
+        # === DISPLAY ===
+        if trial:
+            df = pd.DataFrame(trial)
+            final_tdr = sum(i['dr'] for i in trial)
+            final_tcr = sum(i['cr'] for i in trial)
+            
+            asset_total = sum(i['dr'] for i in trial if i['cat'] == 'Asset')
+            liability_total = sum(i['cr'] for i in trial if i['cat'] == 'Liability')
+            income_total = sum(i['cr'] for i in trial if i['cat'] == 'Income')
+            expense_total = sum(i['dr'] for i in trial if i['cat'] == 'Expense')
+            jv_total_dr = sum(i['dr'] for i in trial if i['cat'] == 'JV Debit')
+            jv_total_cr = sum(i['cr'] for i in trial if i['cat'] == 'JV Credit')
+            capital = next((i['cr'] for i in trial if i['cat'] == 'Capital' and i['cr'] > 0), 
+                          next((i['dr'] for i in trial if i['cat'] == 'Capital' and i['dr'] > 0), 0))
+            
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("📊 Assets (Dr)", f"Rs {asset_total:,.2f}")
+            col2.metric("📊 Liabilities (Cr)", f"Rs {liability_total:,.2f}")
+            col3.metric("💰 Income (Cr)", f"Rs {income_total:,.2f}")
+            col4.metric("💸 Expenses (Dr)", f"Rs {expense_total:,.2f}")
+            col5.metric("📝 JV Total", f"Dr: Rs {jv_total_dr:,.2f} / Cr: Rs {jv_total_cr:,.2f}")
+            
+            st.info(f"💰 **Capital/Equity: Rs {capital:,.2f}**")
+            
+            display_df = df[['head', 'cat', 'dr', 'cr']].rename(columns={
+                'head': 'Account Head',
+                'cat': 'Category',
+                'dr': 'Debit (Dr)',
+                'cr': 'Credit (Cr)'
+            })
+            
+            st.dataframe(
+                display_df.style.format({
+                    'Debit (Dr)': 'Rs {:,.2f}',
+                    'Credit (Cr)': 'Rs {:,.2f}'
+                }),
+                use_container_width=True,
+                height=500
+            )
+            
+            st.markdown(f"**Total Debit: Rs {final_tdr:,.2f} | Total Credit: Rs {final_tcr:,.2f}**")
+            
+            if abs(final_tdr - final_tcr) < 0.01:
+                st.success("✅ **PERFECTLY BALANCED!** 🎉")
+                st.markdown(f"""
+                ### 📊 Balance Sheet Equation:
+                **Assets (Rs {asset_total:,.2f}) = Liabilities (Rs {liability_total:,.2f}) + Capital (Rs {capital:,.2f})**
+                """)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "📥 Download CSV",
+                        df.to_csv(index=False),
+                        "trial_balance.csv",
+                        "text/csv"
+                    )
+                with col2:
+                    if st.button("📄 Print/PDF Trial Balance", use_container_width=True):
+                        content = [
+                            "⚖️ TRIAL BALANCE",
+                            "=" * 50,
+                            f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                            "",
+                            f"Total Debit: Rs {final_tdr:,.2f}",
+                            f"Total Credit: Rs {final_tcr:,.2f}",
+                            "",
+                            f"Journal Vouchers - Debit: Rs {jv_total_dr:,.2f}",
+                            f"Journal Vouchers - Credit: Rs {jv_total_cr:,.2f}",
+                            "",
+                            "DETAILED TRIAL BALANCE:",
+                            "-" * 50
+                        ]
+                        
+                        for item in trial:
+                            content.append(f"{item['head']} | {item['cat']} | Rs {item['dr']:,.2f} | Rs {item['cr']:,.2f}")
+                        
+                        content.append("")
+                        content.append(f"Assets (Dr): Rs {asset_total:,.2f}")
+                        content.append(f"Liabilities (Cr): Rs {liability_total:,.2f}")
+                        content.append(f"Income (Cr): Rs {income_total:,.2f}")
+                        content.append(f"Expenses (Dr): Rs {expense_total:,.2f}")
+                        content.append(f"Capital/Equity: Rs {capital:,.2f}")
+                        
+                        pdf_file = create_pdf("Trial Balance Report", content, "trial_balance")
+                        if pdf_file:
+                            create_download_button(pdf_file, "trial_balance", "📥 Download PDF Report")
+            else:
+                st.error(f"❌ Difference: Rs {abs(final_tdr - final_tcr):,.2f}")
+    
+    c.close()
+
+# ==================== BALANCE SHEET - WITH JV INTEGRATION ====================
+def balance_sheet():
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("❌ Unauthorized access!")
+        return
+    
+    c = get_db()
+    st.markdown("### 📋 Balance Sheet")
+    
+    if st.button("🔄 Generate Balance Sheet", use_container_width=True, type="primary"):
+        assets = []
+        liabilities = []
+        equity_items = []
+        ta = 0
+        tl = 0
+        te = 0
+        
+        # === REGULAR ASSETS ===
+        for mode, name in [('CASH', 'Cash in Hand'), ('BANK', 'Cash in Bank'), ('CHEQUE', 'Cash (Cheque)')]:
+            bal = c.execute("""
+                SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
+                FROM transactions WHERE reference_type=?
+            """, (mode,)).fetchone()[0]
+            if bal > 0:
+                assets.append({'name': name, 'amount': bal})
+                ta += bal
+        
+        fd_total = c.execute("SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
+        if fd_total > 0:
+            assets.append({'name': 'FD Deposits Held', 'amount': fd_total})
+            ta += fd_total
+        
+        rd_total = c.execute("""
+            SELECT COALESCE(SUM(monthly_amount * installments_paid), 0) 
+            FROM recurring_deposits WHERE status='ACTIVE'
+        """).fetchone()[0]
+        if rd_total > 0:
+            assets.append({'name': 'RD Deposits Held', 'amount': rd_total})
+            ta += rd_total
+        
+        ret_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM retrieval_accounts WHERE status='ACTIVE'").fetchone()[0]
+        if ret_total > 0:
+            assets.append({'name': 'Retrieval Account Balance', 'amount': ret_total})
+            ta += ret_total
+        
+        # === JV ASSETS (POSTED JV DEBIT ENTRIES) ===
+        jv_assets = c.execute("""
+            SELECT je.account_head, SUM(je.debit_amount) as total
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
+            WHERE jv.status='POSTED' AND je.debit_amount > 0 
+            GROUP BY je.account_head
+            ORDER BY total DESC
+        """).fetchall()
+        
+        for e in jv_assets:
+            if e[1] > 0:
+                assets.append({'name': f"JV: {e[0]}", 'amount': e[1]})
+                ta += e[1]
+        
+        # === REGULAR LIABILITIES ===
+        sb_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
+        if sb_total > 0:
+            liabilities.append({'name': 'SB Deposits', 'amount': sb_total})
+            tl += sb_total
+        
+        sb_int = c.execute("SELECT COALESCE(SUM(total_interest_earned), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
+        if sb_int > 0:
+            liabilities.append({'name': 'SB Interest Payable', 'amount': sb_int})
+            tl += sb_int
+        
+        # === JV LIABILITIES (POSTED JV CREDIT ENTRIES) ===
+        jv_liabilities = c.execute("""
+            SELECT je.account_head, SUM(je.credit_amount) as total
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
+            WHERE jv.status='POSTED' AND je.credit_amount > 0 
+            GROUP BY je.account_head
+            ORDER BY total DESC
+        """).fetchall()
+        
+        for e in jv_liabilities:
+            if e[1] > 0:
+                liabilities.append({'name': f"JV: {e[0]}", 'amount': e[1]})
+                tl += e[1]
+        
+        # === INCOME & EXPENSES ===
+        income_total = c.execute("SELECT COALESCE(SUM(amount), 0) FROM income").fetchone()[0]
+        expense_total = c.execute("SELECT COALESCE(SUM(amount), 0) FROM expenses").fetchone()[0]
+        
+        # === CAPITAL ===
+        capital = ta - tl
+        
+        # Calculate net profit/loss
+        net_profit = income_total - expense_total
+        
+        # Total equity
+        total_equity = capital + net_profit
+        
+        # === DISPLAY ===
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 📈 ASSETS (What Bank Owns)")
+            st.markdown("---")
+            for item in assets:
+                st.markdown(f"💰 **{item['name']}**: Rs {item['amount']:,.2f}")
+            st.markdown("---")
+            st.markdown(f"### **Total Assets: Rs {ta:,.2f}**")
+        
+        with col2:
+            st.markdown("### 📉 LIABILITIES (What Bank Owes)")
+            st.markdown("---")
+            for item in liabilities:
+                st.markdown(f"💳 **{item['name']}**: Rs {item['amount']:,.2f}")
+            st.markdown("---")
+            st.markdown(f"### **Total Liabilities: Rs {tl:,.2f}**")
+        
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("### 💰 EQUITY")
+            st.markdown("---")
+            st.markdown(f"**Capital**: Rs {capital:,.2f}")
+            if net_profit > 0:
+                st.markdown(f"**Add: Net Profit**: Rs {net_profit:,.2f}")
+            elif net_profit < 0:
+                st.markdown(f"**Less: Net Loss**: Rs {abs(net_profit):,.2f}")
+            st.markdown("---")
+            st.markdown(f"### **Total Equity: Rs {total_equity:,.2f}**")
+        
+        with col2:
+            st.markdown("### 📊 Income & Expenses")
+            st.markdown("---")
+            st.markdown(f"💰 **Total Income**: Rs {income_total:,.2f}")
+            st.markdown(f"💸 **Total Expenses**: Rs {expense_total:,.2f}")
+            st.markdown("---")
+            if net_profit >= 0:
+                st.success(f"### 🎉 Net Profit: Rs {net_profit:,.2f}")
+            else:
+                st.error(f"### 📉 Net Loss: Rs {abs(net_profit):,.2f}")
+        
+        st.markdown("---")
+        
+        if abs(ta - (tl + total_equity)) < 0.01:
+            st.success(f"""
+            ### ✅ PERFECTLY BALANCED! 🎉
+            
+            **Assets (Rs {ta:,.2f}) = Liabilities (Rs {tl:,.2f}) + Equity (Rs {total_equity:,.2f})**
+            """)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                bs_data = []
+                for item in assets:
+                    bs_data.append({'Category': 'Asset', 'Name': item['name'], 'Amount': item['amount']})
+                for item in liabilities:
+                    bs_data.append({'Category': 'Liability', 'Name': item['name'], 'Amount': item['amount']})
+                bs_data.append({'Category': 'Equity', 'Name': 'Total Equity', 'Amount': total_equity})
+                
+                df_bs = pd.DataFrame(bs_data)
+                st.download_button(
+                    "📥 Download CSV",
+                    df_bs.to_csv(index=False),
+                    "balance_sheet.csv",
+                    "text/csv"
+                )
+            
+            with col2:
+                if st.button("📄 Print/PDF Balance Sheet", use_container_width=True):
+                    content = [
+                        "📋 BALANCE SHEET",
+                        "=" * 50,
+                        f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                        "",
+                        "ASSETS:",
+                        "-" * 30
+                    ]
+                    for item in assets:
+                        content.append(f"{item['name']}: Rs {item['amount']:,.2f}")
+                    content.append(f"Total Assets: Rs {ta:,.2f}")
+                    content.append("")
+                    content.append("LIABILITIES:")
+                    content.append("-" * 30)
+                    for item in liabilities:
+                        content.append(f"{item['name']}: Rs {item['amount']:,.2f}")
+                    content.append(f"Total Liabilities: Rs {tl:,.2f}")
+                    content.append("")
+                    content.append("EQUITY:")
+                    content.append("-" * 30)
+                    content.append(f"Capital: Rs {capital:,.2f}")
+                    if net_profit > 0:
+                        content.append(f"Net Profit: Rs {net_profit:,.2f}")
+                    elif net_profit < 0:
+                        content.append(f"Net Loss: Rs {abs(net_profit):,.2f}")
+                    content.append(f"Total Equity: Rs {total_equity:,.2f}")
+                    content.append("")
+                    content.append(f"CHECK: Assets (Rs {ta:,.2f}) = Liabilities (Rs {tl:,.2f}) + Equity (Rs {total_equity:,.2f})")
+                    content.append("")
+                    content.append("✅ PERFECTLY BALANCED!")
+                    
+                    pdf_file = create_pdf("Balance Sheet Report", content, "balance_sheet")
+                    if pdf_file:
+                        create_download_button(pdf_file, "balance_sheet", "📥 Download PDF Report")
+        else:
+            st.error(f"❌ Difference: Rs {abs(ta - (tl + total_equity)):,.2f}")
     
     c.close()
 

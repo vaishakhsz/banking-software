@@ -1202,7 +1202,6 @@ def sb_accounts():
     c.close()
 
 # ==================== FIXED DEPOSITS ====================
-# ==================== FIXED DEPOSITS ====================
 def fixed_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1443,11 +1442,10 @@ def fixed_deposits():
         else:
             st.info("No active fixed deposits")
     
-    # Tab 3: Close FD - FIXED: Properly get SB account and balance
+    # Tab 3: Close FD
     with tab3:
         st.markdown("### 🔒 Close/Withdraw Fixed Deposit")
         
-        # Get active FDs with their SB account details
         active_fds = c.execute("""
             SELECT 
                 fd.id, 
@@ -1477,9 +1475,6 @@ def fixed_deposits():
             c.close()
             return
         
-        # Debug: Show what we found
-        st.info(f"📊 Found {len(active_fds)} active FDs")
-        
         fd_options = []
         for fd in active_fds:
             fd_id, fd_number, cust_id, customer, sb_acc_id, sb_acc, sb_balance, principal, rate, start, maturity, maturity_amount, days_elapsed, total_days = fd
@@ -1492,12 +1487,10 @@ def fixed_deposits():
                 accrued_interest = 0
             
             total_value = principal + accrued_interest
-            
-            # Check if SB account exists
             has_sb = sb_acc_id is not None
             
             fd_options.append({
-                'display': f"{fd_number} - {customer} | {'✅' if has_sb else '❌'} SB: {sb_acc if sb_acc else 'No SB'} | Balance: Rs{sb_balance:,.2f} | Principal: Rs{principal:,.2f} | Value: Rs{total_value:,.2f}",
+                'display': f"{fd_number} - {customer} | {'✅' if has_sb else '❌'} SB: {sb_acc if sb_acc else 'No SB'} | Balance: Rs{sb_balance:,.2f} | Principal: Rs{principal:,.2f}",
                 'fd_id': fd_id,
                 'fd_number': fd_number,
                 'customer_id': cust_id,
@@ -1527,7 +1520,6 @@ def fixed_deposits():
         if selected_fd:
             st.markdown("---")
             
-            # Show SB account status
             if selected_fd['has_sb']:
                 st.success(f"✅ SB Account Found: {selected_fd['sb_account']} (Balance: Rs {selected_fd['sb_balance']:,.2f})")
             else:
@@ -1585,7 +1577,6 @@ def fixed_deposits():
             
             st.markdown("---")
             
-            # Check if closure can be done
             can_close = True
             if not selected_fd['has_sb']:
                 can_close = False
@@ -1608,14 +1599,12 @@ def fixed_deposits():
                         
                         fd_account_id = fd_acc[0]
                         
-                        # Update FD status
                         conn.execute("""
                             UPDATE fixed_deposits 
                             SET status='CLOSED', closed_date=CURRENT_DATE, closed_amount=?
                             WHERE id=?
                         """, (final_amount, selected_fd['fd_id']))
                         
-                        # Get current SB balance
                         sb_balance_result = conn.execute("""
                             SELECT balance FROM accounts WHERE id=?
                         """, (selected_fd['sb_account_id'],)).fetchone()
@@ -1628,7 +1617,6 @@ def fixed_deposits():
                             WHERE id=?
                         """, (new_sb_balance, selected_fd['sb_account_id']))
                         
-                        # Credit to SB account
                         conn.execute("""
                             INSERT INTO transactions (
                                 transaction_id, account_id, transaction_type,
@@ -1649,7 +1637,6 @@ def fixed_deposits():
                             st.session_state.user['id']
                         ))
                         
-                        # Debit from FD account
                         conn.execute("""
                             INSERT INTO transactions (
                                 transaction_id, account_id, transaction_type,
@@ -1670,7 +1657,6 @@ def fixed_deposits():
                             st.session_state.user['id']
                         ))
                         
-                        # Record interest income
                         if selected_fd['accrued_interest'] > 0:
                             conn.execute("""
                                 INSERT INTO income (
@@ -1714,17 +1700,15 @@ def fixed_deposits():
                         import traceback
                         st.error(traceback.format_exc())
     
-    # Tab 4: Closed FDs Tab 4: Closed FDs - FIXED
+    # Tab 4: Closed FDs
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         
         try:
-            # First, let's check if there are any closed FDs at all
             check_query = "SELECT COUNT(*) FROM fixed_deposits WHERE status = 'CLOSED'"
             count = c.execute(check_query).fetchone()[0]
             st.info(f"📊 Found {count} closed FDs in database")
             
-            # Get ALL closed FDs with proper data
             closed_fds = c.execute("""
                 SELECT 
                     fd.fd_number, 
@@ -1746,14 +1730,12 @@ def fixed_deposits():
             """).fetchall()
             
             if closed_fds:
-                # Create DataFrame
                 df = pd.DataFrame(closed_fds, columns=[
                     'FD No', 'Customer', 'Principal', 'Rate', 
                     'Start Date', 'Maturity Date', 'Maturity Amount',
                     'Closed Date', 'Closed Amount', 'Interest Earned', 'Status'
                 ])
                 
-                # Show summary stats
                 total_principal = df['Principal'].sum()
                 total_closed = df['Closed Amount'].sum()
                 total_interest = df['Interest Earned'].sum()
@@ -1766,7 +1748,6 @@ def fixed_deposits():
                 
                 st.markdown("---")
                 
-                # Show the data table
                 st.dataframe(
                     df.style.format({
                         'Principal': 'Rs {:,.2f}',
@@ -1778,7 +1759,6 @@ def fixed_deposits():
                     use_container_width=True
                 )
                 
-                # Download buttons
                 col1, col2 = st.columns(2)
                 with col1:
                     st.download_button(
@@ -1830,7 +1810,6 @@ def fixed_deposits():
                 3. **Records**: All closed FDs appear here with full details
                 """)
                 
-                # Show debug info
                 if st.checkbox("🔍 Show Debug Info"):
                     all_fds = c.execute("SELECT id, fd_number, status, closed_date, closed_amount FROM fixed_deposits").fetchall()
                     if all_fds:
@@ -1843,10 +1822,9 @@ def fixed_deposits():
             st.error(f"❌ Error loading closed FDs: {str(e)}")
             import traceback
             st.error(traceback.format_exc())
+    
+    c.close()
 
-# ==================== RECURRING DEPOSITS ====================
-# ==================== RECURRING DEPOSITS ====================
-# ==================== RECURRING DEPOSITS ====================
 # ==================== RECURRING DEPOSITS ====================
 def recurring_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
@@ -2063,7 +2041,6 @@ def recurring_deposits():
                 use_container_width=True
             )
             
-            # Progress bars
             for rd in rds:
                 progress = rd[11]
                 st.progress(progress/100, text=f"RD {rd[1]} - {rd[3]} - {progress}% completed")
@@ -2081,7 +2058,6 @@ def recurring_deposits():
     with tab3:
         st.markdown("### 💳 Pay RD Installment")
         
-        # Get all pending RDs with their SB account details
         pending_rds = c.execute("""
             SELECT 
                 rd.id, 
@@ -2347,21 +2323,15 @@ def recurring_deposits():
                         import traceback
                         st.error(traceback.format_exc())
     
-    # Tab 4: Closed RDs - FIXED: Show ALL closed/completed RDs properly
-   # The RD closure function is already in the previous response, but let me highlight the key fix for Tab 4:
-
-# Tab 4: Closed RDs - FIXED: Show ALL closed/completed RDs properly
-   # Tab 4: Closed RDs - FIXED
+    # Tab 4: Closed RDs
     with tab4:
         st.markdown("### 📋 Closed/Completed Recurring Deposits")
         
         try:
-            # First, let's check if there are any closed RDs at all
             check_query = "SELECT COUNT(*) FROM recurring_deposits WHERE status IN ('MATURED', 'CLOSED')"
             count = c.execute(check_query).fetchone()[0]
             st.info(f"📊 Found {count} closed/completed RDs in database")
             
-            # Get ALL closed/matured RDs
             closed_rds = c.execute("""
                 SELECT 
                     rd.rd_number,
@@ -2389,14 +2359,12 @@ def recurring_deposits():
             """).fetchall()
             
             if closed_rds:
-                # Create DataFrame
                 df = pd.DataFrame(closed_rds, columns=[
                     'RD No', 'Customer', 'Monthly', 'Paid', 'Total',
                     'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 
                     'Status', 'Closed Date', 'Closed Amount', 'Status Display'
                 ])
                 
-                # Show summary stats
                 total_principal = df['Monthly'].sum()
                 total_maturity = df['Maturity Amount'].sum()
                 total_closed = df['Closed Amount'].sum()
@@ -2410,7 +2378,6 @@ def recurring_deposits():
                 
                 st.markdown("---")
                 
-                # Show the data table
                 st.dataframe(
                     df.style.format({
                         'Monthly': 'Rs {:,.2f}',
@@ -2421,7 +2388,6 @@ def recurring_deposits():
                     use_container_width=True
                 )
                 
-                # Filter options
                 col1, col2 = st.columns(2)
                 with col1:
                     status_filter = st.multiselect(
@@ -2434,7 +2400,6 @@ def recurring_deposits():
                     if st.button("🔄 Clear Filters", use_container_width=True):
                         st.rerun()
                 
-                # Apply filter
                 if status_filter:
                     filtered_df = df[df['Status Display'].isin(status_filter)]
                 else:
@@ -2451,7 +2416,6 @@ def recurring_deposits():
                         use_container_width=True
                     )
                 
-                # Download buttons
                 col1, col2 = st.columns(2)
                 with col1:
                     st.download_button(
@@ -2504,7 +2468,6 @@ def recurring_deposits():
                 3. **Transfer**: Matured amount is automatically transferred to SB account
                 """)
                 
-                # Show debug info
                 if st.checkbox("🔍 Show Debug Info"):
                     all_rds = c.execute("SELECT id, rd_number, status, closed_date, closed_amount FROM recurring_deposits").fetchall()
                     if all_rds:
@@ -2517,36 +2480,9 @@ def recurring_deposits():
             st.error(f"❌ Error loading closed RDs: {str(e)}")
             import traceback
             st.error(traceback.format_exc())
-        
-        try:
-            # Get ALL closed/matured RDs
-            closed_rds = c.execute("""
-                SELECT 
-                    rd.rd_number,
-                    c.first_name||' '||c.last_name as customer,
-                    rd.monthly_amount, 
-                    rd.installments_paid,
-                    rd.total_installments, 
-                    rd.interest_rate,
-                    rd.start_date, 
-                    rd.maturity_date,
-                    rd.maturity_amount, 
-                    rd.status,
-                    rd.closed_date,
-                    COALESCE(rd.closed_amount, rd.maturity_amount) as closed_amount,
-                    CASE 
-                        WHEN rd.status = 'MATURED' THEN '✅ MATURED'
-                        WHEN rd.status = 'CLOSED' THEN '🔒 CLOSED'
-                        ELSE rd.status
-                    END as status_display
-                FROM recurring_deposits rd
-                JOIN accounts a ON rd.account_id = a.id
-                JOIN customers c ON a.customer_id = c.id
-                WHERE rd.status IN ('MATURED', 'CLOSED')
-                ORDER BY rd.closed_date DESC, rd.maturity_date DESC
-            """).fetchall()
-            
-            # Rest of the code...
+    
+    c.close()
+
 # ==================== TRANSACTIONS ====================
 def transactions():
     c = get_db()
@@ -3057,8 +2993,6 @@ def interest_calculation():
             interest_details = []
             
             for acc in accounts:
-                min_balance = 0
-                # Simple interest calculation using average balance
                 balance = acc[3]
                 days = (to_date - from_date).days + 1
                 

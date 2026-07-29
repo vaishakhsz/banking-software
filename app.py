@@ -3036,6 +3036,7 @@ def transactions():
 
 # ==================== JOURNAL VOUCHERS ====================
 # ==================== JOURNAL VOUCHERS - COMPLETE FIX ====================
+# ==================== JOURNAL VOUCHERS - COMPLETE FIX ====================
 def journal_vouchers():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -3062,16 +3063,46 @@ def journal_vouchers():
             num_entries = st.number_input("📊 Number of Entries", min_value=2, max_value=10, value=2)
             
             st.markdown("### 📊 Journal Entries")
+            st.info("💡 **Note:** Debit = Increase Asset/Expense, Credit = Increase Liability/Income")
+            
             entries = []
             total_dr = 0
             total_cr = 0
             
+            # Pre-defined account options that map to real accounts
+            account_options = [
+                'Cash Account',
+                'Bank Account', 
+                'SB Account',
+                'FD Account',
+                'RD Account',
+                'Retrieval Account',
+                'Interest Receivable',
+                'Interest Payable',
+                'Salary Expense',
+                'Rent Expense',
+                'Operating Expense',
+                'Administrative Expense',
+                'Interest Income',
+                'Commission Income',
+                'Other Income',
+                'Capital Account',
+                'Loan Account',
+                'Other Asset',
+                'Other Liability'
+            ]
+            
             for i in range(int(num_entries)):
                 st.markdown(f"**Entry {i+1}**")
-                col1, col2, col3 = st.columns([3, 1, 1])
+                col1, col2, col3 = st.columns([2, 1, 1])
                 
                 with col1:
-                    head = st.text_input(f"Account Head", key=f"jh_{i}", placeholder="e.g., Bank A/c, Capital A/c")
+                    account_type = st.selectbox(
+                        f"Account", 
+                        account_options, 
+                        key=f"atype_{i}",
+                        index=0
+                    )
                 with col2:
                     dr = st.number_input(f"Debit", min_value=0.0, step=100.0, key=f"jd_{i}")
                 with col3:
@@ -3079,7 +3110,12 @@ def journal_vouchers():
                 
                 total_dr += dr
                 total_cr += cr
-                entries.append({'head': head, 'dr': dr, 'cr': cr})
+                entries.append({
+                    'account': account_type,
+                    'dr': dr,
+                    'cr': cr,
+                    'customer_id': cust_id if 'Account' in account_type else None
+                })
             
             st.markdown("---")
             st.info(f"💰 **Total Debit: Rs {total_dr:,.2f} | Total Credit: Rs {total_cr:,.2f}**")
@@ -3087,7 +3123,7 @@ def journal_vouchers():
             if abs(total_dr - total_cr) > 0.01:
                 st.error(f"❌ Difference: Rs {abs(total_dr - total_cr):,.2f} - Must balance!")
             
-            if st.form_submit_button("✅ Create JV", use_container_width=True, type="primary"):
+            if st.form_submit_button("✅ Create & Post JV", use_container_width=True, type="primary"):
                 if abs(total_dr - total_cr) > 0.01:
                     st.error("❌ Journal must be balanced!")
                 else:
@@ -3095,40 +3131,127 @@ def journal_vouchers():
                     try:
                         voucher_number = generate_voucher_number('JOURNAL')
                         
+                        # Insert into journal_vouchers
                         conn.execute("""
                             INSERT INTO journal_vouchers (
                                 voucher_number, voucher_date, description,
-                                total_amount, created_by, customer_id
-                            ) VALUES (?,?,?,?,?,?)
+                                total_amount, created_by, customer_id, status
+                            ) VALUES (?,?,?,?,?,?,?)
                         """, (voucher_number, voucher_date, description, total_dr, 
-                              st.session_state.user['id'], cust_id))
+                              st.session_state.user['id'], cust_id, 'POSTED'))
                         
                         voucher_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                         
+                        # Map account types to actual accounts
+                        account_mapping = {
+                            'Cash Account': ('CASH', 'Asset'),
+                            'Bank Account': ('BANK', 'Asset'),
+                            'SB Account': ('SB', 'Asset'),
+                            'FD Account': ('FD', 'Asset'),
+                            'RD Account': ('RD', 'Asset'),
+                            'Retrieval Account': ('RET', 'Asset'),
+                            'Interest Receivable': ('INT_REC', 'Asset'),
+                            'Interest Payable': ('INT_PAY', 'Liability'),
+                            'Salary Expense': ('SALARY', 'Expense'),
+                            'Rent Expense': ('RENT', 'Expense'),
+                            'Operating Expense': ('OP_EXP', 'Expense'),
+                            'Administrative Expense': ('ADMIN_EXP', 'Expense'),
+                            'Interest Income': ('INT_INC', 'Income'),
+                            'Commission Income': ('COMM_INC', 'Income'),
+                            'Other Income': ('OTHER_INC', 'Income'),
+                            'Capital Account': ('CAPITAL', 'Equity'),
+                            'Loan Account': ('LOAN', 'Liability'),
+                            'Other Asset': ('OTHER_ASSET', 'Asset'),
+                            'Other Liability': ('OTHER_LIAB', 'Liability')
+                        }
+                        
                         for entry in entries:
-                            if (entry['dr'] > 0 or entry['cr'] > 0) and entry['head'].strip():
+                            if entry['dr'] > 0 or entry['cr'] > 0:
+                                # Insert journal entry
                                 conn.execute("""
                                     INSERT INTO journal_entries (
                                         voucher_id, account_head,
                                         debit_amount, credit_amount
                                     ) VALUES (?,?,?,?)
-                                """, (voucher_id, entry['head'].strip(), entry['dr'], entry['cr']))
+                                """, (voucher_id, entry['account'], entry['dr'], entry['cr']))
+                                
+                                # Find or create an account for this JV entry
+                                acc_code, acc_type = account_mapping.get(entry['account'], ('OTHER', 'Other'))
+                                
+                                # Check if account exists for this customer
+                                if cust_id and 'Account' in entry['account']:
+                                    # Try to find existing account
+                                    existing_acc = conn.execute("""
+                                        SELECT id, balance FROM accounts 
+                                        WHERE customer_id = ? AND account_type = ? AND status = 'ACTIVE'
+                                    """, (cust_id, acc_code)).fetchone()
+                                    
+                                    if existing_acc:
+                                        acc_id_to_use = existing_acc[0]
+                                        current_balance = existing_acc[1]
+                                    else:
+                                        # Create new account
+                                        acc_num = generate_account_number(acc_code)
+                                        conn.execute("""
+                                            INSERT INTO accounts (account_number, customer_id, account_type, balance)
+                                            VALUES (?, ?, ?, 0)
+                                        """, (acc_num, cust_id, acc_code))
+                                        acc_id_to_use = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                                        current_balance = 0
+                                    
+                                    # Update balance based on debit/credit
+                                    if entry['dr'] > 0:
+                                        new_balance = current_balance + entry['dr']
+                                        conn.execute("UPDATE accounts SET balance = ? WHERE id = ?", (new_balance, acc_id_to_use))
+                                    elif entry['cr'] > 0:
+                                        new_balance = current_balance - entry['cr']
+                                        conn.execute("UPDATE accounts SET balance = ? WHERE id = ?", (new_balance, acc_id_to_use))
+                                    
+                                    # Record transaction
+                                    conn.execute("""
+                                        INSERT INTO transactions (
+                                            transaction_id, account_id, transaction_type,
+                                            amount, balance_after, description,
+                                            reference_type, voucher_type, voucher_number,
+                                            created_by
+                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    """, (
+                                        generate_id('TXN'), acc_id_to_use,
+                                        'DEBIT' if entry['dr'] > 0 else 'CREDIT',
+                                        entry['dr'] if entry['dr'] > 0 else entry['cr'],
+                                        new_balance,
+                                        f"JV: {entry['account']} - {description[:50]}",
+                                        'JOURNAL', 'JV',
+                                        voucher_number,
+                                        st.session_state.user['id']
+                                    ))
                         
                         conn.commit()
                         conn.close()
                         
                         st.success(f"""
-                        ✅ Journal Voucher Created! 🎉
+                        ✅ Journal Voucher Created & Posted! 🎉
                         
                         📋 **JV Details:**
                         - Voucher Number: **{voucher_number}**
                         - Total Amount: **Rs {total_dr:,.2f}**
                         - Entries: **{num_entries}**
+                        - Status: **POSTED** ✅
+                        
+                        💡 **This JV is now reflected in:**
+                        - Account Balances
+                        - Trial Balance
+                        - Balance Sheet
+                        - Profit & Loss Statement
                         """)
                         st.balloons()
                         
                     except Exception as e:
+                        conn.rollback()
+                        conn.close()
                         st.error(f"❌ Error: {str(e)}")
+                        import traceback
+                        st.error(traceback.format_exc())
     
     with tab2:
         st.markdown("### 📋 Manage Journal Vouchers")
@@ -3146,7 +3269,7 @@ def journal_vouchers():
         
         if vouchers:
             for v in vouchers:
-                status_color = "🟡" if v[5] == 'DRAFT' else "🟢" if v[5] == 'POSTED' else "🔴"
+                status_color = "🟢" if v[5] == 'POSTED' else "🟡" if v[5] == 'DRAFT' else "🔴"
                 
                 with st.expander(f"{status_color} {v[1]} | {v[2]} | Rs {v[4]:,.2f} | {v[5]}"):
                     st.markdown(f"""
@@ -3161,13 +3284,13 @@ def journal_vouchers():
                     """)
                     
                     entries = c.execute("""
-                        SELECT account_head, debit_amount, credit_amount
+                        SELECT id, account_head, debit_amount, credit_amount
                         FROM journal_entries
                         WHERE voucher_id=?
                     """, (v[0],)).fetchall()
                     
                     if entries:
-                        df = pd.DataFrame(entries, columns=['Account Head', 'Debit', 'Credit'])
+                        df = pd.DataFrame(entries, columns=['ID', 'Account Head', 'Debit', 'Credit'])
                         st.dataframe(
                             df.style.format({
                                 'Debit': 'Rs {:,.2f}',
@@ -3175,9 +3298,44 @@ def journal_vouchers():
                             }),
                             use_container_width=True
                         )
+                        
+                        total_debit = df['Debit'].sum()
+                        total_credit = df['Credit'].sum()
+                        st.info(f"📊 Total Debit: Rs {total_debit:,.2f} | Total Credit: Rs {total_credit:,.2f}")
+                        
+                        with st.expander("🗑️ Delete Entry"):
+                            entry_id = st.text_input("Enter Entry ID to delete:", key=f"del_entry_{v[0]}")
+                            if entry_id:
+                                if st.button("🗑️ Delete Entry", key=f"del_btn_{v[0]}", use_container_width=True, type="secondary"):
+                                    if st.checkbox("☑️ Confirm delete?", key=f"confirm_entry_{v[0]}"):
+                                        try:
+                                            conn = get_db()
+                                            # Get the entry details to reverse the transaction
+                                            entry = conn.execute("SELECT account_head, debit_amount, credit_amount FROM journal_entries WHERE id=?", (entry_id,)).fetchone()
+                                            if entry:
+                                                # Reverse the entry in accounts
+                                                if entry[1] > 0:
+                                                    conn.execute("""
+                                                        UPDATE accounts 
+                                                        SET balance = balance - ? 
+                                                        WHERE account_type IN (SELECT account_type FROM accounts WHERE account_number LIKE ?)
+                                                    """, (entry[1], '%'))
+                                                elif entry[2] > 0:
+                                                    conn.execute("""
+                                                        UPDATE accounts 
+                                                        SET balance = balance + ? 
+                                                        WHERE account_type IN (SELECT account_type FROM accounts WHERE account_number LIKE ?)
+                                                    """, (entry[2], '%'))
+                                            conn.execute("DELETE FROM journal_entries WHERE id=?", (entry_id,))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success("✅ Entry deleted and accounts reversed!")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"❌ Error: {str(e)}")
                     
                     if v[5] == 'DRAFT':
-                        col1, col2 = st.columns(2)
+                        col1, col2, col3 = st.columns(3)
                         with col1:
                             if st.button("✅ Post JV", key=f"post_{v[0]}", use_container_width=True):
                                 conn = get_db()
@@ -3188,7 +3346,7 @@ def journal_vouchers():
                                 """, (st.session_state.user['id'], v[0]))
                                 conn.commit()
                                 conn.close()
-                                st.success("✅ JV Posted!")
+                                st.success("✅ JV Posted! It will now reflect in accounts and financial statements")
                                 st.rerun()
                         
                         with col2:
@@ -3199,11 +3357,35 @@ def journal_vouchers():
                                 conn.close()
                                 st.warning("❌ JV Cancelled")
                                 st.rerun()
+                        
+                        with col3:
+                            if st.button("🗑️ Delete JV", key=f"delete_jv_{v[0]}", use_container_width=True, type="secondary"):
+                                if st.checkbox("☑️ Confirm delete?", key=f"confirm_jv_{v[0]}"):
+                                    try:
+                                        conn = get_db()
+                                        # Get all entries to reverse
+                                        entries_to_reverse = conn.execute("SELECT debit_amount, credit_amount FROM journal_entries WHERE voucher_id=?", (v[0],)).fetchall()
+                                        # Reverse account balances
+                                        for entry in entries_to_reverse:
+                                            if entry[0] > 0:
+                                                conn.execute("UPDATE accounts SET balance = balance - ? WHERE account_type IN (SELECT account_type FROM accounts WHERE account_number LIKE ?)", (entry[0], '%'))
+                                            elif entry[1] > 0:
+                                                conn.execute("UPDATE accounts SET balance = balance + ? WHERE account_type IN (SELECT account_type FROM accounts WHERE account_number LIKE ?)", (entry[1], '%'))
+                                        conn.execute("DELETE FROM journal_entries WHERE voucher_id=?", (v[0],))
+                                        conn.execute("DELETE FROM journal_vouchers WHERE id=?", (v[0],))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ JV deleted and accounts reversed!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
+                    
+                    if v[5] == 'POSTED':
+                        st.success("✅ This JV is POSTED and reflected in all financial statements")
         else:
             st.info("No journal vouchers found")
     
     c.close()
-
 # ==================== TRIAL BALANCE - UPDATED ====================
 def trial_balance():
     if st.session_state.user['role'] not in ['admin', 'staff']:

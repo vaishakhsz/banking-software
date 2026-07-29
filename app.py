@@ -1805,6 +1805,7 @@ def fixed_deposits():
 # ==================== RECURRING DEPOSITS ====================
 # ==================== RECURRING DEPOSITS ====================
 # ==================== RECURRING DEPOSITS ====================
+# ==================== RECURRING DEPOSITS ====================
 def recurring_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -2034,12 +2035,11 @@ def recurring_deposits():
         else:
             st.info("No active recurring deposits")
     
-    # Tab 3: Pay Installment - FIXED: Properly get SB account and balance
+    # Tab 3: Pay Installment
     with tab3:
         st.markdown("### 💳 Pay RD Installment")
         
         # Get all pending RDs with their SB account details
-        # Using a simpler query that definitely gets the SB account
         pending_rds = c.execute("""
             SELECT 
                 rd.id, 
@@ -2069,19 +2069,11 @@ def recurring_deposits():
             c.close()
             return
         
-        # Debug: Show what we found
-        st.info(f"📊 Found {len(pending_rds)} pending RDs")
-        
         rd_options = []
         for rd in pending_rds:
             rd_id, rd_number, cust_id, customer, sb_acc_id, sb_acc, sb_balance, monthly, paid, total, rate, start, maturity, maturity_amount = rd
             
-            # Debug: Print the values
-            print(f"RD: {rd_number}, SB Acc ID: {sb_acc_id}, SB Acc: {sb_acc}, SB Balance: {sb_balance}")
-            
             remaining = total - paid
-            
-            # Check if SB account exists
             has_sb = sb_acc_id is not None
             
             rd_options.append({
@@ -2113,7 +2105,6 @@ def recurring_deposits():
         if selected_rd:
             st.markdown("---")
             
-            # Show SB account status
             if selected_rd['has_sb']:
                 st.success(f"✅ SB Account Found: {selected_rd['sb_account']} (Balance: Rs {selected_rd['sb_balance']:,.2f})")
             else:
@@ -2165,7 +2156,6 @@ def recurring_deposits():
                 - Remaining after payment: **{selected_rd['remaining_installments'] - 1}**
                 """)
             
-            # Check if payment can be made
             can_pay = True
             if payment_mode == "SB Transfer (Debit from SB)":
                 if not selected_rd['has_sb']:
@@ -2181,7 +2171,6 @@ def recurring_deposits():
                 else:
                     conn = get_db()
                     try:
-                        # Get the RD account ID
                         rd_acc = conn.execute("""
                             SELECT account_id FROM recurring_deposits WHERE id=?
                         """, (selected_rd['rd_id'],)).fetchone()
@@ -2195,14 +2184,12 @@ def recurring_deposits():
                         new_paid = selected_rd['installments_paid'] + 1
                         new_remaining = selected_rd['total_installments'] - new_paid
                         
-                        # Update installments paid
                         conn.execute("""
                             UPDATE recurring_deposits 
                             SET installments_paid=? 
                             WHERE id=?
                         """, (new_paid, selected_rd['rd_id']))
                         
-                        # Check if RD is completed
                         if new_paid >= selected_rd['total_installments']:
                             conn.execute("""
                                 UPDATE recurring_deposits 
@@ -2210,9 +2197,7 @@ def recurring_deposits():
                                 WHERE id=?
                             """, (selected_rd['maturity_amount'], selected_rd['rd_id']))
                         
-                        # Process payment
                         if payment_mode == "SB Transfer (Debit from SB)":
-                            # Get current SB balance again to avoid race condition
                             sb_balance_result = conn.execute("""
                                 SELECT balance FROM accounts WHERE id=?
                             """, (selected_rd['sb_account_id'],)).fetchone()
@@ -2220,10 +2205,8 @@ def recurring_deposits():
                             current_sb_balance = sb_balance_result[0] if sb_balance_result else 0
                             new_sb_balance = current_sb_balance - selected_rd['monthly_amount']
                             
-                            # Update SB balance
                             conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_sb_balance, selected_rd['sb_account_id']))
                             
-                            # Create debit transaction from SB
                             conn.execute("""
                                 INSERT INTO transactions (
                                     transaction_id, account_id, transaction_type,
@@ -2240,7 +2223,6 @@ def recurring_deposits():
                                 st.session_state.user['id']
                             ))
                         
-                        # Credit to RD account
                         rd_balance = selected_rd['monthly_amount'] * new_paid
                         conn.execute("""
                             INSERT INTO transactions (
@@ -2261,11 +2243,9 @@ def recurring_deposits():
                         conn.commit()
                         conn.close()
                         
-                        # If RD is completed, transfer maturity to SB
                         if new_paid >= selected_rd['total_installments']:
                             transfer_conn = get_db()
                             try:
-                                # Get current SB balance after installment
                                 sb_balance_result = transfer_conn.execute("""
                                     SELECT balance FROM accounts WHERE id=?
                                 """, (selected_rd['sb_account_id'],)).fetchone()
@@ -2325,34 +2305,61 @@ def recurring_deposits():
                         import traceback
                         st.error(traceback.format_exc())
     
-    # Tab 4: Closed RDs
+    # Tab 4: Closed RDs - FIXED: Show ALL closed/completed RDs properly
     with tab4:
         st.markdown("### 📋 Closed/Completed Recurring Deposits")
         
         try:
+            # Get ALL closed/matured RDs - including both 'MATURED' and 'CLOSED' status
             closed_rds = c.execute("""
-                SELECT rd.rd_number,
-                       c.first_name||' '||c.last_name as customer,
-                       rd.monthly_amount, rd.installments_paid,
-                       rd.total_installments, rd.interest_rate,
-                       rd.start_date, rd.maturity_date,
-                       rd.maturity_amount, rd.status,
-                       rd.closed_date,
-                       COALESCE(rd.closed_amount, rd.maturity_amount) as closed_amount
+                SELECT 
+                    rd.rd_number,
+                    c.first_name||' '||c.last_name as customer,
+                    rd.monthly_amount, 
+                    rd.installments_paid,
+                    rd.total_installments, 
+                    rd.interest_rate,
+                    rd.start_date, 
+                    rd.maturity_date,
+                    rd.maturity_amount, 
+                    rd.status,
+                    rd.closed_date,
+                    COALESCE(rd.closed_amount, rd.maturity_amount) as closed_amount,
+                    CASE 
+                        WHEN rd.status = 'MATURED' THEN '✅ MATURED'
+                        WHEN rd.status = 'CLOSED' THEN '🔒 CLOSED'
+                        ELSE rd.status
+                    END as status_display
                 FROM recurring_deposits rd
                 JOIN accounts a ON rd.account_id = a.id
                 JOIN customers c ON a.customer_id = c.id
-                WHERE rd.status='MATURED'
-                ORDER BY rd.maturity_date DESC
+                WHERE rd.status IN ('MATURED', 'CLOSED')
+                ORDER BY rd.closed_date DESC, rd.maturity_date DESC
             """).fetchall()
             
             if closed_rds:
+                # Create DataFrame
                 df = pd.DataFrame(closed_rds, columns=[
                     'RD No', 'Customer', 'Monthly', 'Paid', 'Total',
                     'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 
-                    'Status', 'Closed Date', 'Closed Amount'
+                    'Status', 'Closed Date', 'Closed Amount', 'Status Display'
                 ])
                 
+                # Show summary stats
+                total_principal = df['Monthly'].sum()
+                total_maturity = df['Maturity Amount'].sum()
+                total_closed = df['Closed Amount'].sum()
+                total_interest = total_closed - total_principal
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("📊 Total RDs Closed", f"{len(closed_rds)}")
+                col2.metric("💰 Total Deposited", f"Rs {total_principal:,.2f}")
+                col3.metric("💎 Total Received", f"Rs {total_closed:,.2f}")
+                col4.metric("📈 Total Interest Earned", f"Rs {total_interest:,.2f}")
+                
+                st.markdown("---")
+                
+                # Show the data table
                 st.dataframe(
                     df.style.format({
                         'Monthly': 'Rs {:,.2f}',
@@ -2363,51 +2370,94 @@ def recurring_deposits():
                     use_container_width=True
                 )
                 
-                total_monthly = df['Monthly'].sum()
-                total_maturity = df['Maturity Amount'].sum()
-                total_closed = df['Closed Amount'].sum()
+                # Filter options
+                col1, col2 = st.columns(2)
+                with col1:
+                    status_filter = st.multiselect(
+                        "📊 Filter by Status",
+                        options=df['Status Display'].unique(),
+                        default=df['Status Display'].unique()
+                    )
                 
-                col1, col2, col3 = st.columns(3)
-                col1.metric("💰 Total Monthly Deposits", f"Rs {total_monthly:,.2f}")
-                col2.metric("💎 Total Maturity Amount", f"Rs {total_maturity:,.2f}")
-                col3.metric("💎 Total Closed Amount", f"Rs {total_closed:,.2f}")
+                with col2:
+                    if st.button("🔄 Clear Filters", use_container_width=True):
+                        st.rerun()
                 
-                if st.button("📥 Download Closed RDs Report", use_container_width=True):
-                    content = [
-                        "📋 CLOSED RECURRING DEPOSITS REPORT",
-                        "=" * 50,
-                        f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                        "",
-                        f"Total RDs Completed: {len(closed_rds)}",
-                        f"Total Monthly Deposits: Rs {total_monthly:,.2f}",
-                        f"Total Maturity Amount: Rs {total_maturity:,.2f}",
-                        "",
-                        "DETAILED LIST:",
-                        "-" * 50
-                    ]
-                    
-                    for rd in closed_rds:
-                        content.append(f"""
-                        RD Number: {rd[0]}
-                        Customer: {rd[1]}
-                        Monthly Amount: Rs {rd[2]:,.2f}
-                        Installments: {rd[3]}/{rd[4]}
-                        Rate: {rd[5]}%
-                        Start Date: {rd[6]}
-                        Maturity Date: {rd[7]}
-                        Maturity Amount: Rs {rd[8]:,.2f}
-                        Closed Date: {rd[10]}
-                        Closed Amount: Rs {rd[11]:,.2f}
-                        """)
-                    
-                    pdf_file = create_pdf("Closed Recurring Deposits Report", content, "closed_rds")
-                    if pdf_file:
-                        create_download_button(pdf_file, "closed_recurring_deposits", "📥 Download PDF Report")
+                # Apply filter
+                if status_filter:
+                    filtered_df = df[df['Status Display'].isin(status_filter)]
+                else:
+                    filtered_df = df
+                
+                if not filtered_df.empty:
+                    st.dataframe(
+                        filtered_df.style.format({
+                            'Monthly': 'Rs {:,.2f}',
+                            'Maturity Amount': 'Rs {:,.2f}',
+                            'Closed Amount': 'Rs {:,.2f}',
+                            'Rate': '{:.2f}%'
+                        }),
+                        use_container_width=True
+                    )
+                
+                # Download buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "📥 Download Closed RDs CSV",
+                        df.to_csv(index=False),
+                        "closed_recurring_deposits.csv",
+                        "text/csv"
+                    )
+                
+                with col2:
+                    if st.button("📄 Print/PDF Closed RDs Report", use_container_width=True):
+                        content = [
+                            "📋 CLOSED RECURRING DEPOSITS REPORT",
+                            "=" * 50,
+                            f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                            "",
+                            f"Total RDs Closed: {len(closed_rds)}",
+                            f"Total Deposited: Rs {total_principal:,.2f}",
+                            f"Total Received: Rs {total_closed:,.2f}",
+                            f"Total Interest Earned: Rs {total_interest:,.2f}",
+                            "",
+                            "DETAILED LIST:",
+                            "-" * 50
+                        ]
+                        
+                        for rd in closed_rds:
+                            content.append(f"""
+                            RD Number: {rd[0]}
+                            Customer: {rd[1]}
+                            Monthly Amount: Rs {rd[2]:,.2f}
+                            Installments: {rd[3]}/{rd[4]}
+                            Rate: {rd[5]}%
+                            Start Date: {rd[6]}
+                            Maturity Date: {rd[7]}
+                            Maturity Amount: Rs {rd[8]:,.2f}
+                            Status: {rd[12]}
+                            Closed Date: {rd[10] if rd[10] else 'N/A'}
+                            Closed Amount: Rs {rd[11]:,.2f}
+                            """)
+                        
+                        pdf_file = create_pdf("Closed Recurring Deposits Report", content, "closed_rds")
+                        if pdf_file:
+                            create_download_button(pdf_file, "closed_recurring_deposits", "📥 Download PDF Report")
             else:
-                st.info("No completed recurring deposits found")
+                st.info("ℹ️ No closed/completed recurring deposits found.")
+                st.markdown("""
+                ### 📝 How RDs Get Closed:
+                1. **Auto-Matured**: When all installments are paid, the RD automatically matures
+                2. **Manual Closure**: Staff can manually close an RD
+                3. **Transfer**: Matured amount is automatically transferred to SB account
+                """)
+                
         except Exception as e:
-            st.error(f"Error loading closed RDs: {str(e)}")
-            st.info("Please complete an RD first to populate the data.")
+            st.error(f"❌ Error loading closed RDs: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
+            st.info("💡 Try completing an RD first to see it here.")
     
     c.close()
 # ==================== TRANSACTIONS ====================

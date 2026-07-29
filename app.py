@@ -1,6 +1,3 @@
-# 🏦 AARSHA NIDHI PVT LIMITED BANK - COMPLETE SYSTEM
-# With Print/PDF Statements in ALL Modules, Indian Timezone, Teal Theme
-
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -11,10 +8,27 @@ import hashlib
 import tempfile
 import os
 import base64
-import pytz
 
-# Set Indian Timezone
-IST = pytz.timezone('Asia/Kolkata')
+# Indian Timezone - IST (UTC+5:30) without pytz dependency
+class ISTTimeZone:
+    """Simple IST timezone implementation"""
+    @staticmethod
+    def now():
+        return datetime.utcnow() + timedelta(hours=5, minutes=30)
+    
+    @staticmethod
+    def localize(dt):
+        return dt
+    
+    @staticmethod
+    def normalize(dt):
+        return dt
+
+IST = ISTTimeZone()
+
+def get_indian_time():
+    """Get current time in IST"""
+    return IST.now()
 
 try:
     from fpdf import FPDF

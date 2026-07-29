@@ -10,26 +10,12 @@ import os
 import base64
 
 # Indian Timezone - IST (UTC+5:30) without pytz dependency
-class ISTTimeZone:
-    """Simple IST timezone implementation"""
-    @staticmethod
-    def now():
-        # Get current UTC time and add 5:30 hours for IST
-        return datetime.utcnow() + timedelta(hours=5, minutes=30)
-    
-    @staticmethod
-    def localize(dt):
-        return dt
-    
-    @staticmethod
-    def normalize(dt):
-        return dt
-
-IST = ISTTimeZone()
-
 def get_indian_time():
     """Get current time in IST"""
-    return IST.now()
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+# Keep IST for compatibility
+IST = get_indian_time
 
 try:
     from fpdf import FPDF
@@ -38,7 +24,6 @@ except ImportError:
         from fpdf2 import FPDF
     except ImportError:
         FPDF = None
-
 # ==================== DATABASE SETUP ====================
 def init_database():
     try:

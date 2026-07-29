@@ -3062,60 +3062,24 @@ def journal_vouchers():
             num_entries = st.number_input("📊 Number of Entries", min_value=2, max_value=10, value=2)
             
             st.markdown("### 📊 Journal Entries")
-            st.info("💡 **Note:** For each entry, select 'Account Type' and enter amount in either Debit or Credit")
-            
             entries = []
             total_dr = 0
             total_cr = 0
             
-            # Account types for selection
-            account_types = [
-                'Cash', 'Bank', 'SB Deposits', 'FD Deposits', 'RD Deposits',
-                'Interest Receivable', 'Interest Payable', 'Capital/Equity',
-                'Income - Interest', 'Income - Fees', 'Income - Commission',
-                'Expense - Salary', 'Expense - Rent', 'Expense - Operating',
-                'Expense - Administrative', 'Other Asset', 'Other Liability'
-            ]
-            
             for i in range(int(num_entries)):
                 st.markdown(f"**Entry {i+1}**")
-                col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+                col1, col2, col3 = st.columns([3, 1, 1])
                 
                 with col1:
-                    account_type = st.selectbox(
-                        f"Account Type", 
-                        account_types, 
-                        key=f"atype_{i}",
-                        index=0
-                    )
-                    head = st.text_input(
-                        f"Account Head (Optional)", 
-                        key=f"jh_{i}", 
-                        placeholder="e.g., Specific account name",
-                        value=account_type
-                    )
+                    head = st.text_input(f"Account Head", key=f"jh_{i}", placeholder="e.g., Bank A/c, Capital A/c")
                 with col2:
                     dr = st.number_input(f"Debit", min_value=0.0, step=100.0, key=f"jd_{i}")
                 with col3:
                     cr = st.number_input(f"Credit", min_value=0.0, step=100.0, key=f"jc_{i}")
-                with col4:
-                    if account_type in ['SB Deposits', 'FD Deposits', 'RD Deposits'] and cust_id:
-                        st.info(f"👤 Customer: {cust_name}")
                 
                 total_dr += dr
                 total_cr += cr
-                
-                # Use account_type as head if head is empty or same as placeholder
-                if not head or head == account_type:
-                    head = account_type
-                    
-                entries.append({
-                    'account_type': account_type,
-                    'head': head,
-                    'dr': dr,
-                    'cr': cr,
-                    'customer_id': cust_id if account_type in ['SB Deposits', 'FD Deposits', 'RD Deposits'] else None
-                })
+                entries.append({'head': head, 'dr': dr, 'cr': cr})
             
             st.markdown("---")
             st.info(f"💰 **Total Debit: Rs {total_dr:,.2f} | Total Credit: Rs {total_cr:,.2f}**")
@@ -3131,43 +3095,39 @@ def journal_vouchers():
                     try:
                         voucher_number = generate_voucher_number('JOURNAL')
                         
-                        # Insert into journal_vouchers
                         conn.execute("""
                             INSERT INTO journal_vouchers (
                                 voucher_number, voucher_date, description,
-                                total_amount, created_by, customer_id, status
-                            ) VALUES (?,?,?,?,?,?,?)
+                                total_amount, created_by, customer_id
+                            ) VALUES (?,?,?,?,?,?)
                         """, (voucher_number, voucher_date, description, total_dr, 
-                              st.session_state.user['id'], cust_id, 'POSTED'))  # Auto-post
+                              st.session_state.user['id'], cust_id))
                         
                         voucher_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                         
                         for entry in entries:
-                            if (entry['dr'] > 0 or entry['cr'] > 0):
+                            if (entry['dr'] > 0 or entry['cr'] > 0) and entry['head'].strip():
                                 conn.execute("""
                                     INSERT INTO journal_entries (
                                         voucher_id, account_head,
                                         debit_amount, credit_amount
                                     ) VALUES (?,?,?,?)
-                                """, (voucher_id, entry['head'], entry['dr'], entry['cr']))
+                                """, (voucher_id, entry['head'].strip(), entry['dr'], entry['cr']))
                         
                         conn.commit()
                         conn.close()
                         
                         st.success(f"""
-                        ✅ Journal Voucher Created & Posted! 🎉
+                        ✅ Journal Voucher Created! 🎉
                         
                         📋 **JV Details:**
                         - Voucher Number: **{voucher_number}**
                         - Total Amount: **Rs {total_dr:,.2f}**
                         - Entries: **{num_entries}**
-                        - Status: **POSTED** (Will reflect in Trial Balance & Balance Sheet)
                         """)
                         st.balloons()
                         
                     except Exception as e:
-                        conn.rollback()
-                        conn.close()
                         st.error(f"❌ Error: {str(e)}")
     
     with tab2:
@@ -3186,7 +3146,7 @@ def journal_vouchers():
         
         if vouchers:
             for v in vouchers:
-                status_color = "🟢" if v[5] == 'POSTED' else "🟡" if v[5] == 'DRAFT' else "🔴"
+                status_color = "🟡" if v[5] == 'DRAFT' else "🟢" if v[5] == 'POSTED' else "🔴"
                 
                 with st.expander(f"{status_color} {v[1]} | {v[2]} | Rs {v[4]:,.2f} | {v[5]}"):
                     st.markdown(f"""
@@ -3201,13 +3161,13 @@ def journal_vouchers():
                     """)
                     
                     entries = c.execute("""
-                        SELECT id, account_head, debit_amount, credit_amount
+                        SELECT account_head, debit_amount, credit_amount
                         FROM journal_entries
                         WHERE voucher_id=?
                     """, (v[0],)).fetchall()
                     
                     if entries:
-                        df = pd.DataFrame(entries, columns=['ID', 'Account Head', 'Debit', 'Credit'])
+                        df = pd.DataFrame(entries, columns=['Account Head', 'Debit', 'Credit'])
                         st.dataframe(
                             df.style.format({
                                 'Debit': 'Rs {:,.2f}',
@@ -3215,29 +3175,9 @@ def journal_vouchers():
                             }),
                             use_container_width=True
                         )
-                        
-                        # Calculate totals
-                        total_debit = df['Debit'].sum()
-                        total_credit = df['Credit'].sum()
-                        st.info(f"📊 Total Debit: Rs {total_debit:,.2f} | Total Credit: Rs {total_credit:,.2f}")
-                        
-                        with st.expander("🗑️ Delete Entry"):
-                            entry_id = st.text_input("Enter Entry ID to delete:", key=f"del_entry_{v[0]}")
-                            if entry_id:
-                                if st.button("🗑️ Delete Entry", key=f"del_btn_{v[0]}", use_container_width=True, type="secondary"):
-                                    if st.checkbox("☑️ Confirm delete?", key=f"confirm_entry_{v[0]}"):
-                                        try:
-                                            conn = get_db()
-                                            conn.execute("DELETE FROM journal_entries WHERE id=?", (entry_id,))
-                                            conn.commit()
-                                            conn.close()
-                                            st.success("✅ Entry deleted successfully!")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"❌ Error: {str(e)}")
                     
                     if v[5] == 'DRAFT':
-                        col1, col2, col3 = st.columns(3)
+                        col1, col2 = st.columns(2)
                         with col1:
                             if st.button("✅ Post JV", key=f"post_{v[0]}", use_container_width=True):
                                 conn = get_db()
@@ -3248,7 +3188,7 @@ def journal_vouchers():
                                 """, (st.session_state.user['id'], v[0]))
                                 conn.commit()
                                 conn.close()
-                                st.success("✅ JV Posted! It will now reflect in Trial Balance & Balance Sheet")
+                                st.success("✅ JV Posted!")
                                 st.rerun()
                         
                         with col2:
@@ -3259,23 +3199,6 @@ def journal_vouchers():
                                 conn.close()
                                 st.warning("❌ JV Cancelled")
                                 st.rerun()
-                        
-                        with col3:
-                            if st.button("🗑️ Delete JV", key=f"delete_jv_{v[0]}", use_container_width=True, type="secondary"):
-                                if st.checkbox("☑️ Confirm delete?", key=f"confirm_jv_{v[0]}"):
-                                    try:
-                                        conn = get_db()
-                                        conn.execute("DELETE FROM journal_entries WHERE voucher_id=?", (v[0],))
-                                        conn.execute("DELETE FROM journal_vouchers WHERE id=?", (v[0],))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success("✅ JV deleted successfully!")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"❌ Error: {str(e)}")
-                    
-                    if v[5] == 'POSTED':
-                        st.info("✅ This JV is POSTED and reflected in Trial Balance & Balance Sheet")
         else:
             st.info("No journal vouchers found")
     

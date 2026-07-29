@@ -14,6 +14,7 @@ class ISTTimeZone:
     """Simple IST timezone implementation"""
     @staticmethod
     def now():
+        # Get current UTC time and add 5:30 hours for IST
         return datetime.utcnow() + timedelta(hours=5, minutes=30)
     
     @staticmethod

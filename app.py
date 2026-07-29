@@ -1,5 +1,5 @@
 # 🏦 AASHA NIDHI PVT LIMITED BANK - COMPLETE SYSTEM
-# With Closed Accounts, Print/Download for all modules
+# With Closed Accounts, Retrieval Account, Delete Functionality
 
 import streamlit as st
 import pandas as pd
@@ -11,6 +11,8 @@ import hashlib
 import tempfile
 import os
 import base64
+from PIL import Image
+import io
 
 try:
     from fpdf import FPDF
@@ -79,7 +81,7 @@ def init_database():
             FOREIGN KEY (customer_id) REFERENCES customers (id)
         )''')
         
-        # Fixed Deposits table with closed columns
+        # Fixed Deposits table
         c.execute('''CREATE TABLE IF NOT EXISTS fixed_deposits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             fd_number TEXT UNIQUE NOT NULL,
@@ -99,17 +101,15 @@ def init_database():
             FOREIGN KEY (account_id) REFERENCES accounts (id)
         )''')
         
-        # Check if closed_date and closed_amount columns exist in fixed_deposits, add if not
+        # Check if closed_date and closed_amount columns exist in fixed_deposits
         c.execute("PRAGMA table_info(fixed_deposits)")
         columns = [col[1] for col in c.fetchall()]
         if 'closed_date' not in columns:
             c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date DATE")
-            print("Added closed_date column to fixed_deposits")
         if 'closed_amount' not in columns:
             c.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_amount DECIMAL(15,2)")
-            print("Added closed_amount column to fixed_deposits")
         
-        # Recurring Deposits table with closed columns
+        # Recurring Deposits table
         c.execute('''CREATE TABLE IF NOT EXISTS recurring_deposits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             rd_number TEXT UNIQUE NOT NULL,
@@ -131,29 +131,43 @@ def init_database():
             FOREIGN KEY (account_id) REFERENCES accounts (id)
         )''')
         
-        # Check if closed_date and closed_amount columns exist in recurring_deposits, add if not
+        # Check if closed_date and closed_amount columns exist in recurring_deposits
         c.execute("PRAGMA table_info(recurring_deposits)")
         columns = [col[1] for col in c.fetchall()]
         if 'closed_date' not in columns:
             c.execute("ALTER TABLE recurring_deposits ADD COLUMN closed_date DATE")
-            print("Added closed_date column to recurring_deposits")
         if 'closed_amount' not in columns:
             c.execute("ALTER TABLE recurring_deposits ADD COLUMN closed_amount DECIMAL(15,2)")
-            print("Added closed_amount column to recurring_deposits")
         
-        # Update existing closed FDs with closed_amount if null
-        c.execute("""
-            UPDATE fixed_deposits 
-            SET closed_amount = maturity_amount 
-            WHERE status = 'CLOSED' AND closed_amount IS NULL
-        """)
+        # Retrieval Accounts table
+        c.execute('''CREATE TABLE IF NOT EXISTS retrieval_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_number TEXT UNIQUE NOT NULL,
+            customer_id INTEGER NOT NULL,
+            balance DECIMAL(15,2) DEFAULT 0.00,
+            status TEXT DEFAULT 'ACTIVE',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers (id)
+        )''')
         
-        # Update existing closed RDs with closed_amount if null
-        c.execute("""
-            UPDATE recurring_deposits 
-            SET closed_amount = maturity_amount 
-            WHERE status = 'MATURED' AND closed_amount IS NULL
-        """)
+        # Matured Deposits table
+        c.execute('''CREATE TABLE IF NOT EXISTS matured_deposits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            deposit_id TEXT UNIQUE NOT NULL,
+            customer_id INTEGER NOT NULL,
+            original_deposit_type TEXT NOT NULL,
+            original_deposit_number TEXT NOT NULL,
+            principal_amount DECIMAL(15,2) NOT NULL,
+            interest_earned DECIMAL(15,2) DEFAULT 0.00,
+            total_amount DECIMAL(15,2) NOT NULL,
+            maturity_date DATE NOT NULL,
+            deposited_date DATE NOT NULL,
+            status TEXT DEFAULT 'ACTIVE',
+            withdrawn_date DATE,
+            withdrawn_amount DECIMAL(15,2),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers (id)
+        )''')
         
         # Transactions table
         c.execute('''CREATE TABLE IF NOT EXISTS transactions (
@@ -248,6 +262,20 @@ def init_database():
             FOREIGN KEY (customer_id) REFERENCES customers (id)
         )''')
         
+        # Update existing closed FDs with closed_amount if null
+        c.execute("""
+            UPDATE fixed_deposits 
+            SET closed_amount = maturity_amount 
+            WHERE status = 'CLOSED' AND closed_amount IS NULL
+        """)
+        
+        # Update existing closed RDs with closed_amount if null
+        c.execute("""
+            UPDATE recurring_deposits 
+            SET closed_amount = maturity_amount 
+            WHERE status = 'MATURED' AND closed_amount IS NULL
+        """)
+        
         conn.commit()
         conn.close()
         print("Database initialized successfully!")
@@ -264,7 +292,7 @@ def generate_id(prefix):
     return f"{prefix}{datetime.now().strftime('%Y%m%d%H%M%S')}{str(uuid.uuid4())[:4]}"
 
 def generate_account_number(account_type):
-    prefix = '100' if account_type == 'SB' else '200' if account_type == 'FD' else '300'
+    prefix = '100' if account_type == 'SB' else '200' if account_type == 'FD' else '300' if account_type == 'RD' else '400'
     return f"{prefix}{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
 
 def generate_voucher_number(voucher_type):
@@ -300,6 +328,26 @@ def calculate_rd_maturity(monthly, rate, months):
 def calculate_sb_interest(balance, rate, days):
     return 0 if balance <= 0 else round((balance * rate * days) / (100 * 365), 2)
 
+def delete_record(table, id_column, id_value, confirm_message="Are you sure you want to delete this record?"):
+    """Delete a record from any table with confirmation"""
+    if not st.session_state.get('user'):
+        return False
+    
+    if st.button("🗑️ Delete", key=f"del_{table}_{id_value}", use_container_width=True):
+        if st.checkbox(f"☑️ Confirm delete? This action cannot be undone!", key=f"confirm_{table}_{id_value}"):
+            try:
+                conn = get_db()
+                conn.execute(f"DELETE FROM {table} WHERE {id_column} = ?", (id_value,))
+                conn.commit()
+                conn.close()
+                st.success("✅ Record deleted successfully!")
+                st.rerun()
+                return True
+            except Exception as e:
+                st.error(f"❌ Error deleting record: {str(e)}")
+                return False
+    return False
+
 # ==================== PDF GENERATION ====================
 def create_pdf(title, content, filename):
     """Generate PDF with proper formatting"""
@@ -311,7 +359,7 @@ def create_pdf(title, content, filename):
         pdf = FPDF()
         pdf.add_page()
         
-        # Header
+        # Header with Logo
         pdf.set_font('Arial', 'B', 16)
         pdf.cell(190, 10, 'AASHA NIDHI PVT LIMITED BANK', 0, 1, 'C')
         pdf.set_font('Arial', '', 10)
@@ -336,7 +384,6 @@ def create_pdf(title, content, filename):
         pdf.cell(190, 10, f'Generated on: {datetime.now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
         pdf.cell(190, 10, 'This is a system generated statement', 0, 1, 'C')
         
-        # Save to temp file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
         pdf.output(temp_file.name)
         temp_file.close()
@@ -347,18 +394,179 @@ def create_pdf(title, content, filename):
         return None
 
 def create_download_button(file_path, filename, button_text="📥 Download PDF"):
-    """Create a download button for PDF"""
     if file_path and os.path.exists(file_path):
         with open(file_path, 'rb') as f:
             data = f.read()
         b64 = base64.b64encode(data).decode()
         href = f'<a href="data:application/pdf;base64,{b64}" download="{filename}.pdf">📥 {button_text}</a>'
         st.markdown(href, unsafe_allow_html=True)
-        # Clean up temp file
         try:
             os.unlink(file_path)
         except:
             pass
+
+# ==================== RETRIEVAL ACCOUNT FUNCTIONS ====================
+def get_retrieval_account(customer_id):
+    """Get or create a retrieval account for a customer"""
+    c = get_db()
+    
+    acc = c.execute("""
+        SELECT id, account_number, balance 
+        FROM retrieval_accounts 
+        WHERE customer_id = ? AND status = 'ACTIVE'
+    """, (customer_id,)).fetchone()
+    
+    c.close()
+    
+    if acc:
+        return acc[0], acc[1], acc[2]
+    
+    conn = get_db()
+    account_number = f"RET{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
+    
+    conn.execute("""
+        INSERT INTO retrieval_accounts (account_number, customer_id, balance)
+        VALUES (?, ?, 0)
+    """, (account_number, customer_id))
+    
+    acc_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.commit()
+    conn.close()
+    
+    return acc_id, account_number, 0
+
+def add_to_retrieval_account(customer_id, deposit_type, deposit_number, principal, interest, maturity_date):
+    """Add matured deposit to retrieval account"""
+    conn = get_db()
+    
+    try:
+        acc_id, acc_number, current_balance = get_retrieval_account(customer_id)
+        
+        total_amount = principal + interest
+        
+        new_balance = current_balance + total_amount
+        conn.execute("""
+            UPDATE retrieval_accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_balance, acc_id))
+        
+        deposit_id = generate_id('MAT')
+        conn.execute("""
+            INSERT INTO matured_deposits (
+                deposit_id, customer_id, original_deposit_type,
+                original_deposit_number, principal_amount, interest_earned,
+                total_amount, maturity_date, deposited_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATE('now'))
+        """, (deposit_id, customer_id, deposit_type, deposit_number, 
+              principal, interest, total_amount, maturity_date))
+        
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), acc_id, 'CREDIT',
+            total_amount, new_balance,
+            f"{deposit_type} Maturity: {deposit_number}",
+            'MATURITY', 'RECEIPT',
+            generate_voucher_number('RECEIPT'),
+            st.session_state.user['id']
+        ))
+        
+        conn.commit()
+        conn.close()
+        return acc_number, new_balance
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise e
+
+def transfer_to_sb(customer_id, amount, sb_account_id):
+    """Transfer from retrieval account to SB account"""
+    conn = get_db()
+    
+    try:
+        ret_acc = conn.execute("""
+            SELECT id, account_number, balance 
+            FROM retrieval_accounts 
+            WHERE customer_id = ? AND status = 'ACTIVE'
+        """, (customer_id,)).fetchone()
+        
+        if not ret_acc:
+            conn.close()
+            return None, "No retrieval account found"
+        
+        if ret_acc[2] < amount:
+            conn.close()
+            return None, "Insufficient balance in retrieval account"
+        
+        sb_acc = conn.execute("""
+            SELECT balance FROM accounts WHERE id = ?
+        """, (sb_account_id,)).fetchone()
+        
+        if not sb_acc:
+            conn.close()
+            return None, "SB account not found"
+        
+        new_ret_balance = ret_acc[2] - amount
+        conn.execute("""
+            UPDATE retrieval_accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_ret_balance, ret_acc[0]))
+        
+        new_sb_balance = sb_acc[0] + amount
+        conn.execute("""
+            UPDATE accounts 
+            SET balance = ? 
+            WHERE id = ?
+        """, (new_sb_balance, sb_account_id))
+        
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), ret_acc[0], 'DEBIT',
+            amount, new_ret_balance,
+            "Transfer to SB Account",
+            'TRANSFER', 'PAYMENT',
+            generate_voucher_number('PAYMENT'),
+            st.session_state.user['id']
+        ))
+        
+        conn.execute("""
+            INSERT INTO transactions (
+                transaction_id, account_id, transaction_type,
+                amount, balance_after, description,
+                reference_type, voucher_type, voucher_number,
+                created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            generate_id('TXN'), sb_account_id, 'CREDIT',
+            amount, new_sb_balance,
+            "Transfer from Retrieval Account",
+            'TRANSFER', 'RECEIPT',
+            generate_voucher_number('RECEIPT'),
+            st.session_state.user['id']
+        ))
+        
+        conn.commit()
+        conn.close()
+        return new_ret_balance, new_sb_balance
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise e
 
 # ==================== CUSTOMER SELECTOR ====================
 def customer_selector(label="👤 Select Customer", key_prefix="cust"):
@@ -451,21 +659,34 @@ def load_enterprise_css():
         .main-header {
             background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
             color: white;
-            padding: 1.5rem 2rem;
+            padding: 1rem 2rem;
             border-radius: 16px;
             margin-bottom: 1.5rem;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
         .main-header h1 {
             margin: 0;
-            font-size: 2rem;
+            font-size: 1.8rem;
             font-weight: 800;
         }
         
         .main-header small {
             opacity: 0.8;
-            font-size: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        .bank-logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .bank-logo-icon {
+            font-size: 2.5rem;
         }
         
         .stButton > button {
@@ -488,6 +709,15 @@ def load_enterprise_css():
             background: linear-gradient(135deg, #1a3340, #3a6b80) !important;
         }
         
+        .stButton > button[kind="secondary"] {
+            background: #e74c3c !important;
+            color: white !important;
+        }
+        
+        .stButton > button[kind="secondary"]:hover {
+            background: #c0392b !important;
+        }
+        
         .stTabs [data-baseweb="tab-list"] {
             gap: 8px;
         }
@@ -505,18 +735,50 @@ def load_enterprise_css():
         }
         
         [data-testid="stSidebar"] {
-            background: #0f2027 !important;
+            background: linear-gradient(180deg, #0f2027, #203a43) !important;
         }
         
         [data-testid="stSidebar"] .stButton > button {
             color: white !important;
             background: transparent !important;
             border: 1px solid rgba(255,255,255,0.1) !important;
+            text-align: left !important;
+            justify-content: flex-start !important;
         }
         
         [data-testid="stSidebar"] .stButton > button:hover {
             background: rgba(255,255,255,0.1) !important;
             border-color: rgba(255,255,255,0.3) !important;
+        }
+        
+        [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+            background: rgba(255,255,255,0.15) !important;
+        }
+        
+        .sidebar-logo {
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .sidebar-logo h2 {
+            color: white;
+            margin: 0;
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+        
+        .sidebar-logo p {
+            color: rgba(255,255,255,0.6);
+            font-size: 0.8rem;
+            margin: 0;
+        }
+        
+        .sidebar-logo .logo-icon {
+            font-size: 3rem;
+            display: block;
+            margin-bottom: 5px;
         }
         
         .stDataFrame {
@@ -530,6 +792,36 @@ def load_enterprise_css():
             border-radius: 12px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
+        
+        .delete-btn {
+            background: #e74c3c !important;
+            color: white !important;
+        }
+        
+        .delete-btn:hover {
+            background: #c0392b !important;
+        }
+        
+        .success-box {
+            background: #d4edda;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #28a745;
+        }
+        
+        .warning-box {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #ffc107;
+        }
+        
+        .info-box {
+            background: #d1ecf1;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #17a2b8;
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -539,6 +831,8 @@ def init_session_state():
         st.session_state.user = None
     if 'page' not in st.session_state:
         st.session_state.page = 'dashboard'
+    if 'delete_confirmation' not in st.session_state:
+        st.session_state.delete_confirmation = {}
 
 # ==================== MAIN APP ====================
 def main():
@@ -563,7 +857,7 @@ def show_login():
     st.markdown("""
     <div style="display:flex;justify-content:center;align-items:center;min-height:80vh">
         <div style="background:white;padding:3rem;border-radius:24px;text-align:center;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,0.1)">
-            <h1 style="font-size:2.5rem;margin-bottom:0">🏦</h1>
+            <div style="font-size:4rem;margin-bottom:0">🏦</div>
             <h1 style="font-size:1.8rem;font-weight:800;margin:0.5rem 0">AASHA NIDHI BANK</h1>
             <p style="color:#6c757d;margin-bottom:2rem">Balaramapuram</p>
     """, unsafe_allow_html=True)
@@ -599,25 +893,34 @@ def show_app():
     # Header
     st.markdown(f"""
     <div class="main-header">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap">
+        <div class="bank-logo">
+            <span class="bank-logo-icon">🏦</span>
             <div>
-                <h1>🏦 AASHA NIDHI PVT LIMITED BANK</h1>
+                <h1>AASHA NIDHI PVT LIMITED BANK</h1>
                 <small>📍 BALARAMAPURAM • {datetime.now().strftime('%d-%m-%Y %I:%M %p')}</small>
             </div>
-            <div style="text-align:right">
-                <span style="font-size:1.2rem;font-weight:600">👤 {st.session_state.user['username']}</span>
-                <br>
-                <span style="background:rgba(255,255,255,0.2);padding:0.25rem 1rem;border-radius:20px;font-size:0.9rem">
-                    {st.session_state.user['role'].upper()}
-                </span>
-            </div>
+        </div>
+        <div style="text-align:right">
+            <span style="font-size:1.1rem;font-weight:600">👤 {st.session_state.user['username']}</span>
+            <br>
+            <span style="background:rgba(255,255,255,0.2);padding:0.25rem 1rem;border-radius:20px;font-size:0.8rem">
+                {st.session_state.user['role'].upper()}
+            </span>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
     # Sidebar
     with st.sidebar:
-        st.markdown("### 🏦 Navigation")
+        st.markdown("""
+        <div class="sidebar-logo">
+            <span class="logo-icon">🏦</span>
+            <h2>AASHA NIDHI BANK</h2>
+            <p>Complete Banking Solution</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("### 📋 Navigation")
         st.markdown("---")
         
         menu_items = {
@@ -628,6 +931,7 @@ def show_app():
             'sb_accounts': '🏦 SB Accounts',
             'fixed_deposits': '📈 Fixed Deposits',
             'recurring_deposits': '🔄 Recurring Dep.',
+            'retrieval_account': '💰 Retrieval Account',
             'transactions': '💳 Transactions',
             'journal_vouchers': '📝 Journal Vouchers',
             'income_expenses': '💰 Income & Exp.',
@@ -638,31 +942,21 @@ def show_app():
             'reports': '📄 Reports'
         }
         
-        if st.session_state.user['role'] in ['admin', 'staff']:
-            for key, label in menu_items.items():
-                if st.button(label, key=f"m_{key}", use_container_width=True):
-                    st.session_state.page = key
-                    st.rerun()
-        else:
-            if st.button("📊 Dashboard", key="m_dashboard", use_container_width=True):
-                st.session_state.page = 'dashboard'
-                st.rerun()
-            if st.button("💰 My Accounts", key="m_my_accounts", use_container_width=True):
-                st.session_state.page = 'my_accounts'
-                st.rerun()
-            if st.button("💳 Transactions", key="m_my_transactions", use_container_width=True):
-                st.session_state.page = 'my_transactions'
+        for key, label in menu_items.items():
+            if st.button(label, key=f"m_{key}", use_container_width=True):
+                st.session_state.page = key
                 st.rerun()
         
         st.markdown("---")
+        st.markdown("### 🔧 Settings")
         if st.button("🚪 Sign Out", use_container_width=True):
             st.session_state.user = None
             st.rerun()
         
         st.markdown("""
-        <div style="position:fixed;bottom:1rem;left:1rem;right:1rem;text-align:center;color:#6c757d;font-size:0.8rem">
+        <div style="position:fixed;bottom:1rem;left:1rem;right:1rem;text-align:center;color:rgba(255,255,255,0.4);font-size:0.7rem;padding:10px;">
             © 2024 Aasha Nidhi Bank<br>
-            v2.0
+            v3.0
         </div>
         """, unsafe_allow_html=True)
     
@@ -683,6 +977,8 @@ def show_app():
         fixed_deposits()
     elif page == 'recurring_deposits':
         recurring_deposits()
+    elif page == 'retrieval_account':
+        retrieval_account()
     elif page == 'transactions':
         transactions()
     elif page == 'journal_vouchers':
@@ -699,10 +995,6 @@ def show_app():
         profit_loss()
     elif page == 'reports':
         reports()
-    elif page == 'my_accounts':
-        my_accounts()
-    elif page == 'my_transactions':
-        my_transactions()
     else:
         st.error(f"❌ Page '{page}' not found")
 
@@ -717,6 +1009,7 @@ def dashboard():
     total_fd = c.execute("SELECT COALESCE(SUM(principal_amount),0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
     total_rd = c.execute("SELECT COALESCE(SUM(monthly_amount*installments_paid),0) FROM recurring_deposits WHERE status='ACTIVE'").fetchone()[0]
     pending_kyc = c.execute("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'").fetchone()[0]
+    total_retrieval = c.execute("SELECT COALESCE(SUM(balance),0) FROM retrieval_accounts WHERE status='ACTIVE'").fetchone()[0]
     
     c.close()
     
@@ -737,7 +1030,7 @@ def dashboard():
     
     with col4:
         st.metric("💹 Interest Earned", f"Rs {total_interest:,.2f}")
-        st.metric("⏳ Pending KYC", f"{pending_kyc:,}")
+        st.metric("💰 Retrieval Balance", f"Rs {total_retrieval:,.2f}")
     
     st.markdown("### 🕐 Recent Activity")
     c = get_db()
@@ -823,22 +1116,58 @@ def customer_management():
         st.markdown("### 👥 Customer List")
         conn = get_db()
         customers = conn.execute("""
-            SELECT customer_id, first_name, last_name, email, phone, kyc_status,
-                   CASE WHEN kyc_status='VERIFIED' THEN '✅' WHEN kyc_status='PENDING' THEN '⏳' ELSE '❌' END as status_emoji
+            SELECT id, customer_id, first_name, last_name, email, phone, kyc_status,
+                   CASE WHEN kyc_status='VERIFIED' THEN '✅' WHEN kyc_status='PENDING' THEN '⏳' ELSE '❌' END as status_emoji,
+                   created_at
             FROM customers ORDER BY created_at DESC
         """).fetchall()
         conn.close()
         
         if customers:
-            df = pd.DataFrame(customers, columns=['ID', 'First', 'Last', 'Email', 'Phone', 'KYC', 'Status'])
-            st.dataframe(df[['ID', 'First', 'Last', 'Email', 'Phone', 'Status', 'KYC']], use_container_width=True)
+            df = pd.DataFrame(customers, columns=['ID', 'Customer ID', 'First', 'Last', 'Email', 'Phone', 'KYC', 'Status', 'Created'])
+            st.dataframe(df[['Customer ID', 'First', 'Last', 'Email', 'Phone', 'Status', 'KYC']], use_container_width=True)
             
-            st.download_button(
-                "📥 Export to CSV",
-                df.to_csv(index=False),
-                "customers.csv",
-                "text/csv"
-            )
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Export to CSV",
+                    df.to_csv(index=False),
+                    "customers.csv",
+                    "text/csv"
+                )
+            
+            with col2:
+                # Delete functionality
+                with st.expander("🗑️ Delete Customer"):
+                    delete_id = st.text_input("Enter Customer ID to delete:")
+                    if delete_id:
+                        if st.button("🗑️ Delete Customer", use_container_width=True, type="secondary"):
+                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                try:
+                                    conn = get_db()
+                                    # Delete related records first
+                                    customer = conn.execute("SELECT id FROM customers WHERE customer_id=?", (delete_id,)).fetchone()
+                                    if customer:
+                                        # Delete from accounts
+                                        conn.execute("DELETE FROM accounts WHERE customer_id=?", (customer[0],))
+                                        # Delete from fixed_deposits
+                                        conn.execute("DELETE FROM fixed_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (customer[0],))
+                                        # Delete from recurring_deposits
+                                        conn.execute("DELETE FROM recurring_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (customer[0],))
+                                        # Delete from retrieval_accounts
+                                        conn.execute("DELETE FROM retrieval_accounts WHERE customer_id=?", (customer[0],))
+                                        # Delete from matured_deposits
+                                        conn.execute("DELETE FROM matured_deposits WHERE customer_id=?", (customer[0],))
+                                        # Delete customer
+                                        conn.execute("DELETE FROM customers WHERE customer_id=?", (delete_id,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ Customer and all related records deleted!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Customer not found!")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No customers registered yet")
 
@@ -887,7 +1216,7 @@ def kyc_verification():
                     st.success("✅ Signature Uploaded")
             
             st.markdown("---")
-            col1, col2, col3 = st.columns(3)
+            col1, col2 = st.columns(2)
             
             with col1:
                 if st.button("✅ Approve KYC", key=f"approve_{cust[0]}", use_container_width=True):
@@ -1117,7 +1446,7 @@ def sb_accounts():
     with tab2:
         st.markdown("### 📊 Active SB Accounts")
         accounts = c.execute("""
-            SELECT a.account_number, c.first_name||' '||c.last_name as customer,
+            SELECT a.id, a.account_number, c.first_name||' '||c.last_name as customer,
                    a.balance, COALESCE(a.total_interest_earned,0) as interest,
                    a.interest_rate, a.status, c.kyc_status
             FROM accounts a
@@ -1127,7 +1456,7 @@ def sb_accounts():
         """).fetchall()
         
         if accounts:
-            df = pd.DataFrame(accounts, columns=['Account', 'Customer', 'Balance', 'Interest', 'Rate', 'Status', 'KYC'])
+            df = pd.DataFrame(accounts, columns=['ID', 'Account', 'Customer', 'Balance', 'Interest', 'Rate', 'Status', 'KYC'])
             st.dataframe(
                 df.style.format({
                     'Balance': 'Rs {:,.2f}',
@@ -1140,6 +1469,30 @@ def sb_accounts():
             total_balance = df['Balance'].sum()
             total_interest = df['Interest'].sum()
             st.info(f"💰 Total SB Deposits: Rs {total_balance:,.2f} | Total Interest: Rs {total_interest:,.2f}")
+            
+            # Delete functionality
+            with st.expander("🗑️ Delete SB Account"):
+                acc_num = st.text_input("Enter Account Number to delete:")
+                if acc_num:
+                    if st.button("🗑️ Delete Account", use_container_width=True, type="secondary"):
+                        if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                            try:
+                                conn = get_db()
+                                # Check if account exists
+                                acc = conn.execute("SELECT id FROM accounts WHERE account_number=?", (acc_num,)).fetchone()
+                                if acc:
+                                    # Delete transactions first
+                                    conn.execute("DELETE FROM transactions WHERE account_id=?", (acc[0],))
+                                    # Delete account
+                                    conn.execute("DELETE FROM accounts WHERE account_number=?", (acc_num,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("✅ Account deleted successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Account not found!")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No SB accounts found")
     
@@ -1202,8 +1555,6 @@ def sb_accounts():
     c.close()
 
 # ==================== FIXED DEPOSITS ====================
-# ==================== FIXED DEPOSITS - COMPLETE FIX ====================
-# ==================== FIXED DEPOSITS - COMPLETE FIX ====================
 def fixed_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1529,7 +1880,7 @@ def fixed_deposits():
             if selected_fd['has_sb']:
                 st.success(f"✅ SB Account Found: {selected_fd['sb_account']} (Balance: Rs {selected_fd['sb_balance']:,.2f})")
             else:
-                st.error("❌ No active SB account found for this customer! Please open an SB account first.")
+                st.error("❌ No active SB account found for this customer!")
             
             st.markdown(f"""
             ### 📋 FD Details
@@ -1552,19 +1903,13 @@ def fixed_deposits():
             """)
             
             if selected_fd['is_matured']:
-                st.success("✅ This FD has matured and is eligible for closure with full interest!")
+                st.success("✅ This FD has matured!")
                 final_amount = selected_fd['total_value']
                 penalty_applied = False
             else:
-                st.warning(f"""
-                ⚠️ **Early Closure Warning:**
-                - FD matures on: **{selected_fd['maturity_date']}**
-                - Days remaining: **{selected_fd['total_days'] - selected_fd['days_elapsed']} days**
-                - Early closure may result in reduced interest rate (penalty applies)
-                """)
-                
+                st.warning(f"⚠️ Early Closure - Penalty applies!")
                 penalty_rate = st.number_input(
-                    "📉 Early Closure Penalty Rate (%)",
+                    "📉 Penalty Rate (%)",
                     min_value=0.0,
                     max_value=5.0,
                     value=1.0,
@@ -1583,169 +1928,83 @@ def fixed_deposits():
                 """)
             
             st.markdown("---")
+            st.info("💰 **Amount will be deposited to Retrieval Account**")
             
-            # Ask if user wants to transfer to SB or keep in FD account
-            st.info("💡 **What happens to the amount?**")
-            st.markdown("""
-            - **Transfer to SB Account**: Money moves to your Savings Bank account
-            - **Keep in FD Account (as Savings)**: Money stays in the same account, but it becomes a regular savings account (you can withdraw anytime)
-            """)
-            
-            transfer_option = st.radio(
-                "💰 What would you like to do with the matured amount?",
-                ["Transfer to SB Account", "Keep in FD Account (as Savings)"],
-                horizontal=True
-            )
-            
-            can_close = True
-            if not selected_fd['has_sb'] and transfer_option == "Transfer to SB Account":
-                can_close = False
-                st.error("❌ Cannot transfer to SB: No SB account found! Please choose 'Keep in FD Account (as Savings)'")
-            
-            if st.button("🔒 Close FD", use_container_width=True, type="primary", disabled=not can_close):
-                if not can_close:
-                    st.error("❌ Please fix the issues above before closing!")
-                else:
-                    conn = get_db()
-                    try:
-                        # Update FD status - set to CLOSED
+            if st.button("🔒 Close FD", use_container_width=True, type="primary"):
+                conn = get_db()
+                try:
+                    # Update FD status
+                    conn.execute("""
+                        UPDATE fixed_deposits 
+                        SET status='CLOSED', 
+                            closed_date=CURRENT_DATE, 
+                            closed_amount=?
+                        WHERE id=?
+                    """, (final_amount, selected_fd['fd_id']))
+                    
+                    # Add to retrieval account
+                    ret_acc_number, new_ret_balance = add_to_retrieval_account(
+                        selected_fd['customer_id'],
+                        'FD',
+                        selected_fd['fd_number'],
+                        selected_fd['principal'],
+                        selected_fd['accrued_interest'],
+                        selected_fd['maturity_date']
+                    )
+                    
+                    # Record interest income
+                    if selected_fd['accrued_interest'] > 0:
                         conn.execute("""
-                            UPDATE fixed_deposits 
-                            SET status='CLOSED', 
-                                closed_date=CURRENT_DATE, 
-                                closed_amount=?
-                            WHERE id=?
-                        """, (final_amount, selected_fd['fd_id']))
-                        
-                        if transfer_option == "Transfer to SB Account":
-                            # Transfer to SB
-                            sb_balance_result = conn.execute("""
-                                SELECT balance FROM accounts WHERE id=?
-                            """, (selected_fd['sb_account_id'],)).fetchone()
-                            current_sb_balance = sb_balance_result[0] if sb_balance_result else 0
-                            
-                            new_sb_balance = current_sb_balance + final_amount
-                            conn.execute("""
-                                UPDATE accounts 
-                                SET balance=? 
-                                WHERE id=?
-                            """, (new_sb_balance, selected_fd['sb_account_id']))
-                            
-                            conn.execute("""
-                                INSERT INTO transactions (
-                                    transaction_id, account_id, transaction_type,
-                                    amount, balance_after, description,
-                                    reference_type, voucher_type, voucher_number,
-                                    created_by
-                                ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                            """, (
-                                generate_id('TXN'), 
-                                selected_fd['sb_account_id'], 
-                                'CREDIT',
-                                final_amount, 
-                                new_sb_balance,
-                                f"FD Closure - Transferred to SB: {selected_fd['fd_number']}",
-                                'FD_CLOSURE', 
-                                'RECEIPT',
-                                generate_voucher_number('RECEIPT'),
-                                st.session_state.user['id']
-                            ))
-                            
-                            transfer_message = f"💰 **Transferred to SB Account: {selected_fd['sb_account']}**"
-                        else:
-                            # Keep in FD account - convert to SAVINGS
-                            # Update the account type to SAVINGS and set balance
-                            conn.execute("""
-                                UPDATE accounts 
-                                SET account_type='SAVINGS', 
-                                    balance=?
-                                WHERE id=?
-                            """, (final_amount, selected_fd['fd_account_id']))
-                            
-                            conn.execute("""
-                                INSERT INTO transactions (
-                                    transaction_id, account_id, transaction_type,
-                                    amount, balance_after, description,
-                                    reference_type, voucher_type, voucher_number,
-                                    created_by
-                                ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                            """, (
-                                generate_id('TXN'), 
-                                selected_fd['fd_account_id'], 
-                                'CREDIT',
-                                final_amount, 
-                                final_amount,
-                                f"FD Closure - Converted to Savings: {selected_fd['fd_number']}",
-                                'FD_CLOSURE', 
-                                'RECEIPT',
-                                generate_voucher_number('RECEIPT'),
-                                st.session_state.user['id']
-                            ))
-                            
-                            transfer_message = f"💰 **Kept in Account: {selected_fd['fd_account_number']} (Now a Savings Account)**"
-                        
-                        # Record interest income
-                        if selected_fd['accrued_interest'] > 0:
-                            conn.execute("""
-                                INSERT INTO income (
-                                    income_id, income_type, amount,
-                                    description, date, customer_id,
-                                    created_by
-                                ) VALUES (?,?,?,?,?,?,?)
-                            """, (
-                                generate_id('INC'),
-                                'Interest Earned',
-                                selected_fd['accrued_interest'],
-                                f"FD Interest: {selected_fd['fd_number']}",
-                                date.today(),
-                                selected_fd['customer_id'],
-                                st.session_state.user['id']
-                            ))
-                        
-                        conn.commit()
-                        conn.close()
-                        
-                        st.success(f"""
-                        ✅ **FD Closed Successfully!** 🎉
-                        
-                        📋 **Closure Summary:**
-                        - FD Number: **{selected_fd['fd_number']}**
-                        - Customer: **{selected_fd['customer']}**
-                        - Principal: **Rs {selected_fd['principal']:,.2f}**
-                        - Interest Earned: **Rs {selected_fd['accrued_interest']:,.2f}**
-                        - {'Penalty Applied' if penalty_applied else 'No Penalty'}
-                        - Total Amount: **Rs {final_amount:,.2f}**
-                        - {transfer_message}
-                        """)
-                        st.balloons()
-                        st.rerun()
-                        
-                    except Exception as e:
-                        conn.rollback()
-                        conn.close()
-                        st.error(f"❌ Error closing FD: {str(e)}")
-                        import traceback
-                        st.error(traceback.format_exc())
+                            INSERT INTO income (
+                                income_id, income_type, amount,
+                                description, date, customer_id,
+                                created_by
+                            ) VALUES (?,?,?,?,?,?,?)
+                        """, (
+                            generate_id('INC'),
+                            'Interest Earned',
+                            selected_fd['accrued_interest'],
+                            f"FD Interest: {selected_fd['fd_number']}",
+                            date.today(),
+                            selected_fd['customer_id'],
+                            st.session_state.user['id']
+                        ))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    st.success(f"""
+                    ✅ **FD Closed Successfully!** 🎉
+                    
+                    📋 **Closure Summary:**
+                    - FD Number: **{selected_fd['fd_number']}**
+                    - Customer: **{selected_fd['customer']}**
+                    - Principal: **Rs {selected_fd['principal']:,.2f}**
+                    - Interest Earned: **Rs {selected_fd['accrued_interest']:,.2f}**
+                    - {'Penalty Applied' if penalty_applied else 'No Penalty'}
+                    - Total Amount: **Rs {final_amount:,.2f}**
+                    - 💰 **Deposited to Retrieval Account: {ret_acc_number}**
+                    - Retrieval Balance: **Rs {new_ret_balance:,.2f}**
+                    """)
+                    st.balloons()
+                    st.rerun()
+                    
+                except Exception as e:
+                    conn.rollback()
+                    conn.close()
+                    st.error(f"❌ Error closing FD: {str(e)}")
     
-    # Tab 4: Closed FDs - FIXED to show ALL closed FDs
+    # Tab 4: Closed FDs
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         
         try:
-            check_query = "SELECT COUNT(*) FROM fixed_deposits WHERE status = 'CLOSED'"
-            count = c.execute(check_query).fetchone()[0]
-            st.info(f"📊 Found {count} closed FDs in database")
-            
-            # Get ALL closed FDs
             closed_fds = c.execute("""
                 SELECT 
-                    fd.fd_number, 
-                    fd.principal_amount, 
-                    fd.interest_rate,
-                    fd.start_date, 
-                    fd.maturity_date,
-                    fd.maturity_amount, 
-                    fd.closed_date,
+                    fd.id, fd.fd_number, 
+                    fd.principal_amount, fd.interest_rate,
+                    fd.start_date, fd.maturity_date,
+                    fd.maturity_amount, fd.closed_date,
                     COALESCE(fd.closed_amount, fd.maturity_amount) as closed_amount,
                     COALESCE(fd.closed_amount, fd.maturity_amount) - fd.principal_amount as interest_earned,
                     fd.status,
@@ -1760,7 +2019,7 @@ def fixed_deposits():
             
             if closed_fds:
                 df = pd.DataFrame(closed_fds, columns=[
-                    'FD No', 'Principal', 'Rate', 
+                    'ID', 'FD No', 'Principal', 'Rate', 
                     'Start Date', 'Maturity Date', 'Maturity Amount',
                     'Closed Date', 'Closed Amount', 'Interest Earned', 
                     'Status', 'Account Number', 'Account Type', 'Current Balance'
@@ -1771,10 +2030,10 @@ def fixed_deposits():
                 total_interest = df['Interest Earned'].sum()
                 
                 col1, col2, col3, col4 = st.columns(4)
-                col1.metric("📊 Total FDs Closed", f"{len(closed_fds)}")
+                col1.metric("📊 Total Closed", f"{len(closed_fds)}")
                 col2.metric("💰 Total Principal", f"Rs {total_principal:,.2f}")
                 col3.metric("💎 Total Closed Amount", f"Rs {total_closed:,.2f}")
-                col4.metric("📈 Total Interest Earned", f"Rs {total_interest:,.2f}")
+                col4.metric("📈 Total Interest", f"Rs {total_interest:,.2f}")
                 
                 st.markdown("---")
                 
@@ -1800,70 +2059,35 @@ def fixed_deposits():
                     )
                 
                 with col2:
-                    if st.button("📄 Print/PDF Closed FDs Report", use_container_width=True):
-                        content = [
-                            "📋 CLOSED FIXED DEPOSITS REPORT",
-                            "=" * 50,
-                            f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                            "",
-                            f"Total FDs Closed: {len(closed_fds)}",
-                            f"Total Principal: Rs {total_principal:,.2f}",
-                            f"Total Interest Earned: Rs {total_interest:,.2f}",
-                            f"Total Amount Paid: Rs {total_closed:,.2f}",
-                            "",
-                            "DETAILED LIST:",
-                            "-" * 50
-                        ]
-                        
-                        for fd in closed_fds:
-                            content.append(f"""
-                            FD Number: {fd[0]}
-                            Principal: Rs {fd[1]:,.2f}
-                            Rate: {fd[2]}%
-                            Start Date: {fd[3]}
-                            Maturity Date: {fd[4]}
-                            Maturity Amount: Rs {fd[5]:,.2f}
-                            Closed Date: {fd[6] if fd[6] else 'N/A'}
-                            Amount Paid: Rs {fd[7]:,.2f}
-                            Interest Earned: Rs {fd[8]:,.2f}
-                            Account: {fd[10] if fd[10] else 'N/A'}
-                            Account Type: {fd[11] if fd[11] else 'N/A'}
-                            Current Balance: Rs {fd[12]:,.2f}
-                            """)
-                        
-                        pdf_file = create_pdf("Closed Fixed Deposits Report", content, "closed_fds")
-                        if pdf_file:
-                            create_download_button(pdf_file, "closed_fixed_deposits", "📥 Download PDF Report")
+                    # Delete functionality
+                    with st.expander("🗑️ Delete FD Record"):
+                        fd_num = st.text_input("Enter FD Number to delete:")
+                        if fd_num:
+                            if st.button("🗑️ Delete FD", use_container_width=True, type="secondary"):
+                                if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                    try:
+                                        conn = get_db()
+                                        # Check if FD exists
+                                        fd = conn.execute("SELECT id FROM fixed_deposits WHERE fd_number=?", (fd_num,)).fetchone()
+                                        if fd:
+                                            conn.execute("DELETE FROM fixed_deposits WHERE fd_number=?", (fd_num,))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success("✅ FD record deleted successfully!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ FD not found!")
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
             else:
-                st.info("ℹ️ No closed fixed deposits found.")
-                st.markdown("""
-                ### 📝 How FDs Get Closed:
-                1. **Manual Closure**: Staff can close an FD from the "Close FD" tab
-                2. **Transfer**: Money is transferred to SB Account or kept as Savings
-                3. **Records**: All closed FDs appear here with full details
-                """)
-                
-                if st.checkbox("🔍 Show Debug Info"):
-                    all_fds = c.execute("""
-                        SELECT fd.id, fd.fd_number, fd.status, fd.closed_date, fd.closed_amount,
-                               a.account_number, a.account_type, a.balance
-                        FROM fixed_deposits fd
-                        LEFT JOIN accounts a ON fd.account_id = a.id
-                    """).fetchall()
-                    if all_fds:
-                        debug_df = pd.DataFrame(all_fds, columns=['ID', 'FD Number', 'Status', 'Closed Date', 'Closed Amount', 'Account Number', 'Account Type', 'Balance'])
-                        st.dataframe(debug_df)
-                    else:
-                        st.info("No FDs found in database at all")
+                st.info("No closed fixed deposits found")
                 
         except Exception as e:
-            st.error(f"❌ Error loading closed FDs: {str(e)}")
-            import traceback
-            st.error(traceback.format_exc())
+            st.error(f"❌ Error: {str(e)}")
     
     c.close()
-# ==================== RECURRING DEPOSITS - COMPLETE FIX ====================
-# ==================== RECURRING DEPOSITS - COMPLETE FIX ====================
+
+# ==================== RECURRING DEPOSITS ====================
 def recurring_deposits():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1946,11 +2170,11 @@ def recurring_deposits():
                     nominee_relation = st.text_input("🤝 Relationship (Optional)")
                 
                 if funding_mode == "SB Transfer (Debit from SB)" and monthly_amount > balance:
-                    st.error(f"❌ Insufficient balance for first installment! Available: Rs {balance:,.2f}")
+                    st.error(f"❌ Insufficient balance! Available: Rs {balance:,.2f}")
                 
                 if st.form_submit_button("✅ Open RD", use_container_width=True, type="primary"):
                     if funding_mode == "SB Transfer (Debit from SB)" and monthly_amount > balance:
-                        st.error("❌ Insufficient balance for first installment!")
+                        st.error("❌ Insufficient balance!")
                     else:
                         conn = get_db()
                         try:
@@ -2058,6 +2282,7 @@ def recurring_deposits():
                 remaining = total - paid
                 
                 rd_data.append({
+                    'ID': rd_id,
                     'RD No': rd_number,
                     'Customer': customer,
                     'SB Account': sb_acc,
@@ -2092,7 +2317,7 @@ def recurring_deposits():
         else:
             st.info("No active recurring deposits")
     
-    # Tab 3: Pay Installment - FIXED with transfer option
+    # Tab 3: Pay Installment
     with tab3:
         st.markdown("### 💳 Pay RD Installment")
         
@@ -2170,7 +2395,7 @@ def recurring_deposits():
             if selected_rd['has_sb']:
                 st.success(f"✅ SB Account Found: {selected_rd['sb_account']} (Balance: Rs {selected_rd['sb_balance']:,.2f})")
             else:
-                st.error("❌ No active SB account found for this customer! Please open an SB account first.")
+                st.error("❌ No active SB account found for this customer!")
             
             st.markdown(f"""
             ### 📋 RD Details
@@ -2191,25 +2416,9 @@ def recurring_deposits():
             | **Maturity Amount** | Rs {selected_rd['maturity_amount']:,.2f} |
             """)
             
-            # If this is the last installment, show transfer option
             if selected_rd['is_last_installment']:
                 st.warning("⚠️ **This is the LAST installment!** The RD will mature after this payment.")
-                st.info("💡 **What happens to the maturity amount?**")
-                st.markdown("""
-                - **Transfer to SB Account**: Money moves to your Savings Bank account
-                - **Keep in RD Account (as Savings)**: Money stays in the same account, but it becomes a regular savings account (you can withdraw anytime)
-                """)
-                
-                transfer_option = st.radio(
-                    "💰 What would you like to do with the maturity amount?",
-                    ["Transfer to SB Account", "Keep in RD Account (as Savings)"],
-                    horizontal=True
-                )
-                
-                if not selected_rd['has_sb'] and transfer_option == "Transfer to SB Account":
-                    st.error("❌ Cannot transfer to SB: No SB account found! Please choose 'Keep in RD Account (as Savings)'")
-            else:
-                transfer_option = "Transfer to SB Account"  # Default for non-last installments
+                st.info("💰 **Amount will be deposited to Retrieval Account**")
             
             st.info(f"📊 **Next Installment Amount: Rs {selected_rd['monthly_amount']:,.2f}**")
             
@@ -2229,7 +2438,7 @@ def recurring_deposits():
                         else:
                             st.success(f"✅ Sufficient balance: Rs {selected_rd['sb_balance']:,.2f}")
                     else:
-                        st.error("❌ No SB account found! Please open an SB account first.")
+                        st.error("❌ No SB account found!")
             
             with col2:
                 st.markdown("### 💰 Payment Summary")
@@ -2248,28 +2457,14 @@ def recurring_deposits():
                     can_pay = False
                     st.error(f"❌ Cannot pay: Insufficient balance! Available: Rs {selected_rd['sb_balance']:,.2f}")
             
-            if selected_rd['is_last_installment'] and transfer_option == "Transfer to SB Account" and not selected_rd['has_sb']:
-                can_pay = False
-                st.error("❌ Cannot transfer to SB: No SB account found!")
-            
             if st.button("💳 Pay Installment", use_container_width=True, type="primary", disabled=not can_pay):
                 if not can_pay:
                     st.error("❌ Please fix the issues above before paying!")
                 else:
                     conn = get_db()
                     try:
-                        rd_acc = conn.execute("""
-                            SELECT account_id FROM recurring_deposits WHERE id=?
-                        """, (selected_rd['rd_id'],)).fetchone()
-                        
-                        if not rd_acc:
-                            st.error("❌ RD not found!")
-                            conn.close()
-                            return
-                        
-                        rd_account_id = rd_acc[0]
                         new_paid = selected_rd['installments_paid'] + 1
-                        new_remaining = selected_rd['total_installments'] - new_paid
+                        is_completed = new_paid >= selected_rd['total_installments']
                         
                         conn.execute("""
                             UPDATE recurring_deposits 
@@ -2277,10 +2472,7 @@ def recurring_deposits():
                             WHERE id=?
                         """, (new_paid, selected_rd['rd_id']))
                         
-                        is_completed = new_paid >= selected_rd['total_installments']
-                        
                         if is_completed:
-                            # Mark as matured with closed date and amount
                             conn.execute("""
                                 UPDATE recurring_deposits 
                                 SET status='MATURED', 
@@ -2324,7 +2516,7 @@ def recurring_deposits():
                                 created_by
                             ) VALUES (?,?,?,?,?,?,?,?,?,?)
                         """, (
-                            generate_id('TXN'), rd_account_id, 'CREDIT',
+                            generate_id('TXN'), selected_rd['rd_account_id'], 'CREDIT',
                             selected_rd['monthly_amount'], rd_balance,
                             f"RD Installment {new_paid}/{selected_rd['total_installments']}: {selected_rd['rd_number']}",
                             payment_mode, 'RECEIPT',
@@ -2336,69 +2528,19 @@ def recurring_deposits():
                         conn.close()
                         
                         if is_completed:
-                            # Handle maturity based on user's choice
-                            transfer_conn = get_db()
-                            try:
-                                if transfer_option == "Transfer to SB Account":
-                                    # Transfer to SB
-                                    sb_balance_result = transfer_conn.execute("""
-                                        SELECT balance FROM accounts WHERE id=?
-                                    """, (selected_rd['sb_account_id'],)).fetchone()
-                                    current_sb = sb_balance_result[0] if sb_balance_result else 0
-                                    
-                                    sb_balance_after = current_sb + selected_rd['maturity_amount']
-                                    transfer_conn.execute("UPDATE accounts SET balance=? WHERE id=?", (sb_balance_after, selected_rd['sb_account_id']))
-                                    transfer_conn.execute("""
-                                        INSERT INTO transactions (
-                                            transaction_id, account_id, transaction_type,
-                                            amount, balance_after, description,
-                                            reference_type, voucher_type, voucher_number,
-                                            created_by
-                                        ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                                    """, (
-                                        generate_id('TXN'), selected_rd['sb_account_id'], 'CREDIT',
-                                        selected_rd['maturity_amount'], sb_balance_after,
-                                        f"RD Maturity Transfer to SB: {selected_rd['rd_number']}",
-                                        'RD_MATURITY', 'RECEIPT',
-                                        generate_voucher_number('RECEIPT'),
-                                        st.session_state.user['id']
-                                    ))
-                                    
-                                    transfer_message = f"💰 **Transferred to SB Account: {selected_rd['sb_account']}**"
-                                else:
-                                    # Keep in RD account - convert to SAVINGS
-                                    transfer_conn.execute("""
-                                        UPDATE accounts 
-                                        SET account_type='SAVINGS', 
-                                            balance=?
-                                        WHERE id=?
-                                    """, (selected_rd['maturity_amount'], rd_account_id))
-                                    
-                                    transfer_conn.execute("""
-                                        INSERT INTO transactions (
-                                            transaction_id, account_id, transaction_type,
-                                            amount, balance_after, description,
-                                            reference_type, voucher_type, voucher_number,
-                                            created_by
-                                        ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                                    """, (
-                                        generate_id('TXN'), rd_account_id, 'CREDIT',
-                                        selected_rd['maturity_amount'], selected_rd['maturity_amount'],
-                                        f"RD Maturity - Converted to Savings: {selected_rd['rd_number']}",
-                                        'RD_MATURITY', 'RECEIPT',
-                                        generate_voucher_number('RECEIPT'),
-                                        st.session_state.user['id']
-                                    ))
-                                    
-                                    transfer_message = f"💰 **Kept in Account: {selected_rd['rd_account_number']} (Now a Savings Account)**"
-                                
-                                transfer_conn.commit()
-                                transfer_conn.close()
-                            except Exception as e:
-                                transfer_conn.rollback()
-                                transfer_conn.close()
-                                st.error(f"❌ Error processing maturity: {str(e)}")
-                                return
+                            # Calculate interest
+                            total_investment = selected_rd['monthly_amount'] * selected_rd['total_installments']
+                            interest_earned = selected_rd['maturity_amount'] - total_investment
+                            
+                            # Add to retrieval account
+                            ret_acc_number, new_ret_balance = add_to_retrieval_account(
+                                selected_rd['customer_id'],
+                                'RD',
+                                selected_rd['rd_number'],
+                                total_investment,
+                                interest_earned,
+                                selected_rd['maturity_date']
+                            )
                             
                             st.success(f"""
                             🎉 **RD COMPLETED!** 
@@ -2406,7 +2548,8 @@ def recurring_deposits():
                             ✅ All {selected_rd['total_installments']} installments paid!
                             📋 **RD {selected_rd['rd_number']} is now MATURED!**
                             💰 **Maturity Amount: Rs {selected_rd['maturity_amount']:,.2f}**
-                            {transfer_message}
+                            💰 **Deposited to Retrieval Account: {ret_acc_number}**
+                            - Retrieval Balance: **Rs {new_ret_balance:,.2f}**
                             """)
                             st.balloons()
                         else:
@@ -2417,7 +2560,7 @@ def recurring_deposits():
                             - RD Number: **{selected_rd['rd_number']}**
                             - Installment: **{new_paid}/{selected_rd['total_installments']}**
                             - Amount: **Rs {selected_rd['monthly_amount']:,.2f}**
-                            - Remaining: **{new_remaining} installments**
+                            - Remaining: **{selected_rd['remaining_installments'] - 1} installments**
                             """)
                         
                         st.rerun()
@@ -2425,23 +2568,16 @@ def recurring_deposits():
                     except Exception as e:
                         conn.rollback()
                         conn.close()
-                        st.error(f"❌ Error paying installment: {str(e)}")
-                        import traceback
-                        st.error(traceback.format_exc())
+                        st.error(f"❌ Error: {str(e)}")
     
-    # Tab 4: Closed RDs - FIXED to show ALL closed RDs with account info
+    # Tab 4: Closed RDs
     with tab4:
         st.markdown("### 📋 Closed/Completed Recurring Deposits")
         
         try:
-            check_query = "SELECT COUNT(*) FROM recurring_deposits WHERE status IN ('MATURED', 'CLOSED')"
-            count = c.execute(check_query).fetchone()[0]
-            st.info(f"📊 Found {count} closed/completed RDs in database")
-            
-            # Get ALL closed/matured RDs with account info
             closed_rds = c.execute("""
                 SELECT 
-                    rd.rd_number,
+                    rd.id, rd.rd_number,
                     rd.monthly_amount, 
                     rd.installments_paid,
                     rd.total_installments, 
@@ -2467,9 +2603,8 @@ def recurring_deposits():
             """).fetchall()
             
             if closed_rds:
-                # Create DataFrame
                 df = pd.DataFrame(closed_rds, columns=[
-                    'RD No', 'Monthly', 'Paid', 'Total',
+                    'ID', 'RD No', 'Monthly', 'Paid', 'Total',
                     'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 
                     'Status', 'Closed Date', 'Closed Amount', 'Status Display',
                     'Account Number', 'Account Type', 'Current Balance'
@@ -2481,10 +2616,10 @@ def recurring_deposits():
                 total_interest = total_closed - total_principal
                 
                 col1, col2, col3, col4 = st.columns(4)
-                col1.metric("📊 Total RDs Closed", f"{len(closed_rds)}")
+                col1.metric("📊 Total Closed", f"{len(closed_rds)}")
                 col2.metric("💰 Total Deposited", f"Rs {total_principal:,.2f}")
                 col3.metric("💎 Total Received", f"Rs {total_closed:,.2f}")
-                col4.metric("📈 Total Interest Earned", f"Rs {total_interest:,.2f}")
+                col4.metric("📈 Total Interest", f"Rs {total_interest:,.2f}")
                 
                 st.markdown("---")
                 
@@ -2501,35 +2636,6 @@ def recurring_deposits():
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    status_filter = st.multiselect(
-                        "📊 Filter by Status",
-                        options=df['Status Display'].unique(),
-                        default=df['Status Display'].unique()
-                    )
-                
-                with col2:
-                    if st.button("🔄 Clear Filters", use_container_width=True):
-                        st.rerun()
-                
-                if status_filter:
-                    filtered_df = df[df['Status Display'].isin(status_filter)]
-                else:
-                    filtered_df = df
-                
-                if not filtered_df.empty:
-                    st.dataframe(
-                        filtered_df.style.format({
-                            'Monthly': 'Rs {:,.2f}',
-                            'Maturity Amount': 'Rs {:,.2f}',
-                            'Closed Amount': 'Rs {:,.2f}',
-                            'Rate': '{:.2f}%',
-                            'Current Balance': 'Rs {:,.2f}'
-                        }),
-                        use_container_width=True
-                    )
-                
-                col1, col2 = st.columns(2)
-                with col1:
                     st.download_button(
                         "📥 Download Closed RDs CSV",
                         df.to_csv(index=False),
@@ -2538,67 +2644,322 @@ def recurring_deposits():
                     )
                 
                 with col2:
-                    if st.button("📄 Print/PDF Closed RDs Report", use_container_width=True):
-                        content = [
-                            "📋 CLOSED RECURRING DEPOSITS REPORT",
-                            "=" * 50,
-                            f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                            "",
-                            f"Total RDs Closed: {len(closed_rds)}",
-                            f"Total Deposited: Rs {total_principal:,.2f}",
-                            f"Total Received: Rs {total_closed:,.2f}",
-                            f"Total Interest Earned: Rs {total_interest:,.2f}",
-                            "",
-                            "DETAILED LIST:",
-                            "-" * 50
-                        ]
-                        
-                        for rd in closed_rds:
-                            content.append(f"""
-                            RD Number: {rd[0]}
-                            Monthly Amount: Rs {rd[1]:,.2f}
-                            Installments: {rd[2]}/{rd[3]}
-                            Rate: {rd[4]}%
-                            Start Date: {rd[5]}
-                            Maturity Date: {rd[6]}
-                            Maturity Amount: Rs {rd[7]:,.2f}
-                            Status: {rd[11]}
-                            Closed Date: {rd[9] if rd[9] else 'N/A'}
-                            Closed Amount: Rs {rd[10]:,.2f}
-                            Account: {rd[12] if rd[12] else 'N/A'}
-                            Account Type: {rd[13] if rd[13] else 'N/A'}
-                            Current Balance: Rs {rd[14]:,.2f}
-                            """)
-                        
-                        pdf_file = create_pdf("Closed Recurring Deposits Report", content, "closed_rds")
-                        if pdf_file:
-                            create_download_button(pdf_file, "closed_recurring_deposits", "📥 Download PDF Report")
+                    with st.expander("🗑️ Delete RD Record"):
+                        rd_num = st.text_input("Enter RD Number to delete:")
+                        if rd_num:
+                            if st.button("🗑️ Delete RD", use_container_width=True, type="secondary"):
+                                if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                    try:
+                                        conn = get_db()
+                                        rd = conn.execute("SELECT id FROM recurring_deposits WHERE rd_number=?", (rd_num,)).fetchone()
+                                        if rd:
+                                            conn.execute("DELETE FROM recurring_deposits WHERE rd_number=?", (rd_num,))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success("✅ RD record deleted successfully!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ RD not found!")
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
             else:
-                st.info("ℹ️ No closed/completed recurring deposits found.")
-                st.markdown("""
-                ### 📝 How RDs Get Closed:
-                1. **Auto-Matured**: When all installments are paid, the RD automatically matures
-                2. **Manual Closure**: Staff can manually close an RD
-                3. **Transfer**: Matured amount is transferred to SB or kept as Savings
-                """)
-                
-                if st.checkbox("🔍 Show Debug Info"):
-                    all_rds = c.execute("""
-                        SELECT rd.id, rd.rd_number, rd.status, rd.closed_date, rd.closed_amount,
-                               a.account_number, a.account_type, a.balance
-                        FROM recurring_deposits rd
-                        LEFT JOIN accounts a ON rd.account_id = a.id
-                    """).fetchall()
-                    if all_rds:
-                        debug_df = pd.DataFrame(all_rds, columns=['ID', 'RD Number', 'Status', 'Closed Date', 'Closed Amount', 'Account Number', 'Account Type', 'Balance'])
-                        st.dataframe(debug_df)
-                    else:
-                        st.info("No RDs found in database at all")
+                st.info("No closed recurring deposits found")
                 
         except Exception as e:
-            st.error(f"❌ Error loading closed RDs: {str(e)}")
-            import traceback
-            st.error(traceback.format_exc())
+            st.error(f"❌ Error: {str(e)}")
+    
+    c.close()
+
+# ==================== RETRIEVAL ACCOUNT ====================
+def retrieval_account():
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("❌ Unauthorized access!")
+        return
+    
+    c = get_db()
+    tab1, tab2, tab3, tab4 = st.tabs(["💰 Overview", "📊 Matured Deposits", "🏦 Transfer to SB", "💳 Withdraw"])
+    
+    # Tab 1: Overview
+    with tab1:
+        st.markdown("### 💰 Retrieval Account Overview")
+        
+        cust_id, cust_name, acc_id, acc_number, sb_balance = customer_selector(
+            "👤 Select Customer",
+            "retrieval_customer"
+        )
+        
+        if cust_id:
+            ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
+            
+            # Get SB account
+            sb_acc = c.execute("""
+                SELECT id, account_number, balance 
+                FROM accounts 
+                WHERE customer_id = ? AND account_type = 'SB' AND status = 'ACTIVE'
+            """, (cust_id,)).fetchone()
+            
+            st.markdown(f"""
+            ### 📋 Account Details
+            
+            | Field | Value |
+            |-------|-------|
+            | **Customer** | {cust_name} |
+            | **Retrieval Account** | {ret_acc_number} |
+            | **Retrieval Balance** | Rs {ret_balance:,.2f} |
+            | **SB Account** | {sb_acc[1] if sb_acc else 'No SB Account'} |
+            | **SB Balance** | Rs {sb_acc[2]:,.2f} if sb_acc else 'N/A' |
+            | **Status** | {'🟢 Active' if ret_balance > 0 else '⚪ Empty'} |
+            """)
+            
+            # Show recent transactions
+            txns = c.execute("""
+                SELECT transaction_id, transaction_type, amount,
+                       balance_after, description, created_at
+                FROM transactions
+                WHERE account_id = ?
+                ORDER BY created_at DESC
+                LIMIT 20
+            """, (ret_acc_id,)).fetchall()
+            
+            if txns:
+                st.markdown("### 📊 Recent Transactions")
+                df = pd.DataFrame(txns, columns=['Txn ID', 'Type', 'Amount', 'Balance', 'Description', 'Date'])
+                df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%d-%m-%Y %I:%M %p')
+                st.dataframe(
+                    df.style.format({
+                        'Amount': 'Rs {:,.2f}',
+                        'Balance': 'Rs {:,.2f}'
+                    }),
+                    use_container_width=True
+                )
+            else:
+                st.info("No transactions in retrieval account")
+    
+    # Tab 2: Matured Deposits
+    with tab2:
+        st.markdown("### 📊 Matured Deposits")
+        
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
+            "👤 Select Customer",
+            "matured_customer"
+        )
+        
+        if cust_id:
+            matured = c.execute("""
+                SELECT 
+                    id, deposit_id,
+                    original_deposit_type,
+                    original_deposit_number,
+                    principal_amount,
+                    interest_earned,
+                    total_amount,
+                    maturity_date,
+                    deposited_date,
+                    status,
+                    withdrawn_date,
+                    withdrawn_amount
+                FROM matured_deposits
+                WHERE customer_id = ?
+                ORDER BY deposited_date DESC
+            """, (cust_id,)).fetchall()
+            
+            if matured:
+                df = pd.DataFrame(matured, columns=[
+                    'ID', 'Deposit ID', 'Type', 'Deposit No', 'Principal', 
+                    'Interest Earned', 'Total Amount', 'Maturity Date', 
+                    'Deposited Date', 'Status', 'Withdrawn Date', 'Withdrawn Amount'
+                ])
+                
+                total_principal = df['Principal'].sum()
+                total_interest = df['Interest Earned'].sum()
+                total_amount = df['Total Amount'].sum()
+                active = df[df['Status'] == 'ACTIVE']['Total Amount'].sum()
+                withdrawn = df[df['Status'] == 'WITHDRAWN']['Total Amount'].sum()
+                
+                col1, col2, col3, col4, col5 = st.columns(5)
+                col1.metric("📊 Total", f"{len(matured)}")
+                col2.metric("💰 Principal", f"Rs {total_principal:,.2f}")
+                col3.metric("📈 Interest", f"Rs {total_interest:,.2f}")
+                col4.metric("🟢 Active", f"Rs {active:,.2f}")
+                col5.metric("🔴 Withdrawn", f"Rs {withdrawn:,.2f}")
+                
+                st.markdown("---")
+                
+                st.dataframe(
+                    df.style.format({
+                        'Principal': 'Rs {:,.2f}',
+                        'Interest Earned': 'Rs {:,.2f}',
+                        'Total Amount': 'Rs {:,.2f}',
+                        'Withdrawn Amount': 'Rs {:,.2f}'
+                    }),
+                    use_container_width=True
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "📥 Download Matured Deposits CSV",
+                        df.to_csv(index=False),
+                        "matured_deposits.csv",
+                        "text/csv"
+                    )
+                
+                with col2:
+                    with st.expander("🗑️ Delete Matured Deposit"):
+                        dep_id = st.text_input("Enter Deposit ID to delete:")
+                        if dep_id:
+                            if st.button("🗑️ Delete Deposit", use_container_width=True, type="secondary"):
+                                if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                    try:
+                                        conn = get_db()
+                                        dep = conn.execute("SELECT id FROM matured_deposits WHERE deposit_id=?", (dep_id,)).fetchone()
+                                        if dep:
+                                            conn.execute("DELETE FROM matured_deposits WHERE deposit_id=?", (dep_id,))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success("✅ Deposit record deleted successfully!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ Deposit not found!")
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
+            else:
+                st.info("No matured deposits found for this customer")
+    
+    # Tab 3: Transfer to SB
+    with tab3:
+        st.markdown("### 🏦 Transfer to SB Account")
+        
+        cust_id, cust_name, acc_id, acc_number, sb_balance = customer_selector(
+            "👤 Select Customer",
+            "transfer_customer"
+        )
+        
+        if cust_id and acc_id:
+            ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
+            
+            st.markdown(f"""
+            ✅ **Account Details:**
+            - Customer: **{cust_name}**
+            - Retrieval Account: **{ret_acc_number}**
+            - Retrieval Balance: **Rs {ret_balance:,.2f}**
+            - SB Account: **{acc_number}**
+            - SB Balance: **Rs {sb_balance:,.2f}**
+            """)
+            
+            if ret_balance <= 0:
+                st.warning("⚠️ No balance available in retrieval account!")
+            else:
+                with st.form("transfer_to_sb_form"):
+                    amount = st.number_input(
+                        "💰 Amount to Transfer (Rs)",
+                        min_value=1.0,
+                        max_value=float(ret_balance),
+                        step=100.0,
+                        value=min(1000.0, float(ret_balance))
+                    )
+                    
+                    if st.form_submit_button("🏦 Transfer to SB", use_container_width=True, type="primary"):
+                        try:
+                            new_ret_balance, new_sb_balance = transfer_to_sb(cust_id, amount, acc_id)
+                            
+                            st.success(f"""
+                            ✅ Transfer Successful! 🎉
+                            
+                            📋 **Details:**
+                            - Amount: **Rs {amount:,.2f}**
+                            - From: **Retrieval Account ({ret_acc_number})**
+                            - To: **SB Account ({acc_number})**
+                            - New Retrieval Balance: **Rs {new_ret_balance:,.2f}**
+                            - New SB Balance: **Rs {new_sb_balance:,.2f}**
+                            """)
+                            st.balloons()
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+    
+    # Tab 4: Withdraw
+    with tab4:
+        st.markdown("### 💳 Withdraw from Retrieval Account")
+        
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
+            "👤 Select Customer",
+            "withdraw_customer"
+        )
+        
+        if cust_id:
+            ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
+            
+            st.markdown(f"""
+            ✅ **Retrieval Account:**
+            - Customer: **{cust_name}**
+            - Account: **{ret_acc_number}**
+            - Balance: **Rs {ret_balance:,.2f}**
+            """)
+            
+            if ret_balance <= 0:
+                st.warning("⚠️ No balance available for withdrawal!")
+            else:
+                with st.form("withdraw_form"):
+                    amount = st.number_input(
+                        "💰 Amount to Withdraw (Rs)",
+                        min_value=1.0,
+                        max_value=float(ret_balance),
+                        step=100.0,
+                        value=min(1000.0, float(ret_balance))
+                    )
+                    
+                    mode = st.selectbox(
+                        "💳 Withdrawal Mode",
+                        ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"]
+                    )
+                    
+                    if st.form_submit_button("💳 Withdraw", use_container_width=True, type="primary"):
+                        try:
+                            conn = get_db()
+                            # Update retrieval account
+                            new_balance = ret_balance - amount
+                            conn.execute("""
+                                UPDATE retrieval_accounts 
+                                SET balance = ? 
+                                WHERE id = ?
+                            """, (new_balance, ret_acc_id))
+                            
+                            # Create transaction
+                            conn.execute("""
+                                INSERT INTO transactions (
+                                    transaction_id, account_id, transaction_type,
+                                    amount, balance_after, description,
+                                    reference_type, voucher_type, voucher_number,
+                                    created_by
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                generate_id('TXN'), ret_acc_id, 'DEBIT',
+                                amount, new_balance,
+                                f"Withdrawal from Retrieval Account ({mode})",
+                                mode, 'PAYMENT',
+                                generate_voucher_number('PAYMENT'),
+                                st.session_state.user['id']
+                            ))
+                            
+                            conn.commit()
+                            conn.close()
+                            
+                            st.success(f"""
+                            ✅ Withdrawal Successful! 🎉
+                            
+                            📋 **Details:**
+                            - Amount: **Rs {amount:,.2f}**
+                            - Account: **{ret_acc_number}**
+                            - New Balance: **Rs {new_balance:,.2f}**
+                            - Mode: **{mode}**
+                            """)
+                            st.balloons()
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
     
     c.close()
 
@@ -2617,9 +2978,10 @@ def transactions():
         to_date = st.date_input("📅 To", date.today())
     
     query = """
-        SELECT t.transaction_id, 
+        SELECT t.id, t.transaction_id, 
                COALESCE(c.first_name||' '||c.last_name, 'System') as customer,
                COALESCE(a.account_type, 'GEN') as acc_type,
+               a.account_number,
                t.transaction_type, t.amount, 
                t.reference_type, t.description, t.created_at,
                t.balance_after
@@ -2640,7 +3002,7 @@ def transactions():
     c.close()
     
     if txns:
-        df = pd.DataFrame(txns, columns=['Txn ID', 'Customer', 'Account', 'Type', 'Amount', 'Mode', 'Description', 'Time', 'Balance'])
+        df = pd.DataFrame(txns, columns=['ID', 'Txn ID', 'Customer', 'Account Type', 'Account', 'Type', 'Amount', 'Mode', 'Description', 'Time', 'Balance'])
         df['Time'] = pd.to_datetime(df['Time']).dt.strftime('%d-%m-%Y %I:%M %p')
         
         st.dataframe(
@@ -2667,6 +3029,26 @@ def transactions():
             "text/csv"
         )
         
+        # Delete functionality
+        with st.expander("🗑️ Delete Transaction"):
+            txn_id = st.text_input("Enter Transaction ID to delete:")
+            if txn_id:
+                if st.button("🗑️ Delete Transaction", use_container_width=True, type="secondary"):
+                    if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                        try:
+                            conn = get_db()
+                            txn = conn.execute("SELECT id FROM transactions WHERE transaction_id=?", (txn_id,)).fetchone()
+                            if txn:
+                                conn.execute("DELETE FROM transactions WHERE transaction_id=?", (txn_id,))
+                                conn.commit()
+                                conn.close()
+                                st.success("✅ Transaction deleted successfully!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Transaction not found!")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+        
         if st.button("📄 Print/PDF Transactions", use_container_width=True):
             content = [
                 "📊 TRANSACTIONS REPORT",
@@ -2683,7 +3065,7 @@ def transactions():
             ]
             
             for txn in txns:
-                content.append(f"{txn[0]} | {txn[1]} | {txn[3]} | Rs {txn[4]:,.2f} | {txn[6]} | {txn[7]}")
+                content.append(f"{txn[1]} | {txn[2]} | {txn[5]} | Rs {txn[6]:,.2f} | {txn[8]} | {txn[9]}")
             
             pdf_file = create_pdf("Transactions Report", content, "transactions")
             if pdf_file:
@@ -2817,13 +3199,13 @@ def journal_vouchers():
                     """)
                     
                     entries = c.execute("""
-                        SELECT account_head, debit_amount, credit_amount
+                        SELECT id, account_head, debit_amount, credit_amount
                         FROM journal_entries
                         WHERE voucher_id=?
                     """, (v[0],)).fetchall()
                     
                     if entries:
-                        df = pd.DataFrame(entries, columns=['Account Head', 'Debit', 'Credit'])
+                        df = pd.DataFrame(entries, columns=['ID', 'Account Head', 'Debit', 'Credit'])
                         st.dataframe(
                             df.style.format({
                                 'Debit': 'Rs {:,.2f}',
@@ -2831,9 +3213,25 @@ def journal_vouchers():
                             }),
                             use_container_width=True
                         )
+                        
+                        # Delete entry
+                        with st.expander("🗑️ Delete Entry"):
+                            entry_id = st.text_input("Enter Entry ID to delete:", key=f"del_entry_{v[0]}")
+                            if entry_id:
+                                if st.button("🗑️ Delete Entry", key=f"del_btn_{v[0]}", use_container_width=True, type="secondary"):
+                                    if st.checkbox("☑️ Confirm delete?", key=f"confirm_entry_{v[0]}"):
+                                        try:
+                                            conn = get_db()
+                                            conn.execute("DELETE FROM journal_entries WHERE id=?", (entry_id,))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success("✅ Entry deleted successfully!")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"❌ Error: {str(e)}")
                     
                     if v[5] == 'DRAFT':
-                        col1, col2 = st.columns(2)
+                        col1, col2, col3 = st.columns(3)
                         with col1:
                             if st.button("✅ Post JV", key=f"post_{v[0]}", use_container_width=True):
                                 conn = get_db()
@@ -2855,6 +3253,20 @@ def journal_vouchers():
                                 conn.close()
                                 st.warning("❌ JV Cancelled")
                                 st.rerun()
+                        
+                        with col3:
+                            if st.button("🗑️ Delete JV", key=f"delete_jv_{v[0]}", use_container_width=True, type="secondary"):
+                                if st.checkbox("☑️ Confirm delete?", key=f"confirm_jv_{v[0]}"):
+                                    try:
+                                        conn = get_db()
+                                        conn.execute("DELETE FROM journal_entries WHERE voucher_id=?", (v[0],))
+                                        conn.execute("DELETE FROM journal_vouchers WHERE id=?", (v[0],))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ JV deleted successfully!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No journal vouchers found")
     
@@ -2982,80 +3394,102 @@ def income_expenses():
     with tab3:
         st.markdown("### 📊 Income Summary")
         income_data = c.execute("""
-            SELECT income_type, SUM(amount) as total, COUNT(*) as count
+            SELECT id, income_id, income_type, amount, description, date, created_at
             FROM income
-            GROUP BY income_type
-            ORDER BY total DESC
+            ORDER BY created_at DESC
         """).fetchall()
         
         if income_data:
-            df = pd.DataFrame(income_data, columns=['Type', 'Total', 'Count'])
+            df = pd.DataFrame(income_data, columns=['ID', 'Income ID', 'Type', 'Amount', 'Description', 'Date', 'Created'])
             st.dataframe(
                 df.style.format({
-                    'Total': 'Rs {:,.2f}'
+                    'Amount': 'Rs {:,.2f}'
                 }),
                 use_container_width=True
             )
             
-            total_income = df['Total'].sum()
+            total_income = df['Amount'].sum()
             st.info(f"💰 Total Income: Rs {total_income:,.2f}")
             
-            if st.button("📄 Print/PDF Income Summary", use_container_width=True):
-                content = [
-                    "📊 INCOME SUMMARY REPORT",
-                    "=" * 50,
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                    f"Total Income: Rs {total_income:,.2f}",
-                    "",
-                    "DETAILED INCOME:",
-                    "-" * 30
-                ]
-                for item in income_data:
-                    content.append(f"{item[0]}: Rs {item[1]:,.2f} ({item[2]} entries)")
-                
-                pdf_file = create_pdf("Income Summary Report", content, "income_summary")
-                if pdf_file:
-                    create_download_button(pdf_file, "income_summary", "📥 Download PDF Report")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download Income CSV",
+                    df.to_csv(index=False),
+                    "income.csv",
+                    "text/csv"
+                )
+            
+            with col2:
+                with st.expander("🗑️ Delete Income Record"):
+                    inc_id = st.text_input("Enter Income ID to delete:")
+                    if inc_id:
+                        if st.button("🗑️ Delete Income", use_container_width=True, type="secondary"):
+                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                try:
+                                    conn = get_db()
+                                    inc = conn.execute("SELECT id FROM income WHERE income_id=?", (inc_id,)).fetchone()
+                                    if inc:
+                                        conn.execute("DELETE FROM income WHERE income_id=?", (inc_id,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ Income record deleted successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Income record not found!")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No income recorded")
     
     with tab4:
         st.markdown("### 📊 Expense Summary")
         expense_data = c.execute("""
-            SELECT expense_type, SUM(amount) as total, COUNT(*) as count
+            SELECT id, expense_id, expense_type, amount, description, date, created_at
             FROM expenses
-            GROUP BY expense_type
-            ORDER BY total DESC
+            ORDER BY created_at DESC
         """).fetchall()
         
         if expense_data:
-            df = pd.DataFrame(expense_data, columns=['Type', 'Total', 'Count'])
+            df = pd.DataFrame(expense_data, columns=['ID', 'Expense ID', 'Type', 'Amount', 'Description', 'Date', 'Created'])
             st.dataframe(
                 df.style.format({
-                    'Total': 'Rs {:,.2f}'
+                    'Amount': 'Rs {:,.2f}'
                 }),
                 use_container_width=True
             )
             
-            total_expense = df['Total'].sum()
+            total_expense = df['Amount'].sum()
             st.info(f"💸 Total Expenses: Rs {total_expense:,.2f}")
             
-            if st.button("📄 Print/PDF Expense Summary", use_container_width=True):
-                content = [
-                    "📊 EXPENSE SUMMARY REPORT",
-                    "=" * 50,
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                    f"Total Expenses: Rs {total_expense:,.2f}",
-                    "",
-                    "DETAILED EXPENSES:",
-                    "-" * 30
-                ]
-                for item in expense_data:
-                    content.append(f"{item[0]}: Rs {item[1]:,.2f} ({item[2]} entries)")
-                
-                pdf_file = create_pdf("Expense Summary Report", content, "expense_summary")
-                if pdf_file:
-                    create_download_button(pdf_file, "expense_summary", "📥 Download PDF Report")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download Expense CSV",
+                    df.to_csv(index=False),
+                    "expenses.csv",
+                    "text/csv"
+                )
+            
+            with col2:
+                with st.expander("🗑️ Delete Expense Record"):
+                    exp_id = st.text_input("Enter Expense ID to delete:")
+                    if exp_id:
+                        if st.button("🗑️ Delete Expense", use_container_width=True, type="secondary"):
+                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                try:
+                                    conn = get_db()
+                                    exp = conn.execute("SELECT id FROM expenses WHERE expense_id=?", (exp_id,)).fetchone()
+                                    if exp:
+                                        conn.execute("DELETE FROM expenses WHERE expense_id=?", (exp_id,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ Expense record deleted successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Expense record not found!")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No expenses recorded")
     
@@ -3170,7 +3604,7 @@ def interest_calculation():
     
     st.markdown("### 📊 Recent Interest Calculations")
     recent = c.execute("""
-        SELECT ic.calculation_date, c.first_name||' '||c.last_name as customer,
+        SELECT ic.id, ic.calculation_date, c.first_name||' '||c.last_name as customer,
                ic.principal_amount, ic.interest_rate, ic.interest_earned,
                ic.days_calculated
         FROM interest_calculations ic
@@ -3180,7 +3614,7 @@ def interest_calculation():
     c.close()
     
     if recent:
-        df = pd.DataFrame(recent, columns=['Date', 'Customer', 'Principal', 'Rate', 'Interest', 'Days'])
+        df = pd.DataFrame(recent, columns=['ID', 'Date', 'Customer', 'Principal', 'Rate', 'Interest', 'Days'])
         st.dataframe(
             df.style.format({
                 'Principal': 'Rs {:,.2f}',
@@ -3189,6 +3623,21 @@ def interest_calculation():
             }),
             use_container_width=True
         )
+        
+        with st.expander("🗑️ Delete Interest Record"):
+            int_id = st.text_input("Enter Interest Calculation ID to delete:")
+            if int_id:
+                if st.button("🗑️ Delete Interest Record", use_container_width=True, type="secondary"):
+                    if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                        try:
+                            conn = get_db()
+                            conn.execute("DELETE FROM interest_calculations WHERE id=?", (int_id,))
+                            conn.commit()
+                            conn.close()
+                            st.success("✅ Interest record deleted successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
 
 # ==================== TRIAL BALANCE ====================
 def trial_balance():
@@ -3222,19 +3671,9 @@ def trial_balance():
         if rd_total > 0:
             trial.append({'head': 'RD Deposits Held', 'cat': 'Asset', 'dr': rd_total, 'cr': 0})
         
-        fd_int_asset = c.execute("""
-            SELECT COALESCE(SUM(maturity_amount - principal_amount), 0) 
-            FROM fixed_deposits WHERE status='ACTIVE'
-        """).fetchone()[0]
-        if fd_int_asset > 0:
-            trial.append({'head': 'FD Interest Receivable', 'cat': 'Asset', 'dr': fd_int_asset, 'cr': 0})
-        
-        rd_int_asset = c.execute("""
-            SELECT COALESCE(SUM(maturity_amount - (monthly_amount * installments_paid)), 0) 
-            FROM recurring_deposits WHERE status='ACTIVE'
-        """).fetchone()[0]
-        if rd_int_asset > 0:
-            trial.append({'head': 'RD Interest Receivable', 'cat': 'Asset', 'dr': rd_int_asset, 'cr': 0})
+        ret_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM retrieval_accounts WHERE status='ACTIVE'").fetchone()[0]
+        if ret_total > 0:
+            trial.append({'head': 'Retrieval Account Balance', 'cat': 'Asset', 'dr': ret_total, 'cr': 0})
         
         # === LIABILITIES ===
         sb_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
@@ -3244,34 +3683,6 @@ def trial_balance():
         sb_int = c.execute("SELECT COALESCE(SUM(total_interest_earned), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         if sb_int > 0:
             trial.append({'head': 'SB Interest Payable', 'cat': 'Liability', 'dr': 0, 'cr': sb_int})
-        
-        if fd_int_asset > 0:
-            trial.append({'head': 'FD Interest Payable', 'cat': 'Liability', 'dr': 0, 'cr': fd_int_asset})
-        
-        if rd_int_asset > 0:
-            trial.append({'head': 'RD Interest Payable', 'cat': 'Liability', 'dr': 0, 'cr': rd_int_asset})
-        
-        jv_dr = c.execute("""
-            SELECT je.account_head, SUM(je.debit_amount) 
-            FROM journal_entries je 
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
-            WHERE jv.status='POSTED' AND je.debit_amount > 0 
-            GROUP BY je.account_head
-        """).fetchall()
-        for e in jv_dr:
-            if e[1] > 0:
-                trial.append({'head': f"JV: {e[0]}", 'cat': 'Asset', 'dr': e[1], 'cr': 0})
-        
-        jv_cr = c.execute("""
-            SELECT je.account_head, SUM(je.credit_amount) 
-            FROM journal_entries je 
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
-            WHERE jv.status='POSTED' AND je.credit_amount > 0 
-            GROUP BY je.account_head
-        """).fetchall()
-        for e in jv_cr:
-            if e[1] > 0:
-                trial.append({'head': f"JV: {e[0]}", 'cat': 'Liability', 'dr': 0, 'cr': e[1]})
         
         # === INCOME ===
         income_types = ['Interest Earned', 'Fees & Charges', 'Commission Income', 'Other Income']
@@ -3304,22 +3715,19 @@ def trial_balance():
             final_tdr = sum(i['dr'] for i in trial)
             final_tcr = sum(i['cr'] for i in trial)
             
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                asset_total = sum(i['dr'] for i in trial if i['cat'] == 'Asset')
-                st.metric("📊 Assets (Dr)", f"Rs {asset_total:,.2f}")
-            with col2:
-                liability_total = sum(i['cr'] for i in trial if i['cat'] == 'Liability')
-                st.metric("📊 Liabilities (Cr)", f"Rs {liability_total:,.2f}")
-            with col3:
-                income_total = sum(i['cr'] for i in trial if i['cat'] == 'Income')
-                st.metric("💰 Income (Cr)", f"Rs {income_total:,.2f}")
-            with col4:
-                expense_total = sum(i['dr'] for i in trial if i['cat'] == 'Expense')
-                st.metric("💸 Expenses (Dr)", f"Rs {expense_total:,.2f}")
-            
+            asset_total = sum(i['dr'] for i in trial if i['cat'] == 'Asset')
+            liability_total = sum(i['cr'] for i in trial if i['cat'] == 'Liability')
+            income_total = sum(i['cr'] for i in trial if i['cat'] == 'Income')
+            expense_total = sum(i['dr'] for i in trial if i['cat'] == 'Expense')
             capital = next((i['cr'] for i in trial if i['cat'] == 'Capital' and i['cr'] > 0), 
                           next((i['dr'] for i in trial if i['cat'] == 'Capital' and i['dr'] > 0), 0))
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("📊 Assets (Dr)", f"Rs {asset_total:,.2f}")
+            col2.metric("📊 Liabilities (Cr)", f"Rs {liability_total:,.2f}")
+            col3.metric("💰 Income (Cr)", f"Rs {income_total:,.2f}")
+            col4.metric("💸 Expenses (Dr)", f"Rs {expense_total:,.2f}")
+            
             st.info(f"💰 **Capital/Equity: Rs {capital:,.2f}**")
             
             display_df = df[['head', 'cat', 'dr', 'cr']].rename(columns={
@@ -3425,21 +3833,10 @@ def balance_sheet():
             assets.append({'name': 'RD Deposits Held', 'amount': rd_total})
             ta += rd_total
         
-        fd_int_asset = c.execute("""
-            SELECT COALESCE(SUM(maturity_amount - principal_amount), 0) 
-            FROM fixed_deposits WHERE status='ACTIVE'
-        """).fetchone()[0]
-        if fd_int_asset > 0:
-            assets.append({'name': 'FD Interest Receivable', 'amount': fd_int_asset})
-            ta += fd_int_asset
-        
-        rd_int_asset = c.execute("""
-            SELECT COALESCE(SUM(maturity_amount - (monthly_amount * installments_paid)), 0) 
-            FROM recurring_deposits WHERE status='ACTIVE'
-        """).fetchone()[0]
-        if rd_int_asset > 0:
-            assets.append({'name': 'RD Interest Receivable', 'amount': rd_int_asset})
-            ta += rd_int_asset
+        ret_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM retrieval_accounts WHERE status='ACTIVE'").fetchone()[0]
+        if ret_total > 0:
+            assets.append({'name': 'Retrieval Account Balance', 'amount': ret_total})
+            ta += ret_total
         
         # === LIABILITIES ===
         sb_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
@@ -3451,14 +3848,6 @@ def balance_sheet():
         if sb_int > 0:
             liabilities.append({'name': 'SB Interest Payable', 'amount': sb_int})
             tl += sb_int
-        
-        if fd_int_asset > 0:
-            liabilities.append({'name': 'FD Interest Payable', 'amount': fd_int_asset})
-            tl += fd_int_asset
-        
-        if rd_int_asset > 0:
-            liabilities.append({'name': 'RD Interest Payable', 'amount': rd_int_asset})
-            tl += rd_int_asset
         
         capital = ta - tl
         
@@ -3615,17 +4004,12 @@ def profit_loss():
         
         col1, col2 = st.columns(2)
         with col1:
-            pl_data = []
-            for item in income_data:
-                pl_data.append({'Type': 'Income', 'Category': item[0], 'Amount': item[1]})
-            for item in expense_data:
-                pl_data.append({'Type': 'Expense', 'Category': item[0], 'Amount': item[1]})
-            pl_data.append({'Type': 'Net', 'Category': 'Net Profit/Loss', 'Amount': net_profit})
-            
-            df_pl = pd.DataFrame(pl_data)
             st.download_button(
                 "📥 Download CSV",
-                df_pl.to_csv(index=False),
+                pd.DataFrame({
+                    'Type': ['Income', 'Expense', 'Net'],
+                    'Amount': [total_income, total_expense, net_profit]
+                }).to_csv(index=False),
                 "profit_loss.csv",
                 "text/csv"
             )
@@ -3674,7 +4058,7 @@ def reports():
     
     report_type = st.selectbox(
         "📊 Select Report",
-        ["Customer List", "Daily Transactions", "Account Statement", "Interest Summary", "FD Summary", "RD Summary"]
+        ["Customer List", "Daily Transactions", "Account Statement", "Interest Summary", "FD Summary", "RD Summary", "Retrieval Summary"]
     )
     
     if report_type == "Customer List":
@@ -3980,6 +4364,61 @@ def reports():
                     create_download_button(pdf_file, "rd_summary", "📥 Download PDF Report")
         else:
             st.info("No recurring deposits found")
+    
+    elif report_type == "Retrieval Summary":
+        st.markdown("### 📊 Retrieval Account Summary")
+        
+        retrieval_data = c.execute("""
+            SELECT 
+                c.first_name||' '||c.last_name as customer,
+                ra.account_number,
+                ra.balance,
+                COUNT(md.id) as matured_count,
+                COALESCE(SUM(md.total_amount), 0) as total_matured
+            FROM customers c
+            LEFT JOIN retrieval_accounts ra ON c.id = ra.customer_id AND ra.status = 'ACTIVE'
+            LEFT JOIN matured_deposits md ON c.id = md.customer_id AND md.status = 'ACTIVE'
+            GROUP BY c.id
+            HAVING ra.balance > 0 OR COUNT(md.id) > 0
+            ORDER BY ra.balance DESC
+        """).fetchall()
+        
+        if retrieval_data:
+            df = pd.DataFrame(retrieval_data, columns=['Customer', 'Account', 'Balance', 'Matured Count', 'Total Matured'])
+            st.dataframe(
+                df.style.format({
+                    'Balance': 'Rs {:,.2f}',
+                    'Total Matured': 'Rs {:,.2f}'
+                }),
+                use_container_width=True
+            )
+            
+            total_balance = df['Balance'].sum()
+            total_matured = df['Total Matured'].sum()
+            
+            col1, col2 = st.columns(2)
+            col1.metric("💰 Total Retrieval Balance", f"Rs {total_balance:,.2f}")
+            col2.metric("📊 Total Matured Amount", f"Rs {total_matured:,.2f}")
+            
+            if st.button("📄 Print/PDF Retrieval Summary", use_container_width=True):
+                content = [
+                    "📊 RETRIEVAL ACCOUNT SUMMARY REPORT",
+                    "=" * 50,
+                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                    f"Total Retrieval Balance: Rs {total_balance:,.2f}",
+                    f"Total Matured Amount: Rs {total_matured:,.2f}",
+                    "",
+                    "DETAILED SUMMARY:",
+                    "-" * 50
+                ]
+                for item in retrieval_data:
+                    content.append(f"{item[0]} | {item[1]} | Rs {item[2]:,.2f} | {item[3]} deposits")
+                
+                pdf_file = create_pdf("Retrieval Account Summary Report", content, "retrieval_summary")
+                if pdf_file:
+                    create_download_button(pdf_file, "retrieval_summary", "📥 Download PDF Report")
+        else:
+            st.info("No retrieval account data found")
     
     c.close()
 

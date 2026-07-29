@@ -406,40 +406,46 @@ def create_download_button(file_path, filename, button_text="📥 Download PDF")
             pass
 
 # ==================== RETRIEVAL ACCOUNT FUNCTIONS ====================
+# ==================== RETRIEVAL ACCOUNT FUNCTIONS ====================
+
 def get_retrieval_account(customer_id):
     """Get or create a retrieval account for a customer"""
-    c = get_db()
-    
-    acc = c.execute("""
-        SELECT id, account_number, balance 
-        FROM retrieval_accounts 
-        WHERE customer_id = ? AND status = 'ACTIVE'
-    """, (customer_id,)).fetchone()
-    
-    c.close()
-    
-    if acc:
-        return acc[0], acc[1], acc[2]
-    
     conn = get_db()
-    account_number = f"RET{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
-    
-    conn.execute("""
-        INSERT INTO retrieval_accounts (account_number, customer_id, balance)
-        VALUES (?, ?, 0)
-    """, (account_number, customer_id))
-    
-    acc_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    conn.commit()
-    conn.close()
-    
-    return acc_id, account_number, 0
+    try:
+        # Check if retrieval account exists
+        acc = conn.execute("""
+            SELECT id, account_number, balance 
+            FROM retrieval_accounts 
+            WHERE customer_id = ? AND status = 'ACTIVE'
+        """, (customer_id,)).fetchone()
+        
+        if acc:
+            conn.close()
+            return acc[0], acc[1], acc[2]
+        
+        # Create new retrieval account
+        account_number = f"RET{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
+        
+        conn.execute("""
+            INSERT INTO retrieval_accounts (account_number, customer_id, balance)
+            VALUES (?, ?, 0)
+        """, (account_number, customer_id))
+        
+        acc_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+        conn.close()
+        
+        return acc_id, account_number, 0
+    except Exception as e:
+        conn.close()
+        raise e
 
 def add_to_retrieval_account(customer_id, deposit_type, deposit_number, principal, interest, maturity_date):
     """Add matured deposit to retrieval account"""
     conn = get_db()
     
     try:
+        # Get or create retrieval account
         acc_id, acc_number, current_balance = get_retrieval_account(customer_id)
         
         total_amount = principal + interest
@@ -491,6 +497,7 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
     conn = get_db()
     
     try:
+        # Get retrieval account
         ret_acc = conn.execute("""
             SELECT id, account_number, balance 
             FROM retrieval_accounts 
@@ -505,6 +512,7 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
             conn.close()
             return None, "Insufficient balance in retrieval account"
         
+        # Get SB account balance
         sb_acc = conn.execute("""
             SELECT balance FROM accounts WHERE id = ?
         """, (sb_account_id,)).fetchone()
@@ -513,6 +521,7 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
             conn.close()
             return None, "SB account not found"
         
+        # Update retrieval account (debit)
         new_ret_balance = ret_acc[2] - amount
         conn.execute("""
             UPDATE retrieval_accounts 
@@ -520,6 +529,7 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
             WHERE id = ?
         """, (new_ret_balance, ret_acc[0]))
         
+        # Update SB account (credit)
         new_sb_balance = sb_acc[0] + amount
         conn.execute("""
             UPDATE accounts 
@@ -527,6 +537,7 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
             WHERE id = ?
         """, (new_sb_balance, sb_account_id))
         
+        # Transaction: Debit from retrieval
         conn.execute("""
             INSERT INTO transactions (
                 transaction_id, account_id, transaction_type,
@@ -543,6 +554,7 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
             st.session_state.user['id']
         ))
         
+        # Transaction: Credit to SB
         conn.execute("""
             INSERT INTO transactions (
                 transaction_id, account_id, transaction_type,
@@ -568,6 +580,331 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
         conn.close()
         raise e
 
+# ==================== RETRIEVAL ACCOUNT PAGE ====================
+def retrieval_account():
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("❌ Unauthorized access!")
+        return
+    
+    c = get_db()
+    tab1, tab2, tab3, tab4 = st.tabs(["💰 Overview", "📊 Matured Deposits", "🏦 Transfer to SB", "💳 Withdraw"])
+    
+    # Tab 1: Overview
+    with tab1:
+        st.markdown("### 💰 Retrieval Account Overview")
+        
+        cust_id, cust_name, acc_id, acc_number, sb_balance = customer_selector(
+            "👤 Select Customer",
+            "retrieval_customer"
+        )
+        
+        if cust_id:
+            try:
+                ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
+                
+                # Get SB account
+                sb_acc = c.execute("""
+                    SELECT id, account_number, balance 
+                    FROM accounts 
+                    WHERE customer_id = ? AND account_type = 'SB' AND status = 'ACTIVE'
+                """, (cust_id,)).fetchone()
+                
+                st.markdown(f"""
+                ### 📋 Account Details
+                
+                | Field | Value |
+                |-------|-------|
+                | **Customer** | {cust_name} |
+                | **Retrieval Account** | {ret_acc_number} |
+                | **Retrieval Balance** | Rs {ret_balance:,.2f} |
+                | **SB Account** | {sb_acc[1] if sb_acc else 'No SB Account'} |
+                | **SB Balance** | Rs {sb_acc[2]:,.2f} if sb_acc else 'N/A' |
+                | **Status** | {'🟢 Active' if ret_balance > 0 else '⚪ Empty'} |
+                """)
+                
+                # Show recent transactions
+                txns = c.execute("""
+                    SELECT transaction_id, transaction_type, amount,
+                           balance_after, description, created_at
+                    FROM transactions
+                    WHERE account_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                """, (ret_acc_id,)).fetchall()
+                
+                if txns:
+                    st.markdown("### 📊 Recent Transactions")
+                    # Convert to DataFrame with proper null handling
+                    txn_data = []
+                    for txn in txns:
+                        txn_data.append({
+                            'Txn ID': txn[0],
+                            'Type': txn[1],
+                            'Amount': f"Rs {txn[2]:,.2f}" if txn[2] is not None else "Rs 0.00",
+                            'Balance': f"Rs {txn[3]:,.2f}" if txn[3] is not None else "Rs 0.00",
+                            'Description': txn[4] or 'N/A',
+                            'Date': datetime.strptime(txn[5], '%Y-%m-%d %H:%M:%S').strftime('%d-%m-%Y %I:%M %p') if txn[5] else 'N/A'
+                        })
+                    df = pd.DataFrame(txn_data)
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("No transactions in retrieval account")
+            except Exception as e:
+                st.error(f"Error loading retrieval account: {str(e)}")
+    
+    # Tab 2: Matured Deposits
+    with tab2:
+        st.markdown("### 📊 Matured Deposits")
+        
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
+            "👤 Select Customer",
+            "matured_customer"
+        )
+        
+        if cust_id:
+            try:
+                matured = c.execute("""
+                    SELECT 
+                        id, deposit_id,
+                        original_deposit_type,
+                        original_deposit_number,
+                        principal_amount,
+                        interest_earned,
+                        total_amount,
+                        maturity_date,
+                        deposited_date,
+                        status,
+                        withdrawn_date,
+                        withdrawn_amount
+                    FROM matured_deposits
+                    WHERE customer_id = ?
+                    ORDER BY deposited_date DESC
+                """, (cust_id,)).fetchall()
+                
+                if matured:
+                    # Convert to DataFrame with proper null handling
+                    matured_data = []
+                    for m in matured:
+                        matured_data.append({
+                            'ID': m[0],
+                            'Deposit ID': m[1],
+                            'Type': m[2],
+                            'Deposit No': m[3],
+                            'Principal': m[4] if m[4] is not None else 0,
+                            'Interest Earned': m[5] if m[5] is not None else 0,
+                            'Total Amount': m[6] if m[6] is not None else 0,
+                            'Maturity Date': m[7] if m[7] else 'N/A',
+                            'Deposited Date': m[8] if m[8] else 'N/A',
+                            'Status': m[9] if m[9] else 'N/A',
+                            'Withdrawn Date': m[10] if m[10] else 'N/A',
+                            'Withdrawn Amount': m[11] if m[11] is not None else 0
+                        })
+                    
+                    df = pd.DataFrame(matured_data)
+                    
+                    total_principal = df['Principal'].sum()
+                    total_interest = df['Interest Earned'].sum()
+                    total_amount = df['Total Amount'].sum()
+                    active = df[df['Status'] == 'ACTIVE']['Total Amount'].sum()
+                    withdrawn = df[df['Status'] == 'WITHDRAWN']['Total Amount'].sum()
+                    
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    col1.metric("📊 Total", f"{len(matured)}")
+                    col2.metric("💰 Principal", f"Rs {total_principal:,.2f}")
+                    col3.metric("📈 Interest", f"Rs {total_interest:,.2f}")
+                    col4.metric("🟢 Active", f"Rs {active:,.2f}")
+                    col5.metric("🔴 Withdrawn", f"Rs {withdrawn:,.2f}")
+                    
+                    st.markdown("---")
+                    
+                    # Format the dataframe for display
+                    display_df = df.copy()
+                    display_df['Principal'] = display_df['Principal'].apply(lambda x: f"Rs {x:,.2f}")
+                    display_df['Interest Earned'] = display_df['Interest Earned'].apply(lambda x: f"Rs {x:,.2f}")
+                    display_df['Total Amount'] = display_df['Total Amount'].apply(lambda x: f"Rs {x:,.2f}")
+                    display_df['Withdrawn Amount'] = display_df['Withdrawn Amount'].apply(lambda x: f"Rs {x:,.2f}" if x > 0 else "Rs 0.00")
+                    
+                    st.dataframe(display_df[['Deposit ID', 'Type', 'Deposit No', 'Principal', 'Interest Earned', 
+                                            'Total Amount', 'Maturity Date', 'Deposited Date', 'Status', 
+                                            'Withdrawn Date', 'Withdrawn Amount']], use_container_width=True)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(
+                            "📥 Download Matured Deposits CSV",
+                            df.to_csv(index=False),
+                            "matured_deposits.csv",
+                            "text/csv"
+                        )
+                    
+                    with col2:
+                        with st.expander("🗑️ Delete Matured Deposit"):
+                            dep_id = st.text_input("Enter Deposit ID to delete:")
+                            if dep_id:
+                                if st.button("🗑️ Delete Deposit", use_container_width=True, type="secondary"):
+                                    if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                        try:
+                                            conn = get_db()
+                                            dep = conn.execute("SELECT id FROM matured_deposits WHERE deposit_id=?", (dep_id,)).fetchone()
+                                            if dep:
+                                                conn.execute("DELETE FROM matured_deposits WHERE deposit_id=?", (dep_id,))
+                                                conn.commit()
+                                                conn.close()
+                                                st.success("✅ Deposit record deleted successfully!")
+                                                st.rerun()
+                                            else:
+                                                st.error("❌ Deposit not found!")
+                                        except Exception as e:
+                                            st.error(f"❌ Error: {str(e)}")
+                else:
+                    st.info("No matured deposits found for this customer")
+            except Exception as e:
+                st.error(f"Error loading matured deposits: {str(e)}")
+    
+    # Tab 3: Transfer to SB
+    with tab3:
+        st.markdown("### 🏦 Transfer to SB Account")
+        
+        cust_id, cust_name, acc_id, acc_number, sb_balance = customer_selector(
+            "👤 Select Customer",
+            "transfer_customer"
+        )
+        
+        if cust_id and acc_id:
+            try:
+                ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
+                
+                st.markdown(f"""
+                ✅ **Account Details:**
+                - Customer: **{cust_name}**
+                - Retrieval Account: **{ret_acc_number}**
+                - Retrieval Balance: **Rs {ret_balance:,.2f}**
+                - SB Account: **{acc_number}**
+                - SB Balance: **Rs {sb_balance:,.2f}**
+                """)
+                
+                if ret_balance <= 0:
+                    st.warning("⚠️ No balance available in retrieval account!")
+                else:
+                    with st.form("transfer_to_sb_form"):
+                        amount = st.number_input(
+                            "💰 Amount to Transfer (Rs)",
+                            min_value=1.0,
+                            max_value=float(ret_balance),
+                            step=100.0,
+                            value=min(1000.0, float(ret_balance))
+                        )
+                        
+                        if st.form_submit_button("🏦 Transfer to SB", use_container_width=True, type="primary"):
+                            try:
+                                new_ret_balance, new_sb_balance = transfer_to_sb(cust_id, amount, acc_id)
+                                
+                                st.success(f"""
+                                ✅ Transfer Successful! 🎉
+                                
+                                📋 **Details:**
+                                - Amount: **Rs {amount:,.2f}**
+                                - From: **Retrieval Account ({ret_acc_number})**
+                                - To: **SB Account ({acc_number})**
+                                - New Retrieval Balance: **Rs {new_ret_balance:,.2f}**
+                                - New SB Balance: **Rs {new_sb_balance:,.2f}**
+                                """)
+                                st.balloons()
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"❌ Error during transfer: {str(e)}")
+            except Exception as e:
+                st.error(f"Error loading retrieval account: {str(e)}")
+    
+    # Tab 4: Withdraw
+    with tab4:
+        st.markdown("### 💳 Withdraw from Retrieval Account")
+        
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
+            "👤 Select Customer",
+            "withdraw_customer"
+        )
+        
+        if cust_id:
+            try:
+                ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
+                
+                st.markdown(f"""
+                ✅ **Retrieval Account:**
+                - Customer: **{cust_name}**
+                - Account: **{ret_acc_number}**
+                - Balance: **Rs {ret_balance:,.2f}**
+                """)
+                
+                if ret_balance <= 0:
+                    st.warning("⚠️ No balance available for withdrawal!")
+                else:
+                    with st.form("withdraw_form"):
+                        amount = st.number_input(
+                            "💰 Amount to Withdraw (Rs)",
+                            min_value=1.0,
+                            max_value=float(ret_balance),
+                            step=100.0,
+                            value=min(1000.0, float(ret_balance))
+                        )
+                        
+                        mode = st.selectbox(
+                            "💳 Withdrawal Mode",
+                            ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"]
+                        )
+                        
+                        if st.form_submit_button("💳 Withdraw", use_container_width=True, type="primary"):
+                            try:
+                                conn = get_db()
+                                # Update retrieval account
+                                new_balance = ret_balance - amount
+                                conn.execute("""
+                                    UPDATE retrieval_accounts 
+                                    SET balance = ? 
+                                    WHERE id = ?
+                                """, (new_balance, ret_acc_id))
+                                
+                                # Create transaction
+                                conn.execute("""
+                                    INSERT INTO transactions (
+                                        transaction_id, account_id, transaction_type,
+                                        amount, balance_after, description,
+                                        reference_type, voucher_type, voucher_number,
+                                        created_by
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (
+                                    generate_id('TXN'), ret_acc_id, 'DEBIT',
+                                    amount, new_balance,
+                                    f"Withdrawal from Retrieval Account ({mode})",
+                                    mode, 'PAYMENT',
+                                    generate_voucher_number('PAYMENT'),
+                                    st.session_state.user['id']
+                                ))
+                                
+                                conn.commit()
+                                conn.close()
+                                
+                                st.success(f"""
+                                ✅ Withdrawal Successful! 🎉
+                                
+                                📋 **Details:**
+                                - Amount: **Rs {amount:,.2f}**
+                                - Account: **{ret_acc_number}**
+                                - New Balance: **Rs {new_balance:,.2f}**
+                                - Mode: **{mode}**
+                                """)
+                                st.balloons()
+                                st.rerun()
+                                
+                            except Exception as e:
+                                conn.rollback()
+                                conn.close()
+                                st.error(f"❌ Error during withdrawal: {str(e)}")
+            except Exception as e:
+                st.error(f"Error loading retrieval account: {str(e)}")
+    
+    c.close()
 # ==================== CUSTOMER SELECTOR ====================
 def customer_selector(label="👤 Select Customer", key_prefix="cust"):
     c = get_db()

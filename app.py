@@ -4581,6 +4581,7 @@ def balance_sheet():
     c.close()
 
 # ==================== PROFIT & LOSS ====================
+# ==================== PROFIT & LOSS - COMPLETE FIX ====================
 def profit_loss():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -4591,15 +4592,21 @@ def profit_loss():
     
     col1, col2 = st.columns(2)
     with col1:
-        from_date = st.date_input("📅 From Date", date.today().replace(month=1, day=1))
+        from_date = st.date_input("📅 From Date", get_ist_today().replace(day=1))
     with col2:
-        to_date = st.date_input("📅 To Date", date.today())
+        to_date = st.date_input("📅 To Date", get_ist_today())
     
     if st.button("🔄 Generate P&L", use_container_width=True, type="primary"):
-        income_data = c.execute("""
+        # === INCOME FROM ALL SOURCES ===
+        income_data = []
+        total_income = 0
+        
+        # 1. Income from manual entries (income table with chart of accounts)
+        manual_income = c.execute("""
             SELECT 
                 COALESCE(c.account_name, i.income_type) as income_name,
-                SUM(i.amount) as total
+                SUM(i.amount) as total,
+                'Manual Entry' as source
             FROM income i
             LEFT JOIN chart_of_accounts c ON i.chart_of_accounts_id = c.id
             WHERE DATE(i.date) BETWEEN ? AND ?
@@ -4607,10 +4614,113 @@ def profit_loss():
             ORDER BY total DESC
         """, (from_date, to_date)).fetchall()
         
-        expense_data = c.execute("""
+        for item in manual_income:
+            if item[1] > 0:
+                income_data.append({
+                    'Income Name': item[0],
+                    'Amount': item[1],
+                    'Source': 'Manual Entry'
+                })
+                total_income += item[1]
+        
+        # 2. SB Interest Income (from interest calculations)
+        sb_interest = c.execute("""
+            SELECT 
+                'SB Interest Income' as income_name,
+                COALESCE(SUM(interest_earned), 0) as total,
+                'SB Account' as source
+            FROM interest_calculations ic
+            JOIN accounts a ON ic.account_id = a.id
+            WHERE a.account_type = 'SB' 
+            AND DATE(ic.calculation_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if sb_interest and sb_interest[1] > 0:
+            income_data.append({
+                'Income Name': 'SB Interest Income',
+                'Amount': sb_interest[1],
+                'Source': 'SB Account'
+            })
+            total_income += sb_interest[1]
+        
+        # 3. FD Interest Income (from matured FDs)
+        fd_interest = c.execute("""
+            SELECT 
+                'FD Interest Income' as income_name,
+                COALESCE(SUM(interest_earned), 0) as total,
+                'Fixed Deposit' as source
+            FROM (
+                SELECT 
+                    fd.fd_number,
+                    fd.maturity_amount - fd.principal_amount as interest_earned
+                FROM fixed_deposits fd
+                WHERE fd.status = 'CLOSED' 
+                AND DATE(fd.closed_date) BETWEEN ? AND ?
+            )
+        """, (from_date, to_date)).fetchone()
+        
+        if fd_interest and fd_interest[1] > 0:
+            income_data.append({
+                'Income Name': 'FD Interest Income',
+                'Amount': fd_interest[1],
+                'Source': 'Fixed Deposit'
+            })
+            total_income += fd_interest[1]
+        
+        # 4. RD Interest Income (from matured RDs)
+        rd_interest = c.execute("""
+            SELECT 
+                'RD Interest Income' as income_name,
+                COALESCE(SUM(interest_earned), 0) as total,
+                'Recurring Deposit' as source
+            FROM (
+                SELECT 
+                    rd.rd_number,
+                    rd.maturity_amount - (rd.monthly_amount * rd.total_installments) as interest_earned
+                FROM recurring_deposits rd
+                WHERE rd.status = 'MATURED' 
+                AND DATE(rd.closed_date) BETWEEN ? AND ?
+            )
+        """, (from_date, to_date)).fetchone()
+        
+        if rd_interest and rd_interest[1] > 0:
+            income_data.append({
+                'Income Name': 'RD Interest Income',
+                'Amount': rd_interest[1],
+                'Source': 'Recurring Deposit'
+            })
+            total_income += rd_interest[1]
+        
+        # 5. Fees & Charges Income (from transactions)
+        fees_income = c.execute("""
+            SELECT 
+                'Fees & Charges' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Transactions' as source
+            FROM transactions
+            WHERE transaction_type = 'CREDIT' 
+            AND reference_type IN ('FEE', 'CHARGE', 'COMMISSION')
+            AND DATE(created_at) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if fees_income and fees_income[1] > 0:
+            income_data.append({
+                'Income Name': 'Fees & Charges',
+                'Amount': fees_income[1],
+                'Source': 'Transactions'
+            })
+            total_income += fees_income[1]
+        
+        # === EXPENSES FROM ALL SOURCES ===
+        expense_data = []
+        total_expense = 0
+        
+        # 1. Manual expenses (expenses table with chart of accounts)
+        manual_expenses = c.execute("""
             SELECT 
                 COALESCE(c.account_name, e.expense_type) as expense_name,
-                SUM(e.amount) as total
+                SUM(e.amount) as total,
+                'Manual Entry' as source
             FROM expenses e
             LEFT JOIN chart_of_accounts c ON e.chart_of_accounts_id = c.id
             WHERE DATE(e.date) BETWEEN ? AND ?
@@ -4618,20 +4728,78 @@ def profit_loss():
             ORDER BY total DESC
         """, (from_date, to_date)).fetchall()
         
-        total_income = sum(i[1] for i in income_data)
-        total_expense = sum(e[1] for e in expense_data)
+        for item in manual_expenses:
+            if item[1] > 0:
+                expense_data.append({
+                    'Expense Name': item[0],
+                    'Amount': item[1],
+                    'Source': 'Manual Entry'
+                })
+                total_expense += item[1]
+        
+        # 2. Interest Paid (if any - from JV or other sources)
+        interest_paid = c.execute("""
+            SELECT 
+                'Interest Paid' as expense_name,
+                COALESCE(SUM(je.debit_amount), 0) as total,
+                'Journal Voucher' as source
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND je.account_head LIKE '%Interest Payable%'
+            AND DATE(jv.voucher_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if interest_paid and interest_paid[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Interest Paid',
+                'Amount': interest_paid[1],
+                'Source': 'Journal Voucher'
+            })
+            total_expense += interest_paid[1]
+        
+        # 3. Bank Charges (from JV)
+        bank_charges = c.execute("""
+            SELECT 
+                'Bank Charges' as expense_name,
+                COALESCE(SUM(je.debit_amount), 0) as total,
+                'Journal Voucher' as source
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND je.account_head LIKE '%Bank Charges%'
+            AND DATE(jv.voucher_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if bank_charges and bank_charges[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Bank Charges',
+                'Amount': bank_charges[1],
+                'Source': 'Journal Voucher'
+            })
+            total_expense += bank_charges[1]
+        
+        # Calculate net profit/loss
         net_profit = total_income - total_expense
         
+        # === DISPLAY ===
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("### 💰 INCOME")
             st.markdown("---")
             if income_data:
+                # Group by source
+                df_income = pd.DataFrame(income_data)
+                
+                # Show detailed breakdown
                 for item in income_data:
-                    st.markdown(f"📊 **{item[0]}**: Rs {item[1]:,.2f}")
+                    st.markdown(f"📊 **{item['Income Name']}**")
+                    st.markdown(f"   {item['Source']}: **₹ {item['Amount']:,.2f}**")
+                    st.markdown("")
+                
                 st.markdown("---")
-                st.markdown(f"### **Total Income: Rs {total_income:,.2f}**")
+                st.markdown(f"### **Total Income: ₹ {total_income:,.2f}**")
             else:
                 st.info("No income in this period")
         
@@ -4639,33 +4807,89 @@ def profit_loss():
             st.markdown("### 💸 EXPENSES")
             st.markdown("---")
             if expense_data:
+                # Show detailed breakdown
                 for item in expense_data:
-                    st.markdown(f"📊 **{item[0]}**: Rs {item[1]:,.2f}")
+                    st.markdown(f"📊 **{item['Expense Name']}**")
+                    st.markdown(f"   {item['Source']}: **₹ {item['Amount']:,.2f}**")
+                    st.markdown("")
+                
                 st.markdown("---")
-                st.markdown(f"### **Total Expenses: Rs {total_expense:,.2f}**")
+                st.markdown(f"### **Total Expenses: ₹ {total_expense:,.2f}**")
             else:
                 st.info("No expenses in this period")
         
         st.markdown("---")
         
         if net_profit >= 0:
-            st.success(f"### 🎉 Net Profit: Rs {net_profit:,.2f}")
+            st.success(f"""
+            ### 🎉 Net Profit: ₹ {net_profit:,.2f}
+            
+            📊 **Profit Margin:** {((net_profit / total_income) * 100) if total_income > 0 else 0:.1f}%
+            """)
             st.balloons()
         else:
-            st.error(f"### 📉 Net Loss: Rs {abs(net_profit):,.2f}")
+            st.error(f"""
+            ### 📉 Net Loss: ₹ {abs(net_profit):,.2f}
+            """)
         
-        if total_income > 0:
-            profit_margin = (net_profit / total_income) * 100
-            st.info(f"📊 Profit Margin: {profit_margin:.1f}%")
+        # === SUMMARY BY SOURCE ===
+        st.markdown("### 📊 Income by Source")
         
+        income_by_source = {}
+        for item in income_data:
+            source = item['Source']
+            if source not in income_by_source:
+                income_by_source[source] = 0
+            income_by_source[source] += item['Amount']
+        
+        if income_by_source:
+            source_data = []
+            for source, amount in income_by_source.items():
+                source_data.append({
+                    'Source': source,
+                    'Amount': f"₹ {amount:,.2f}",
+                    'Percentage': f"{(amount/total_income*100):.1f}%" if total_income > 0 else "0%"
+                })
+            df_source = pd.DataFrame(source_data)
+            st.dataframe(df_source, use_container_width=True)
+        
+        # === EXPENSES BY SOURCE ===
+        st.markdown("### 📊 Expenses by Source")
+        
+        expense_by_source = {}
+        for item in expense_data:
+            source = item['Source']
+            if source not in expense_by_source:
+                expense_by_source[source] = 0
+            expense_by_source[source] += item['Amount']
+        
+        if expense_by_source:
+            source_data = []
+            for source, amount in expense_by_source.items():
+                source_data.append({
+                    'Source': source,
+                    'Amount': f"₹ {amount:,.2f}",
+                    'Percentage': f"{(amount/total_expense*100):.1f}%" if total_expense > 0 else "0%"
+                })
+            df_source = pd.DataFrame(source_data)
+            st.dataframe(df_source, use_container_width=True)
+        
+        # === DOWNLOAD BUTTONS ===
         col1, col2 = st.columns(2)
         with col1:
+            # Create CSV data
+            csv_data = []
+            csv_data.append(['Type', 'Name', 'Source', 'Amount'])
+            for item in income_data:
+                csv_data.append(['Income', item['Income Name'], item['Source'], item['Amount']])
+            for item in expense_data:
+                csv_data.append(['Expense', item['Expense Name'], item['Source'], item['Amount']])
+            csv_data.append(['Net', 'Net Profit/Loss', '', net_profit])
+            
+            df_csv = pd.DataFrame(csv_data[1:], columns=csv_data[0])
             st.download_button(
                 "📥 Download CSV",
-                pd.DataFrame({
-                    'Type': ['Income', 'Expense', 'Net'],
-                    'Amount': [total_income, total_expense, net_profit]
-                }).to_csv(index=False),
+                df_csv.to_csv(index=False),
                 "profit_loss.csv",
                 "text/csv"
             )
@@ -4676,26 +4900,26 @@ def profit_loss():
                     "📈 PROFIT & LOSS STATEMENT",
                     "=" * 50,
                     f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}",
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+                    f"Generated on: {get_ist_now().strftime('%d-%m-%Y %I:%M %p')}",
                     "",
                     "INCOME:",
                     "-" * 30
                 ]
                 for item in income_data:
-                    content.append(f"{item[0]}: Rs {item[1]:,.2f}")
-                content.append(f"Total Income: Rs {total_income:,.2f}")
+                    content.append(f"{item['Income Name']} ({item['Source']}): ₹ {item['Amount']:,.2f}")
+                content.append(f"Total Income: ₹ {total_income:,.2f}")
                 content.append("")
                 content.append("EXPENSES:")
                 content.append("-" * 30)
                 for item in expense_data:
-                    content.append(f"{item[0]}: Rs {item[1]:,.2f}")
-                content.append(f"Total Expenses: Rs {total_expense:,.2f}")
+                    content.append(f"{item['Expense Name']} ({item['Source']}): ₹ {item['Amount']:,.2f}")
+                content.append(f"Total Expenses: ₹ {total_expense:,.2f}")
                 content.append("")
                 if net_profit >= 0:
-                    content.append(f"NET PROFIT: Rs {net_profit:,.2f}")
-                    content.append(f"Profit Margin: {(net_profit/total_income*100):.1f}%")
+                    content.append(f"NET PROFIT: ₹ {net_profit:,.2f}")
+                    content.append(f"Profit Margin: {((net_profit/total_income*100) if total_income > 0 else 0):.1f}%")
                 else:
-                    content.append(f"NET LOSS: Rs {abs(net_profit):,.2f}")
+                    content.append(f"NET LOSS: ₹ {abs(net_profit):,.2f}")
                 
                 pdf_file = create_pdf("Profit & Loss Statement", content, "profit_loss")
                 if pdf_file:

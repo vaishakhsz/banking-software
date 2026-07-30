@@ -704,6 +704,7 @@ def customer_selector(label="👤 Select Customer", key_prefix="cust"):
 
 # ==================== TEAL THEME CSS ====================
 # ==================== TEAL THEME CSS ====================
+# ==================== TEAL THEME CSS ====================
 def load_enterprise_css():
     st.markdown("""
     <style>
@@ -790,7 +791,7 @@ def load_enterprise_css():
             margin-top: 2px;
         }
         
-        /* Sidebar - Black Theme */
+        /* Sidebar */
         [data-testid="stSidebar"] {
             background: linear-gradient(180deg, #1a1a1a, #2d2d2d, #1a1a1a) !important;
             border-right: 1px solid rgba(255,255,255,0.05);
@@ -839,35 +840,45 @@ def load_enterprise_css():
             font-weight: 600;
         }
         
+        /* Sidebar Buttons - Black/Dark */
         [data-testid="stSidebar"] .stButton > button {
-            color: rgba(255,255,255,0.8) !important;
-            background: transparent !important;
-            border: none !important;
-            border-radius: 10px !important;
+            color: rgba(255,255,255,0.85) !important;
+            background: #2d2d2d !important;
+            border: 1px solid rgba(255,255,255,0.05) !important;
+            border-radius: 8px !important;
             padding: 10px 14px !important;
-            margin: 2px 0 !important;
+            margin: 3px 0 !important;
             text-align: left !important;
             justify-content: flex-start !important;
             font-weight: 500 !important;
             font-size: 0.9rem !important;
             transition: all 0.2s ease !important;
             width: 100% !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
         }
         
         [data-testid="stSidebar"] .stButton > button:hover {
-            background: rgba(255,255,255,0.08) !important;
+            background: #3d3d3d !important;
             color: white !important;
             transform: translateX(5px);
+            border-color: #0a8a7a !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
         }
         
         [data-testid="stSidebar"] .stButton > button:focus {
-            background: rgba(255,255,255,0.12) !important;
+            background: #3d3d3d !important;
             color: white !important;
+            border-color: #0a8a7a !important;
         }
         
         [data-testid="stSidebar"] .stButton > button[kind="primary"] {
-            background: rgba(255,255,255,0.08) !important;
-            border-left: 3px solid #0a8a7a !important;
+            background: #0a8a7a !important;
+            border-left: 3px solid #f0c040 !important;
+            color: white !important;
+        }
+        
+        [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+            background: #0d6b5e !important;
         }
         
         .sidebar-footer {
@@ -977,6 +988,26 @@ def load_enterprise_css():
         
         .print-btn:hover {
             background: #0d6b5e !important;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #2d2d2d;
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #0a8a7a;
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #0d6b5e;
         }
     </style>
     """, unsafe_allow_html=True)

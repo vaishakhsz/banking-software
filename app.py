@@ -1498,7 +1498,7 @@ def create_sb_account():
                     "📈 Interest Rate (%)",
                     min_value=0.0,
                     max_value=10.0,
-                    value=3.5,
+                    value=3.0,
                     step=0.25
                 )
                 opening_balance = st.number_input(
@@ -3894,7 +3894,7 @@ def interest_calculation():
                 days = (to_date - from_date).days + 1
                 
                 if balance > 0 and days > 0:
-                    interest = calculate_sb_interest(balance, acc[4] or 3.5, days)
+                    interest = calculate_sb_interest(balance, acc[4] or 3.0, days)
                     
                     if interest > 0:
                         conn.execute("""
@@ -3910,14 +3910,14 @@ def interest_calculation():
                                 interest_earned, days_calculated,
                                 customer_id
                             ) VALUES (?,DATE('now'),?,?,?,?,?)
-                        """, (acc[0], balance, acc[4] or 3.5, interest, days, acc[5]))
+                        """, (acc[0], balance, acc[4] or 3.0, interest, days, acc[5]))
                         
                         total_interest += interest
                         interest_details.append({
                             'Account': acc[1],
                             'Customer': acc[2],
                             'Balance': balance,
-                            'Rate': acc[4] or 3.5,
+                            'Rate': acc[4] or 3.0,
                             'Days': days,
                             'Interest': interest
                         })

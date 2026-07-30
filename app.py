@@ -4387,7 +4387,8 @@ def interest_calculation():
                         except Exception as e:
                             st.error(f"❌ Error: {str(e)}")
 
-# ==================== PROFIT & LOSS ====================
+
+# ==================== PROFIT & LOSS - COMPLETE FIX ====================
 def profit_loss():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -4407,7 +4408,65 @@ def profit_loss():
         income_data = []
         total_income = 0
         
-        # 1. Manual income entries
+        # 1. SB Interest Income (from interest_calculations)
+        sb_interest = c.execute("""
+            SELECT 
+                'SB Interest Income' as income_name,
+                COALESCE(SUM(ic.interest_earned), 0) as total,
+                'Savings Account' as source
+            FROM interest_calculations ic
+            JOIN accounts a ON ic.account_id = a.id
+            WHERE a.account_type = 'SB' 
+            AND DATE(ic.calculation_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if sb_interest and sb_interest[1] > 0:
+            income_data.append({
+                'Income Name': 'SB Interest Income',
+                'Amount': sb_interest[1],
+                'Source': 'Savings Account'
+            })
+            total_income += sb_interest[1]
+        
+        # 2. FD Interest Income (from matured FDs)
+        fd_interest = c.execute("""
+            SELECT 
+                'FD Interest Income' as income_name,
+                COALESCE(SUM(fd.maturity_amount - fd.principal_amount), 0) as total,
+                'Fixed Deposit' as source
+            FROM fixed_deposits fd
+            WHERE fd.status = 'CLOSED' 
+            AND DATE(fd.closed_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if fd_interest and fd_interest[1] > 0:
+            income_data.append({
+                'Income Name': 'FD Interest Income',
+                'Amount': fd_interest[1],
+                'Source': 'Fixed Deposit'
+            })
+            total_income += fd_interest[1]
+        
+        # 3. RD Interest Income (from matured RDs)
+        rd_interest = c.execute("""
+            SELECT 
+                'RD Interest Income' as income_name,
+                COALESCE(SUM(rd.maturity_amount - (rd.monthly_amount * rd.total_installments)), 0) as total,
+                'Recurring Deposit' as source
+            FROM recurring_deposits rd
+            WHERE rd.status = 'MATURED' 
+            AND DATE(rd.closed_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if rd_interest and rd_interest[1] > 0:
+            income_data.append({
+                'Income Name': 'RD Interest Income',
+                'Amount': rd_interest[1],
+                'Source': 'Recurring Deposit'
+            })
+            total_income += rd_interest[1]
+        
+        # 4. Manual Income Entries (from income table)
         manual_income = c.execute("""
             SELECT 
                 COALESCE(c.account_name, i.income_type) as income_name,
@@ -4429,75 +4488,7 @@ def profit_loss():
                 })
                 total_income += item[1]
         
-        # 2. SB Interest Income
-        sb_interest = c.execute("""
-            SELECT 
-                'SB Interest Income' as income_name,
-                COALESCE(SUM(interest_earned), 0) as total,
-                'SB Account' as source
-            FROM interest_calculations ic
-            JOIN accounts a ON ic.account_id = a.id
-            WHERE a.account_type = 'SB' 
-            AND DATE(ic.calculation_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if sb_interest and sb_interest[1] > 0:
-            income_data.append({
-                'Income Name': 'SB Interest Income',
-                'Amount': sb_interest[1],
-                'Source': 'SB Account'
-            })
-            total_income += sb_interest[1]
-        
-        # 3. FD Interest Income
-        fd_interest = c.execute("""
-            SELECT 
-                'FD Interest Income' as income_name,
-                COALESCE(SUM(interest_earned), 0) as total,
-                'Fixed Deposit' as source
-            FROM (
-                SELECT 
-                    fd.fd_number,
-                    fd.maturity_amount - fd.principal_amount as interest_earned
-                FROM fixed_deposits fd
-                WHERE fd.status = 'CLOSED' 
-                AND DATE(fd.closed_date) BETWEEN ? AND ?
-            )
-        """, (from_date, to_date)).fetchone()
-        
-        if fd_interest and fd_interest[1] > 0:
-            income_data.append({
-                'Income Name': 'FD Interest Income',
-                'Amount': fd_interest[1],
-                'Source': 'Fixed Deposit'
-            })
-            total_income += fd_interest[1]
-        
-        # 4. RD Interest Income
-        rd_interest = c.execute("""
-            SELECT 
-                'RD Interest Income' as income_name,
-                COALESCE(SUM(interest_earned), 0) as total,
-                'Recurring Deposit' as source
-            FROM (
-                SELECT 
-                    rd.rd_number,
-                    rd.maturity_amount - (rd.monthly_amount * rd.total_installments) as interest_earned
-                FROM recurring_deposits rd
-                WHERE rd.status = 'MATURED' 
-                AND DATE(rd.closed_date) BETWEEN ? AND ?
-            )
-        """, (from_date, to_date)).fetchone()
-        
-        if rd_interest and rd_interest[1] > 0:
-            income_data.append({
-                'Income Name': 'RD Interest Income',
-                'Amount': rd_interest[1],
-                'Source': 'Recurring Deposit'
-            })
-            total_income += rd_interest[1]
-        
-        # 5. Fees & Charges
+        # 5. Fees & Charges (from transactions)
         fees_income = c.execute("""
             SELECT 
                 'Fees & Charges' as income_name,
@@ -4521,7 +4512,7 @@ def profit_loss():
         expense_data = []
         total_expense = 0
         
-        # 1. Manual expenses
+        # 1. Manual Expense Entries (from expenses table)
         manual_expenses = c.execute("""
             SELECT 
                 COALESCE(c.account_name, e.expense_type) as expense_name,
@@ -4543,7 +4534,7 @@ def profit_loss():
                 })
                 total_expense += item[1]
         
-        # 2. Interest Paid
+        # 2. Interest Paid (from JV)
         interest_paid = c.execute("""
             SELECT 
                 'Interest Paid' as expense_name,
@@ -4564,7 +4555,7 @@ def profit_loss():
             })
             total_expense += interest_paid[1]
         
-        # 3. Bank Charges
+        # 3. Bank Charges (from JV)
         bank_charges = c.execute("""
             SELECT 
                 'Bank Charges' as expense_name,
@@ -4585,6 +4576,31 @@ def profit_loss():
             })
             total_expense += bank_charges[1]
         
+        # 4. Operating Expenses (from JV)
+        operating_expenses = c.execute("""
+            SELECT 
+                'Operating Expenses' as expense_name,
+                COALESCE(SUM(je.debit_amount), 0) as total,
+                'Journal Voucher' as source
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND (je.account_head LIKE '%Salary%' 
+                 OR je.account_head LIKE '%Rent%' 
+                 OR je.account_head LIKE '%Electricity%'
+                 OR je.account_head LIKE '%Water%'
+                 OR je.account_head LIKE '%Internet%')
+            AND DATE(jv.voucher_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if operating_expenses and operating_expenses[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Operating Expenses',
+                'Amount': operating_expenses[1],
+                'Source': 'Journal Voucher'
+            })
+            total_expense += operating_expenses[1]
+        
         # Calculate net profit/loss
         net_profit = total_income - total_expense
         
@@ -4595,14 +4611,23 @@ def profit_loss():
             st.markdown("### 💰 INCOME")
             st.markdown("---")
             if income_data:
-                # Show detailed breakdown
+                # Show summary by source
+                st.markdown("#### 📊 Income Breakdown")
                 for item in income_data:
-                    st.markdown(f"📊 **{item['Income Name']}**")
-                    st.markdown(f"   {item['Source']}: **₹ {item['Amount']:,.2f}**")
-                    st.markdown("")
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f0f0f0;">
+                        <span><strong>{item['Income Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
+                        <span style="font-weight: 600;">₹ {item['Amount']:,.2f}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 st.markdown("---")
-                st.markdown(f"### **Total Income: ₹ {total_income:,.2f}**")
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; padding: 8px 0; background: #f8f9fa; border-radius: 8px; padding: 10px;">
+                    <span style="font-size: 1.1rem; font-weight: 700;">Total Income</span>
+                    <span style="font-size: 1.1rem; font-weight: 700; color: #28a745;">₹ {total_income:,.2f}</span>
+                </div>
+                """, unsafe_allow_html=True)
             else:
                 st.info("No income in this period")
         
@@ -4610,32 +4635,46 @@ def profit_loss():
             st.markdown("### 💸 EXPENSES")
             st.markdown("---")
             if expense_data:
-                # Show detailed breakdown
+                st.markdown("#### 📊 Expense Breakdown")
                 for item in expense_data:
-                    st.markdown(f"📊 **{item['Expense Name']}**")
-                    st.markdown(f"   {item['Source']}: **₹ {item['Amount']:,.2f}**")
-                    st.markdown("")
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f0f0f0;">
+                        <span><strong>{item['Expense Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
+                        <span style="font-weight: 600;">₹ {item['Amount']:,.2f}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 st.markdown("---")
-                st.markdown(f"### **Total Expenses: ₹ {total_expense:,.2f}**")
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; padding: 8px 0; background: #f8f9fa; border-radius: 8px; padding: 10px;">
+                    <span style="font-size: 1.1rem; font-weight: 700;">Total Expenses</span>
+                    <span style="font-size: 1.1rem; font-weight: 700; color: #dc3545;">₹ {total_expense:,.2f}</span>
+                </div>
+                """, unsafe_allow_html=True)
             else:
                 st.info("No expenses in this period")
         
         st.markdown("---")
         
+        # Net Result
         if net_profit >= 0:
-            st.success(f"""
-            ### 🎉 Net Profit: ₹ {net_profit:,.2f}
-            
-            📊 **Profit Margin:** {((net_profit / total_income) * 100) if total_income > 0 else 0:.1f}%
-            """)
+            st.markdown(f"""
+            <div style="background: #d4edda; padding: 2rem; border-radius: 12px; text-align: center;">
+                <h2 style="color: #155724; margin: 0;">🎉 Net Profit: ₹ {net_profit:,.2f}</h2>
+                <p style="color: #155724; margin: 5px 0 0 0;">
+                    Profit Margin: {((net_profit / total_income) * 100) if total_income > 0 else 0:.1f}%
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
             st.balloons()
         else:
-            st.error(f"""
-            ### 📉 Net Loss: ₹ {abs(net_profit):,.2f}
-            """)
+            st.markdown(f"""
+            <div style="background: #f8d7da; padding: 2rem; border-radius: 12px; text-align: center;">
+                <h2 style="color: #721c24; margin: 0;">📉 Net Loss: ₹ {abs(net_profit):,.2f}</h2>
+            </div>
+            """, unsafe_allow_html=True)
         
-        # === SUMMARY BY SOURCE ===
+        # === INCOME BY SOURCE CHART ===
         st.markdown("### 📊 Income by Source")
         
         income_by_source = {}
@@ -4648,15 +4687,21 @@ def profit_loss():
         if income_by_source:
             source_data = []
             for source, amount in income_by_source.items():
+                percentage = (amount/total_income*100) if total_income > 0 else 0
                 source_data.append({
                     'Source': source,
                     'Amount': f"₹ {amount:,.2f}",
-                    'Percentage': f"{(amount/total_income*100):.1f}%" if total_income > 0 else "0%"
+                    'Percentage': f"{percentage:.1f}%"
                 })
             df_source = pd.DataFrame(source_data)
             st.dataframe(df_source, use_container_width=True)
+            
+            # Show progress bars for income sources
+            for source, amount in income_by_source.items():
+                percentage = (amount/total_income*100) if total_income > 0 else 0
+                st.progress(percentage/100, text=f"{source}: {percentage:.1f}% (₹ {amount:,.2f})")
         
-        # === EXPENSES BY SOURCE ===
+        # === EXPENSES BY SOURCE CHART ===
         st.markdown("### 📊 Expenses by Source")
         
         expense_by_source = {}
@@ -4669,13 +4714,19 @@ def profit_loss():
         if expense_by_source:
             source_data = []
             for source, amount in expense_by_source.items():
+                percentage = (amount/total_expense*100) if total_expense > 0 else 0
                 source_data.append({
                     'Source': source,
                     'Amount': f"₹ {amount:,.2f}",
-                    'Percentage': f"{(amount/total_expense*100):.1f}%" if total_expense > 0 else "0%"
+                    'Percentage': f"{percentage:.1f}%"
                 })
             df_source = pd.DataFrame(source_data)
             st.dataframe(df_source, use_container_width=True)
+            
+            # Show progress bars for expense sources
+            for source, amount in expense_by_source.items():
+                percentage = (amount/total_expense*100) if total_expense > 0 else 0
+                st.progress(percentage/100, text=f"{source}: {percentage:.1f}% (₹ {amount:,.2f})")
         
         # === DOWNLOAD BUTTONS ===
         col1, col2 = st.columns(2)
@@ -4693,7 +4744,7 @@ def profit_loss():
             st.download_button(
                 "📥 Download CSV",
                 df_csv.to_csv(index=False),
-                "profit_loss.csv",
+                f"profit_loss_{from_date.strftime('%d%m%Y')}_{to_date.strftime('%d%m%Y')}.csv",
                 "text/csv"
             )
         

@@ -11,14 +11,22 @@ import hashlib
 import tempfile
 import os
 import base64
-import pytz
 
-# Set IST timezone
-IST = pytz.timezone('Asia/Kolkata')
+# Use zoneinfo for timezone (Python 3.9+)
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo('Asia/Kolkata')
+except ImportError:
+    # Fallback: use UTC + 5:30 offset
+    from datetime import timezone, timedelta
+    IST = timezone(timedelta(hours=5, minutes=30))
 
 def get_ist_now():
     """Get current time in IST"""
-    return datetime.now(IST)
+    try:
+        return datetime.now(IST)
+    except:
+        return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 def get_ist_today():
     """Get current date in IST"""
@@ -29,8 +37,7 @@ def format_ist_datetime(dt_str):
     if dt_str:
         try:
             dt = datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
-            dt_ist = pytz.utc.localize(dt).astimezone(IST)
-            return dt_ist.strftime('%d-%m-%Y %I:%M %p')
+            return dt.strftime('%d-%m-%Y %I:%M %p')
         except:
             return dt_str
     return 'N/A'
@@ -912,82 +919,6 @@ def load_enterprise_css():
             transform: translateY(-2px);
             box-shadow: 0 8px 20px rgba(0,0,0,0.1);
         }
-        
-        .status-badge {
-            display: inline-block;
-            padding: 0.25rem 0.75rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        
-        .status-active {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .status-inactive {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        
-        .status-pending {
-            background: #fff3cd;
-            color: #856404;
-        }
-        
-        .success-box {
-            background: #d4edda;
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #28a745;
-        }
-        
-        .warning-box {
-            background: #fff3cd;
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #ffc107;
-        }
-        
-        .info-box {
-            background: #d1ecf1;
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #17a2b8;
-        }
-        
-        .card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            margin-bottom: 1rem;
-        }
-        
-        .divider {
-            border: none;
-            height: 1px;
-            background: linear-gradient(to right, transparent, #ccc, transparent);
-            margin: 1.5rem 0;
-        }
-        
-        .footer-text {
-            color: rgba(255,255,255,0.4);
-            font-size: 0.7rem;
-            text-align: center;
-            padding: 10px;
-        }
-        
-        @media (max-width: 768px) {
-            .main-header {
-                flex-direction: column;
-                text-align: center;
-            }
-            .main-header h1 {
-                font-size: 1.2rem;
-            }
-        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -1122,7 +1053,7 @@ def show_app():
             st.rerun()
         
         st.markdown(f"""
-        <div class="footer-text">
+        <div style="position:fixed;bottom:1rem;left:1rem;right:1rem;text-align:center;color:rgba(255,255,255,0.4);font-size:0.7rem;padding:10px;">
             © 2024 Aasha Nidhi Bank<br>
             v3.0 • {get_ist_now().strftime('%d-%m-%Y %I:%M %p')}
         </div>
@@ -1333,29 +1264,45 @@ def customer_management():
                 )
             
             with col2:
+                # DELETE CUSTOMER - FIXED
                 with st.expander("🗑️ Delete Customer"):
-                    delete_id = st.text_input("Enter Customer ID to delete:")
+                    st.warning("⚠️ This will delete the customer and ALL related records (accounts, transactions, deposits).")
+                    delete_id = st.text_input("Enter Customer ID to delete:", key="del_cust_id")
                     if delete_id:
-                        if st.button("🗑️ Delete Customer", use_container_width=True, type="secondary"):
-                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                try:
-                                    conn = get_db()
-                                    customer = conn.execute("SELECT id FROM customers WHERE customer_id=?", (delete_id,)).fetchone()
-                                    if customer:
-                                        conn.execute("DELETE FROM accounts WHERE customer_id=?", (customer[0],))
-                                        conn.execute("DELETE FROM fixed_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (customer[0],))
-                                        conn.execute("DELETE FROM recurring_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (customer[0],))
-                                        conn.execute("DELETE FROM retrieval_accounts WHERE customer_id=?", (customer[0],))
-                                        conn.execute("DELETE FROM matured_deposits WHERE customer_id=?", (customer[0],))
-                                        conn.execute("DELETE FROM customers WHERE customer_id=?", (delete_id,))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success("✅ Customer and all related records deleted!")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Customer not found!")
-                                except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                        confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_cust_confirm")
+                        if confirm and st.button("🗑️ Delete Customer Permanently", use_container_width=True, type="secondary"):
+                            try:
+                                conn = get_db()
+                                # Get customer id
+                                customer = conn.execute("SELECT id FROM customers WHERE customer_id=?", (delete_id,)).fetchone()
+                                if customer:
+                                    cust_id = customer[0]
+                                    # Delete from accounts
+                                    conn.execute("DELETE FROM accounts WHERE customer_id=?", (cust_id,))
+                                    # Delete from fixed_deposits
+                                    conn.execute("DELETE FROM fixed_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (cust_id,))
+                                    # Delete from recurring_deposits
+                                    conn.execute("DELETE FROM recurring_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (cust_id,))
+                                    # Delete from retrieval_accounts
+                                    conn.execute("DELETE FROM retrieval_accounts WHERE customer_id=?", (cust_id,))
+                                    # Delete from matured_deposits
+                                    conn.execute("DELETE FROM matured_deposits WHERE customer_id=?", (cust_id,))
+                                    # Delete from transactions
+                                    conn.execute("DELETE FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (cust_id,))
+                                    # Delete from income
+                                    conn.execute("DELETE FROM income WHERE customer_id=?", (cust_id,))
+                                    # Delete from expenses
+                                    conn.execute("DELETE FROM expenses WHERE customer_id=?", (cust_id,))
+                                    # Delete customer
+                                    conn.execute("DELETE FROM customers WHERE customer_id=?", (delete_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("✅ Customer and all related records deleted successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Customer not found!")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No customers registered yet")
 
@@ -1668,25 +1615,28 @@ def sb_accounts():
             total_interest = sum(acc[4] for acc in accounts)
             st.info(f"💰 Total SB Deposits: ₹ {total_balance:,.2f} | Total Interest: ₹ {total_interest:,.2f}")
             
+            # DELETE SB ACCOUNT - FIXED
             with st.expander("🗑️ Delete SB Account"):
-                acc_num = st.text_input("Enter Account Number to delete:")
+                st.warning("⚠️ This will delete the SB account and all its transactions.")
+                acc_num = st.text_input("Enter Account Number to delete:", key="del_sb_acc")
                 if acc_num:
-                    if st.button("🗑️ Delete Account", use_container_width=True, type="secondary"):
-                        if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                            try:
-                                conn = get_db()
-                                acc = conn.execute("SELECT id FROM accounts WHERE account_number=?", (acc_num,)).fetchone()
-                                if acc:
-                                    conn.execute("DELETE FROM transactions WHERE account_id=?", (acc[0],))
-                                    conn.execute("DELETE FROM accounts WHERE account_number=?", (acc_num,))
-                                    conn.commit()
-                                    conn.close()
-                                    st.success("✅ Account deleted successfully!")
-                                    st.rerun()
-                                else:
-                                    st.error("❌ Account not found!")
-                            except Exception as e:
-                                st.error(f"❌ Error: {str(e)}")
+                    confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_sb_confirm")
+                    if confirm and st.button("🗑️ Delete Account Permanently", use_container_width=True, type="secondary"):
+                        try:
+                            conn = get_db()
+                            acc = conn.execute("SELECT id FROM accounts WHERE account_number=?", (acc_num,)).fetchone()
+                            if acc:
+                                acc_id = acc[0]
+                                conn.execute("DELETE FROM transactions WHERE account_id=?", (acc_id,))
+                                conn.execute("DELETE FROM accounts WHERE account_number=?", (acc_num,))
+                                conn.commit()
+                                conn.close()
+                                st.success("✅ Account deleted successfully!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Account not found!")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No SB accounts found")
     
@@ -2194,14 +2144,14 @@ def fixed_deposits():
                         conn.close()
                     st.error(f"❌ Error closing FD: {str(e)}")
     
-    # Tab 4: Closed FDs
+    # Tab 4: Closed FDs - DELETE FIXED
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
         
         try:
             closed_fds = c.execute("""
                 SELECT 
-                    fd.fd_number, 
+                    fd.id, fd.fd_number, 
                     fd.principal_amount, 
                     fd.interest_rate,
                     fd.start_date, 
@@ -2218,7 +2168,7 @@ def fixed_deposits():
             
             if closed_fds:
                 df = pd.DataFrame(closed_fds, columns=[
-                    'FD No', 'Principal', 'Rate', 
+                    'ID', 'FD No', 'Principal', 'Rate', 
                     'Start Date', 'Maturity Date', 'Maturity Amount',
                     'Closed Date', 'Closed Amount', 'Interest Earned', 'Status'
                 ])
@@ -2256,24 +2206,26 @@ def fixed_deposits():
                     )
                 
                 with col2:
+                    # DELETE FD RECORD - FIXED
                     with st.expander("🗑️ Delete FD Record"):
-                        fd_num = st.text_input("Enter FD Number to delete:")
+                        st.warning("⚠️ This will permanently delete the FD record.")
+                        fd_num = st.text_input("Enter FD Number to delete:", key="del_fd")
                         if fd_num:
-                            if st.button("🗑️ Delete FD", use_container_width=True, type="secondary"):
-                                if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                    try:
-                                        conn = get_db()
-                                        fd = conn.execute("SELECT id FROM fixed_deposits WHERE fd_number=?", (fd_num,)).fetchone()
-                                        if fd:
-                                            conn.execute("DELETE FROM fixed_deposits WHERE fd_number=?", (fd_num,))
-                                            conn.commit()
-                                            conn.close()
-                                            st.success("✅ FD record deleted successfully!")
-                                            st.rerun()
-                                        else:
-                                            st.error("❌ FD not found!")
-                                    except Exception as e:
-                                        st.error(f"❌ Error: {str(e)}")
+                            confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_fd_confirm")
+                            if confirm and st.button("🗑️ Delete FD Permanently", use_container_width=True, type="secondary"):
+                                try:
+                                    conn = get_db()
+                                    fd = conn.execute("SELECT id FROM fixed_deposits WHERE fd_number=?", (fd_num,)).fetchone()
+                                    if fd:
+                                        conn.execute("DELETE FROM fixed_deposits WHERE fd_number=?", (fd_num,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ FD record deleted successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ FD not found!")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
             else:
                 st.info("No closed fixed deposits found")
                 
@@ -2763,14 +2715,14 @@ def recurring_deposits():
                         conn.close()
                         st.error(f"❌ Error: {str(e)}")
     
-    # Tab 4: Closed RDs
+    # Tab 4: Closed RDs - DELETE FIXED
     with tab4:
         st.markdown("### 📋 Closed/Completed Recurring Deposits")
         
         try:
             closed_rds = c.execute("""
                 SELECT 
-                    rd.rd_number,
+                    rd.id, rd.rd_number,
                     rd.monthly_amount, 
                     rd.installments_paid,
                     rd.total_installments, 
@@ -2793,7 +2745,7 @@ def recurring_deposits():
             
             if closed_rds:
                 df = pd.DataFrame(closed_rds, columns=[
-                    'RD No', 'Monthly', 'Paid', 'Total',
+                    'ID', 'RD No', 'Monthly', 'Paid', 'Total',
                     'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 
                     'Status', 'Closed Date', 'Closed Amount', 'Status Display'
                 ])
@@ -2831,24 +2783,26 @@ def recurring_deposits():
                     )
                 
                 with col2:
+                    # DELETE RD RECORD - FIXED
                     with st.expander("🗑️ Delete RD Record"):
-                        rd_num = st.text_input("Enter RD Number to delete:")
+                        st.warning("⚠️ This will permanently delete the RD record.")
+                        rd_num = st.text_input("Enter RD Number to delete:", key="del_rd")
                         if rd_num:
-                            if st.button("🗑️ Delete RD", use_container_width=True, type="secondary"):
-                                if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                    try:
-                                        conn = get_db()
-                                        rd = conn.execute("SELECT id FROM recurring_deposits WHERE rd_number=?", (rd_num,)).fetchone()
-                                        if rd:
-                                            conn.execute("DELETE FROM recurring_deposits WHERE rd_number=?", (rd_num,))
-                                            conn.commit()
-                                            conn.close()
-                                            st.success("✅ RD record deleted successfully!")
-                                            st.rerun()
-                                        else:
-                                            st.error("❌ RD not found!")
-                                    except Exception as e:
-                                        st.error(f"❌ Error: {str(e)}")
+                            confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_rd_confirm")
+                            if confirm and st.button("🗑️ Delete RD Permanently", use_container_width=True, type="secondary"):
+                                try:
+                                    conn = get_db()
+                                    rd = conn.execute("SELECT id FROM recurring_deposits WHERE rd_number=?", (rd_num,)).fetchone()
+                                    if rd:
+                                        conn.execute("DELETE FROM recurring_deposits WHERE rd_number=?", (rd_num,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ RD record deleted successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ RD not found!")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
             else:
                 st.info("No closed recurring deposits found")
                 
@@ -2939,7 +2893,7 @@ def retrieval_account():
             try:
                 matured = c.execute("""
                     SELECT 
-                        deposit_id,
+                        id, deposit_id,
                         original_deposit_type,
                         original_deposit_number,
                         principal_amount,
@@ -2964,10 +2918,10 @@ def retrieval_account():
                     withdrawn_total = 0
                     
                     for m in matured:
-                        principal = float(m[3]) if m[3] is not None else 0
-                        interest = float(m[4]) if m[4] is not None else 0
-                        total = float(m[5]) if m[5] is not None else 0
-                        status = m[8] if m[8] else 'ACTIVE'
+                        principal = float(m[4]) if m[4] is not None else 0
+                        interest = float(m[5]) if m[5] is not None else 0
+                        total = float(m[6]) if m[6] is not None else 0
+                        status = m[9] if m[9] else 'ACTIVE'
                         
                         total_principal += principal
                         total_interest += interest
@@ -2978,17 +2932,17 @@ def retrieval_account():
                             withdrawn_total += total
                         
                         matured_data.append({
-                            'Deposit ID': m[0],
-                            'Type': m[1],
-                            'Deposit No': m[2],
+                            'Deposit ID': m[1],
+                            'Type': m[2],
+                            'Deposit No': m[3],
                             'Principal': f"₹ {principal:,.2f}",
                             'Interest Earned': f"₹ {interest:,.2f}",
                             'Total Amount': f"₹ {total:,.2f}",
-                            'Maturity Date': m[6] if m[6] else 'N/A',
-                            'Deposited Date': m[7] if m[7] else 'N/A',
+                            'Maturity Date': m[7] if m[7] else 'N/A',
+                            'Deposited Date': m[8] if m[8] else 'N/A',
                             'Status': '🟢 Active' if status == 'ACTIVE' else '🔴 Withdrawn',
-                            'Withdrawn Date': m[9] if m[9] else 'N/A',
-                            'Withdrawn Amount': f"₹ {float(m[10]):,.2f}" if m[10] is not None else "₹ 0.00"
+                            'Withdrawn Date': m[10] if m[10] else 'N/A',
+                            'Withdrawn Amount': f"₹ {float(m[11]):,.2f}" if m[11] is not None else "₹ 0.00"
                         })
                     
                     df = pd.DataFrame(matured_data)
@@ -3008,17 +2962,17 @@ def retrieval_account():
                         raw_data = []
                         for m in matured:
                             raw_data.append({
-                                'Deposit ID': m[0],
-                                'Type': m[1],
-                                'Deposit No': m[2],
-                                'Principal': float(m[3]) if m[3] is not None else 0,
-                                'Interest Earned': float(m[4]) if m[4] is not None else 0,
-                                'Total Amount': float(m[5]) if m[5] is not None else 0,
-                                'Maturity Date': m[6] if m[6] else '',
-                                'Deposited Date': m[7] if m[7] else '',
-                                'Status': m[8] if m[8] else 'ACTIVE',
-                                'Withdrawn Date': m[9] if m[9] else '',
-                                'Withdrawn Amount': float(m[10]) if m[10] is not None else 0
+                                'Deposit ID': m[1],
+                                'Type': m[2],
+                                'Deposit No': m[3],
+                                'Principal': float(m[4]) if m[4] is not None else 0,
+                                'Interest Earned': float(m[5]) if m[5] is not None else 0,
+                                'Total Amount': float(m[6]) if m[6] is not None else 0,
+                                'Maturity Date': m[7] if m[7] else '',
+                                'Deposited Date': m[8] if m[8] else '',
+                                'Status': m[9] if m[9] else 'ACTIVE',
+                                'Withdrawn Date': m[10] if m[10] else '',
+                                'Withdrawn Amount': float(m[11]) if m[11] is not None else 0
                             })
                         raw_df = pd.DataFrame(raw_data)
                         st.download_button(
@@ -3032,21 +2986,21 @@ def retrieval_account():
                         with st.expander("🗑️ Delete Matured Deposit"):
                             dep_id = st.text_input("Enter Deposit ID to delete:")
                             if dep_id:
-                                if st.button("🗑️ Delete Deposit", use_container_width=True, type="secondary"):
-                                    if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                        try:
-                                            conn = get_db()
-                                            dep = conn.execute("SELECT id FROM matured_deposits WHERE deposit_id=?", (dep_id,)).fetchone()
-                                            if dep:
-                                                conn.execute("DELETE FROM matured_deposits WHERE deposit_id=?", (dep_id,))
-                                                conn.commit()
-                                                conn.close()
-                                                st.success("✅ Deposit record deleted successfully!")
-                                                st.rerun()
-                                            else:
-                                                st.error("❌ Deposit not found!")
-                                        except Exception as e:
-                                            st.error(f"❌ Error: {str(e)}")
+                                confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!")
+                                if confirm and st.button("🗑️ Delete Deposit", use_container_width=True, type="secondary"):
+                                    try:
+                                        conn = get_db()
+                                        dep = conn.execute("SELECT id FROM matured_deposits WHERE deposit_id=?", (dep_id,)).fetchone()
+                                        if dep:
+                                            conn.execute("DELETE FROM matured_deposits WHERE deposit_id=?", (dep_id,))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success("✅ Deposit record deleted successfully!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ Deposit not found!")
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
                 else:
                     st.info("No matured deposits found for this customer")
             except Exception as e:
@@ -3247,26 +3201,26 @@ def chart_of_accounts():
                 with st.expander("🗑️ Delete Account"):
                     acc_code = st.text_input("Enter Account Code to delete:")
                     if acc_code:
-                        if st.button("🗑️ Delete Account", use_container_width=True, type="secondary"):
-                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                try:
-                                    conn = get_db()
-                                    acc = conn.execute("SELECT id FROM chart_of_accounts WHERE account_code=?", (acc_code,)).fetchone()
-                                    if acc:
-                                        used_in_income = conn.execute("SELECT id FROM income WHERE chart_of_accounts_id=?", (acc[0],)).fetchone()
-                                        used_in_expense = conn.execute("SELECT id FROM expenses WHERE chart_of_accounts_id=?", (acc[0],)).fetchone()
-                                        if used_in_income or used_in_expense:
-                                            st.error("❌ This account is in use and cannot be deleted!")
-                                        else:
-                                            conn.execute("DELETE FROM chart_of_accounts WHERE account_code=?", (acc_code,))
-                                            conn.commit()
-                                            conn.close()
-                                            st.success("✅ Account deleted successfully!")
-                                            st.rerun()
+                        confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!")
+                        if confirm and st.button("🗑️ Delete Account", use_container_width=True, type="secondary"):
+                            try:
+                                conn = get_db()
+                                acc = conn.execute("SELECT id FROM chart_of_accounts WHERE account_code=?", (acc_code,)).fetchone()
+                                if acc:
+                                    used_in_income = conn.execute("SELECT id FROM income WHERE chart_of_accounts_id=?", (acc[0],)).fetchone()
+                                    used_in_expense = conn.execute("SELECT id FROM expenses WHERE chart_of_accounts_id=?", (acc[0],)).fetchone()
+                                    if used_in_income or used_in_expense:
+                                        st.error("❌ This account is in use and cannot be deleted!")
                                     else:
-                                        st.error("❌ Account not found!")
-                                except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                                        conn.execute("DELETE FROM chart_of_accounts WHERE account_code=?", (acc_code,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ Account deleted successfully!")
+                                        st.rerun()
+                                else:
+                                    st.error("❌ Account not found!")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No accounts found")
     
@@ -3523,21 +3477,21 @@ def transactions():
         with st.expander("🗑️ Delete Transaction"):
             txn_id = st.text_input("Enter Transaction ID to delete:")
             if txn_id:
-                if st.button("🗑️ Delete Transaction", use_container_width=True, type="secondary"):
-                    if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                        try:
-                            conn = get_db()
-                            txn = conn.execute("SELECT id FROM transactions WHERE transaction_id=?", (txn_id,)).fetchone()
-                            if txn:
-                                conn.execute("DELETE FROM transactions WHERE transaction_id=?", (txn_id,))
-                                conn.commit()
-                                conn.close()
-                                st.success("✅ Transaction deleted successfully!")
-                                st.rerun()
-                            else:
-                                st.error("❌ Transaction not found!")
-                        except Exception as e:
-                            st.error(f"❌ Error: {str(e)}")
+                confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!")
+                if confirm and st.button("🗑️ Delete Transaction", use_container_width=True, type="secondary"):
+                    try:
+                        conn = get_db()
+                        txn = conn.execute("SELECT id FROM transactions WHERE transaction_id=?", (txn_id,)).fetchone()
+                        if txn:
+                            conn.execute("DELETE FROM transactions WHERE transaction_id=?", (txn_id,))
+                            conn.commit()
+                            conn.close()
+                            st.success("✅ Transaction deleted successfully!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Transaction not found!")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
         
         if st.button("📄 Print/PDF Transactions", use_container_width=True):
             content = [
@@ -3762,20 +3716,21 @@ def journal_vouchers():
                         total_credit = df['Credit'].sum()
                         st.info(f"📊 Total Debit: ₹ {total_debit:,.2f} | Total Credit: ₹ {total_credit:,.2f}")
                         
+                        # DELETE ENTRY - FIXED
                         with st.expander("🗑️ Delete Entry"):
                             entry_id = st.text_input("Enter Entry ID to delete:", key=f"del_entry_{v[0]}")
                             if entry_id:
-                                if st.button("🗑️ Delete Entry", key=f"del_btn_{v[0]}", use_container_width=True, type="secondary"):
-                                    if st.checkbox("☑️ Confirm delete?", key=f"confirm_entry_{v[0]}"):
-                                        try:
-                                            conn = get_db()
-                                            conn.execute("DELETE FROM journal_entries WHERE id=?", (entry_id,))
-                                            conn.commit()
-                                            conn.close()
-                                            st.success("✅ Entry deleted successfully!")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"❌ Error: {str(e)}")
+                                confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key=f"confirm_entry_{v[0]}")
+                                if confirm and st.button("🗑️ Delete Entry", key=f"del_btn_{v[0]}", use_container_width=True, type="secondary"):
+                                    try:
+                                        conn = get_db()
+                                        conn.execute("DELETE FROM journal_entries WHERE id=?", (entry_id,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ Entry deleted successfully!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
                     
                     if v[5] == 'DRAFT':
                         col1, col2, col3 = st.columns(3)
@@ -3804,7 +3759,8 @@ def journal_vouchers():
                         
                         with col3:
                             if st.button("🗑️ Delete JV", key=f"delete_jv_{v[0]}", use_container_width=True, type="secondary"):
-                                if st.checkbox("☑️ Confirm delete?", key=f"confirm_jv_{v[0]}"):
+                                confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key=f"confirm_jv_{v[0]}")
+                                if confirm:
                                     try:
                                         conn = get_db()
                                         conn.execute("DELETE FROM journal_entries WHERE voucher_id=?", (v[0],))
@@ -3859,7 +3815,7 @@ def income_expenses():
             with col1:
                 income_type = st.selectbox(
                     "📊 Income Type",
-                    ["Interest Earned", "Fees & Charges", "Commission Income", "Other Income"]
+                    ["Interest Received", "Fees & Charges", "Commission Income", "Other Income"]
                 )
                 
                 if income_accounts:
@@ -4097,24 +4053,26 @@ def income_expenses():
                 )
             
             with col2:
+                # DELETE INCOME - FIXED
                 with st.expander("🗑️ Delete Income Record"):
-                    inc_id = st.text_input("Enter Income ID to delete:")
+                    st.warning("⚠️ This will permanently delete the income record.")
+                    inc_id = st.text_input("Enter Income ID to delete:", key="del_inc")
                     if inc_id:
-                        if st.button("🗑️ Delete Income", use_container_width=True, type="secondary"):
-                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                try:
-                                    conn = get_db()
-                                    inc = conn.execute("SELECT id FROM income WHERE income_id=?", (inc_id,)).fetchone()
-                                    if inc:
-                                        conn.execute("DELETE FROM income WHERE income_id=?", (inc_id,))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success("✅ Income record deleted successfully!")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Income record not found!")
-                                except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                        confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_inc_confirm")
+                        if confirm and st.button("🗑️ Delete Income", use_container_width=True, type="secondary"):
+                            try:
+                                conn = get_db()
+                                inc = conn.execute("SELECT id FROM income WHERE income_id=?", (inc_id,)).fetchone()
+                                if inc:
+                                    conn.execute("DELETE FROM income WHERE income_id=?", (inc_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("✅ Income record deleted successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Income record not found!")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No income recorded")
     
@@ -4200,24 +4158,26 @@ def income_expenses():
                 )
             
             with col2:
+                # DELETE EXPENSE - FIXED
                 with st.expander("🗑️ Delete Expense Record"):
-                    exp_id = st.text_input("Enter Expense ID to delete:")
+                    st.warning("⚠️ This will permanently delete the expense record.")
+                    exp_id = st.text_input("Enter Expense ID to delete:", key="del_exp")
                     if exp_id:
-                        if st.button("🗑️ Delete Expense", use_container_width=True, type="secondary"):
-                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                try:
-                                    conn = get_db()
-                                    exp = conn.execute("SELECT id FROM expenses WHERE expense_id=?", (exp_id,)).fetchone()
-                                    if exp:
-                                        conn.execute("DELETE FROM expenses WHERE expense_id=?", (exp_id,))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success("✅ Expense record deleted successfully!")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Expense record not found!")
-                                except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                        confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_exp_confirm")
+                        if confirm and st.button("🗑️ Delete Expense", use_container_width=True, type="secondary"):
+                            try:
+                                conn = get_db()
+                                exp = conn.execute("SELECT id FROM expenses WHERE expense_id=?", (exp_id,)).fetchone()
+                                if exp:
+                                    conn.execute("DELETE FROM expenses WHERE expense_id=?", (exp_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("✅ Expense record deleted successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Expense record not found!")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No expenses recorded")
     
@@ -4372,378 +4332,22 @@ def interest_calculation():
         df = pd.DataFrame(data)
         st.dataframe(df, use_container_width=True)
         
+        # DELETE INTEREST RECORD - FIXED
         with st.expander("🗑️ Delete Interest Record"):
             int_id = st.text_input("Enter Interest Calculation ID to delete:")
             if int_id:
-                if st.button("🗑️ Delete Interest Record", use_container_width=True, type="secondary"):
-                    if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                        try:
-                            conn = get_db()
-                            conn.execute("DELETE FROM interest_calculations WHERE id=?", (int_id,))
-                            conn.commit()
-                            conn.close()
-                            st.success("✅ Interest record deleted successfully!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error: {str(e)}")
+                confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!")
+                if confirm and st.button("🗑️ Delete Interest Record", use_container_width=True, type="secondary"):
+                    try:
+                        conn = get_db()
+                        conn.execute("DELETE FROM interest_calculations WHERE id=?", (int_id,))
+                        conn.commit()
+                        conn.close()
+                        st.success("✅ Interest record deleted successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
 
-
-# ==================== PROFIT & LOSS - COMPLETE FIX ====================
-# ==================== PROFIT & LOSS - COMPLETE FIX ====================
-def profit_loss():
-    if st.session_state.user['role'] not in ['admin', 'staff']:
-        st.error("❌ Unauthorized access!")
-        return
-    
-    c = get_db()
-    st.markdown("### 📈 Profit & Loss Statement")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        from_date = st.date_input("📅 From Date", get_ist_today().replace(day=1))
-    with col2:
-        to_date = st.date_input("📅 To Date", get_ist_today())
-    
-    if st.button("🔄 Generate P&L", use_container_width=True, type="primary"):
-        # === INCOME ===
-        income_data = []
-        total_income = 0
-        
-        # 1. Interest Received on Loans (from loan module - to be added)
-        # For now, we'll get from manual income entries marked as 'Interest Received'
-        loan_interest = c.execute("""
-            SELECT 
-                'Interest Received on Loans' as income_name,
-                COALESCE(SUM(amount), 0) as total,
-                'Loan Interest' as source
-            FROM income
-            WHERE income_type = 'Interest Received' 
-            AND DATE(date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if loan_interest and loan_interest[1] > 0:
-            income_data.append({
-                'Income Name': 'Interest Received on Loans',
-                'Amount': loan_interest[1],
-                'Source': 'Loan Interest'
-            })
-            total_income += loan_interest[1]
-        
-        # 2. Fees & Charges Income (from transactions)
-        fees_income = c.execute("""
-            SELECT 
-                'Processing & Service Fees' as income_name,
-                COALESCE(SUM(amount), 0) as total,
-                'Transactions' as source
-            FROM transactions
-            WHERE transaction_type = 'CREDIT' 
-            AND reference_type IN ('FEE', 'CHARGE', 'COMMISSION', 'PROCESSING')
-            AND DATE(created_at) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if fees_income and fees_income[1] > 0:
-            income_data.append({
-                'Income Name': 'Processing & Service Fees',
-                'Amount': fees_income[1],
-                'Source': 'Transactions'
-            })
-            total_income += fees_income[1]
-        
-        # 3. Other Income (manual entries)
-        manual_income = c.execute("""
-            SELECT 
-                COALESCE(c.account_name, i.income_type) as income_name,
-                SUM(i.amount) as total,
-                'Manual Entry' as source
-            FROM income i
-            LEFT JOIN chart_of_accounts c ON i.chart_of_accounts_id = c.id
-            WHERE DATE(i.date) BETWEEN ? AND ?
-            AND i.income_type NOT LIKE '%Interest Received%'
-            GROUP BY income_name
-            ORDER BY total DESC
-        """, (from_date, to_date)).fetchall()
-        
-        for item in manual_income:
-            if item[1] > 0:
-                income_data.append({
-                    'Income Name': item[0],
-                    'Amount': item[1],
-                    'Source': 'Manual Entry'
-                })
-                total_income += item[1]
-        
-        # === EXPENSES (Interest Paid to Depositors) ===
-        expense_data = []
-        total_expense = 0
-        
-        # 1. SB Interest Paid
-        sb_interest = c.execute("""
-            SELECT 
-                'SB Interest Paid' as expense_name,
-                COALESCE(SUM(interest_earned), 0) as total,
-                'Savings Account' as source
-            FROM interest_calculations
-            WHERE DATE(calculation_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if sb_interest and sb_interest[1] > 0:
-            expense_data.append({
-                'Expense Name': 'SB Interest Paid',
-                'Amount': sb_interest[1],
-                'Source': 'Savings Account'
-            })
-            total_expense += sb_interest[1]
-        
-        # 2. FD Interest Paid
-        fd_interest = c.execute("""
-            SELECT 
-                'FD Interest Paid' as expense_name,
-                COALESCE(SUM(closed_amount - principal_amount), 0) as total,
-                'Fixed Deposit' as source
-            FROM fixed_deposits
-            WHERE status = 'CLOSED' 
-            AND DATE(closed_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if fd_interest and fd_interest[1] > 0:
-            expense_data.append({
-                'Expense Name': 'FD Interest Paid',
-                'Amount': fd_interest[1],
-                'Source': 'Fixed Deposit'
-            })
-            total_expense += fd_interest[1]
-        
-        # 3. RD Interest Paid
-        rd_interest = c.execute("""
-            SELECT 
-                'RD Interest Paid' as expense_name,
-                COALESCE(SUM(closed_amount - (monthly_amount * total_installments)), 0) as total,
-                'Recurring Deposit' as source
-            FROM recurring_deposits
-            WHERE status = 'MATURED' 
-            AND DATE(closed_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if rd_interest and rd_interest[1] > 0:
-            expense_data.append({
-                'Expense Name': 'RD Interest Paid',
-                'Amount': rd_interest[1],
-                'Source': 'Recurring Deposit'
-            })
-            total_expense += rd_interest[1]
-        
-        # 4. Manual Expenses
-        manual_expenses = c.execute("""
-            SELECT 
-                COALESCE(c.account_name, e.expense_type) as expense_name,
-                SUM(e.amount) as total,
-                'Manual Entry' as source
-            FROM expenses e
-            LEFT JOIN chart_of_accounts c ON e.chart_of_accounts_id = c.id
-            WHERE DATE(e.date) BETWEEN ? AND ?
-            GROUP BY expense_name
-            ORDER BY total DESC
-        """, (from_date, to_date)).fetchall()
-        
-        for item in manual_expenses:
-            if item[1] > 0:
-                expense_data.append({
-                    'Expense Name': item[0],
-                    'Amount': item[1],
-                    'Source': 'Manual Entry'
-                })
-                total_expense += item[1]
-        
-        # 5. Operating Expenses (from JV)
-        operating_expenses = c.execute("""
-            SELECT 
-                'Operating & Administrative Expenses' as expense_name,
-                COALESCE(SUM(je.debit_amount), 0) as total,
-                'Journal Voucher' as source
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND (je.account_head LIKE '%Salary%' 
-                 OR je.account_head LIKE '%Rent%' 
-                 OR je.account_head LIKE '%Electricity%'
-                 OR je.account_head LIKE '%Water%'
-                 OR je.account_head LIKE '%Internet%'
-                 OR je.account_head LIKE '%Stationary%'
-                 OR je.account_head LIKE '%Conveyance%')
-            AND DATE(jv.voucher_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if operating_expenses and operating_expenses[1] > 0:
-            expense_data.append({
-                'Expense Name': 'Operating & Administrative Expenses',
-                'Amount': operating_expenses[1],
-                'Source': 'Journal Voucher'
-            })
-            total_expense += operating_expenses[1]
-        
-        # Calculate net profit/loss
-        net_profit = total_income - total_expense
-        
-        # === DISPLAY P&L ===
-        st.markdown("### 📊 Profit & Loss Summary")
-        st.markdown(f"**Period:** {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}")
-        st.markdown("---")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### 💰 INCOME (Revenue)")
-            st.markdown("---")
-            if income_data:
-                for item in income_data:
-                    emoji = "💰" if "Interest" in item['Income Name'] else "📊"
-                    st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
-                        <span>{emoji} <strong>{item['Income Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
-                        <span style="font-weight: 600; color: #28a745;">+ ₹ {item['Amount']:,.2f}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                st.markdown("---")
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 10px; background: #e8f5e9; border-radius: 8px;">
-                    <span style="font-size: 1.1rem; font-weight: 700;">Total Income</span>
-                    <span style="font-size: 1.1rem; font-weight: 700; color: #2e7d32;">₹ {total_income:,.2f}</span>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.info("No income recorded in this period")
-        
-        with col2:
-            st.markdown("#### 💸 EXPENSES")
-            st.markdown("---")
-            if expense_data:
-                for item in expense_data:
-                    emoji = "🏦" if "Interest Paid" in item['Expense Name'] else "📊"
-                    st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
-                        <span>{emoji} <strong>{item['Expense Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
-                        <span style="font-weight: 600; color: #dc3545;">- ₹ {item['Amount']:,.2f}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                st.markdown("---")
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 10px; background: #fce4ec; border-radius: 8px;">
-                    <span style="font-size: 1.1rem; font-weight: 700;">Total Expenses</span>
-                    <span style="font-size: 1.1rem; font-weight: 700; color: #c62828;">₹ {total_expense:,.2f}</span>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.info("No expenses recorded in this period")
-        
-        st.markdown("---")
-        
-        # Net Result
-        if net_profit >= 0:
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); padding: 2rem; border-radius: 12px; text-align: center;">
-                <h2 style="color: #1b5e20; margin: 0;">🎉 Net Profit: ₹ {net_profit:,.2f}</h2>
-                <p style="color: #1b5e20; margin: 10px 0 0 0; font-size: 1rem;">
-                    Profit Margin: {((net_profit / total_income) * 100) if total_income > 0 else 0:.1f}%
-                </p>
-                <p style="color: #1b5e20; margin: 5px 0 0 0; font-size: 0.9rem;">
-                    Total Income: ₹ {total_income:,.2f} | Total Expenses: ₹ {total_expense:,.2f}
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.balloons()
-        else:
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #fce4ec, #f8d7da); padding: 2rem; border-radius: 12px; text-align: center;">
-                <h2 style="color: #721c24; margin: 0;">📉 Net Loss: ₹ {abs(net_profit):,.2f}</h2>
-                <p style="color: #721c24; margin: 10px 0 0 0; font-size: 0.9rem;">
-                    Total Income: ₹ {total_income:,.2f} | Total Expenses: ₹ {total_expense:,.2f}
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # === INTEREST BREAKDOWN ===
-        st.markdown("### 📊 Interest Summary")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### 📈 Interest Received (Income)")
-            interest_received = sum(item['Amount'] for item in income_data if "Interest" in item['Income Name'])
-            if interest_received > 0:
-                st.metric("Total Interest Received", f"₹ {interest_received:,.2f}")
-                for item in income_data:
-                    if "Interest" in item['Income Name']:
-                        st.write(f"• {item['Income Name']}: ₹ {item['Amount']:,.2f}")
-            else:
-                st.info("No interest received recorded")
-        
-        with col2:
-            st.markdown("#### 📉 Interest Paid (Expenses)")
-            interest_paid = sum(item['Amount'] for item in expense_data if "Interest Paid" in item['Expense Name'])
-            if interest_paid > 0:
-                st.metric("Total Interest Paid", f"₹ {interest_paid:,.2f}")
-                for item in expense_data:
-                    if "Interest Paid" in item['Expense Name']:
-                        st.write(f"• {item['Expense Name']}: ₹ {item['Amount']:,.2f}")
-            else:
-                st.info("No interest paid recorded")
-        
-        # Net Interest Income/Expense
-        net_interest = interest_received - interest_paid
-        if net_interest >= 0:
-            st.success(f"✅ **Net Interest Income: ₹ {net_interest:,.2f}**")
-        else:
-            st.error(f"❌ **Net Interest Expense: ₹ {abs(net_interest):,.2f}**")
-        
-        # === DOWNLOAD ===
-        col1, col2 = st.columns(2)
-        with col1:
-            csv_data = [['Type', 'Name', 'Source', 'Amount']]
-            for item in income_data:
-                csv_data.append(['Income', item['Income Name'], item['Source'], item['Amount']])
-            for item in expense_data:
-                csv_data.append(['Expense', item['Expense Name'], item['Source'], item['Amount']])
-            csv_data.append(['Net', 'Net Profit/Loss', '', net_profit])
-            df_csv = pd.DataFrame(csv_data[1:], columns=csv_data[0])
-            st.download_button(
-                "📥 Download CSV",
-                df_csv.to_csv(index=False),
-                f"profit_loss_{from_date.strftime('%d%m%Y')}_{to_date.strftime('%d%m%Y')}.csv",
-                "text/csv"
-            )
-        
-        with col2:
-            if st.button("📄 Print/PDF P&L", use_container_width=True):
-                content = [
-                    "📈 PROFIT & LOSS STATEMENT",
-                    "=" * 50,
-                    f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}",
-                    f"Generated on: {get_ist_now().strftime('%d-%m-%Y %I:%M %p')}",
-                    "",
-                    "INCOME:",
-                    "-" * 30
-                ]
-                for item in income_data:
-                    content.append(f"{item['Income Name']} ({item['Source']}): ₹ {item['Amount']:,.2f}")
-                content.append(f"Total Income: ₹ {total_income:,.2f}")
-                content.append("")
-                content.append("EXPENSES:")
-                content.append("-" * 30)
-                for item in expense_data:
-                    content.append(f"{item['Expense Name']} ({item['Source']}): ₹ {item['Amount']:,.2f}")
-                content.append(f"Total Expenses: ₹ {total_expense:,.2f}")
-                content.append("")
-                if net_profit >= 0:
-                    content.append(f"NET PROFIT: ₹ {net_profit:,.2f}")
-                else:
-                    content.append(f"NET LOSS: ₹ {abs(net_profit):,.2f}")
-                
-                pdf_file = create_pdf("Profit & Loss Statement", content, "profit_loss")
-                if pdf_file:
-                    create_download_button(pdf_file, "profit_loss", "📥 Download PDF Report")
-    
-    c.close()
 # ==================== TRIAL BALANCE ====================
 def trial_balance():
     if st.session_state.user['role'] not in ['admin', 'staff']:
@@ -4962,13 +4566,10 @@ def balance_sheet():
     if st.button("🔄 Generate Balance Sheet", use_container_width=True, type="primary"):
         assets = []
         liabilities = []
-        equity_items = []
         ta = 0
         tl = 0
-        te = 0
         
-        # === ASSETS ===
-        # 1. Cash in Hand
+        # === REGULAR ASSETS ===
         for mode, name in [('CASH', 'Cash in Hand'), ('BANK', 'Cash in Bank'), ('CHEQUE', 'Cash (Cheque)')]:
             bal = c.execute("""
                 SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
@@ -4978,44 +4579,11 @@ def balance_sheet():
                 assets.append({'name': name, 'amount': bal})
                 ta += bal
         
-        # 2. Loans given (to be added)
-        # For now, get from chart of accounts
-        loan_assets = c.execute("""
-            SELECT 
-                'Loans Given' as name,
-                COALESCE(SUM(je.debit_amount), 0) as amount
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND je.account_head LIKE '%Loan Given%'
-        """).fetchone()
-        
-        if loan_assets and loan_assets[1] > 0:
-            assets.append({'name': 'Loans Given', 'amount': loan_assets[1]})
-            ta += loan_assets[1]
-        
-        # 3. Interest Receivable (Interest earned but not received)
-        interest_receivable = c.execute("""
-            SELECT 
-                'Interest Receivable' as name,
-                COALESCE(SUM(je.debit_amount), 0) as amount
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND je.account_head LIKE '%Interest Receivable%'
-        """).fetchone()
-        
-        if interest_receivable and interest_receivable[1] > 0:
-            assets.append({'name': 'Interest Receivable', 'amount': interest_receivable[1]})
-            ta += interest_receivable[1]
-        
-        # 4. FD Deposits Held (Active FDs)
         fd_total = c.execute("SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
         if fd_total > 0:
             assets.append({'name': 'FD Deposits Held', 'amount': fd_total})
             ta += fd_total
         
-        # 5. RD Deposits Held
         rd_total = c.execute("""
             SELECT COALESCE(SUM(monthly_amount * installments_paid), 0) 
             FROM recurring_deposits WHERE status='ACTIVE'
@@ -5024,140 +4592,64 @@ def balance_sheet():
             assets.append({'name': 'RD Deposits Held', 'amount': rd_total})
             ta += rd_total
         
-        # 6. Retrieval Account Balance
         ret_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM retrieval_accounts WHERE status='ACTIVE'").fetchone()[0]
         if ret_total > 0:
             assets.append({'name': 'Retrieval Account Balance', 'amount': ret_total})
             ta += ret_total
         
-        # 7. Other Assets (from JV)
-        other_assets = c.execute("""
-            SELECT 
-                'Other Assets' as name,
-                COALESCE(SUM(je.debit_amount), 0) as amount
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND je.account_head LIKE '%Asset%'
-            AND je.account_head NOT LIKE '%Interest Receivable%'
-            AND je.account_head NOT LIKE '%Loan Given%'
-        """).fetchone()
+        # === JV ASSETS (POSTED JV DEBIT ENTRIES) ===
+        jv_assets = c.execute("""
+            SELECT je.account_head, SUM(je.debit_amount) as total
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
+            WHERE jv.status='POSTED' AND je.debit_amount > 0 
+            GROUP BY je.account_head
+            ORDER BY total DESC
+        """).fetchall()
         
-        if other_assets and other_assets[1] > 0:
-            assets.append({'name': 'Other Assets', 'amount': other_assets[1]})
-            ta += other_assets[1]
+        for e in jv_assets:
+            if e[1] > 0:
+                assets.append({'name': f"JV: {e[0]}", 'amount': e[1]})
+                ta += e[1]
         
-        # === LIABILITIES ===
-        # 1. SB Deposits
+        # === REGULAR LIABILITIES ===
         sb_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         if sb_total > 0:
             liabilities.append({'name': 'SB Deposits', 'amount': sb_total})
             tl += sb_total
         
-        # 2. SB Interest Payable (Accrued but not paid)
-        sb_int_payable = c.execute("""
-            SELECT COALESCE(SUM(total_interest_earned), 0) 
-            FROM accounts WHERE account_type='SB' AND status='ACTIVE'
-        """).fetchone()[0]
-        if sb_int_payable > 0:
-            liabilities.append({'name': 'SB Interest Payable', 'amount': sb_int_payable})
-            tl += sb_int_payable
+        sb_int = c.execute("SELECT COALESCE(SUM(total_interest_earned), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
+        if sb_int > 0:
+            liabilities.append({'name': 'SB Interest Payable', 'amount': sb_int})
+            tl += sb_int
         
-        # 3. FD Interest Payable
-        fd_int_payable = c.execute("""
-            SELECT COALESCE(SUM(closed_amount - principal_amount), 0) 
-            FROM fixed_deposits WHERE status='CLOSED'
-        """).fetchone()[0]
-        if fd_int_payable > 0:
-            liabilities.append({'name': 'FD Interest Payable', 'amount': fd_int_payable})
-            tl += fd_int_payable
+        # === JV LIABILITIES (POSTED JV CREDIT ENTRIES) ===
+        jv_liabilities = c.execute("""
+            SELECT je.account_head, SUM(je.credit_amount) as total
+            FROM journal_entries je 
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
+            WHERE jv.status='POSTED' AND je.credit_amount > 0 
+            GROUP BY je.account_head
+            ORDER BY total DESC
+        """).fetchall()
         
-        # 4. RD Interest Payable
-        rd_int_payable = c.execute("""
-            SELECT COALESCE(SUM(closed_amount - (monthly_amount * total_installments)), 0) 
-            FROM recurring_deposits WHERE status='MATURED'
-        """).fetchone()[0]
-        if rd_int_payable > 0:
-            liabilities.append({'name': 'RD Interest Payable', 'amount': rd_int_payable})
-            tl += rd_int_payable
+        for e in jv_liabilities:
+            if e[1] > 0:
+                liabilities.append({'name': f"JV: {e[0]}", 'amount': e[1]})
+                tl += e[1]
         
-        # 5. Other Liabilities (from JV)
-        other_liabilities = c.execute("""
-            SELECT 
-                'Other Liabilities' as name,
-                COALESCE(SUM(je.credit_amount), 0) as amount
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND (je.account_head LIKE '%Payable%' 
-                 OR je.account_head LIKE '%Liability%')
-            AND je.account_head NOT LIKE '%Interest Payable%'
-        """).fetchone()
+        # === INCOME & EXPENSES ===
+        income_total = c.execute("SELECT COALESCE(SUM(amount), 0) FROM income").fetchone()[0]
+        expense_total = c.execute("SELECT COALESCE(SUM(amount), 0) FROM expenses").fetchone()[0]
         
-        if other_liabilities and other_liabilities[1] > 0:
-            liabilities.append({'name': 'Other Liabilities', 'amount': other_liabilities[1]})
-            tl += other_liabilities[1]
+        # === CAPITAL ===
+        capital = ta - tl
         
-        # === EQUITY ===
-        # 1. Directors' Capital
-        capital = c.execute("""
-            SELECT COALESCE(SUM(je.credit_amount), 0) 
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND je.account_head LIKE '%Capital%'
-        """).fetchone()[0]
+        # Calculate net profit/loss
+        net_profit = income_total - expense_total
         
-        if capital > 0:
-            equity_items.append({'name': "Directors' Capital", 'amount': capital})
-            te += capital
-        else:
-            # If no capital recorded, calculate as balancing figure
-            capital = ta - tl
-            if capital > 0:
-                equity_items.append({'name': "Directors' Capital (Balancing)", 'amount': capital})
-                te += capital
-        
-        # 2. Retained Earnings (Reserves & Surplus)
-        retained_earnings = c.execute("""
-            SELECT COALESCE(SUM(amount), 0) 
-            FROM income
-        """).fetchone()[0] - c.execute("""
-            SELECT COALESCE(SUM(amount), 0) 
-            FROM expenses
-        """).fetchone()[0]
-        
-        # Add JV income/expense effects
-        jv_income = c.execute("""
-            SELECT COALESCE(SUM(je.credit_amount), 0) 
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND (je.account_head LIKE '%Income%' 
-                 OR je.account_head LIKE '%Revenue%'
-                 OR je.account_head LIKE '%Gain%')
-        """).fetchone()[0]
-        
-        jv_expense = c.execute("""
-            SELECT COALESCE(SUM(je.debit_amount), 0) 
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND (je.account_head LIKE '%Expense%' 
-                 OR je.account_head LIKE '%Interest Paid%')
-        """).fetchone()[0]
-        
-        total_retained = retained_earnings + jv_income - jv_expense
-        
-        if total_retained != 0:
-            if total_retained > 0:
-                equity_items.append({'name': 'Retained Earnings (Profit)', 'amount': total_retained})
-            else:
-                equity_items.append({'name': 'Retained Earnings (Loss)', 'amount': abs(total_retained)})
-            te += total_retained
-        
-        # Total Equity
-        total_equity = te
+        # Total equity
+        total_equity = capital + net_profit
         
         # === DISPLAY ===
         col1, col2 = st.columns(2)
@@ -5184,21 +4676,27 @@ def balance_sheet():
         with col1:
             st.markdown("### 💰 EQUITY")
             st.markdown("---")
-            for item in equity_items:
-                st.markdown(f"📊 **{item['name']}**: ₹ {item['amount']:,.2f}")
+            st.markdown(f"**Capital**: ₹ {capital:,.2f}")
+            if net_profit > 0:
+                st.markdown(f"**Add: Net Profit**: ₹ {net_profit:,.2f}")
+            elif net_profit < 0:
+                st.markdown(f"**Less: Net Loss**: ₹ {abs(net_profit):,.2f}")
             st.markdown("---")
             st.markdown(f"### **Total Equity: ₹ {total_equity:,.2f}**")
         
         with col2:
-            st.markdown("### 📊 Interest Summary")
+            st.markdown("### 📊 Income & Expenses")
             st.markdown("---")
-            st.markdown(f"🏦 **Interest Payable**: ₹ {sb_int_payable + fd_int_payable + rd_int_payable:,.2f}")
-            st.markdown(f"💰 **Interest Receivable**: ₹ {interest_receivable[1] if interest_receivable else 0:,.2f}")
-            st.markdown(f"📈 **Net Interest**: ₹ {(interest_receivable[1] if interest_receivable else 0) - (sb_int_payable + fd_int_payable + rd_int_payable):,.2f}")
+            st.markdown(f"💰 **Total Income**: ₹ {income_total:,.2f}")
+            st.markdown(f"💸 **Total Expenses**: ₹ {expense_total:,.2f}")
+            st.markdown("---")
+            if net_profit >= 0:
+                st.success(f"### 🎉 Net Profit: ₹ {net_profit:,.2f}")
+            else:
+                st.error(f"### 📉 Net Loss: ₹ {abs(net_profit):,.2f}")
         
         st.markdown("---")
         
-        # Check if balanced
         if abs(ta - (tl + total_equity)) < 0.01:
             st.success(f"""
             ### ✅ PERFECTLY BALANCED! 🎉
@@ -5213,8 +4711,7 @@ def balance_sheet():
                     bs_data.append({'Category': 'Asset', 'Name': item['name'], 'Amount': item['amount']})
                 for item in liabilities:
                     bs_data.append({'Category': 'Liability', 'Name': item['name'], 'Amount': item['amount']})
-                for item in equity_items:
-                    bs_data.append({'Category': 'Equity', 'Name': item['name'], 'Amount': item['amount']})
+                bs_data.append({'Category': 'Equity', 'Name': 'Total Equity', 'Amount': total_equity})
                 
                 df_bs = pd.DataFrame(bs_data)
                 st.download_button(
@@ -5246,8 +4743,11 @@ def balance_sheet():
                     content.append("")
                     content.append("EQUITY:")
                     content.append("-" * 30)
-                    for item in equity_items:
-                        content.append(f"{item['name']}: ₹ {item['amount']:,.2f}")
+                    content.append(f"Capital: ₹ {capital:,.2f}")
+                    if net_profit > 0:
+                        content.append(f"Net Profit: ₹ {net_profit:,.2f}")
+                    elif net_profit < 0:
+                        content.append(f"Net Loss: ₹ {abs(net_profit):,.2f}")
                     content.append(f"Total Equity: ₹ {total_equity:,.2f}")
                     content.append("")
                     content.append(f"CHECK: Assets (₹ {ta:,.2f}) = Liabilities (₹ {tl:,.2f}) + Equity (₹ {total_equity:,.2f})")
@@ -5259,6 +4759,352 @@ def balance_sheet():
                         create_download_button(pdf_file, "balance_sheet", "📥 Download PDF Report")
         else:
             st.error(f"❌ Difference: ₹ {abs(ta - (tl + total_equity)):,.2f}")
+    
+    c.close()
+
+# ==================== PROFIT & LOSS ====================
+def profit_loss():
+    if st.session_state.user['role'] not in ['admin', 'staff']:
+        st.error("❌ Unauthorized access!")
+        return
+    
+    c = get_db()
+    st.markdown("### 📈 Profit & Loss Statement")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        from_date = st.date_input("📅 From Date", get_ist_today().replace(day=1))
+    with col2:
+        to_date = st.date_input("📅 To Date", get_ist_today())
+    
+    if st.button("🔄 Generate P&L", use_container_width=True, type="primary"):
+        # === INCOME FROM ALL SOURCES ===
+        income_data = []
+        total_income = 0
+        
+        # 1. Interest Received on Loans (from income table)
+        loan_interest = c.execute("""
+            SELECT 
+                'Interest Received on Loans' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Loan Interest' as source
+            FROM income
+            WHERE income_type = 'Interest Received' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if loan_interest and loan_interest[1] > 0:
+            income_data.append({
+                'Income Name': 'Interest Received on Loans',
+                'Amount': loan_interest[1],
+                'Source': 'Loan Interest'
+            })
+            total_income += loan_interest[1]
+        
+        # 2. Fees & Charges Income
+        fees_income = c.execute("""
+            SELECT 
+                'Processing & Service Fees' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Transactions' as source
+            FROM transactions
+            WHERE transaction_type = 'CREDIT' 
+            AND reference_type IN ('FEE', 'CHARGE', 'COMMISSION', 'PROCESSING')
+            AND DATE(created_at) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if fees_income and fees_income[1] > 0:
+            income_data.append({
+                'Income Name': 'Processing & Service Fees',
+                'Amount': fees_income[1],
+                'Source': 'Transactions'
+            })
+            total_income += fees_income[1]
+        
+        # 3. Other Income (manual entries)
+        manual_income = c.execute("""
+            SELECT 
+                COALESCE(c.account_name, i.income_type) as income_name,
+                SUM(i.amount) as total,
+                'Manual Entry' as source
+            FROM income i
+            LEFT JOIN chart_of_accounts c ON i.chart_of_accounts_id = c.id
+            WHERE DATE(i.date) BETWEEN ? AND ?
+            AND i.income_type NOT LIKE '%Interest Received%'
+            GROUP BY income_name
+            ORDER BY total DESC
+        """, (from_date, to_date)).fetchall()
+        
+        for item in manual_income:
+            if item[1] > 0:
+                income_data.append({
+                    'Income Name': item[0],
+                    'Amount': item[1],
+                    'Source': 'Manual Entry'
+                })
+                total_income += item[1]
+        
+        # === EXPENSES ===
+        expense_data = []
+        total_expense = 0
+        
+        # 1. SB Interest Paid
+        sb_interest = c.execute("""
+            SELECT 
+                'SB Interest Paid' as expense_name,
+                COALESCE(SUM(interest_earned), 0) as total,
+                'Savings Account' as source
+            FROM interest_calculations
+            WHERE DATE(calculation_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if sb_interest and sb_interest[1] > 0:
+            expense_data.append({
+                'Expense Name': 'SB Interest Paid',
+                'Amount': sb_interest[1],
+                'Source': 'Savings Account'
+            })
+            total_expense += sb_interest[1]
+        
+        # 2. FD Interest Paid
+        fd_interest = c.execute("""
+            SELECT 
+                'FD Interest Paid' as expense_name,
+                COALESCE(SUM(closed_amount - principal_amount), 0) as total,
+                'Fixed Deposit' as source
+            FROM fixed_deposits
+            WHERE status = 'CLOSED' 
+            AND DATE(closed_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if fd_interest and fd_interest[1] > 0:
+            expense_data.append({
+                'Expense Name': 'FD Interest Paid',
+                'Amount': fd_interest[1],
+                'Source': 'Fixed Deposit'
+            })
+            total_expense += fd_interest[1]
+        
+        # 3. RD Interest Paid
+        rd_interest = c.execute("""
+            SELECT 
+                'RD Interest Paid' as expense_name,
+                COALESCE(SUM(closed_amount - (monthly_amount * total_installments)), 0) as total,
+                'Recurring Deposit' as source
+            FROM recurring_deposits
+            WHERE status = 'MATURED' 
+            AND DATE(closed_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if rd_interest and rd_interest[1] > 0:
+            expense_data.append({
+                'Expense Name': 'RD Interest Paid',
+                'Amount': rd_interest[1],
+                'Source': 'Recurring Deposit'
+            })
+            total_expense += rd_interest[1]
+        
+        # 4. Manual Expenses
+        manual_expenses = c.execute("""
+            SELECT 
+                COALESCE(c.account_name, e.expense_type) as expense_name,
+                SUM(e.amount) as total,
+                'Manual Entry' as source
+            FROM expenses e
+            LEFT JOIN chart_of_accounts c ON e.chart_of_accounts_id = c.id
+            WHERE DATE(e.date) BETWEEN ? AND ?
+            GROUP BY expense_name
+            ORDER BY total DESC
+        """, (from_date, to_date)).fetchall()
+        
+        for item in manual_expenses:
+            if item[1] > 0:
+                expense_data.append({
+                    'Expense Name': item[0],
+                    'Amount': item[1],
+                    'Source': 'Manual Entry'
+                })
+                total_expense += item[1]
+        
+        # 5. Operating Expenses (from JV)
+        operating_expenses = c.execute("""
+            SELECT 
+                'Operating & Administrative Expenses' as expense_name,
+                COALESCE(SUM(je.debit_amount), 0) as total,
+                'Journal Voucher' as source
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND (je.account_head LIKE '%Salary%' 
+                 OR je.account_head LIKE '%Rent%' 
+                 OR je.account_head LIKE '%Electricity%'
+                 OR je.account_head LIKE '%Water%'
+                 OR je.account_head LIKE '%Internet%'
+                 OR je.account_head LIKE '%Stationary%'
+                 OR je.account_head LIKE '%Conveyance%')
+            AND DATE(jv.voucher_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if operating_expenses and operating_expenses[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Operating & Administrative Expenses',
+                'Amount': operating_expenses[1],
+                'Source': 'Journal Voucher'
+            })
+            total_expense += operating_expenses[1]
+        
+        # Calculate net profit/loss
+        net_profit = total_income - total_expense
+        
+        # === DISPLAY ===
+        st.markdown("### 📊 Profit & Loss Summary")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 💰 INCOME")
+            st.markdown("---")
+            if income_data:
+                for item in income_data:
+                    emoji = "💰" if "Interest" in item['Income Name'] else "📊"
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
+                        <span>{emoji} <strong>{item['Income Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
+                        <span style="font-weight: 600; color: #28a745;">+ ₹ {item['Amount']:,.2f}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("---")
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: #e8f5e9; border-radius: 8px;">
+                    <span style="font-size: 1.1rem; font-weight: 700;">Total Income</span>
+                    <span style="font-size: 1.1rem; font-weight: 700; color: #2e7d32;">₹ {total_income:,.2f}</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("No income in this period")
+        
+        with col2:
+            st.markdown("#### 💸 EXPENSES")
+            st.markdown("---")
+            if expense_data:
+                for item in expense_data:
+                    emoji = "🏦" if "Interest Paid" in item['Expense Name'] else "📊"
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
+                        <span>{emoji} <strong>{item['Expense Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
+                        <span style="font-weight: 600; color: #dc3545;">- ₹ {item['Amount']:,.2f}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("---")
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: #fce4ec; border-radius: 8px;">
+                    <span style="font-size: 1.1rem; font-weight: 700;">Total Expenses</span>
+                    <span style="font-size: 1.1rem; font-weight: 700; color: #c62828;">₹ {total_expense:,.2f}</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("No expenses in this period")
+        
+        st.markdown("---")
+        
+        if net_profit >= 0:
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); padding: 2rem; border-radius: 12px; text-align: center;">
+                <h2 style="color: #1b5e20; margin: 0;">🎉 Net Profit: ₹ {net_profit:,.2f}</h2>
+                <p style="color: #1b5e20; margin: 10px 0 0 0; font-size: 1rem;">
+                    Profit Margin: {((net_profit / total_income) * 100) if total_income > 0 else 0:.1f}%
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.balloons()
+        else:
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #fce4ec, #f8d7da); padding: 2rem; border-radius: 12px; text-align: center;">
+                <h2 style="color: #721c24; margin: 0;">📉 Net Loss: ₹ {abs(net_profit):,.2f}</h2>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # === INTEREST SUMMARY ===
+        st.markdown("### 📊 Interest Summary")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📈 Interest Received (Income)")
+            interest_received = sum(item['Amount'] for item in income_data if "Interest" in item['Income Name'])
+            if interest_received > 0:
+                st.metric("Total Interest Received", f"₹ {interest_received:,.2f}")
+                for item in income_data:
+                    if "Interest" in item['Income Name']:
+                        st.write(f"• {item['Income Name']}: ₹ {item['Amount']:,.2f}")
+            else:
+                st.info("No interest received recorded")
+        
+        with col2:
+            st.markdown("#### 📉 Interest Paid (Expenses)")
+            interest_paid = sum(item['Amount'] for item in expense_data if "Interest Paid" in item['Expense Name'])
+            if interest_paid > 0:
+                st.metric("Total Interest Paid", f"₹ {interest_paid:,.2f}")
+                for item in expense_data:
+                    if "Interest Paid" in item['Expense Name']:
+                        st.write(f"• {item['Expense Name']}: ₹ {item['Amount']:,.2f}")
+            else:
+                st.info("No interest paid recorded")
+        
+        # Net Interest
+        net_interest = interest_received - interest_paid
+        if net_interest >= 0:
+            st.success(f"✅ **Net Interest Income: ₹ {net_interest:,.2f}**")
+        else:
+            st.error(f"❌ **Net Interest Expense: ₹ {abs(net_interest):,.2f}**")
+        
+        # === DOWNLOAD ===
+        col1, col2 = st.columns(2)
+        with col1:
+            csv_data = [['Type', 'Name', 'Source', 'Amount']]
+            for item in income_data:
+                csv_data.append(['Income', item['Income Name'], item['Source'], item['Amount']])
+            for item in expense_data:
+                csv_data.append(['Expense', item['Expense Name'], item['Source'], item['Amount']])
+            csv_data.append(['Net', 'Net Profit/Loss', '', net_profit])
+            df_csv = pd.DataFrame(csv_data[1:], columns=csv_data[0])
+            st.download_button(
+                "📥 Download CSV",
+                df_csv.to_csv(index=False),
+                f"profit_loss_{from_date.strftime('%d%m%Y')}_{to_date.strftime('%d%m%Y')}.csv",
+                "text/csv"
+            )
+        
+        with col2:
+            if st.button("📄 Print/PDF P&L", use_container_width=True):
+                content = [
+                    "📈 PROFIT & LOSS STATEMENT",
+                    "=" * 50,
+                    f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}",
+                    f"Generated on: {get_ist_now().strftime('%d-%m-%Y %I:%M %p')}",
+                    "",
+                    "INCOME:",
+                    "-" * 30
+                ]
+                for item in income_data:
+                    content.append(f"{item['Income Name']} ({item['Source']}): ₹ {item['Amount']:,.2f}")
+                content.append(f"Total Income: ₹ {total_income:,.2f}")
+                content.append("")
+                content.append("EXPENSES:")
+                content.append("-" * 30)
+                for item in expense_data:
+                    content.append(f"{item['Expense Name']} ({item['Source']}): ₹ {item['Amount']:,.2f}")
+                content.append(f"Total Expenses: ₹ {total_expense:,.2f}")
+                content.append("")
+                if net_profit >= 0:
+                    content.append(f"NET PROFIT: ₹ {net_profit:,.2f}")
+                else:
+                    content.append(f"NET LOSS: ₹ {abs(net_profit):,.2f}")
+                
+                pdf_file = create_pdf("Profit & Loss Statement", content, "profit_loss")
+                if pdf_file:
+                    create_download_button(pdf_file, "profit_loss", "📥 Download PDF Report")
     
     c.close()
 

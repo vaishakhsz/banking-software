@@ -703,6 +703,7 @@ def customer_selector(label="👤 Select Customer", key_prefix="cust"):
     return None, None, None, None, None
 
 # ==================== TEAL THEME CSS ====================
+# ==================== TEAL THEME CSS ====================
 def load_enterprise_css():
     st.markdown("""
     <style>
@@ -789,9 +790,9 @@ def load_enterprise_css():
             margin-top: 2px;
         }
         
-        /* Sidebar */
+        /* Sidebar - Black Theme */
         [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0a8a7a, #0d6b5e, #1a4a4a) !important;
+            background: linear-gradient(180deg, #1a1a1a, #2d2d2d, #1a1a1a) !important;
             border-right: 1px solid rgba(255,255,255,0.05);
         }
         
@@ -806,7 +807,7 @@ def load_enterprise_css():
             font-size: 4rem;
             display: block;
             margin-bottom: 5px;
-            filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));
+            filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5));
         }
         
         .sidebar-logo h2 {
@@ -822,7 +823,7 @@ def load_enterprise_css():
         }
         
         .sidebar-logo p {
-            color: rgba(255,255,255,0.5);
+            color: rgba(255,255,255,0.4);
             font-size: 0.7rem;
             margin: 0;
             letter-spacing: 1px;
@@ -839,7 +840,7 @@ def load_enterprise_css():
         }
         
         [data-testid="stSidebar"] .stButton > button {
-            color: rgba(255,255,255,0.85) !important;
+            color: rgba(255,255,255,0.8) !important;
             background: transparent !important;
             border: none !important;
             border-radius: 10px !important;
@@ -865,8 +866,8 @@ def load_enterprise_css():
         }
         
         [data-testid="stSidebar"] .stButton > button[kind="primary"] {
-            background: rgba(255,255,255,0.1) !important;
-            border-left: 3px solid #f0c040 !important;
+            background: rgba(255,255,255,0.08) !important;
+            border-left: 3px solid #0a8a7a !important;
         }
         
         .sidebar-footer {

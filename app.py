@@ -4389,6 +4389,7 @@ def interest_calculation():
 
 
 # ==================== PROFIT & LOSS - COMPLETE FIX ====================
+# ==================== PROFIT & LOSS - COMPLETE FIX ====================
 def profit_loss():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -4404,67 +4405,51 @@ def profit_loss():
         to_date = st.date_input("📅 To Date", get_ist_today())
     
     if st.button("🔄 Generate P&L", use_container_width=True, type="primary"):
-        # === INCOME FROM ALL SOURCES ===
+        # === INCOME ===
         income_data = []
         total_income = 0
         
-        # 1. SB Interest Income (from interest_calculations)
-        sb_interest = c.execute("""
+        # 1. Interest Received on Loans (from loan module - to be added)
+        # For now, we'll get from manual income entries marked as 'Interest Received'
+        loan_interest = c.execute("""
             SELECT 
-                'SB Interest Income' as income_name,
-                COALESCE(SUM(interest_earned), 0) as total,
-                'Savings Account' as source
-            FROM interest_calculations
-            WHERE DATE(calculation_date) BETWEEN ? AND ?
+                'Interest Received on Loans' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Loan Interest' as source
+            FROM income
+            WHERE income_type = 'Interest Received' 
+            AND DATE(date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()
         
-        if sb_interest and sb_interest[1] > 0:
+        if loan_interest and loan_interest[1] > 0:
             income_data.append({
-                'Income Name': 'SB Interest Income',
-                'Amount': sb_interest[1],
-                'Source': 'Savings Account'
+                'Income Name': 'Interest Received on Loans',
+                'Amount': loan_interest[1],
+                'Source': 'Loan Interest'
             })
-            total_income += sb_interest[1]
+            total_income += loan_interest[1]
         
-        # 2. FD Interest Income (from closed FDs)
-        fd_interest = c.execute("""
+        # 2. Fees & Charges Income (from transactions)
+        fees_income = c.execute("""
             SELECT 
-                'FD Interest Income' as income_name,
-                COALESCE(SUM(closed_amount - principal_amount), 0) as total,
-                'Fixed Deposit' as source
-            FROM fixed_deposits
-            WHERE status = 'CLOSED' 
-            AND DATE(closed_date) BETWEEN ? AND ?
+                'Processing & Service Fees' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Transactions' as source
+            FROM transactions
+            WHERE transaction_type = 'CREDIT' 
+            AND reference_type IN ('FEE', 'CHARGE', 'COMMISSION', 'PROCESSING')
+            AND DATE(created_at) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()
         
-        if fd_interest and fd_interest[1] > 0:
+        if fees_income and fees_income[1] > 0:
             income_data.append({
-                'Income Name': 'FD Interest Income',
-                'Amount': fd_interest[1],
-                'Source': 'Fixed Deposit'
+                'Income Name': 'Processing & Service Fees',
+                'Amount': fees_income[1],
+                'Source': 'Transactions'
             })
-            total_income += fd_interest[1]
+            total_income += fees_income[1]
         
-        # 3. RD Interest Income (from matured RDs)
-        rd_interest = c.execute("""
-            SELECT 
-                'RD Interest Income' as income_name,
-                COALESCE(SUM(closed_amount - (monthly_amount * total_installments)), 0) as total,
-                'Recurring Deposit' as source
-            FROM recurring_deposits
-            WHERE status = 'MATURED' 
-            AND DATE(closed_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if rd_interest and rd_interest[1] > 0:
-            income_data.append({
-                'Income Name': 'RD Interest Income',
-                'Amount': rd_interest[1],
-                'Source': 'Recurring Deposit'
-            })
-            total_income += rd_interest[1]
-        
-        # 4. Manual Income Entries (from income table)
+        # 3. Other Income (manual entries)
         manual_income = c.execute("""
             SELECT 
                 COALESCE(c.account_name, i.income_type) as income_name,
@@ -4473,6 +4458,7 @@ def profit_loss():
             FROM income i
             LEFT JOIN chart_of_accounts c ON i.chart_of_accounts_id = c.id
             WHERE DATE(i.date) BETWEEN ? AND ?
+            AND i.income_type NOT LIKE '%Interest Received%'
             GROUP BY income_name
             ORDER BY total DESC
         """, (from_date, to_date)).fetchall()
@@ -4486,31 +4472,67 @@ def profit_loss():
                 })
                 total_income += item[1]
         
-        # 5. Fees & Charges (from transactions)
-        fees_income = c.execute("""
-            SELECT 
-                'Fees & Charges' as income_name,
-                COALESCE(SUM(amount), 0) as total,
-                'Transactions' as source
-            FROM transactions
-            WHERE transaction_type = 'CREDIT' 
-            AND reference_type IN ('FEE', 'CHARGE', 'COMMISSION')
-            AND DATE(created_at) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if fees_income and fees_income[1] > 0:
-            income_data.append({
-                'Income Name': 'Fees & Charges',
-                'Amount': fees_income[1],
-                'Source': 'Transactions'
-            })
-            total_income += fees_income[1]
-        
-        # === EXPENSES ===
+        # === EXPENSES (Interest Paid to Depositors) ===
         expense_data = []
         total_expense = 0
         
-        # 1. Manual Expense Entries (from expenses table)
+        # 1. SB Interest Paid
+        sb_interest = c.execute("""
+            SELECT 
+                'SB Interest Paid' as expense_name,
+                COALESCE(SUM(interest_earned), 0) as total,
+                'Savings Account' as source
+            FROM interest_calculations
+            WHERE DATE(calculation_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if sb_interest and sb_interest[1] > 0:
+            expense_data.append({
+                'Expense Name': 'SB Interest Paid',
+                'Amount': sb_interest[1],
+                'Source': 'Savings Account'
+            })
+            total_expense += sb_interest[1]
+        
+        # 2. FD Interest Paid
+        fd_interest = c.execute("""
+            SELECT 
+                'FD Interest Paid' as expense_name,
+                COALESCE(SUM(closed_amount - principal_amount), 0) as total,
+                'Fixed Deposit' as source
+            FROM fixed_deposits
+            WHERE status = 'CLOSED' 
+            AND DATE(closed_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if fd_interest and fd_interest[1] > 0:
+            expense_data.append({
+                'Expense Name': 'FD Interest Paid',
+                'Amount': fd_interest[1],
+                'Source': 'Fixed Deposit'
+            })
+            total_expense += fd_interest[1]
+        
+        # 3. RD Interest Paid
+        rd_interest = c.execute("""
+            SELECT 
+                'RD Interest Paid' as expense_name,
+                COALESCE(SUM(closed_amount - (monthly_amount * total_installments)), 0) as total,
+                'Recurring Deposit' as source
+            FROM recurring_deposits
+            WHERE status = 'MATURED' 
+            AND DATE(closed_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if rd_interest and rd_interest[1] > 0:
+            expense_data.append({
+                'Expense Name': 'RD Interest Paid',
+                'Amount': rd_interest[1],
+                'Source': 'Recurring Deposit'
+            })
+            total_expense += rd_interest[1]
+        
+        # 4. Manual Expenses
         manual_expenses = c.execute("""
             SELECT 
                 COALESCE(c.account_name, e.expense_type) as expense_name,
@@ -4532,52 +4554,10 @@ def profit_loss():
                 })
                 total_expense += item[1]
         
-        # 2. Interest Paid (from JV)
-        interest_paid = c.execute("""
-            SELECT 
-                'Interest Paid' as expense_name,
-                COALESCE(SUM(je.debit_amount), 0) as total,
-                'Journal Voucher' as source
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND je.account_head LIKE '%Interest Payable%'
-            AND DATE(jv.voucher_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if interest_paid and interest_paid[1] > 0:
-            expense_data.append({
-                'Expense Name': 'Interest Paid',
-                'Amount': interest_paid[1],
-                'Source': 'Journal Voucher'
-            })
-            total_expense += interest_paid[1]
-        
-        # 3. Bank Charges (from JV)
-        bank_charges = c.execute("""
-            SELECT 
-                'Bank Charges' as expense_name,
-                COALESCE(SUM(je.debit_amount), 0) as total,
-                'Journal Voucher' as source
-            FROM journal_entries je
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id
-            WHERE jv.status = 'POSTED' 
-            AND je.account_head LIKE '%Bank Charges%'
-            AND DATE(jv.voucher_date) BETWEEN ? AND ?
-        """, (from_date, to_date)).fetchone()
-        
-        if bank_charges and bank_charges[1] > 0:
-            expense_data.append({
-                'Expense Name': 'Bank Charges',
-                'Amount': bank_charges[1],
-                'Source': 'Journal Voucher'
-            })
-            total_expense += bank_charges[1]
-        
-        # 4. Operating Expenses (from JV)
+        # 5. Operating Expenses (from JV)
         operating_expenses = c.execute("""
             SELECT 
-                'Operating Expenses' as expense_name,
+                'Operating & Administrative Expenses' as expense_name,
                 COALESCE(SUM(je.debit_amount), 0) as total,
                 'Journal Voucher' as source
             FROM journal_entries je
@@ -4587,13 +4567,15 @@ def profit_loss():
                  OR je.account_head LIKE '%Rent%' 
                  OR je.account_head LIKE '%Electricity%'
                  OR je.account_head LIKE '%Water%'
-                 OR je.account_head LIKE '%Internet%')
+                 OR je.account_head LIKE '%Internet%'
+                 OR je.account_head LIKE '%Stationary%'
+                 OR je.account_head LIKE '%Conveyance%')
             AND DATE(jv.voucher_date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()
         
         if operating_expenses and operating_expenses[1] > 0:
             expense_data.append({
-                'Expense Name': 'Operating Expenses',
+                'Expense Name': 'Operating & Administrative Expenses',
                 'Amount': operating_expenses[1],
                 'Source': 'Journal Voucher'
             })
@@ -4602,17 +4584,19 @@ def profit_loss():
         # Calculate net profit/loss
         net_profit = total_income - total_expense
         
-        # === DISPLAY ===
+        # === DISPLAY P&L ===
         st.markdown("### 📊 Profit & Loss Summary")
+        st.markdown(f"**Period:** {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}")
+        st.markdown("---")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### 💰 INCOME")
+            st.markdown("#### 💰 INCOME (Revenue)")
             st.markdown("---")
             if income_data:
                 for item in income_data:
-                    emoji = "🏦" if "SB" in item['Income Name'] else "📈" if "FD" in item['Income Name'] else "🔄" if "RD" in item['Income Name'] else "💰"
+                    emoji = "💰" if "Interest" in item['Income Name'] else "📊"
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
                         <span>{emoji} <strong>{item['Income Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
@@ -4628,16 +4612,17 @@ def profit_loss():
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                st.info("No income in this period")
+                st.info("No income recorded in this period")
         
         with col2:
             st.markdown("#### 💸 EXPENSES")
             st.markdown("---")
             if expense_data:
                 for item in expense_data:
+                    emoji = "🏦" if "Interest Paid" in item['Expense Name'] else "📊"
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
-                        <span>📊 <strong>{item['Expense Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
+                        <span>{emoji} <strong>{item['Expense Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
                         <span style="font-weight: 600; color: #dc3545;">- ₹ {item['Amount']:,.2f}</span>
                     </div>
                     """, unsafe_allow_html=True)
@@ -4650,7 +4635,7 @@ def profit_loss():
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                st.info("No expenses in this period")
+                st.info("No expenses recorded in this period")
         
         st.markdown("---")
         
@@ -4659,8 +4644,11 @@ def profit_loss():
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); padding: 2rem; border-radius: 12px; text-align: center;">
                 <h2 style="color: #1b5e20; margin: 0;">🎉 Net Profit: ₹ {net_profit:,.2f}</h2>
-                <p style="color: #1b5e20; margin: 10px 0 0 0; font-size: 1.1rem;">
+                <p style="color: #1b5e20; margin: 10px 0 0 0; font-size: 1rem;">
                     Profit Margin: {((net_profit / total_income) * 100) if total_income > 0 else 0:.1f}%
+                </p>
+                <p style="color: #1b5e20; margin: 5px 0 0 0; font-size: 0.9rem;">
+                    Total Income: ₹ {total_income:,.2f} | Total Expenses: ₹ {total_expense:,.2f}
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -4669,77 +4657,54 @@ def profit_loss():
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #fce4ec, #f8d7da); padding: 2rem; border-radius: 12px; text-align: center;">
                 <h2 style="color: #721c24; margin: 0;">📉 Net Loss: ₹ {abs(net_profit):,.2f}</h2>
+                <p style="color: #721c24; margin: 10px 0 0 0; font-size: 0.9rem;">
+                    Total Income: ₹ {total_income:,.2f} | Total Expenses: ₹ {total_expense:,.2f}
+                </p>
             </div>
             """, unsafe_allow_html=True)
         
-        # === INCOME BY SOURCE CHART ===
-        st.markdown("### 📊 Income by Source")
+        # === INTEREST BREAKDOWN ===
+        st.markdown("### 📊 Interest Summary")
         
-        income_by_source = {}
-        for item in income_data:
-            source = item['Source']
-            if source not in income_by_source:
-                income_by_source[source] = 0
-            income_by_source[source] += item['Amount']
-        
-        if income_by_source:
-            source_data = []
-            for source, amount in income_by_source.items():
-                percentage = (amount/total_income*100) if total_income > 0 else 0
-                source_data.append({
-                    'Source': source,
-                    'Amount': f"₹ {amount:,.2f}",
-                    'Percentage': f"{percentage:.1f}%"
-                })
-            df_source = pd.DataFrame(source_data)
-            st.dataframe(df_source, use_container_width=True)
-            
-            # Show progress bars for income sources
-            st.markdown("#### 📈 Income Distribution")
-            for source, amount in income_by_source.items():
-                percentage = (amount/total_income*100) if total_income > 0 else 0
-                st.progress(percentage/100, text=f"{source}: {percentage:.1f}% (₹ {amount:,.2f})")
-        
-        # === EXPENSES BY SOURCE CHART ===
-        st.markdown("### 📊 Expenses by Source")
-        
-        expense_by_source = {}
-        for item in expense_data:
-            source = item['Source']
-            if source not in expense_by_source:
-                expense_by_source[source] = 0
-            expense_by_source[source] += item['Amount']
-        
-        if expense_by_source:
-            source_data = []
-            for source, amount in expense_by_source.items():
-                percentage = (amount/total_expense*100) if total_expense > 0 else 0
-                source_data.append({
-                    'Source': source,
-                    'Amount': f"₹ {amount:,.2f}",
-                    'Percentage': f"{percentage:.1f}%"
-                })
-            df_source = pd.DataFrame(source_data)
-            st.dataframe(df_source, use_container_width=True)
-            
-            # Show progress bars for expense sources
-            st.markdown("#### 📉 Expense Distribution")
-            for source, amount in expense_by_source.items():
-                percentage = (amount/total_expense*100) if total_expense > 0 else 0
-                st.progress(percentage/100, text=f"{source}: {percentage:.1f}% (₹ {amount:,.2f})")
-        
-        # === DOWNLOAD BUTTONS ===
         col1, col2 = st.columns(2)
         with col1:
-            # Create CSV data
-            csv_data = []
-            csv_data.append(['Type', 'Name', 'Source', 'Amount'])
+            st.markdown("#### 📈 Interest Received (Income)")
+            interest_received = sum(item['Amount'] for item in income_data if "Interest" in item['Income Name'])
+            if interest_received > 0:
+                st.metric("Total Interest Received", f"₹ {interest_received:,.2f}")
+                for item in income_data:
+                    if "Interest" in item['Income Name']:
+                        st.write(f"• {item['Income Name']}: ₹ {item['Amount']:,.2f}")
+            else:
+                st.info("No interest received recorded")
+        
+        with col2:
+            st.markdown("#### 📉 Interest Paid (Expenses)")
+            interest_paid = sum(item['Amount'] for item in expense_data if "Interest Paid" in item['Expense Name'])
+            if interest_paid > 0:
+                st.metric("Total Interest Paid", f"₹ {interest_paid:,.2f}")
+                for item in expense_data:
+                    if "Interest Paid" in item['Expense Name']:
+                        st.write(f"• {item['Expense Name']}: ₹ {item['Amount']:,.2f}")
+            else:
+                st.info("No interest paid recorded")
+        
+        # Net Interest Income/Expense
+        net_interest = interest_received - interest_paid
+        if net_interest >= 0:
+            st.success(f"✅ **Net Interest Income: ₹ {net_interest:,.2f}**")
+        else:
+            st.error(f"❌ **Net Interest Expense: ₹ {abs(net_interest):,.2f}**")
+        
+        # === DOWNLOAD ===
+        col1, col2 = st.columns(2)
+        with col1:
+            csv_data = [['Type', 'Name', 'Source', 'Amount']]
             for item in income_data:
                 csv_data.append(['Income', item['Income Name'], item['Source'], item['Amount']])
             for item in expense_data:
                 csv_data.append(['Expense', item['Expense Name'], item['Source'], item['Amount']])
             csv_data.append(['Net', 'Net Profit/Loss', '', net_profit])
-            
             df_csv = pd.DataFrame(csv_data[1:], columns=csv_data[0])
             st.download_button(
                 "📥 Download CSV",
@@ -4771,7 +4736,6 @@ def profit_loss():
                 content.append("")
                 if net_profit >= 0:
                     content.append(f"NET PROFIT: ₹ {net_profit:,.2f}")
-                    content.append(f"Profit Margin: {((net_profit/total_income*100) if total_income > 0 else 0):.1f}%")
                 else:
                     content.append(f"NET LOSS: ₹ {abs(net_profit):,.2f}")
                 
@@ -4998,10 +4962,13 @@ def balance_sheet():
     if st.button("🔄 Generate Balance Sheet", use_container_width=True, type="primary"):
         assets = []
         liabilities = []
+        equity_items = []
         ta = 0
         tl = 0
+        te = 0
         
-        # === REGULAR ASSETS ===
+        # === ASSETS ===
+        # 1. Cash in Hand
         for mode, name in [('CASH', 'Cash in Hand'), ('BANK', 'Cash in Bank'), ('CHEQUE', 'Cash (Cheque)')]:
             bal = c.execute("""
                 SELECT COALESCE(SUM(CASE WHEN transaction_type='CREDIT' THEN amount ELSE -amount END), 0)
@@ -5011,11 +4978,44 @@ def balance_sheet():
                 assets.append({'name': name, 'amount': bal})
                 ta += bal
         
+        # 2. Loans given (to be added)
+        # For now, get from chart of accounts
+        loan_assets = c.execute("""
+            SELECT 
+                'Loans Given' as name,
+                COALESCE(SUM(je.debit_amount), 0) as amount
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND je.account_head LIKE '%Loan Given%'
+        """).fetchone()
+        
+        if loan_assets and loan_assets[1] > 0:
+            assets.append({'name': 'Loans Given', 'amount': loan_assets[1]})
+            ta += loan_assets[1]
+        
+        # 3. Interest Receivable (Interest earned but not received)
+        interest_receivable = c.execute("""
+            SELECT 
+                'Interest Receivable' as name,
+                COALESCE(SUM(je.debit_amount), 0) as amount
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND je.account_head LIKE '%Interest Receivable%'
+        """).fetchone()
+        
+        if interest_receivable and interest_receivable[1] > 0:
+            assets.append({'name': 'Interest Receivable', 'amount': interest_receivable[1]})
+            ta += interest_receivable[1]
+        
+        # 4. FD Deposits Held (Active FDs)
         fd_total = c.execute("SELECT COALESCE(SUM(principal_amount), 0) FROM fixed_deposits WHERE status='ACTIVE'").fetchone()[0]
         if fd_total > 0:
             assets.append({'name': 'FD Deposits Held', 'amount': fd_total})
             ta += fd_total
         
+        # 5. RD Deposits Held
         rd_total = c.execute("""
             SELECT COALESCE(SUM(monthly_amount * installments_paid), 0) 
             FROM recurring_deposits WHERE status='ACTIVE'
@@ -5024,64 +5024,140 @@ def balance_sheet():
             assets.append({'name': 'RD Deposits Held', 'amount': rd_total})
             ta += rd_total
         
+        # 6. Retrieval Account Balance
         ret_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM retrieval_accounts WHERE status='ACTIVE'").fetchone()[0]
         if ret_total > 0:
             assets.append({'name': 'Retrieval Account Balance', 'amount': ret_total})
             ta += ret_total
         
-        # === JV ASSETS (POSTED JV DEBIT ENTRIES) ===
-        jv_assets = c.execute("""
-            SELECT je.account_head, SUM(je.debit_amount) as total
-            FROM journal_entries je 
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
-            WHERE jv.status='POSTED' AND je.debit_amount > 0 
-            GROUP BY je.account_head
-            ORDER BY total DESC
-        """).fetchall()
+        # 7. Other Assets (from JV)
+        other_assets = c.execute("""
+            SELECT 
+                'Other Assets' as name,
+                COALESCE(SUM(je.debit_amount), 0) as amount
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND je.account_head LIKE '%Asset%'
+            AND je.account_head NOT LIKE '%Interest Receivable%'
+            AND je.account_head NOT LIKE '%Loan Given%'
+        """).fetchone()
         
-        for e in jv_assets:
-            if e[1] > 0:
-                assets.append({'name': f"JV: {e[0]}", 'amount': e[1]})
-                ta += e[1]
+        if other_assets and other_assets[1] > 0:
+            assets.append({'name': 'Other Assets', 'amount': other_assets[1]})
+            ta += other_assets[1]
         
-        # === REGULAR LIABILITIES ===
+        # === LIABILITIES ===
+        # 1. SB Deposits
         sb_total = c.execute("SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
         if sb_total > 0:
             liabilities.append({'name': 'SB Deposits', 'amount': sb_total})
             tl += sb_total
         
-        sb_int = c.execute("SELECT COALESCE(SUM(total_interest_earned), 0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
-        if sb_int > 0:
-            liabilities.append({'name': 'SB Interest Payable', 'amount': sb_int})
-            tl += sb_int
+        # 2. SB Interest Payable (Accrued but not paid)
+        sb_int_payable = c.execute("""
+            SELECT COALESCE(SUM(total_interest_earned), 0) 
+            FROM accounts WHERE account_type='SB' AND status='ACTIVE'
+        """).fetchone()[0]
+        if sb_int_payable > 0:
+            liabilities.append({'name': 'SB Interest Payable', 'amount': sb_int_payable})
+            tl += sb_int_payable
         
-        # === JV LIABILITIES (POSTED JV CREDIT ENTRIES) ===
-        jv_liabilities = c.execute("""
-            SELECT je.account_head, SUM(je.credit_amount) as total
-            FROM journal_entries je 
-            JOIN journal_vouchers jv ON je.voucher_id = jv.id 
-            WHERE jv.status='POSTED' AND je.credit_amount > 0 
-            GROUP BY je.account_head
-            ORDER BY total DESC
-        """).fetchall()
+        # 3. FD Interest Payable
+        fd_int_payable = c.execute("""
+            SELECT COALESCE(SUM(closed_amount - principal_amount), 0) 
+            FROM fixed_deposits WHERE status='CLOSED'
+        """).fetchone()[0]
+        if fd_int_payable > 0:
+            liabilities.append({'name': 'FD Interest Payable', 'amount': fd_int_payable})
+            tl += fd_int_payable
         
-        for e in jv_liabilities:
-            if e[1] > 0:
-                liabilities.append({'name': f"JV: {e[0]}", 'amount': e[1]})
-                tl += e[1]
+        # 4. RD Interest Payable
+        rd_int_payable = c.execute("""
+            SELECT COALESCE(SUM(closed_amount - (monthly_amount * total_installments)), 0) 
+            FROM recurring_deposits WHERE status='MATURED'
+        """).fetchone()[0]
+        if rd_int_payable > 0:
+            liabilities.append({'name': 'RD Interest Payable', 'amount': rd_int_payable})
+            tl += rd_int_payable
         
-        # === INCOME & EXPENSES ===
-        income_total = c.execute("SELECT COALESCE(SUM(amount), 0) FROM income").fetchone()[0]
-        expense_total = c.execute("SELECT COALESCE(SUM(amount), 0) FROM expenses").fetchone()[0]
+        # 5. Other Liabilities (from JV)
+        other_liabilities = c.execute("""
+            SELECT 
+                'Other Liabilities' as name,
+                COALESCE(SUM(je.credit_amount), 0) as amount
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND (je.account_head LIKE '%Payable%' 
+                 OR je.account_head LIKE '%Liability%')
+            AND je.account_head NOT LIKE '%Interest Payable%'
+        """).fetchone()
         
-        # === CAPITAL ===
-        capital = ta - tl
+        if other_liabilities and other_liabilities[1] > 0:
+            liabilities.append({'name': 'Other Liabilities', 'amount': other_liabilities[1]})
+            tl += other_liabilities[1]
         
-        # Calculate net profit/loss
-        net_profit = income_total - expense_total
+        # === EQUITY ===
+        # 1. Directors' Capital
+        capital = c.execute("""
+            SELECT COALESCE(SUM(je.credit_amount), 0) 
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND je.account_head LIKE '%Capital%'
+        """).fetchone()[0]
         
-        # Total equity
-        total_equity = capital + net_profit
+        if capital > 0:
+            equity_items.append({'name': "Directors' Capital", 'amount': capital})
+            te += capital
+        else:
+            # If no capital recorded, calculate as balancing figure
+            capital = ta - tl
+            if capital > 0:
+                equity_items.append({'name': "Directors' Capital (Balancing)", 'amount': capital})
+                te += capital
+        
+        # 2. Retained Earnings (Reserves & Surplus)
+        retained_earnings = c.execute("""
+            SELECT COALESCE(SUM(amount), 0) 
+            FROM income
+        """).fetchone()[0] - c.execute("""
+            SELECT COALESCE(SUM(amount), 0) 
+            FROM expenses
+        """).fetchone()[0]
+        
+        # Add JV income/expense effects
+        jv_income = c.execute("""
+            SELECT COALESCE(SUM(je.credit_amount), 0) 
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND (je.account_head LIKE '%Income%' 
+                 OR je.account_head LIKE '%Revenue%'
+                 OR je.account_head LIKE '%Gain%')
+        """).fetchone()[0]
+        
+        jv_expense = c.execute("""
+            SELECT COALESCE(SUM(je.debit_amount), 0) 
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND (je.account_head LIKE '%Expense%' 
+                 OR je.account_head LIKE '%Interest Paid%')
+        """).fetchone()[0]
+        
+        total_retained = retained_earnings + jv_income - jv_expense
+        
+        if total_retained != 0:
+            if total_retained > 0:
+                equity_items.append({'name': 'Retained Earnings (Profit)', 'amount': total_retained})
+            else:
+                equity_items.append({'name': 'Retained Earnings (Loss)', 'amount': abs(total_retained)})
+            te += total_retained
+        
+        # Total Equity
+        total_equity = te
         
         # === DISPLAY ===
         col1, col2 = st.columns(2)
@@ -5108,27 +5184,21 @@ def balance_sheet():
         with col1:
             st.markdown("### 💰 EQUITY")
             st.markdown("---")
-            st.markdown(f"**Capital**: ₹ {capital:,.2f}")
-            if net_profit > 0:
-                st.markdown(f"**Add: Net Profit**: ₹ {net_profit:,.2f}")
-            elif net_profit < 0:
-                st.markdown(f"**Less: Net Loss**: ₹ {abs(net_profit):,.2f}")
+            for item in equity_items:
+                st.markdown(f"📊 **{item['name']}**: ₹ {item['amount']:,.2f}")
             st.markdown("---")
             st.markdown(f"### **Total Equity: ₹ {total_equity:,.2f}**")
         
         with col2:
-            st.markdown("### 📊 Income & Expenses")
+            st.markdown("### 📊 Interest Summary")
             st.markdown("---")
-            st.markdown(f"💰 **Total Income**: ₹ {income_total:,.2f}")
-            st.markdown(f"💸 **Total Expenses**: ₹ {expense_total:,.2f}")
-            st.markdown("---")
-            if net_profit >= 0:
-                st.success(f"### 🎉 Net Profit: ₹ {net_profit:,.2f}")
-            else:
-                st.error(f"### 📉 Net Loss: ₹ {abs(net_profit):,.2f}")
+            st.markdown(f"🏦 **Interest Payable**: ₹ {sb_int_payable + fd_int_payable + rd_int_payable:,.2f}")
+            st.markdown(f"💰 **Interest Receivable**: ₹ {interest_receivable[1] if interest_receivable else 0:,.2f}")
+            st.markdown(f"📈 **Net Interest**: ₹ {(interest_receivable[1] if interest_receivable else 0) - (sb_int_payable + fd_int_payable + rd_int_payable):,.2f}")
         
         st.markdown("---")
         
+        # Check if balanced
         if abs(ta - (tl + total_equity)) < 0.01:
             st.success(f"""
             ### ✅ PERFECTLY BALANCED! 🎉
@@ -5143,7 +5213,8 @@ def balance_sheet():
                     bs_data.append({'Category': 'Asset', 'Name': item['name'], 'Amount': item['amount']})
                 for item in liabilities:
                     bs_data.append({'Category': 'Liability', 'Name': item['name'], 'Amount': item['amount']})
-                bs_data.append({'Category': 'Equity', 'Name': 'Total Equity', 'Amount': total_equity})
+                for item in equity_items:
+                    bs_data.append({'Category': 'Equity', 'Name': item['name'], 'Amount': item['amount']})
                 
                 df_bs = pd.DataFrame(bs_data)
                 st.download_button(
@@ -5175,11 +5246,8 @@ def balance_sheet():
                     content.append("")
                     content.append("EQUITY:")
                     content.append("-" * 30)
-                    content.append(f"Capital: ₹ {capital:,.2f}")
-                    if net_profit > 0:
-                        content.append(f"Net Profit: ₹ {net_profit:,.2f}")
-                    elif net_profit < 0:
-                        content.append(f"Net Loss: ₹ {abs(net_profit):,.2f}")
+                    for item in equity_items:
+                        content.append(f"{item['name']}: ₹ {item['amount']:,.2f}")
                     content.append(f"Total Equity: ₹ {total_equity:,.2f}")
                     content.append("")
                     content.append(f"CHECK: Assets (₹ {ta:,.2f}) = Liabilities (₹ {tl:,.2f}) + Equity (₹ {total_equity:,.2f})")

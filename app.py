@@ -4412,12 +4412,10 @@ def profit_loss():
         sb_interest = c.execute("""
             SELECT 
                 'SB Interest Income' as income_name,
-                COALESCE(SUM(ic.interest_earned), 0) as total,
+                COALESCE(SUM(interest_earned), 0) as total,
                 'Savings Account' as source
-            FROM interest_calculations ic
-            JOIN accounts a ON ic.account_id = a.id
-            WHERE a.account_type = 'SB' 
-            AND DATE(ic.calculation_date) BETWEEN ? AND ?
+            FROM interest_calculations
+            WHERE DATE(calculation_date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()
         
         if sb_interest and sb_interest[1] > 0:
@@ -4428,15 +4426,15 @@ def profit_loss():
             })
             total_income += sb_interest[1]
         
-        # 2. FD Interest Income (from matured FDs)
+        # 2. FD Interest Income (from closed FDs)
         fd_interest = c.execute("""
             SELECT 
                 'FD Interest Income' as income_name,
-                COALESCE(SUM(fd.maturity_amount - fd.principal_amount), 0) as total,
+                COALESCE(SUM(closed_amount - principal_amount), 0) as total,
                 'Fixed Deposit' as source
-            FROM fixed_deposits fd
-            WHERE fd.status = 'CLOSED' 
-            AND DATE(fd.closed_date) BETWEEN ? AND ?
+            FROM fixed_deposits
+            WHERE status = 'CLOSED' 
+            AND DATE(closed_date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()
         
         if fd_interest and fd_interest[1] > 0:
@@ -4451,11 +4449,11 @@ def profit_loss():
         rd_interest = c.execute("""
             SELECT 
                 'RD Interest Income' as income_name,
-                COALESCE(SUM(rd.maturity_amount - (rd.monthly_amount * rd.total_installments)), 0) as total,
+                COALESCE(SUM(closed_amount - (monthly_amount * total_installments)), 0) as total,
                 'Recurring Deposit' as source
-            FROM recurring_deposits rd
-            WHERE rd.status = 'MATURED' 
-            AND DATE(rd.closed_date) BETWEEN ? AND ?
+            FROM recurring_deposits
+            WHERE status = 'MATURED' 
+            AND DATE(closed_date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()
         
         if rd_interest and rd_interest[1] > 0:
@@ -4508,7 +4506,7 @@ def profit_loss():
             })
             total_income += fees_income[1]
         
-        # === EXPENSES FROM ALL SOURCES ===
+        # === EXPENSES ===
         expense_data = []
         total_expense = 0
         
@@ -4605,50 +4603,50 @@ def profit_loss():
         net_profit = total_income - total_expense
         
         # === DISPLAY ===
+        st.markdown("### 📊 Profit & Loss Summary")
+        
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("### 💰 INCOME")
+            st.markdown("#### 💰 INCOME")
             st.markdown("---")
             if income_data:
-                # Show summary by source
-                st.markdown("#### 📊 Income Breakdown")
                 for item in income_data:
+                    emoji = "🏦" if "SB" in item['Income Name'] else "📈" if "FD" in item['Income Name'] else "🔄" if "RD" in item['Income Name'] else "💰"
                     st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f0f0f0;">
-                        <span><strong>{item['Income Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
-                        <span style="font-weight: 600;">₹ {item['Amount']:,.2f}</span>
+                    <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
+                        <span>{emoji} <strong>{item['Income Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
+                        <span style="font-weight: 600; color: #28a745;">+ ₹ {item['Amount']:,.2f}</span>
                     </div>
                     """, unsafe_allow_html=True)
                 
                 st.markdown("---")
                 st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 8px 0; background: #f8f9fa; border-radius: 8px; padding: 10px;">
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: #e8f5e9; border-radius: 8px;">
                     <span style="font-size: 1.1rem; font-weight: 700;">Total Income</span>
-                    <span style="font-size: 1.1rem; font-weight: 700; color: #28a745;">₹ {total_income:,.2f}</span>
+                    <span style="font-size: 1.1rem; font-weight: 700; color: #2e7d32;">₹ {total_income:,.2f}</span>
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.info("No income in this period")
         
         with col2:
-            st.markdown("### 💸 EXPENSES")
+            st.markdown("#### 💸 EXPENSES")
             st.markdown("---")
             if expense_data:
-                st.markdown("#### 📊 Expense Breakdown")
                 for item in expense_data:
                     st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f0f0f0;">
-                        <span><strong>{item['Expense Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
-                        <span style="font-weight: 600;">₹ {item['Amount']:,.2f}</span>
+                    <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
+                        <span>📊 <strong>{item['Expense Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
+                        <span style="font-weight: 600; color: #dc3545;">- ₹ {item['Amount']:,.2f}</span>
                     </div>
                     """, unsafe_allow_html=True)
                 
                 st.markdown("---")
                 st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 8px 0; background: #f8f9fa; border-radius: 8px; padding: 10px;">
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: #fce4ec; border-radius: 8px;">
                     <span style="font-size: 1.1rem; font-weight: 700;">Total Expenses</span>
-                    <span style="font-size: 1.1rem; font-weight: 700; color: #dc3545;">₹ {total_expense:,.2f}</span>
+                    <span style="font-size: 1.1rem; font-weight: 700; color: #c62828;">₹ {total_expense:,.2f}</span>
                 </div>
                 """, unsafe_allow_html=True)
             else:
@@ -4659,9 +4657,9 @@ def profit_loss():
         # Net Result
         if net_profit >= 0:
             st.markdown(f"""
-            <div style="background: #d4edda; padding: 2rem; border-radius: 12px; text-align: center;">
-                <h2 style="color: #155724; margin: 0;">🎉 Net Profit: ₹ {net_profit:,.2f}</h2>
-                <p style="color: #155724; margin: 5px 0 0 0;">
+            <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); padding: 2rem; border-radius: 12px; text-align: center;">
+                <h2 style="color: #1b5e20; margin: 0;">🎉 Net Profit: ₹ {net_profit:,.2f}</h2>
+                <p style="color: #1b5e20; margin: 10px 0 0 0; font-size: 1.1rem;">
                     Profit Margin: {((net_profit / total_income) * 100) if total_income > 0 else 0:.1f}%
                 </p>
             </div>
@@ -4669,7 +4667,7 @@ def profit_loss():
             st.balloons()
         else:
             st.markdown(f"""
-            <div style="background: #f8d7da; padding: 2rem; border-radius: 12px; text-align: center;">
+            <div style="background: linear-gradient(135deg, #fce4ec, #f8d7da); padding: 2rem; border-radius: 12px; text-align: center;">
                 <h2 style="color: #721c24; margin: 0;">📉 Net Loss: ₹ {abs(net_profit):,.2f}</h2>
             </div>
             """, unsafe_allow_html=True)
@@ -4697,6 +4695,7 @@ def profit_loss():
             st.dataframe(df_source, use_container_width=True)
             
             # Show progress bars for income sources
+            st.markdown("#### 📈 Income Distribution")
             for source, amount in income_by_source.items():
                 percentage = (amount/total_income*100) if total_income > 0 else 0
                 st.progress(percentage/100, text=f"{source}: {percentage:.1f}% (₹ {amount:,.2f})")
@@ -4724,6 +4723,7 @@ def profit_loss():
             st.dataframe(df_source, use_container_width=True)
             
             # Show progress bars for expense sources
+            st.markdown("#### 📉 Expense Distribution")
             for source, amount in expense_by_source.items():
                 percentage = (amount/total_expense*100) if total_expense > 0 else 0
                 st.progress(percentage/100, text=f"{source}: {percentage:.1f}% (₹ {amount:,.2f})")
@@ -4780,7 +4780,6 @@ def profit_loss():
                     create_download_button(pdf_file, "profit_loss", "📥 Download PDF Report")
     
     c.close()
-
 # ==================== TRIAL BALANCE ====================
 def trial_balance():
     if st.session_state.user['role'] not in ['admin', 'staff']:

@@ -1,5 +1,5 @@
-# 🏦 AASHA NIDHI PVT LIMITED BANK - COMPLETE SYSTEM
-# With Enhanced UI, Closed Accounts, Retrieval Account, Delete Functionality, JV Integration
+# 🏦 AARSHA NIDHI PVT LIMITED BANK - COMPLETE SYSTEM
+# With Print/PDF Statements in ALL Modules, Indian Timezone, Teal Theme
 
 import streamlit as st
 import pandas as pd
@@ -11,6 +11,14 @@ import hashlib
 import tempfile
 import os
 import base64
+
+# Indian Timezone - IST (UTC+5:30)
+def get_indian_time():
+    """Get current time in IST"""
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+# For backward compatibility
+IST = get_indian_time
 
 try:
     from fpdf import FPDF
@@ -287,15 +295,15 @@ def get_db():
     return sqlite3.connect('banking_system.db')
 
 def generate_id(prefix):
-    return f"{prefix}{datetime.now().strftime('%Y%m%d%H%M%S')}{str(uuid.uuid4())[:4]}"
+    return f"{prefix}{get_indian_time().strftime('%Y%m%d%H%M%S')}{str(uuid.uuid4())[:4]}"
 
 def generate_account_number(account_type):
     prefix = '100' if account_type == 'SB' else '200' if account_type == 'FD' else '300' if account_type == 'RD' else '400'
-    return f"{prefix}{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
+    return f"{prefix}{get_indian_time().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
 
 def generate_voucher_number(voucher_type):
     prefix = 'PMT' if voucher_type == 'PAYMENT' else 'RCT' if voucher_type == 'RECEIPT' else 'JNL'
-    return f"{prefix}{datetime.now().strftime('%Y%m%d%H%M')}{str(uuid.uuid4().int)[:4]}"
+    return f"{prefix}{get_indian_time().strftime('%Y%m%d%H%M')}{str(uuid.uuid4().int)[:4]}"
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -342,7 +350,7 @@ def get_retrieval_account(customer_id):
             conn.close()
             return acc[0], acc[1], acc[2]
         
-        account_number = f"RET{datetime.now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
+        account_number = f"RET{get_indian_time().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
         
         conn.execute("""
             INSERT INTO retrieval_accounts (account_number, customer_id, balance)
@@ -505,10 +513,10 @@ def create_pdf(title, content, filename):
         pdf.add_page()
         
         pdf.set_font('Arial', 'B', 16)
-        pdf.cell(190, 10, 'AASHA NIDHI PVT LIMITED BANK', 0, 1, 'C')
+        pdf.cell(190, 10, 'AARSHA NIDHI PVT LIMITED BANK', 0, 1, 'C')
         pdf.set_font('Arial', '', 10)
         pdf.cell(190, 6, 'Balaramapuram', 0, 1, 'C')
-        pdf.cell(190, 6, f'Date: {datetime.now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
+        pdf.cell(190, 6, f'Date: {get_indian_time().strftime("%d-%m-%Y %I:%M %p")} (IST)', 0, 1, 'C')
         pdf.line(10, 35, 200, 35)
         
         pdf.set_font('Arial', 'B', 14)
@@ -522,7 +530,7 @@ def create_pdf(title, content, filename):
         
         pdf.set_y(-30)
         pdf.set_font('Arial', 'I', 8)
-        pdf.cell(190, 10, f'Generated on: {datetime.now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
+        pdf.cell(190, 10, f'Generated on: {get_indian_time().strftime("%d-%m-%Y %I:%M %p")} (IST)', 0, 1, 'C')
         pdf.cell(190, 10, 'This is a system generated statement', 0, 1, 'C')
         
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
@@ -545,6 +553,76 @@ def create_download_button(file_path, filename, button_text="📥 Download PDF")
             os.unlink(file_path)
         except:
             pass
+
+# ==================== PRINT HTML FUNCTION ====================
+def print_html(title, df):
+    """Generate HTML for printing"""
+    if df.empty:
+        st.warning("No data to print!")
+        return
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{title}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 20px; }}
+            .header {{ text-align: center; margin-bottom: 30px; border-bottom: 2px solid #0a8a7a; padding-bottom: 10px; }}
+            .header h1 {{ color: #0a8a7a; margin: 0; }}
+            .header p {{ color: #666; margin: 5px 0; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+            th {{ background: #0a8a7a; color: white; padding: 10px; text-align: left; }}
+            td {{ padding: 8px; border-bottom: 1px solid #ddd; }}
+            tr:hover {{ background: #f5f5f5; }}
+            .footer {{ text-align: center; margin-top: 30px; color: #666; font-size: 12px; border-top: 2px solid #0a8a7a; padding-top: 10px; }}
+            @media print {{
+                .no-print {{ display: none; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🏦 AARSHA NIDHI PVT LIMITED BANK</h1>
+            <p>Balaramapuram • {get_indian_time().strftime('%d-%m-%Y %I:%M %p')} (IST)</p>
+            <h2>{title}</h2>
+        </div>
+        <table>
+            <tr>
+    """
+    for col in df.columns:
+        html += f"<th>{col}</th>"
+    html += "</tr>"
+    
+    for _, row in df.iterrows():
+        html += "<tr>"
+        for val in row:
+            html += f"<td>{val}</td>"
+        html += "</tr>"
+    
+    html += f"""
+        </table>
+        <div class="footer">
+            <p>Generated on: {get_indian_time().strftime('%d-%m-%Y %I:%M %p')} (IST)</p>
+            <p>This is a system generated statement</p>
+        </div>
+        <div class="no-print" style="text-align:center;margin-top:20px;">
+            <button onclick="window.print()" style="background:#0a8a7a;color:white;padding:10px 30px;border:none;border-radius:8px;font-size:16px;cursor:pointer;">
+                🖨️ Print / Save as PDF
+            </button>
+        </div>
+        <script>
+            window.onload = function() {{
+                setTimeout(function() {{
+                    window.print();
+                }}, 500);
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    
+    st.components.v1.html(html, height=800, scrolling=True)
 
 # ==================== CUSTOMER SELECTOR ====================
 def customer_selector(label="👤 Select Customer", key_prefix="cust"):
@@ -624,7 +702,7 @@ def customer_selector(label="👤 Select Customer", key_prefix="cust"):
     
     return None, None, None, None, None
 
-# ==================== IMPROVED CSS ====================
+# ==================== TEAL THEME CSS ====================
 def load_enterprise_css():
     st.markdown("""
     <style>
@@ -634,18 +712,27 @@ def load_enterprise_css():
             font-family: 'Inter', sans-serif;
         }
         
+        /* Teal Theme Colors */
+        :root {
+            --teal-primary: #0a8a7a;
+            --teal-dark: #0d6b5e;
+            --teal-darker: #1a4a4a;
+            --teal-light: #e6f7f5;
+            --teal-gradient: linear-gradient(135deg, #0a8a7a, #0d6b5e, #1a4a4a);
+        }
+        
         /* Main Header */
         .main-header {
-            background: linear-gradient(135deg, #0a1628, #1a2a4a, #2a4a6a);
+            background: var(--teal-gradient);
             color: white;
             padding: 1.5rem 2rem;
             border-radius: 16px;
             margin-bottom: 1.5rem;
-            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 30px rgba(10,138,122,0.3);
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border: 1px solid rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
         }
         
         .main-header h1 {
@@ -660,7 +747,7 @@ def load_enterprise_css():
         }
         
         .main-header small {
-            opacity: 0.7;
+            opacity: 0.8;
             font-size: 0.85rem;
             font-weight: 300;
         }
@@ -704,7 +791,7 @@ def load_enterprise_css():
         
         /* Sidebar */
         [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0a1628, #1a2a4a) !important;
+            background: linear-gradient(180deg, #0a8a7a, #0d6b5e, #1a4a4a) !important;
             border-right: 1px solid rgba(255,255,255,0.05);
         }
         
@@ -716,15 +803,16 @@ def load_enterprise_css():
         }
         
         .sidebar-logo .logo-icon {
-            font-size: 3.5rem;
+            font-size: 4rem;
             display: block;
             margin-bottom: 5px;
+            filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));
         }
         
         .sidebar-logo h2 {
             color: white;
             margin: 0;
-            font-size: 1.1rem;
+            font-size: 1.2rem;
             font-weight: 700;
             letter-spacing: -0.5px;
         }
@@ -734,7 +822,7 @@ def load_enterprise_css():
         }
         
         .sidebar-logo p {
-            color: rgba(255,255,255,0.4);
+            color: rgba(255,255,255,0.5);
             font-size: 0.7rem;
             margin: 0;
             letter-spacing: 1px;
@@ -751,7 +839,7 @@ def load_enterprise_css():
         }
         
         [data-testid="stSidebar"] .stButton > button {
-            color: rgba(255,255,255,0.8) !important;
+            color: rgba(255,255,255,0.85) !important;
             background: transparent !important;
             border: none !important;
             border-radius: 10px !important;
@@ -768,6 +856,7 @@ def load_enterprise_css():
         [data-testid="stSidebar"] .stButton > button:hover {
             background: rgba(255,255,255,0.08) !important;
             color: white !important;
+            transform: translateX(5px);
         }
         
         [data-testid="stSidebar"] .stButton > button:focus {
@@ -803,16 +892,16 @@ def load_enterprise_css():
         
         .stButton > button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.2) !important;
+            box-shadow: 0 8px 25px rgba(10,138,122,0.3) !important;
         }
         
         .stButton > button[kind="primary"] {
-            background: linear-gradient(135deg, #1a2a4a, #2a4a6a) !important;
+            background: linear-gradient(135deg, #0a8a7a, #0d6b5e) !important;
             color: white !important;
         }
         
         .stButton > button[kind="primary"]:hover {
-            background: linear-gradient(135deg, #2a4a6a, #3a6a8a) !important;
+            background: linear-gradient(135deg, #0d6b5e, #1a4a4a) !important;
         }
         
         .stButton > button[kind="secondary"] {
@@ -842,9 +931,9 @@ def load_enterprise_css():
         }
         
         .stTabs [aria-selected="true"] {
-            background: linear-gradient(135deg, #1a2a4a, #2a4a6a) !important;
+            background: linear-gradient(135deg, #0a8a7a, #0d6b5e) !important;
             color: white !important;
-            box-shadow: 0 4px 15px rgba(26,42,74,0.3);
+            box-shadow: 0 4px 15px rgba(10,138,122,0.3);
         }
         
         /* Metrics */
@@ -853,12 +942,12 @@ def load_enterprise_css():
             padding: 1rem;
             border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-            border: 1px solid #f0f2f6;
+            border: 1px solid #e6f7f5;
             transition: all 0.2s ease;
         }
         
         .stMetric:hover {
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            box-shadow: 0 4px 20px rgba(10,138,122,0.1);
             transform: translateY(-2px);
         }
         
@@ -870,156 +959,23 @@ def load_enterprise_css():
         }
         
         .stDataFrame thead tr th {
-            background: #f8f9fa !important;
+            background: #0a8a7a !important;
+            color: white !important;
             font-weight: 600 !important;
-            color: #1a2a4a !important;
         }
         
-        /* Cards */
-        .card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-            border: 1px solid #f0f2f6;
-            margin-bottom: 1rem;
+        .stDataFrame tbody tr:hover {
+            background: #e6f7f5 !important;
         }
         
-        .card-title {
-            font-weight: 600;
-            color: #1a2a4a;
-            margin-bottom: 0.5rem;
-            font-size: 1.1rem;
+        /* Print Button */
+        .print-btn {
+            background: #0a8a7a !important;
+            color: white !important;
         }
         
-        .card-value {
-            font-weight: 700;
-            font-size: 1.8rem;
-            color: #1a2a4a;
-        }
-        
-        .card-label {
-            color: #6c757d;
-            font-size: 0.85rem;
-        }
-        
-        /* Status Badges */
-        .badge-success {
-            background: #d4edda;
-            color: #155724;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        
-        .badge-warning {
-            background: #fff3cd;
-            color: #856404;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        
-        .badge-danger {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        
-        .badge-info {
-            background: #d1ecf1;
-            color: #0c5460;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        
-        /* Alerts */
-        .alert-success {
-            background: #d4edda;
-            padding: 15px 20px;
-            border-radius: 12px;
-            border-left: 4px solid #28a745;
-            margin: 10px 0;
-        }
-        
-        .alert-warning {
-            background: #fff3cd;
-            padding: 15px 20px;
-            border-radius: 12px;
-            border-left: 4px solid #ffc107;
-            margin: 10px 0;
-        }
-        
-        .alert-danger {
-            background: #f8d7da;
-            padding: 15px 20px;
-            border-radius: 12px;
-            border-left: 4px solid #dc3545;
-            margin: 10px 0;
-        }
-        
-        .alert-info {
-            background: #d1ecf1;
-            padding: 15px 20px;
-            border-radius: 12px;
-            border-left: 4px solid #17a2b8;
-            margin: 10px 0;
-        }
-        
-        /* Expanders */
-        .streamlit-expanderHeader {
-            font-weight: 600 !important;
-            color: #1a2a4a !important;
-        }
-        
-        /* Progress Bar */
-        .stProgress > div > div {
-            background: linear-gradient(90deg, #1a2a4a, #2a4a6a) !important;
-        }
-        
-        /* Select Box */
-        .stSelectbox > div > div {
-            border-radius: 8px !important;
-        }
-        
-        /* Inputs */
-        .stTextInput > div > div > input {
-            border-radius: 8px !important;
-        }
-        
-        .stNumberInput > div > div > input {
-            border-radius: 8px !important;
-        }
-        
-        .stTextArea > div > div > textarea {
-            border-radius: 8px !important;
-        }
-        
-        /* Scrollbar */
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 3px;
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: #888;
-            border-radius: 3px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: #555;
+        .print-btn:hover {
+            background: #0d6b5e !important;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -1034,7 +990,7 @@ def init_session_state():
 # ==================== MAIN APP ====================
 def main():
     st.set_page_config(
-        page_title="🏦 Aasha Nidhi Bank - Complete Banking System",
+        page_title="🏦 Aarsha Nidhi Bank - Complete Banking System",
         page_icon="🏦",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -1053,10 +1009,10 @@ def main():
 def show_login():
     st.markdown("""
     <div style="display:flex;justify-content:center;align-items:center;min-height:80vh;">
-        <div style="background:white;padding:3rem 3.5rem;border-radius:24px;text-align:center;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.12);">
+        <div style="background:white;padding:3rem 3.5rem;border-radius:24px;text-align:center;max-width:420px;box-shadow:0 20px 60px rgba(10,138,122,0.15);border:1px solid #e6f7f5;">
             <div style="font-size:4rem;margin-bottom:5px;">🏦</div>
-            <h1 style="font-size:1.8rem;font-weight:700;margin:0.5rem 0;color:#1a2a4a;">
-                AASHA NIDHI <span style="color:#f0c040;">BANK</span>
+            <h1 style="font-size:1.8rem;font-weight:700;margin:0.5rem 0;color:#0a8a7a;">
+                AARSHA NIDHI <span style="color:#f0c040;">BANK</span>
             </h1>
             <p style="color:#6c757d;margin-bottom:2rem;font-size:0.9rem;">Balaramapuram • Complete Banking Solution</p>
     """, unsafe_allow_html=True)
@@ -1095,8 +1051,8 @@ def show_app():
         <div class="bank-logo">
             <span class="bank-logo-icon">🏦</span>
             <div>
-                <h1>AASHA NIDHI <span class="gold">BANK</span></h1>
-                <small>📍 BALARAMAPURAM • {datetime.now().strftime('%d-%m-%Y %I:%M %p')}</small>
+                <h1>AARSHA NIDHI <span class="gold">BANK</span></h1>
+                <small>📍 BALARAMAPURAM • {get_indian_time().strftime('%d-%m-%Y %I:%M %p')} (IST)</small>
             </div>
         </div>
         <div class="user-info">
@@ -1111,7 +1067,7 @@ def show_app():
         st.markdown("""
         <div class="sidebar-logo">
             <span class="logo-icon">🏦</span>
-            <h2>AASHA NIDHI <span class="gold">BANK</span></h2>
+            <h2>AARSHA NIDHI <span class="gold">BANK</span></h2>
             <p>Complete Banking Solution</p>
         </div>
         """, unsafe_allow_html=True)
@@ -1156,8 +1112,8 @@ def show_app():
         
         st.markdown("""
         <div class="sidebar-footer">
-            © 2024 Aasha Nidhi Bank<br>
-            <span style="opacity:0.5;">v3.0</span>
+            © 2024 Aarsha Nidhi Bank<br>
+            <span style="opacity:0.5;">v3.0 • IST</span>
         </div>
         """, unsafe_allow_html=True)
     
@@ -1327,7 +1283,8 @@ def customer_management():
         
         if customers:
             df = pd.DataFrame(customers, columns=['ID', 'Customer ID', 'First', 'Last', 'Email', 'Phone', 'KYC', 'Status', 'Created'])
-            st.dataframe(df[['Customer ID', 'First', 'Last', 'Email', 'Phone', 'Status', 'KYC']], use_container_width=True)
+            display_df = df[['Customer ID', 'First', 'Last', 'Email', 'Phone', 'Status', 'KYC']]
+            st.dataframe(display_df, use_container_width=True)
             
             col1, col2 = st.columns(2)
             with col1:
@@ -1339,29 +1296,32 @@ def customer_management():
                 )
             
             with col2:
-                with st.expander("🗑️ Delete Customer"):
-                    delete_id = st.text_input("Enter Customer ID to delete:")
-                    if delete_id:
-                        if st.button("🗑️ Delete Customer", use_container_width=True, type="secondary"):
-                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                try:
-                                    conn = get_db()
-                                    customer = conn.execute("SELECT id FROM customers WHERE customer_id=?", (delete_id,)).fetchone()
-                                    if customer:
-                                        conn.execute("DELETE FROM accounts WHERE customer_id=?", (customer[0],))
-                                        conn.execute("DELETE FROM fixed_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (customer[0],))
-                                        conn.execute("DELETE FROM recurring_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (customer[0],))
-                                        conn.execute("DELETE FROM retrieval_accounts WHERE customer_id=?", (customer[0],))
-                                        conn.execute("DELETE FROM matured_deposits WHERE customer_id=?", (customer[0],))
-                                        conn.execute("DELETE FROM customers WHERE customer_id=?", (delete_id,))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success("✅ Customer and all related records deleted!")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Customer not found!")
-                                except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                if st.button("📄 Print Customer List", use_container_width=True):
+                    print_html("Customer List", display_df)
+            
+            with st.expander("🗑️ Delete Customer"):
+                delete_id = st.text_input("Enter Customer ID to delete:")
+                if delete_id:
+                    if st.button("🗑️ Delete Customer", use_container_width=True, type="secondary"):
+                        if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                            try:
+                                conn = get_db()
+                                customer = conn.execute("SELECT id FROM customers WHERE customer_id=?", (delete_id,)).fetchone()
+                                if customer:
+                                    conn.execute("DELETE FROM accounts WHERE customer_id=?", (customer[0],))
+                                    conn.execute("DELETE FROM fixed_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (customer[0],))
+                                    conn.execute("DELETE FROM recurring_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (customer[0],))
+                                    conn.execute("DELETE FROM retrieval_accounts WHERE customer_id=?", (customer[0],))
+                                    conn.execute("DELETE FROM matured_deposits WHERE customer_id=?", (customer[0],))
+                                    conn.execute("DELETE FROM customers WHERE customer_id=?", (delete_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("✅ Customer and all related records deleted!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Customer not found!")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No customers registered yet")
 
@@ -1651,8 +1611,9 @@ def sb_accounts():
         
         if accounts:
             df = pd.DataFrame(accounts, columns=['ID', 'Account', 'Customer', 'Balance', 'Interest', 'Rate', 'Status', 'KYC'])
+            display_df = df[['Account', 'Customer', 'Balance', 'Interest', 'Rate', 'Status', 'KYC']]
             st.dataframe(
-                df.style.format({
+                display_df.style.format({
                     'Balance': 'Rs {:,.2f}',
                     'Interest': 'Rs {:,.2f}',
                     'Rate': '{:.2f}%'
@@ -1663,6 +1624,18 @@ def sb_accounts():
             total_balance = df['Balance'].sum()
             total_interest = df['Interest'].sum()
             st.info(f"💰 Total SB Deposits: Rs {total_balance:,.2f} | Total Interest: Rs {total_interest:,.2f}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download CSV",
+                    df.to_csv(index=False),
+                    "sb_accounts.csv",
+                    "text/csv"
+                )
+            with col2:
+                if st.button("📄 Print SB Accounts", use_container_width=True):
+                    print_html("SB Accounts List", display_df)
             
             with st.expander("🗑️ Delete SB Account"):
                 acc_num = st.text_input("Enter Account Number to delete:")
@@ -1717,8 +1690,9 @@ def sb_accounts():
                     df = pd.DataFrame(transactions, columns=['ID', 'Type', 'Amount', 'Balance', 'Description', 'Mode', 'Date'])
                     df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%d-%m-%Y %I:%M %p')
                     
+                    display_df = df[['ID', 'Type', 'Amount', 'Balance', 'Description', 'Mode', 'Date']]
                     st.dataframe(
-                        df.style.format({
+                        display_df.style.format({
                             'Amount': 'Rs {:,.2f}',
                             'Balance': 'Rs {:,.2f}'
                         }),
@@ -1733,12 +1707,17 @@ def sb_accounts():
                     col2.metric("Total Debits", f"Rs {total_debit:,.2f}")
                     col3.metric("Net Change", f"Rs {(total_credit - total_debit):,.2f}")
                     
-                    st.download_button(
-                        "📥 Download Statement",
-                        df.to_csv(index=False),
-                        f"statement_{acc_number}_{from_date}_{to_date}.csv",
-                        "text/csv"
-                    )
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(
+                            "📥 Download Statement",
+                            df.to_csv(index=False),
+                            f"statement_{acc_number}_{from_date}_{to_date}.csv",
+                            "text/csv"
+                        )
+                    with col2:
+                        if st.button("📄 Print Statement", use_container_width=True):
+                            print_html(f"Account Statement - {acc_number}", display_df)
                 else:
                     st.info("No transactions in this period")
     
@@ -1965,8 +1944,9 @@ def fixed_deposits():
                 })
             
             fd_df = pd.DataFrame(fd_data)
+            display_df = fd_df[['FD No', 'Customer', 'SB Account', 'Principal', 'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 'Accrued Interest', 'Total Value', 'Status', 'Days Elapsed']]
             st.dataframe(
-                fd_df.style.format({
+                display_df.style.format({
                     'Principal': 'Rs {:,.2f}',
                     'Rate': '{:.2f}%',
                     'Maturity Amount': 'Rs {:,.2f}',
@@ -1984,6 +1964,18 @@ def fixed_deposits():
             col1.metric("💰 Total FD Investments", f"Rs {total_fd:,.2f}")
             col2.metric("📈 Accrued Interest", f"Rs {total_interest:,.2f}")
             col3.metric("💎 Total Value", f"Rs {total_value:,.2f}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download FDs CSV",
+                    fd_df.to_csv(index=False),
+                    "active_fds.csv",
+                    "text/csv"
+                )
+            with col2:
+                if st.button("📄 Print Active FDs", use_container_width=True):
+                    print_html("Active Fixed Deposits", display_df)
         else:
             st.info("No active fixed deposits")
     
@@ -2247,26 +2239,28 @@ def fixed_deposits():
                         "closed_fixed_deposits.csv",
                         "text/csv"
                     )
-                
                 with col2:
-                    with st.expander("🗑️ Delete FD Record"):
-                        fd_num = st.text_input("Enter FD Number to delete:")
-                        if fd_num:
-                            if st.button("🗑️ Delete FD", use_container_width=True, type="secondary"):
-                                if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                    try:
-                                        conn = get_db()
-                                        fd = conn.execute("SELECT id FROM fixed_deposits WHERE fd_number=?", (fd_num,)).fetchone()
-                                        if fd:
-                                            conn.execute("DELETE FROM fixed_deposits WHERE fd_number=?", (fd_num,))
-                                            conn.commit()
-                                            conn.close()
-                                            st.success("✅ FD record deleted successfully!")
-                                            st.rerun()
-                                        else:
-                                            st.error("❌ FD not found!")
-                                    except Exception as e:
-                                        st.error(f"❌ Error: {str(e)}")
+                    if st.button("📄 Print Closed FDs", use_container_width=True):
+                        print_html("Closed Fixed Deposits", df)
+                
+                with st.expander("🗑️ Delete FD Record"):
+                    fd_num = st.text_input("Enter FD Number to delete:")
+                    if fd_num:
+                        if st.button("🗑️ Delete FD", use_container_width=True, type="secondary"):
+                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                try:
+                                    conn = get_db()
+                                    fd = conn.execute("SELECT id FROM fixed_deposits WHERE fd_number=?", (fd_num,)).fetchone()
+                                    if fd:
+                                        conn.execute("DELETE FROM fixed_deposits WHERE fd_number=?", (fd_num,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ FD record deleted successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ FD not found!")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
             else:
                 st.info("No closed fixed deposits found")
                 
@@ -2484,8 +2478,9 @@ def recurring_deposits():
                 })
             
             rd_df = pd.DataFrame(rd_data)
+            display_df = rd_df[['RD No', 'Customer', 'SB Account', 'Monthly', 'Paid', 'Total', 'Remaining', 'Maturity Amount', 'Progress %', 'Status']]
             st.dataframe(
-                rd_df.style.format({
+                display_df.style.format({
                     'Monthly': 'Rs {:,.2f}',
                     'Maturity Amount': 'Rs {:,.2f}'
                 }),
@@ -2502,6 +2497,18 @@ def recurring_deposits():
             col1, col2 = st.columns(2)
             col1.metric("💰 Total Monthly Investment", f"Rs {total_monthly:,.2f}")
             col2.metric("💎 Total Maturity Value", f"Rs {total_maturity:,.2f}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download RDs CSV",
+                    rd_df.to_csv(index=False),
+                    "active_rds.csv",
+                    "text/csv"
+                )
+            with col2:
+                if st.button("📄 Print Active RDs", use_container_width=True):
+                    print_html("Active Recurring Deposits", display_df)
         else:
             st.info("No active recurring deposits")
     
@@ -2822,26 +2829,28 @@ def recurring_deposits():
                         "closed_recurring_deposits.csv",
                         "text/csv"
                     )
-                
                 with col2:
-                    with st.expander("🗑️ Delete RD Record"):
-                        rd_num = st.text_input("Enter RD Number to delete:")
-                        if rd_num:
-                            if st.button("🗑️ Delete RD", use_container_width=True, type="secondary"):
-                                if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                    try:
-                                        conn = get_db()
-                                        rd = conn.execute("SELECT id FROM recurring_deposits WHERE rd_number=?", (rd_num,)).fetchone()
-                                        if rd:
-                                            conn.execute("DELETE FROM recurring_deposits WHERE rd_number=?", (rd_num,))
-                                            conn.commit()
-                                            conn.close()
-                                            st.success("✅ RD record deleted successfully!")
-                                            st.rerun()
-                                        else:
-                                            st.error("❌ RD not found!")
-                                    except Exception as e:
-                                        st.error(f"❌ Error: {str(e)}")
+                    if st.button("📄 Print Closed RDs", use_container_width=True):
+                        print_html("Closed Recurring Deposits", df)
+                
+                with st.expander("🗑️ Delete RD Record"):
+                    rd_num = st.text_input("Enter RD Number to delete:")
+                    if rd_num:
+                        if st.button("🗑️ Delete RD", use_container_width=True, type="secondary"):
+                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                try:
+                                    conn = get_db()
+                                    rd = conn.execute("SELECT id FROM recurring_deposits WHERE rd_number=?", (rd_num,)).fetchone()
+                                    if rd:
+                                        conn.execute("DELETE FROM recurring_deposits WHERE rd_number=?", (rd_num,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("✅ RD record deleted successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ RD not found!")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
             else:
                 st.info("No closed recurring deposits found")
                 
@@ -2914,6 +2923,18 @@ def retrieval_account():
                         })
                     df = pd.DataFrame(txn_data)
                     st.dataframe(df, use_container_width=True)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(
+                            "📥 Download Transactions CSV",
+                            df.to_csv(index=False),
+                            "retrieval_transactions.csv",
+                            "text/csv"
+                        )
+                    with col2:
+                        if st.button("📄 Print Transactions", use_container_width=True):
+                            print_html("Retrieval Account Transactions", df)
                 else:
                     st.info("No transactions in retrieval account")
             except Exception as e:
@@ -3022,24 +3043,27 @@ def retrieval_account():
                         )
                     
                     with col2:
-                        with st.expander("🗑️ Delete Matured Deposit"):
-                            dep_id = st.text_input("Enter Deposit ID to delete:")
-                            if dep_id:
-                                if st.button("🗑️ Delete Deposit", use_container_width=True, type="secondary"):
-                                    if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                        try:
-                                            conn = get_db()
-                                            dep = conn.execute("SELECT id FROM matured_deposits WHERE deposit_id=?", (dep_id,)).fetchone()
-                                            if dep:
-                                                conn.execute("DELETE FROM matured_deposits WHERE deposit_id=?", (dep_id,))
-                                                conn.commit()
-                                                conn.close()
-                                                st.success("✅ Deposit record deleted successfully!")
-                                                st.rerun()
-                                            else:
-                                                st.error("❌ Deposit not found!")
-                                        except Exception as e:
-                                            st.error(f"❌ Error: {str(e)}")
+                        if st.button("📄 Print Matured Deposits", use_container_width=True):
+                            print_html("Matured Deposits", df)
+                    
+                    with st.expander("🗑️ Delete Matured Deposit"):
+                        dep_id = st.text_input("Enter Deposit ID to delete:")
+                        if dep_id:
+                            if st.button("🗑️ Delete Deposit", use_container_width=True, type="secondary"):
+                                if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                                    try:
+                                        conn = get_db()
+                                        dep = conn.execute("SELECT id FROM matured_deposits WHERE deposit_id=?", (dep_id,)).fetchone()
+                                        if dep:
+                                            conn.execute("DELETE FROM matured_deposits WHERE deposit_id=?", (dep_id,))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success("✅ Deposit record deleted successfully!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ Deposit not found!")
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
                 else:
                     st.info("No matured deposits found for this customer")
             except Exception as e:
@@ -3368,6 +3392,11 @@ def journal_vouchers():
                         total_credit = df['Credit'].sum()
                         st.info(f"📊 Total Debit: Rs {total_debit:,.2f} | Total Credit: Rs {total_credit:,.2f}")
                         
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("📄 Print JV", use_container_width=True):
+                                print_html(f"Journal Voucher - {v[1]}", df)
+                        
                         with st.expander("🗑️ Delete Entry"):
                             entry_id = st.text_input("Enter Entry ID to delete:", key=f"del_entry_{v[0]}")
                             if entry_id:
@@ -3470,8 +3499,9 @@ def transactions():
         df = pd.DataFrame(txns, columns=['ID', 'Txn ID', 'Customer', 'Account Type', 'Account', 'Type', 'Amount', 'Mode', 'Description', 'Time', 'Balance'])
         df['Time'] = pd.to_datetime(df['Time']).dt.strftime('%d-%m-%Y %I:%M %p')
         
+        display_df = df[['Txn ID', 'Customer', 'Account Type', 'Account', 'Type', 'Amount', 'Mode', 'Description', 'Time', 'Balance']]
         st.dataframe(
-            df.style.format({
+            display_df.style.format({
                 'Amount': 'Rs {:,.2f}',
                 'Balance': 'Rs {:,.2f}'
             }),
@@ -3487,12 +3517,17 @@ def transactions():
         col2.metric("💳 Total Debits", f"Rs {total_debit:,.2f}")
         col3.metric("📊 Net Balance", f"Rs {(total_credit - total_debit):,.2f}")
         
-        st.download_button(
-            "📥 Download Transactions CSV",
-            df.to_csv(index=False),
-            f"transactions_{from_date}_{to_date}.csv",
-            "text/csv"
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📥 Download Transactions CSV",
+                df.to_csv(index=False),
+                f"transactions_{from_date}_{to_date}.csv",
+                "text/csv"
+            )
+        with col2:
+            if st.button("📄 Print Transactions", use_container_width=True):
+                print_html(f"Transactions Report ({from_date} to {to_date})", display_df)
         
         with st.expander("🗑️ Delete Transaction"):
             txn_id = st.text_input("Enter Transaction ID to delete:")
@@ -3512,28 +3547,6 @@ def transactions():
                                 st.error("❌ Transaction not found!")
                         except Exception as e:
                             st.error(f"❌ Error: {str(e)}")
-        
-        if st.button("📄 Print/PDF Transactions", use_container_width=True):
-            content = [
-                "📊 TRANSACTIONS REPORT",
-                "=" * 50,
-                f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}",
-                f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                "",
-                f"Total Credits: Rs {total_credit:,.2f}",
-                f"Total Debits: Rs {total_debit:,.2f}",
-                f"Net Balance: Rs {(total_credit - total_debit):,.2f}",
-                "",
-                "DETAILED TRANSACTIONS:",
-                "-" * 50
-            ]
-            
-            for txn in txns:
-                content.append(f"{txn[1]} | {txn[2]} | {txn[5]} | Rs {txn[6]:,.2f} | {txn[8]} | {txn[9]}")
-            
-            pdf_file = create_pdf("Transactions Report", content, "transactions")
-            if pdf_file:
-                create_download_button(pdf_file, "transactions_report", "📥 Download PDF Report")
     else:
         st.info("No transactions in this period")
 
@@ -3666,8 +3679,9 @@ def income_expenses():
         
         if income_data:
             df = pd.DataFrame(income_data, columns=['ID', 'Income ID', 'Type', 'Amount', 'Description', 'Date', 'Created'])
+            display_df = df[['Income ID', 'Type', 'Amount', 'Description', 'Date', 'Created']]
             st.dataframe(
-                df.style.format({
+                display_df.style.format({
                     'Amount': 'Rs {:,.2f}'
                 }),
                 use_container_width=True
@@ -3684,26 +3698,28 @@ def income_expenses():
                     "income.csv",
                     "text/csv"
                 )
-            
             with col2:
-                with st.expander("🗑️ Delete Income Record"):
-                    inc_id = st.text_input("Enter Income ID to delete:")
-                    if inc_id:
-                        if st.button("🗑️ Delete Income", use_container_width=True, type="secondary"):
-                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                try:
-                                    conn = get_db()
-                                    inc = conn.execute("SELECT id FROM income WHERE income_id=?", (inc_id,)).fetchone()
-                                    if inc:
-                                        conn.execute("DELETE FROM income WHERE income_id=?", (inc_id,))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success("✅ Income record deleted successfully!")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Income record not found!")
-                                except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                if st.button("📄 Print Income", use_container_width=True):
+                    print_html("Income Summary", display_df)
+            
+            with st.expander("🗑️ Delete Income Record"):
+                inc_id = st.text_input("Enter Income ID to delete:")
+                if inc_id:
+                    if st.button("🗑️ Delete Income", use_container_width=True, type="secondary"):
+                        if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                            try:
+                                conn = get_db()
+                                inc = conn.execute("SELECT id FROM income WHERE income_id=?", (inc_id,)).fetchone()
+                                if inc:
+                                    conn.execute("DELETE FROM income WHERE income_id=?", (inc_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("✅ Income record deleted successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Income record not found!")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No income recorded")
     
@@ -3717,8 +3733,9 @@ def income_expenses():
         
         if expense_data:
             df = pd.DataFrame(expense_data, columns=['ID', 'Expense ID', 'Type', 'Amount', 'Description', 'Date', 'Created'])
+            display_df = df[['Expense ID', 'Type', 'Amount', 'Description', 'Date', 'Created']]
             st.dataframe(
-                df.style.format({
+                display_df.style.format({
                     'Amount': 'Rs {:,.2f}'
                 }),
                 use_container_width=True
@@ -3735,26 +3752,28 @@ def income_expenses():
                     "expenses.csv",
                     "text/csv"
                 )
-            
             with col2:
-                with st.expander("🗑️ Delete Expense Record"):
-                    exp_id = st.text_input("Enter Expense ID to delete:")
-                    if exp_id:
-                        if st.button("🗑️ Delete Expense", use_container_width=True, type="secondary"):
-                            if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                                try:
-                                    conn = get_db()
-                                    exp = conn.execute("SELECT id FROM expenses WHERE expense_id=?", (exp_id,)).fetchone()
-                                    if exp:
-                                        conn.execute("DELETE FROM expenses WHERE expense_id=?", (exp_id,))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success("✅ Expense record deleted successfully!")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Expense record not found!")
-                                except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                if st.button("📄 Print Expenses", use_container_width=True):
+                    print_html("Expense Summary", display_df)
+            
+            with st.expander("🗑️ Delete Expense Record"):
+                exp_id = st.text_input("Enter Expense ID to delete:")
+                if exp_id:
+                    if st.button("🗑️ Delete Expense", use_container_width=True, type="secondary"):
+                        if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
+                            try:
+                                conn = get_db()
+                                exp = conn.execute("SELECT id FROM expenses WHERE expense_id=?", (exp_id,)).fetchone()
+                                if exp:
+                                    conn.execute("DELETE FROM expenses WHERE expense_id=?", (exp_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("✅ Expense record deleted successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Expense record not found!")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No expenses recorded")
     
@@ -3880,14 +3899,27 @@ def interest_calculation():
     
     if recent:
         df = pd.DataFrame(recent, columns=['ID', 'Date', 'Customer', 'Principal', 'Rate', 'Interest', 'Days'])
+        display_df = df[['Date', 'Customer', 'Principal', 'Rate', 'Interest', 'Days']]
         st.dataframe(
-            df.style.format({
+            display_df.style.format({
                 'Principal': 'Rs {:,.2f}',
                 'Interest': 'Rs {:,.2f}',
                 'Rate': '{:.2f}%'
             }),
             use_container_width=True
         )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📥 Download Interest CSV",
+                df.to_csv(index=False),
+                "interest_calculations.csv",
+                "text/csv"
+            )
+        with col2:
+            if st.button("📄 Print Interest Calculations", use_container_width=True):
+                print_html("Interest Calculations", display_df)
         
         with st.expander("🗑️ Delete Interest Record"):
             int_id = st.text_input("Enter Interest Calculation ID to delete:")
@@ -4060,35 +4092,8 @@ def trial_balance():
                         "text/csv"
                     )
                 with col2:
-                    if st.button("📄 Print/PDF Trial Balance", use_container_width=True):
-                        content = [
-                            "⚖️ TRIAL BALANCE",
-                            "=" * 50,
-                            f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                            "",
-                            f"Total Debit: Rs {final_tdr:,.2f}",
-                            f"Total Credit: Rs {final_tcr:,.2f}",
-                            "",
-                            f"Journal Vouchers - Debit: Rs {jv_total_dr:,.2f}",
-                            f"Journal Vouchers - Credit: Rs {jv_total_cr:,.2f}",
-                            "",
-                            "DETAILED TRIAL BALANCE:",
-                            "-" * 50
-                        ]
-                        
-                        for item in trial:
-                            content.append(f"{item['head']} | {item['cat']} | Rs {item['dr']:,.2f} | Rs {item['cr']:,.2f}")
-                        
-                        content.append("")
-                        content.append(f"Assets (Dr): Rs {asset_total:,.2f}")
-                        content.append(f"Liabilities (Cr): Rs {liability_total:,.2f}")
-                        content.append(f"Income (Cr): Rs {income_total:,.2f}")
-                        content.append(f"Expenses (Dr): Rs {expense_total:,.2f}")
-                        content.append(f"Capital/Equity: Rs {capital:,.2f}")
-                        
-                        pdf_file = create_pdf("Trial Balance Report", content, "trial_balance")
-                        if pdf_file:
-                            create_download_button(pdf_file, "trial_balance", "📥 Download PDF Report")
+                    if st.button("📄 Print Trial Balance", use_container_width=True):
+                        print_html("Trial Balance", display_df)
             else:
                 st.error(f"❌ Difference: Rs {abs(final_tdr - final_tcr):,.2f}")
     
@@ -4262,41 +4267,8 @@ def balance_sheet():
                 )
             
             with col2:
-                if st.button("📄 Print/PDF Balance Sheet", use_container_width=True):
-                    content = [
-                        "📋 BALANCE SHEET",
-                        "=" * 50,
-                        f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                        "",
-                        "ASSETS:",
-                        "-" * 30
-                    ]
-                    for item in assets:
-                        content.append(f"{item['name']}: Rs {item['amount']:,.2f}")
-                    content.append(f"Total Assets: Rs {ta:,.2f}")
-                    content.append("")
-                    content.append("LIABILITIES:")
-                    content.append("-" * 30)
-                    for item in liabilities:
-                        content.append(f"{item['name']}: Rs {item['amount']:,.2f}")
-                    content.append(f"Total Liabilities: Rs {tl:,.2f}")
-                    content.append("")
-                    content.append("EQUITY:")
-                    content.append("-" * 30)
-                    content.append(f"Capital: Rs {capital:,.2f}")
-                    if net_profit > 0:
-                        content.append(f"Net Profit: Rs {net_profit:,.2f}")
-                    elif net_profit < 0:
-                        content.append(f"Net Loss: Rs {abs(net_profit):,.2f}")
-                    content.append(f"Total Equity: Rs {total_equity:,.2f}")
-                    content.append("")
-                    content.append(f"CHECK: Assets (Rs {ta:,.2f}) = Liabilities (Rs {tl:,.2f}) + Equity (Rs {total_equity:,.2f})")
-                    content.append("")
-                    content.append("✅ PERFECTLY BALANCED!")
-                    
-                    pdf_file = create_pdf("Balance Sheet Report", content, "balance_sheet")
-                    if pdf_file:
-                        create_download_button(pdf_file, "balance_sheet", "📥 Download PDF Report")
+                if st.button("📄 Print Balance Sheet", use_container_width=True):
+                    print_html("Balance Sheet", df_bs)
         else:
             st.error(f"❌ Difference: Rs {abs(ta - (tl + total_equity)):,.2f}")
     
@@ -4342,8 +4314,9 @@ def profit_loss():
             st.markdown("### 💰 INCOME")
             st.markdown("---")
             if income_data:
-                for item in income_data:
-                    st.markdown(f"📊 **{item[0]}**: Rs {item[1]:,.2f}")
+                income_df = pd.DataFrame(income_data, columns=['Type', 'Amount'])
+                for _, row in income_df.iterrows():
+                    st.markdown(f"📊 **{row['Type']}**: Rs {row['Amount']:,.2f}")
                 st.markdown("---")
                 st.markdown(f"### **Total Income: Rs {total_income:,.2f}**")
             else:
@@ -4353,8 +4326,9 @@ def profit_loss():
             st.markdown("### 💸 EXPENSES")
             st.markdown("---")
             if expense_data:
-                for item in expense_data:
-                    st.markdown(f"📊 **{item[0]}**: Rs {item[1]:,.2f}")
+                expense_df = pd.DataFrame(expense_data, columns=['Type', 'Amount'])
+                for _, row in expense_df.iterrows():
+                    st.markdown(f"📊 **{row['Type']}**: Rs {row['Amount']:,.2f}")
                 st.markdown("---")
                 st.markdown(f"### **Total Expenses: Rs {total_expense:,.2f}**")
             else:
@@ -4374,46 +4348,26 @@ def profit_loss():
         
         col1, col2 = st.columns(2)
         with col1:
+            pl_data = []
+            # ... (continuing from profit_loss function)
+
+            for item in income_data:
+                pl_data.append({'Type': 'Income', 'Category': item[0], 'Amount': item[1]})
+            for item in expense_data:
+                pl_data.append({'Type': 'Expense', 'Category': item[0], 'Amount': item[1]})
+            pl_data.append({'Type': 'Net', 'Category': 'Net Profit/Loss', 'Amount': net_profit})
+            
+            df_pl = pd.DataFrame(pl_data)
             st.download_button(
                 "📥 Download CSV",
-                pd.DataFrame({
-                    'Type': ['Income', 'Expense', 'Net'],
-                    'Amount': [total_income, total_expense, net_profit]
-                }).to_csv(index=False),
+                df_pl.to_csv(index=False),
                 "profit_loss.csv",
                 "text/csv"
             )
         
         with col2:
-            if st.button("📄 Print/PDF P&L", use_container_width=True):
-                content = [
-                    "📈 PROFIT & LOSS STATEMENT",
-                    "=" * 50,
-                    f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}",
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                    "",
-                    "INCOME:",
-                    "-" * 30
-                ]
-                for item in income_data:
-                    content.append(f"{item[0]}: Rs {item[1]:,.2f}")
-                content.append(f"Total Income: Rs {total_income:,.2f}")
-                content.append("")
-                content.append("EXPENSES:")
-                content.append("-" * 30)
-                for item in expense_data:
-                    content.append(f"{item[0]}: Rs {item[1]:,.2f}")
-                content.append(f"Total Expenses: Rs {total_expense:,.2f}")
-                content.append("")
-                if net_profit >= 0:
-                    content.append(f"NET PROFIT: Rs {net_profit:,.2f}")
-                    content.append(f"Profit Margin: {(net_profit/total_income*100):.1f}%")
-                else:
-                    content.append(f"NET LOSS: Rs {abs(net_profit):,.2f}")
-                
-                pdf_file = create_pdf("Profit & Loss Statement", content, "profit_loss")
-                if pdf_file:
-                    create_download_button(pdf_file, "profit_loss", "📥 Download PDF Report")
+            if st.button("📄 Print P&L", use_container_width=True):
+                print_html("Profit & Loss Statement", df_pl)
     
     c.close()
 
@@ -4447,17 +4401,8 @@ def reports():
             with col1:
                 st.download_button("📥 Download CSV", df.to_csv(index=False), "customers_list.csv", "text/csv")
             with col2:
-                if st.button("📄 Print/PDF Customer List", use_container_width=True):
-                    content = ["👥 CUSTOMER LIST", "=" * 50]
-                    content.append(f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}")
-                    content.append(f"Total Customers: {len(customers)}")
-                    content.append("")
-                    for cust in customers:
-                        content.append(f"ID: {cust[0]} | Name: {cust[1]} {cust[2]} | Email: {cust[3]} | Phone: {cust[4]} | KYC: {cust[5]}")
-                    
-                    pdf_file = create_pdf("Customer List Report", content, "customer_list")
-                    if pdf_file:
-                        create_download_button(pdf_file, "customer_list", "📥 Download PDF Report")
+                if st.button("📄 Print Customer List", use_container_width=True):
+                    print_html("Customer List", df)
         else:
             st.info("No customers found")
     
@@ -4489,25 +4434,12 @@ def reports():
             col2.metric("💳 Debits", f"Rs {total_debit:,.2f}")
             col3.metric("📊 Net", f"Rs {(total_credit - total_debit):,.2f}")
             
-            if st.button("📄 Print/PDF Daily Transactions", use_container_width=True):
-                content = [
-                    f"📊 DAILY TRANSACTIONS REPORT - {report_date.strftime('%d-%m-%Y')}",
-                    "=" * 50,
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                    f"Total Transactions: {len(transactions)}",
-                    f"Total Credits: Rs {total_credit:,.2f}",
-                    f"Total Debits: Rs {total_debit:,.2f}",
-                    f"Net: Rs {(total_credit - total_debit):,.2f}",
-                    "",
-                    "TRANSACTION DETAILS:",
-                    "-" * 50
-                ]
-                for txn in transactions:
-                    content.append(f"{txn[0]} | {txn[1]} | {txn[2]} | Rs {txn[3]:,.2f} | {txn[4]} | {txn[6]}")
-                
-                pdf_file = create_pdf("Daily Transactions Report", content, "daily_transactions")
-                if pdf_file:
-                    create_download_button(pdf_file, "daily_transactions", "📥 Download PDF Report")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button("📥 Download CSV", df.to_csv(index=False), "daily_transactions.csv", "text/csv")
+            with col2:
+                if st.button("📄 Print Daily Transactions", use_container_width=True):
+                    print_html(f"Daily Transactions - {report_date.strftime('%d-%m-%Y')}", df)
         else:
             st.info("No transactions on this date")
     
@@ -4554,27 +4486,8 @@ def reports():
                             "text/csv"
                         )
                     with col2:
-                        if st.button("📄 Print/PDF Statement", use_container_width=True):
-                            content = [
-                                f"📋 ACCOUNT STATEMENT - {acc_number}",
-                                "=" * 50,
-                                f"Customer: {cust_name}",
-                                f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}",
-                                f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                                "",
-                                "TRANSACTION DETAILS:",
-                                "-" * 50
-                            ]
-                            for txn in txns:
-                                content.append(f"{txn[0]} | {txn[1]} | Rs {txn[2]:,.2f} | Rs {txn[3]:,.2f} | {txn[4]} | {txn[6]}")
-                            
-                            content.append("")
-                            content.append(f"Opening Balance: Rs {balance:,.2f}")
-                            content.append(f"Closing Balance: Rs {txns[0][3] if txns else balance:,.2f}")
-                            
-                            pdf_file = create_pdf(f"Account Statement - {acc_number}", content, f"statement_{acc_number}")
-                            if pdf_file:
-                                create_download_button(pdf_file, f"statement_{acc_number}", "📥 Download PDF Report")
+                        if st.button("📄 Print Statement", use_container_width=True):
+                            print_html(f"Account Statement - {acc_number}", df)
                 else:
                     st.info("No transactions in this period")
     
@@ -4603,22 +4516,12 @@ def reports():
             total_interest = df['Interest Earned'].sum()
             st.info(f"💰 Total Interest Earned: Rs {total_interest:,.2f}")
             
-            if st.button("📄 Print/PDF Interest Summary", use_container_width=True):
-                content = [
-                    "📊 INTEREST SUMMARY REPORT",
-                    "=" * 50,
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                    f"Total Interest Earned: Rs {total_interest:,.2f}",
-                    "",
-                    "DETAILED SUMMARY:",
-                    "-" * 50
-                ]
-                for item in interest_data:
-                    content.append(f"{item[0]} | {item[1]} | Rs {item[2]:,.2f} | {item[3]}%")
-                
-                pdf_file = create_pdf("Interest Summary Report", content, "interest_summary")
-                if pdf_file:
-                    create_download_button(pdf_file, "interest_summary", "📥 Download PDF Report")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button("📥 Download CSV", df.to_csv(index=False), "interest_summary.csv", "text/csv")
+            with col2:
+                if st.button("📄 Print Interest Summary", use_container_width=True):
+                    print_html("Interest Summary", df)
         else:
             st.info("No interest data available")
     
@@ -4656,25 +4559,12 @@ def reports():
             col2.metric("🔴 Closed FD", f"Rs {closed_fd:,.2f}")
             col3.metric("💰 Total FD", f"Rs {total_fd:,.2f}")
             
-            if st.button("📄 Print/PDF FD Summary", use_container_width=True):
-                content = [
-                    "📊 FIXED DEPOSITS SUMMARY REPORT",
-                    "=" * 50,
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                    f"Total FDs: {len(fds)}",
-                    f"Active FD Amount: Rs {active_fd:,.2f}",
-                    f"Closed FD Amount: Rs {closed_fd:,.2f}",
-                    f"Total FD Amount: Rs {total_fd:,.2f}",
-                    "",
-                    "FD DETAILS:",
-                    "-" * 50
-                ]
-                for fd in fds:
-                    content.append(f"{fd[0]} | {fd[1]} | Rs {fd[2]:,.2f} | {fd[3]}% | {fd[4]} | {fd[5]} | {fd[7]}")
-                
-                pdf_file = create_pdf("FD Summary Report", content, "fd_summary")
-                if pdf_file:
-                    create_download_button(pdf_file, "fd_summary", "📥 Download PDF Report")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button("📥 Download CSV", df.to_csv(index=False), "fd_summary.csv", "text/csv")
+            with col2:
+                if st.button("📄 Print FD Summary", use_container_width=True):
+                    print_html("FD Summary Report", df)
         else:
             st.info("No fixed deposits found")
     
@@ -4713,25 +4603,12 @@ def reports():
             col2.metric("🔴 Matured RD", f"Rs {matured_rd:,.2f}")
             col3.metric("💰 Total RD", f"Rs {total_rd:,.2f}")
             
-            if st.button("📄 Print/PDF RD Summary", use_container_width=True):
-                content = [
-                    "📊 RECURRING DEPOSITS SUMMARY REPORT",
-                    "=" * 50,
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                    f"Total RDs: {len(rds)}",
-                    f"Active RD Amount: Rs {active_rd:,.2f}",
-                    f"Matured RD Amount: Rs {matured_rd:,.2f}",
-                    f"Total RD Amount: Rs {total_rd:,.2f}",
-                    "",
-                    "RD DETAILS:",
-                    "-" * 50
-                ]
-                for rd in rds:
-                    content.append(f"{rd[0]} | {rd[1]} | Rs {rd[2]:,.2f} | {rd[3]}/{rd[4]} | {rd[5]}% | {rd[6]} | {rd[7]} | {rd[9]}")
-                
-                pdf_file = create_pdf("RD Summary Report", content, "rd_summary")
-                if pdf_file:
-                    create_download_button(pdf_file, "rd_summary", "📥 Download PDF Report")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button("📥 Download CSV", df.to_csv(index=False), "rd_summary.csv", "text/csv")
+            with col2:
+                if st.button("📄 Print RD Summary", use_container_width=True):
+                    print_html("RD Summary Report", df)
         else:
             st.info("No recurring deposits found")
     
@@ -4770,23 +4647,12 @@ def reports():
             col1.metric("💰 Total Retrieval Balance", f"Rs {total_balance:,.2f}")
             col2.metric("📊 Total Matured Amount", f"Rs {total_matured:,.2f}")
             
-            if st.button("📄 Print/PDF Retrieval Summary", use_container_width=True):
-                content = [
-                    "📊 RETRIEVAL ACCOUNT SUMMARY REPORT",
-                    "=" * 50,
-                    f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
-                    f"Total Retrieval Balance: Rs {total_balance:,.2f}",
-                    f"Total Matured Amount: Rs {total_matured:,.2f}",
-                    "",
-                    "DETAILED SUMMARY:",
-                    "-" * 50
-                ]
-                for item in retrieval_data:
-                    content.append(f"{item[0]} | {item[1]} | Rs {item[2]:,.2f} | {item[3]} deposits")
-                
-                pdf_file = create_pdf("Retrieval Account Summary Report", content, "retrieval_summary")
-                if pdf_file:
-                    create_download_button(pdf_file, "retrieval_summary", "📥 Download PDF Report")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button("📥 Download CSV", df.to_csv(index=False), "retrieval_summary.csv", "text/csv")
+            with col2:
+                if st.button("📄 Print Retrieval Summary", use_container_width=True):
+                    print_html("Retrieval Account Summary", df)
         else:
             st.info("No retrieval account data found")
     
@@ -4826,6 +4692,11 @@ def my_accounts():
         total_interest = sum(acc[3] for acc in accounts)
         
         st.info(f"💰 **Total Portfolio: Rs {total_balance + total_interest:,.2f}**")
+        
+        # Print option for my accounts
+        if st.button("📄 Print My Accounts", use_container_width=True):
+            df = pd.DataFrame(accounts, columns=['Account Number', 'Type', 'Balance', 'Interest Earned', 'Rate', 'Status'])
+            print_html("My Accounts", df)
     else:
         st.info("No active accounts found")
     
@@ -4874,6 +4745,18 @@ def my_transactions():
         col1.metric("💰 Total Credits", f"Rs {total_credit:,.2f}")
         col2.metric("💳 Total Debits", f"Rs {total_debit:,.2f}")
         col3.metric("📊 Net Change", f"Rs {(total_credit - total_debit):,.2f}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📥 Download Transactions CSV",
+                df.to_csv(index=False),
+                "my_transactions.csv",
+                "text/csv"
+            )
+        with col2:
+            if st.button("📄 Print My Transactions", use_container_width=True):
+                print_html("My Transactions", df)
     else:
         st.info("No transactions found")
     
@@ -4882,4 +4765,3 @@ def my_transactions():
 # ==================== MAIN EXECUTION ====================
 if __name__ == "__main__":
     main()
-    

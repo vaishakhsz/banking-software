@@ -705,6 +705,7 @@ def customer_selector(label="👤 Select Customer", key_prefix="cust"):
 # ==================== TEAL THEME CSS ====================
 # ==================== TEAL THEME CSS ====================
 # ==================== TEAL THEME CSS ====================
+# ==================== TEAL THEME CSS ====================
 def load_enterprise_css():
     st.markdown("""
     <style>
@@ -792,9 +793,13 @@ def load_enterprise_css():
         }
         
         /* Sidebar */
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #1a1a1a, #2d2d2d, #1a1a1a) !important;
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #0a0a0a, #1a1a1a, #2a2a2a) !important;
             border-right: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        section[data-testid="stSidebar"] .css-1d391kg {
+            background: transparent !important;
         }
         
         .sidebar-logo {
@@ -841,10 +846,10 @@ def load_enterprise_css():
         }
         
         /* Sidebar Buttons - Black/Dark */
-        [data-testid="stSidebar"] .stButton > button {
+        section[data-testid="stSidebar"] .stButton > button {
             color: rgba(255,255,255,0.85) !important;
             background: #2d2d2d !important;
-            border: 1px solid rgba(255,255,255,0.05) !important;
+            border: 1px solid rgba(255,255,255,0.08) !important;
             border-radius: 8px !important;
             padding: 10px 14px !important;
             margin: 3px 0 !important;
@@ -854,31 +859,54 @@ def load_enterprise_css():
             font-size: 0.9rem !important;
             transition: all 0.2s ease !important;
             width: 100% !important;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3) !important;
         }
         
-        [data-testid="stSidebar"] .stButton > button:hover {
+        section[data-testid="stSidebar"] .stButton > button:hover {
             background: #3d3d3d !important;
             color: white !important;
             transform: translateX(5px);
             border-color: #0a8a7a !important;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
         }
         
-        [data-testid="stSidebar"] .stButton > button:focus {
+        section[data-testid="stSidebar"] .stButton > button:active,
+        section[data-testid="stSidebar"] .stButton > button:focus {
             background: #3d3d3d !important;
             color: white !important;
             border-color: #0a8a7a !important;
+            outline: none !important;
+            box-shadow: 0 0 0 2px rgba(10,138,122,0.3) !important;
         }
         
-        [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        /* Active/Selected button */
+        section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
             background: #0a8a7a !important;
             border-left: 3px solid #f0c040 !important;
             color: white !important;
+            box-shadow: 0 4px 15px rgba(10,138,122,0.3) !important;
         }
         
-        [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+        section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
             background: #0d6b5e !important;
+        }
+        
+        /* Remove default button styling */
+        section[data-testid="stSidebar"] .stButton > button > div {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+        }
+        
+        /* Sign Out button */
+        section[data-testid="stSidebar"] .stButton:last-of-type > button {
+            background: #2d2d2d !important;
+            border-color: rgba(255,50,50,0.2) !important;
+        }
+        
+        section[data-testid="stSidebar"] .stButton:last-of-type > button:hover {
+            background: #3d2d2d !important;
+            border-color: rgba(255,50,50,0.4) !important;
         }
         
         .sidebar-footer {

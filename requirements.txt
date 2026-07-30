@@ -3,4 +3,7 @@ pandas
 plotly
 fpdf2
 Pillow
+python-dateutil
+pytz
+fpdf
 

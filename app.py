@@ -240,9 +240,13 @@ def login_page():
 def main_dashboard():
     user = st.session_state.user
     
+    # Safe retrieval of user details with fallbacks
+    full_name = user.get('full_name', user.get('username', 'User'))
+    role = user.get('role', 'Staff')
+    
     # Sidebar Navigation mapping to requested exact menu options
-    st.sidebar.markdown(f"### Welcome, **{user['full_name']}**")
-    st.sidebar.caption(f"Role: {user['role']}")
+    st.sidebar.markdown(f"### Welcome, **{full_name}**")
+    st.sidebar.caption(f"Role: {role}")
     st.sidebar.markdown("---")
     
     menu = st.sidebar.selectbox("Navigation Menu", [

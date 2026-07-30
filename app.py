@@ -412,7 +412,7 @@ def add_to_retrieval_account(customer_id, deposit_type, deposit_number, principa
         raise e
 
 def transfer_to_sb(customer_id, amount, sb_account_id):
-    """Transfer from retrieval account to SB account"""
+    """Transfer from retrieval account to """
     conn = get_db()
     
     try:
@@ -436,7 +436,7 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
         
         if not sb_acc:
             conn.close()
-            return None, "SB account not found"
+            return None, " not found"
         
         new_ret_balance = ret_acc[2] - amount
         conn.execute("""
@@ -462,7 +462,7 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
         """, (
             generate_id('TXN'), ret_acc[0], 'DEBIT',
             amount, new_ret_balance,
-            "Transfer to SB Account",
+            "Transfer to ",
             'TRANSFER', 'PAYMENT',
             generate_voucher_number('PAYMENT'),
             st.session_state.user['id']
@@ -575,7 +575,7 @@ def customer_selector(label="👤 Select Customer", key_prefix="cust"):
     options = []
     for cust in customers:
         if cust[4] is None:
-            display = f"❌ {cust[2]} | {cust[1]} | No SB Account | KYC: {cust[3]}"
+            display = f"❌ {cust[2]} | {cust[1]} | No  | KYC: {cust[3]}"
             options.append({
                 'display': display,
                 'customer_id': cust[0],
@@ -619,7 +619,7 @@ def customer_selector(label="👤 Select Customer", key_prefix="cust"):
             selected['total_balance']
         )
     elif selected and not selected['has_account']:
-        st.warning(f"⚠️ {selected['customer_name']} doesn't have an SB account yet!")
+        st.warning(f"⚠️ {selected['customer_name']} doesn't have an  yet!")
         return selected['customer_id'], selected['customer_name'], None, None, 0
     
     return None, None, None, None, None
@@ -1276,6 +1276,7 @@ def create_sb_account():
     c.close()
 
 # ==================== SB ACCOUNTS ====================
+# ==================== SB ACCOUNTS - FIXED ====================
 def sb_accounts():
     if st.session_state.user['role'] not in ['admin', 'staff']:
         st.error("❌ Unauthorized access!")
@@ -1297,7 +1298,7 @@ def sb_accounts():
             ✅ **Selected Account:**
             - Customer: **{cust_name}**
             - Account: **{acc_number}**
-            - Balance: **Rs {balance:,.2f}**
+            - Balance: **₹ {balance:,.2f}**
             """)
             
             with st.form("transaction_form"):
@@ -1312,16 +1313,18 @@ def sb_accounts():
                 
                 with col2:
                     amount = st.number_input(
-                        "💵 Amount (Rs)",
+                        "💵 Amount (₹)",
                         min_value=1.0,
-                        step=100.0
+                        step=100.0,
+                        value=100.0
                     )
                 
                 mode = st.selectbox(
                     "💳 Payment Mode",
-                    ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"]
+                    ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"],
+                    key="sb_txn_mode"
                 )
-                description = st.text_input("📝 Description", placeholder="Transaction details")
+                description = st.text_input("📝 Description", placeholder="Transaction details", key="sb_txn_desc")
                 
                 if st.form_submit_button("✅ Process Transaction", use_container_width=True, type="primary"):
                     if transaction_type == "💳 Withdraw" and amount > balance:
@@ -1333,6 +1336,10 @@ def sb_accounts():
                             new_balance = balance - amount if txn_type == "DEBIT" else balance + amount
                             voucher_type = "PAYMENT" if txn_type == "DEBIT" else "RECEIPT"
                             
+                            # Generate proper transaction ID
+                            txn_id = generate_id('TXN')
+                            voucher_number = generate_voucher_number(voucher_type)
+                            
                             conn.execute("""
                                 INSERT INTO transactions (
                                     transaction_id, account_id, transaction_type,
@@ -1341,9 +1348,9 @@ def sb_accounts():
                                     created_by
                                 ) VALUES (?,?,?,?,?,?,?,?,?,?)
                             """, (
-                                generate_id('TXN'), acc_id, txn_type,
+                                txn_id, acc_id, txn_type,
                                 amount, new_balance, description or f"{transaction_type}",
-                                mode, voucher_type, generate_voucher_number(voucher_type),
+                                mode, voucher_type, voucher_number,
                                 st.session_state.user['id']
                             ))
                             
@@ -1356,12 +1363,17 @@ def sb_accounts():
                             
                             📋 **Details:**
                             - Type: **{transaction_type}**
-                            - Amount: **Rs {amount:,.2f}**
-                            - New Balance: **Rs {new_balance:,.2f}**
+                            - Amount: **₹ {amount:,.2f}**
+                            - New Balance: **₹ {new_balance:,.2f}**
+                            - Transaction ID: **{txn_id}**
+                            - Voucher: **{voucher_number}**
                             """)
+                            st.balloons()
                             st.rerun()
                             
                         except Exception as e:
+                            conn.rollback()
+                            conn.close()
                             st.error(f"❌ Error: {str(e)}")
     
     with tab2:
@@ -1377,39 +1389,46 @@ def sb_accounts():
         """).fetchall()
         
         if accounts:
-            df = pd.DataFrame(accounts, columns=['ID', 'Account', 'Customer', 'Balance', 'Interest', 'Rate', 'Status', 'KYC'])
-            st.dataframe(
-                df.style.format({
-                    'Balance': 'Rs {:,.2f}',
-                    'Interest': 'Rs {:,.2f}',
-                    'Rate': '{:.2f}%'
-                }),
-                use_container_width=True
-            )
+            data = []
+            for acc in accounts:
+                data.append({
+                    'ID': acc[0],
+                    'Account': acc[1],
+                    'Customer': acc[2],
+                    'Balance': f"₹ {acc[3]:,.2f}",
+                    'Interest': f"₹ {acc[4]:,.2f}",
+                    'Rate': f"{acc[5]}%",
+                    'Status': acc[6],
+                    'KYC': acc[7]
+                })
+            df = pd.DataFrame(data)
+            st.dataframe(df[['Account', 'Customer', 'Balance', 'Interest', 'Rate', 'Status', 'KYC']], use_container_width=True)
             
-            total_balance = df['Balance'].sum()
-            total_interest = df['Interest'].sum()
-            st.info(f"💰 Total SB Deposits: Rs {total_balance:,.2f} | Total Interest: Rs {total_interest:,.2f}")
+            total_balance = sum(acc[3] for acc in accounts)
+            total_interest = sum(acc[4] for acc in accounts)
+            st.info(f"💰 Total SB Deposits: ₹ {total_balance:,.2f} | Total Interest Earned: ₹ {total_interest:,.2f}")
             
             with st.expander("🗑️ Delete SB Account"):
-                acc_num = st.text_input("Enter Account Number to delete:")
+                st.warning("⚠️ This will delete the SB account and all its transactions.")
+                acc_num = st.text_input("Enter Account Number to delete:", key="del_sb_acc")
                 if acc_num:
-                    if st.button("🗑️ Delete Account", use_container_width=True, type="secondary"):
-                        if st.checkbox("☑️ Confirm delete? This cannot be undone!"):
-                            try:
-                                conn = get_db()
-                                acc = conn.execute("SELECT id FROM accounts WHERE account_number=?", (acc_num,)).fetchone()
-                                if acc:
-                                    conn.execute("DELETE FROM transactions WHERE account_id=?", (acc[0],))
-                                    conn.execute("DELETE FROM accounts WHERE account_number=?", (acc_num,))
-                                    conn.commit()
-                                    conn.close()
-                                    st.success("✅ Account deleted successfully!")
-                                    st.rerun()
-                                else:
-                                    st.error("❌ Account not found!")
-                            except Exception as e:
-                                st.error(f"❌ Error: {str(e)}")
+                    confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_sb_confirm")
+                    if confirm and st.button("🗑️ Delete Account Permanently", use_container_width=True, type="secondary"):
+                        try:
+                            conn = get_db()
+                            acc = conn.execute("SELECT id FROM accounts WHERE account_number=?", (acc_num,)).fetchone()
+                            if acc:
+                                acc_id = acc[0]
+                                conn.execute("DELETE FROM transactions WHERE account_id=?", (acc_id,))
+                                conn.execute("DELETE FROM accounts WHERE account_number=?", (acc_num,))
+                                conn.commit()
+                                conn.close()
+                                st.success("✅ Account deleted successfully!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Account not found!")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
         else:
             st.info("No SB accounts found")
     
@@ -1424,9 +1443,9 @@ def sb_accounts():
         if cust_id and acc_id:
             col1, col2 = st.columns(2)
             with col1:
-                from_date = st.date_input("📅 From Date", date.today() - timedelta(days=30))
+                from_date = st.date_input("📅 From Date", get_ist_today() - timedelta(days=30))
             with col2:
-                to_date = st.date_input("📅 To Date", date.today())
+                to_date = st.date_input("📅 To Date", get_ist_today())
             
             if st.button("📊 Generate Statement", use_container_width=True):
                 conn = get_db()
@@ -1441,29 +1460,58 @@ def sb_accounts():
                 conn.close()
                 
                 if transactions:
-                    df = pd.DataFrame(transactions, columns=['ID', 'Type', 'Amount', 'Balance', 'Description', 'Mode', 'Date'])
-                    df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%d-%m-%Y %I:%M %p')
+                    data = []
+                    for txn in transactions:
+                        # Format date properly
+                        try:
+                            txn_date = format_ist_datetime(txn[6])
+                        except:
+                            txn_date = str(txn[6]) if txn[6] else 'N/A'
+                        
+                        # Format amount with proper sign
+                        amount = txn[2]
+                        if txn[1] == 'DEBIT':
+                            amount_str = f"- ₹ {amount:,.2f}"
+                        else:
+                            amount_str = f"+ ₹ {amount:,.2f}"
+                        
+                        data.append({
+                            'Txn ID': txn[0],
+                            'Type': '💳 Debit' if txn[1] == 'DEBIT' else '💰 Credit',
+                            'Amount': amount_str,
+                            'Balance': f"₹ {txn[3]:,.2f}",
+                            'Description': txn[4] if txn[4] else 'N/A',
+                            'Mode': txn[5] if txn[5] else 'N/A',
+                            'Date': txn_date
+                        })
+                    df = pd.DataFrame(data)
+                    st.dataframe(df, use_container_width=True)
                     
-                    st.dataframe(
-                        df.style.format({
-                            'Amount': 'Rs {:,.2f}',
-                            'Balance': 'Rs {:,.2f}'
-                        }),
-                        use_container_width=True
-                    )
-                    
-                    total_credit = df[df['Type'] == 'CREDIT']['Amount'].sum()
-                    total_debit = df[df['Type'] == 'DEBIT']['Amount'].sum()
+                    total_credit = sum(txn[2] for txn in transactions if txn[1] == 'CREDIT')
+                    total_debit = sum(txn[2] for txn in transactions if txn[1] == 'DEBIT')
                     
                     col1, col2, col3 = st.columns(3)
-                    col1.metric("Total Credits", f"Rs {total_credit:,.2f}")
-                    col2.metric("Total Debits", f"Rs {total_debit:,.2f}")
-                    col3.metric("Net Change", f"Rs {(total_credit - total_debit):,.2f}")
+                    col1.metric("💰 Total Credits", f"₹ {total_credit:,.2f}")
+                    col2.metric("💳 Total Debits", f"₹ {total_debit:,.2f}")
+                    col3.metric("📊 Net Change", f"₹ {(total_credit - total_debit):,.2f}")
                     
+                    # Download button with proper data
+                    download_data = []
+                    for txn in transactions:
+                        download_data.append({
+                            'Transaction ID': txn[0],
+                            'Type': txn[1],
+                            'Amount': txn[2],
+                            'Balance': txn[3],
+                            'Description': txn[4] if txn[4] else '',
+                            'Mode': txn[5] if txn[5] else '',
+                            'Date': txn[6] if txn[6] else ''
+                        })
+                    df_download = pd.DataFrame(download_data)
                     st.download_button(
                         "📥 Download Statement",
-                        df.to_csv(index=False),
-                        f"statement_{acc_number}_{from_date}_{to_date}.csv",
+                        df_download.to_csv(index=False),
+                        f"statement_{acc_number}_{from_date.strftime('%d%m%Y')}_{to_date.strftime('%d%m%Y')}.csv",
                         "text/csv"
                     )
                 else:

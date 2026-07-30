@@ -1,5 +1,5 @@
 # 🏦 AASHA NIDHI PVT LIMITED BANK - COMPLETE SYSTEM
-# With IST Timezone, Chart of Accounts, Interest Rate Settings, Customer-wise Income/Expense
+# With Proper P&L, Interest Rate Management, Delete Functionality
 
 import streamlit as st
 import pandas as pd
@@ -17,23 +17,19 @@ try:
     from zoneinfo import ZoneInfo
     IST = ZoneInfo('Asia/Kolkata')
 except ImportError:
-    # Fallback: use UTC + 5:30 offset
     from datetime import timezone, timedelta
     IST = timezone(timedelta(hours=5, minutes=30))
 
 def get_ist_now():
-    """Get current time in IST"""
     try:
         return datetime.now(IST)
     except:
         return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 def get_ist_today():
-    """Get current date in IST"""
     return get_ist_now().date()
 
 def format_ist_datetime(dt_str):
-    """Format datetime string to IST"""
     if dt_str:
         try:
             dt = datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
@@ -348,35 +344,32 @@ def init_database():
             VALUES ('SB_INTEREST_RATE', '3.5', 'SB Account Interest Rate (%)')
         """)
         
-        # Insert default Chart of Accounts
+        # Insert default Chart of Accounts - Updated for Bank P&L
         default_accounts = [
-            # Income Accounts
-            ('INC001', 'Interest Income', 'Income', 'Banking Income'),
-            ('INC002', 'Commission Income', 'Income', 'Banking Income'),
-            ('INC003', 'Fees & Charges', 'Income', 'Banking Income'),
-            ('INC004', 'Processing Fees', 'Income', 'Banking Income'),
-            ('INC005', 'Other Income', 'Income', 'Other Income'),
+            # INCOME Accounts
+            ('INC001', 'Interest Received on Loans', 'Income', 'Interest Income'),
+            ('INC002', 'Interest Received on Investments', 'Income', 'Interest Income'),
+            ('INC003', 'Processing Fees', 'Income', 'Fee Based Income'),
+            ('INC004', 'Service Charges', 'Income', 'Fee Based Income'),
+            ('INC005', 'Commission Income', 'Income', 'Fee Based Income'),
+            ('INC006', 'Transaction Fees', 'Income', 'Fee Based Income'),
+            ('INC007', 'Investment Income', 'Income', 'Other Income'),
+            ('INC008', 'Miscellaneous Income', 'Income', 'Other Income'),
             
-            # Expense Accounts - Operating
-            ('EXP001', 'Salaries & Wages', 'Expense', 'Operating Expenses'),
-            ('EXP002', 'Rent & Utilities', 'Expense', 'Operating Expenses'),
-            ('EXP003', 'Electricity Charges', 'Expense', 'Operating Expenses'),
-            ('EXP004', 'Water Charges', 'Expense', 'Operating Expenses'),
-            ('EXP005', 'Internet & Telephone', 'Expense', 'Operating Expenses'),
-            
-            # Expense Accounts - Administrative
-            ('EXP006', 'Printing & Stationary', 'Expense', 'Administrative Expenses'),
-            ('EXP007', 'Postage & Courier', 'Expense', 'Administrative Expenses'),
-            ('EXP008', 'Office Supplies', 'Expense', 'Administrative Expenses'),
-            ('EXP009', 'Conveyance', 'Expense', 'Administrative Expenses'),
-            ('EXP010', 'Travel Expenses', 'Expense', 'Administrative Expenses'),
-            
-            # Expense Accounts - Other
-            ('EXP011', 'Bank Charges', 'Expense', 'Other Expenses'),
-            ('EXP012', 'Insurance', 'Expense', 'Other Expenses'),
-            ('EXP013', 'Maintenance', 'Expense', 'Other Expenses'),
-            ('EXP014', 'Professional Fees', 'Expense', 'Other Expenses'),
-            ('EXP015', 'Other Expenses', 'Expense', 'Other Expenses'),
+            # EXPENSE Accounts
+            ('EXP001', 'SB Interest Paid', 'Expense', 'Interest Expense'),
+            ('EXP002', 'FD Interest Paid', 'Expense', 'Interest Expense'),
+            ('EXP003', 'RD Interest Paid', 'Expense', 'Interest Expense'),
+            ('EXP004', 'Interest on Borrowings', 'Expense', 'Interest Expense'),
+            ('EXP005', 'Salaries & Benefits', 'Expense', 'Operating Expenses'),
+            ('EXP006', 'Rent & Utilities', 'Expense', 'Operating Expenses'),
+            ('EXP007', 'IT Infrastructure', 'Expense', 'Operating Expenses'),
+            ('EXP008', 'Depreciation', 'Expense', 'Operating Expenses'),
+            ('EXP009', 'Provision for NPAs', 'Expense', 'Provisions'),
+            ('EXP010', 'Bad Debt Write-off', 'Expense', 'Provisions'),
+            ('EXP011', 'Marketing Expenses', 'Expense', 'Other Expenses'),
+            ('EXP012', 'Legal & Audit Fees', 'Expense', 'Other Expenses'),
+            ('EXP013', 'Miscellaneous Expenses', 'Expense', 'Other Expenses'),
         ]
         
         for acc_code, acc_name, acc_type, category in default_accounts:
@@ -444,13 +437,11 @@ def create_default_admin():
     c.close()
 
 def get_current_sb_interest_rate():
-    """Get the current SB interest rate from settings"""
     c = get_db()
     rate = c.execute("""
         SELECT value FROM system_settings WHERE key = 'SB_INTEREST_RATE'
     """).fetchone()
     c.close()
-    
     if rate:
         return float(rate[0])
     return 3.5
@@ -465,9 +456,7 @@ def calculate_sb_interest(balance, rate, days):
     return 0 if balance <= 0 else round((balance * rate * days) / (100 * 365), 2)
 
 # ==================== RETRIEVAL ACCOUNT FUNCTIONS ====================
-
 def get_retrieval_account(customer_id):
-    """Get or create a retrieval account for a customer"""
     conn = get_db()
     try:
         acc = conn.execute("""
@@ -481,32 +470,26 @@ def get_retrieval_account(customer_id):
             return acc[0], acc[1], acc[2]
         
         account_number = f"RET{get_ist_now().strftime('%y%m%d')}{str(uuid.uuid4().int)[:6]}"
-        
         conn.execute("""
             INSERT INTO retrieval_accounts (account_number, customer_id, balance)
             VALUES (?, ?, 0)
         """, (account_number, customer_id))
-        
         acc_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
         conn.close()
-        
         return acc_id, account_number, 0
     except Exception as e:
         conn.close()
         raise e
 
 def add_to_retrieval_account(customer_id, deposit_type, deposit_number, principal, interest, maturity_date):
-    """Add matured deposit to retrieval account"""
     conn = None
     try:
         acc_id, acc_number, current_balance = get_retrieval_account(customer_id)
-        
         total_amount = principal + interest
-        
         conn = get_db()
-        
         new_balance = current_balance + total_amount
+        
         conn.execute("""
             UPDATE retrieval_accounts 
             SET balance = ? 
@@ -542,7 +525,6 @@ def add_to_retrieval_account(customer_id, deposit_type, deposit_number, principa
         conn.commit()
         conn.close()
         return acc_number, new_balance
-        
     except Exception as e:
         if conn:
             conn.rollback()
@@ -550,9 +532,7 @@ def add_to_retrieval_account(customer_id, deposit_type, deposit_number, principa
         raise e
 
 def transfer_to_sb(customer_id, amount, sb_account_id):
-    """Transfer from retrieval account to SB account"""
     conn = get_db()
-    
     try:
         ret_acc = conn.execute("""
             SELECT id, account_number, balance 
@@ -563,7 +543,6 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
         if not ret_acc:
             conn.close()
             return None, "No retrieval account found"
-        
         if ret_acc[2] < amount:
             conn.close()
             return None, "Insufficient balance in retrieval account"
@@ -625,7 +604,6 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
         conn.commit()
         conn.close()
         return new_ret_balance, new_sb_balance
-        
     except Exception as e:
         conn.rollback()
         conn.close()
@@ -633,41 +611,32 @@ def transfer_to_sb(customer_id, amount, sb_account_id):
 
 # ==================== PDF GENERATION ====================
 def create_pdf(title, content, filename):
-    """Generate PDF with proper formatting"""
     if FPDF is None:
         st.warning("⚠️ PDF library not available. Please install fpdf.")
         return None
-    
     try:
         pdf = FPDF()
         pdf.add_page()
-        
-        # Header
         pdf.set_font('Arial', 'B', 16)
         pdf.cell(190, 10, 'AASHA NIDHI PVT LIMITED BANK', 0, 1, 'C')
         pdf.set_font('Arial', '', 10)
         pdf.cell(190, 6, 'Balaramapuram', 0, 1, 'C')
         pdf.cell(190, 6, f'Date: {get_ist_now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
         pdf.line(10, 35, 200, 35)
-        
         pdf.set_font('Arial', 'B', 14)
         pdf.cell(190, 10, title, 0, 1, 'C')
         pdf.ln(5)
-        
         pdf.set_font('Arial', '', 10)
         for line in content:
             pdf.multi_cell(190, 6, line)
             pdf.ln(2)
-        
         pdf.set_y(-30)
         pdf.set_font('Arial', 'I', 8)
         pdf.cell(190, 10, f'Generated on: {get_ist_now().strftime("%d-%m-%Y %I:%M %p")}', 0, 1, 'C')
         pdf.cell(190, 10, 'This is a system generated statement', 0, 1, 'C')
-        
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
         pdf.output(temp_file.name)
         temp_file.close()
-        
         return temp_file.name
     except Exception as e:
         st.error(f"PDF generation error: {e}")
@@ -688,7 +657,6 @@ def create_download_button(file_path, filename, button_text="📥 Download PDF")
 # ==================== CUSTOMER SELECTOR ====================
 def customer_selector(label="👤 Select Customer", key_prefix="cust"):
     c = get_db()
-    
     query = """
         SELECT 
             c.id,
@@ -703,7 +671,6 @@ def customer_selector(label="👤 Select Customer", key_prefix="cust"):
         LEFT JOIN accounts a ON c.id = a.customer_id AND a.account_type = 'SB' AND a.status = 'ACTIVE'
         ORDER BY c.first_name
     """
-    
     customers = c.execute(query).fetchall()
     c.close()
     
@@ -760,7 +727,6 @@ def customer_selector(label="👤 Select Customer", key_prefix="cust"):
     elif selected and not selected['has_account']:
         st.warning(f"⚠️ {selected['customer_name']} doesn't have an SB account yet!")
         return selected['customer_id'], selected['customer_name'], None, None, 0
-    
     return None, None, None, None, None
 
 # ==================== CSS ====================
@@ -768,11 +734,7 @@ def load_enterprise_css():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-        
-        * {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-        }
-        
+        * { font-family: 'Plus Jakarta Sans', sans-serif; }
         .main-header {
             background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
             color: white;
@@ -785,140 +747,29 @@ def load_enterprise_css():
             align-items: center;
             flex-wrap: wrap;
         }
-        
-        .main-header h1 {
-            margin: 0;
-            font-size: 1.6rem;
-            font-weight: 800;
-        }
-        
-        .main-header small {
-            opacity: 0.8;
-            font-size: 0.85rem;
-        }
-        
-        .bank-logo {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-        
-        .bank-logo-icon {
-            font-size: 2.5rem;
-            animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-            100% { transform: scale(1); }
-        }
-        
-        .header-time {
-            background: rgba(255,255,255,0.15);
-            padding: 0.3rem 1rem;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            margin-top: 5px;
-            display: inline-block;
-        }
-        
-        .stButton > button {
-            border-radius: 10px !important;
-            font-weight: 700 !important;
-            transition: all 0.3s ease !important;
-        }
-        
-        .stButton > button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.15) !important;
-        }
-        
-        .stButton > button[kind="primary"] {
-            background: linear-gradient(135deg, #0f2027, #2c5364) !important;
-            color: white !important;
-        }
-        
-        .stButton > button[kind="primary"]:hover {
-            background: linear-gradient(135deg, #1a3340, #3a6b80) !important;
-        }
-        
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
-        }
-        
-        .stTabs [data-baseweb="tab"] {
-            border-radius: 8px;
-            padding: 8px 16px;
-            background: #f0f2f6;
-            font-weight: 600;
-        }
-        
-        .stTabs [aria-selected="true"] {
-            background: #0f2027 !important;
-            color: white !important;
-        }
-        
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0f2027, #203a43) !important;
-        }
-        
-        [data-testid="stSidebar"] .stButton > button {
-            color: white !important;
-            background: transparent !important;
-            border: 1px solid rgba(255,255,255,0.1) !important;
-            text-align: left !important;
-            justify-content: flex-start !important;
-        }
-        
-        [data-testid="stSidebar"] .stButton > button:hover {
-            background: rgba(255,255,255,0.1) !important;
-            border-color: rgba(255,255,255,0.3) !important;
-        }
-        
-        .sidebar-logo {
-            text-align: center;
-            padding: 20px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            margin-bottom: 20px;
-        }
-        
-        .sidebar-logo h2 {
-            color: white;
-            margin: 0;
-            font-size: 1.2rem;
-            font-weight: 700;
-        }
-        
-        .sidebar-logo p {
-            color: rgba(255,255,255,0.6);
-            font-size: 0.8rem;
-            margin: 0;
-        }
-        
-        .sidebar-logo .logo-icon {
-            font-size: 3rem;
-            display: block;
-            margin-bottom: 5px;
-        }
-        
-        .stDataFrame {
-            border-radius: 12px !important;
-            overflow: hidden !important;
-        }
-        
-        .stMetric {
-            background: white;
-            padding: 1rem;
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            transition: all 0.3s ease;
-        }
-        
-        .stMetric:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
-        }
+        .main-header h1 { margin: 0; font-size: 1.6rem; font-weight: 800; }
+        .main-header small { opacity: 0.8; font-size: 0.85rem; }
+        .bank-logo { display: flex; align-items: center; gap: 15px; }
+        .bank-logo-icon { font-size: 2.5rem; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+        .header-time { background: rgba(255,255,255,0.15); padding: 0.3rem 1rem; border-radius: 20px; font-size: 0.8rem; margin-top: 5px; display: inline-block; }
+        .stButton > button { border-radius: 10px !important; font-weight: 700 !important; transition: all 0.3s ease !important; }
+        .stButton > button:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.15) !important; }
+        .stButton > button[kind="primary"] { background: linear-gradient(135deg, #0f2027, #2c5364) !important; color: white !important; }
+        .stButton > button[kind="primary"]:hover { background: linear-gradient(135deg, #1a3340, #3a6b80) !important; }
+        .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+        .stTabs [data-baseweb="tab"] { border-radius: 8px; padding: 8px 16px; background: #f0f2f6; font-weight: 600; }
+        .stTabs [aria-selected="true"] { background: #0f2027 !important; color: white !important; }
+        [data-testid="stSidebar"] { background: linear-gradient(180deg, #0f2027, #203a43) !important; }
+        [data-testid="stSidebar"] .stButton > button { color: white !important; background: transparent !important; border: 1px solid rgba(255,255,255,0.1) !important; text-align: left !important; justify-content: flex-start !important; }
+        [data-testid="stSidebar"] .stButton > button:hover { background: rgba(255,255,255,0.1) !important; border-color: rgba(255,255,255,0.3) !important; }
+        .sidebar-logo { text-align: center; padding: 20px 0; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar-logo h2 { color: white; margin: 0; font-size: 1.2rem; font-weight: 700; }
+        .sidebar-logo p { color: rgba(255,255,255,0.6); font-size: 0.8rem; margin: 0; }
+        .sidebar-logo .logo-icon { font-size: 3rem; display: block; margin-bottom: 5px; }
+        .stDataFrame { border-radius: 12px !important; overflow: hidden !important; }
+        .stMetric { background: white; padding: 1rem; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); transition: all 0.3s ease; }
+        .stMetric:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
     </style>
     """, unsafe_allow_html=True)
 
@@ -937,12 +788,10 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
     init_database()
     create_default_admin()
     init_session_state()
     load_enterprise_css()
-    
     if st.session_state.user is None:
         show_login()
     else:
@@ -965,29 +814,19 @@ def show_login():
         if st.button("🚀 Sign In", use_container_width=True, type="primary"):
             user = login_user(username, password)
             if user:
-                st.session_state.user = {
-                    'id': user[0],
-                    'username': user[1],
-                    'role': user[3]
-                }
+                st.session_state.user = {'id': user[0], 'username': user[1], 'role': user[3]}
                 st.rerun()
             else:
                 st.error("❌ Invalid credentials! Please try again.")
-        
         st.markdown("""
         <div style="margin-top:1rem;padding:1rem;background:#f8f9fa;border-radius:12px">
-            <small style="color:#6c757d">
-                🔑 Demo: <strong>admin</strong> / <strong>admin123</strong>
-            </small>
+            <small style="color:#6c757d">🔑 Demo: <strong>admin</strong> / <strong>admin123</strong></small>
         </div>
         """, unsafe_allow_html=True)
-    
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 def show_app():
-    # Header with IST time
     current_time = get_ist_now().strftime('%d-%m-%Y %I:%M:%S %p')
-    
     st.markdown(f"""
     <div class="main-header">
         <div class="bank-logo">
@@ -1007,7 +846,6 @@ def show_app():
     </div>
     """, unsafe_allow_html=True)
     
-    # Sidebar
     with st.sidebar:
         st.markdown("""
         <div class="sidebar-logo">
@@ -1016,7 +854,6 @@ def show_app():
             <p>Complete Banking Solution</p>
         </div>
         """, unsafe_allow_html=True)
-        
         st.markdown("### 📋 Navigation")
         st.markdown("---")
         
@@ -1059,9 +896,7 @@ def show_app():
         </div>
         """, unsafe_allow_html=True)
     
-    # Page routing
     page = st.session_state.get('page', 'dashboard')
-    
     if page == 'dashboard':
         dashboard()
     elif page == 'customer_management':
@@ -1104,7 +939,6 @@ def show_app():
 # ==================== DASHBOARD ====================
 def dashboard():
     c = get_db()
-    
     total_customers = c.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
     total_sb_accounts = c.execute("SELECT COUNT(*) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
     total_sb_balance = c.execute("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE account_type='SB' AND status='ACTIVE'").fetchone()[0]
@@ -1114,24 +948,18 @@ def dashboard():
     pending_kyc = c.execute("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'").fetchone()[0]
     total_retrieval = c.execute("SELECT COALESCE(SUM(balance),0) FROM retrieval_accounts WHERE status='ACTIVE'").fetchone()[0]
     current_rate = get_current_sb_interest_rate()
-    
     c.close()
     
     st.markdown("### 📊 Bank Overview")
-    
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
         st.metric("👥 Total Customers", f"{total_customers:,}", delta=f"{total_customers - pending_kyc} Verified")
-    
     with col2:
         st.metric("🏦 SB Accounts", f"{total_sb_accounts:,}")
         st.metric("💰 SB Deposits", f"₹ {total_sb_balance:,.2f}")
-    
     with col3:
         st.metric("📈 FD Deposits", f"₹ {total_fd:,.2f}")
         st.metric("🔄 RD Deposits", f"₹ {total_rd:,.2f}")
-    
     with col4:
         st.metric("💹 Interest Earned", f"₹ {total_interest:,.2f}")
         st.metric("💰 Retrieval Balance", f"₹ {total_retrieval:,.2f}")
@@ -1173,7 +1001,6 @@ def customer_management():
         st.markdown("### 📝 Register New Customer")
         with st.form("register_customer"):
             col1, col2 = st.columns(2)
-            
             with col1:
                 first_name = st.text_input("👤 First Name*", placeholder="Enter first name")
                 last_name = st.text_input("👤 Last Name*", placeholder="Enter last name")
@@ -1181,7 +1008,6 @@ def customer_management():
                 email = st.text_input("📧 Email*", placeholder="customer@email.com")
                 phone = st.text_input("📱 Phone*", placeholder="9876543210")
                 gender = st.selectbox("⚥ Gender", ["Male", "Female", "Other"])
-            
             with col2:
                 pan = st.text_input("🪪 PAN Number*", placeholder="ABCDE1234F")
                 aadhar = st.text_input("🆔 Aadhar Number*", placeholder="1234 5678 9012")
@@ -1256,44 +1082,28 @@ def customer_management():
             
             col1, col2 = st.columns(2)
             with col1:
-                st.download_button(
-                    "📥 Export to CSV",
-                    df.to_csv(index=False),
-                    "customers.csv",
-                    "text/csv"
-                )
+                st.download_button("📥 Export to CSV", df.to_csv(index=False), "customers.csv", "text/csv")
             
             with col2:
-                # DELETE CUSTOMER - FIXED
                 with st.expander("🗑️ Delete Customer"):
-                    st.warning("⚠️ This will delete the customer and ALL related records (accounts, transactions, deposits).")
+                    st.warning("⚠️ This will delete the customer and ALL related records.")
                     delete_id = st.text_input("Enter Customer ID to delete:", key="del_cust_id")
                     if delete_id:
                         confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_cust_confirm")
                         if confirm and st.button("🗑️ Delete Customer Permanently", use_container_width=True, type="secondary"):
                             try:
                                 conn = get_db()
-                                # Get customer id
                                 customer = conn.execute("SELECT id FROM customers WHERE customer_id=?", (delete_id,)).fetchone()
                                 if customer:
                                     cust_id = customer[0]
-                                    # Delete from accounts
                                     conn.execute("DELETE FROM accounts WHERE customer_id=?", (cust_id,))
-                                    # Delete from fixed_deposits
                                     conn.execute("DELETE FROM fixed_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (cust_id,))
-                                    # Delete from recurring_deposits
                                     conn.execute("DELETE FROM recurring_deposits WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (cust_id,))
-                                    # Delete from retrieval_accounts
                                     conn.execute("DELETE FROM retrieval_accounts WHERE customer_id=?", (cust_id,))
-                                    # Delete from matured_deposits
                                     conn.execute("DELETE FROM matured_deposits WHERE customer_id=?", (cust_id,))
-                                    # Delete from transactions
                                     conn.execute("DELETE FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE customer_id=?)", (cust_id,))
-                                    # Delete from income
                                     conn.execute("DELETE FROM income WHERE customer_id=?", (cust_id,))
-                                    # Delete from expenses
                                     conn.execute("DELETE FROM expenses WHERE customer_id=?", (cust_id,))
-                                    # Delete customer
                                     conn.execute("DELETE FROM customers WHERE customer_id=?", (delete_id,))
                                     conn.commit()
                                     conn.close()
@@ -1314,18 +1124,15 @@ def kyc_verification():
     
     c = get_db()
     pending = c.execute("SELECT * FROM customers WHERE kyc_status='PENDING'").fetchall()
-    
     if not pending:
         st.success("✅ All customers are KYC verified! 🎉")
         c.close()
         return
     
     st.markdown(f"### ✅ KYC Verification ({len(pending)} pending)")
-    
     for cust in pending:
         with st.expander(f"{'⏳' if cust[12]=='PENDING' else '✅'} {cust[3]} {cust[4]} (ID: {cust[2]})"):
             col1, col2 = st.columns([2, 1])
-            
             with col1:
                 st.markdown(f"""
                 **📋 Customer Details:**
@@ -1338,7 +1145,6 @@ def kyc_verification():
                 - 🆔 Aadhar: {cust[11]}
                 - 🏠 Address: {cust[9] or 'N/A'}
                 """)
-            
             with col2:
                 st.markdown("**📎 Documents:**")
                 if cust[14]:
@@ -1352,7 +1158,6 @@ def kyc_verification():
             
             st.markdown("---")
             col1, col2 = st.columns(2)
-            
             with col1:
                 if st.button("✅ Approve KYC", key=f"approve_{cust[0]}", use_container_width=True):
                     c.execute("""
@@ -1365,14 +1170,12 @@ def kyc_verification():
                     c.commit()
                     st.success(f"✅ KYC Approved for {cust[3]} {cust[4]}!")
                     st.rerun()
-            
             with col2:
                 if st.button("❌ Reject KYC", key=f"reject_{cust[0]}", use_container_width=True):
                     c.execute("UPDATE customers SET kyc_status='REJECTED' WHERE id=?", (cust[0],))
                     c.commit()
                     st.warning(f"❌ KYC Rejected for {cust[3]} {cust[4]}")
                     st.rerun()
-    
     c.close()
 
 # ==================== CREATE SB ACCOUNT ====================
@@ -1382,8 +1185,6 @@ def create_sb_account():
         return
     
     c = get_db()
-    
-    # Get current interest rate
     current_rate = get_current_sb_interest_rate()
     
     customers = c.execute("""
@@ -1410,14 +1211,12 @@ def create_sb_account():
         options.append(f"{kyc_emoji} {cust[2]} | {cust[1]} | KYC: {cust[3]}")
     
     selected = st.selectbox("👤 Select Customer", options)
-    
     if selected:
         idx = options.index(selected)
         cust = customers[idx]
         
         with st.form("open_sb"):
             col1, col2 = st.columns(2)
-            
             with col1:
                 interest_rate = st.number_input(
                     "📈 Interest Rate (%)",
@@ -1433,12 +1232,8 @@ def create_sb_account():
                     step=100.0,
                     value=500.0
                 )
-            
             with col2:
-                mode = st.selectbox(
-                    "💳 Funding Mode",
-                    ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"]
-                )
+                mode = st.selectbox("💳 Funding Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
                 nominee = st.text_input("👤 Nominee Name (Optional)")
             
             if cust[3] != 'VERIFIED':
@@ -1446,7 +1241,6 @@ def create_sb_account():
             
             if st.form_submit_button("✅ Create SB Account", use_container_width=True, type="primary"):
                 account_number = generate_account_number('SB')
-                
                 conn = get_db()
                 try:
                     conn.execute("""
@@ -1458,7 +1252,6 @@ def create_sb_account():
                     """, (account_number, cust[0], 'SB', opening_balance, interest_rate))
                     
                     account_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                    
                     if opening_balance > 0:
                         conn.execute("""
                             INSERT INTO transactions (
@@ -1474,10 +1267,8 @@ def create_sb_account():
                             mode, 'RECEIPT', generate_voucher_number('RECEIPT'),
                             st.session_state.user['id']
                         ))
-                    
                     conn.commit()
                     conn.close()
-                    
                     st.success(f"""
                     ✅ SB Account Created Successfully! 🎉
                     
@@ -1488,10 +1279,8 @@ def create_sb_account():
                     - Interest Rate: **{interest_rate}%**
                     """)
                     st.balloons()
-                    
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
-    
     c.close()
 
 # ==================== SB ACCOUNTS ====================
@@ -1505,11 +1294,7 @@ def sb_accounts():
     
     with tab1:
         st.markdown("### 💳 Deposit/Withdraw")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer Account",
-            "txn_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer Account", "txn_customer")
         
         if cust_id and acc_id:
             st.success(f"""
@@ -1521,25 +1306,11 @@ def sb_accounts():
             
             with st.form("transaction_form"):
                 col1, col2 = st.columns(2)
-                
                 with col1:
-                    transaction_type = st.radio(
-                        "📊 Transaction Type",
-                        ["💰 Deposit", "💳 Withdraw"],
-                        horizontal=True
-                    )
-                
+                    transaction_type = st.radio("📊 Transaction Type", ["💰 Deposit", "💳 Withdraw"], horizontal=True)
                 with col2:
-                    amount = st.number_input(
-                        "💵 Amount (₹)",
-                        min_value=1.0,
-                        step=100.0
-                    )
-                
-                mode = st.selectbox(
-                    "💳 Payment Mode",
-                    ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"]
-                )
+                    amount = st.number_input("💵 Amount (₹)", min_value=1.0, step=100.0)
+                mode = st.selectbox("💳 Payment Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
                 description = st.text_input("📝 Description", placeholder="Transaction details")
                 
                 if st.form_submit_button("✅ Process Transaction", use_container_width=True, type="primary"):
@@ -1565,11 +1336,9 @@ def sb_accounts():
                                 mode, voucher_type, generate_voucher_number(voucher_type),
                                 st.session_state.user['id']
                             ))
-                            
                             conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_balance, acc_id))
                             conn.commit()
                             conn.close()
-                            
                             st.success(f"""
                             ✅ Transaction Successful! 🎉
                             
@@ -1579,7 +1348,6 @@ def sb_accounts():
                             - New Balance: **₹ {new_balance:,.2f}**
                             """)
                             st.rerun()
-                            
                         except Exception as e:
                             st.error(f"❌ Error: {str(e)}")
     
@@ -1615,7 +1383,6 @@ def sb_accounts():
             total_interest = sum(acc[4] for acc in accounts)
             st.info(f"💰 Total SB Deposits: ₹ {total_balance:,.2f} | Total Interest: ₹ {total_interest:,.2f}")
             
-            # DELETE SB ACCOUNT - FIXED
             with st.expander("🗑️ Delete SB Account"):
                 st.warning("⚠️ This will delete the SB account and all its transactions.")
                 acc_num = st.text_input("Enter Account Number to delete:", key="del_sb_acc")
@@ -1642,11 +1409,7 @@ def sb_accounts():
     
     with tab3:
         st.markdown("### 📋 Account Statement")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer for Statement",
-            "stmt_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer for Statement", "stmt_customer")
         
         if cust_id and acc_id:
             col1, col2 = st.columns(2)
@@ -1698,7 +1461,6 @@ def sb_accounts():
                     )
                 else:
                     st.info("No transactions in this period")
-    
     c.close()
 
 # ==================== FIXED DEPOSITS ====================
@@ -1713,11 +1475,7 @@ def fixed_deposits():
     # Tab 1: Open FD
     with tab1:
         st.markdown("### 📝 Open Fixed Deposit")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer for FD",
-            "fd_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer for FD", "fd_customer")
         
         if cust_id and acc_id:
             st.success(f"""
@@ -1729,33 +1487,12 @@ def fixed_deposits():
             
             with st.form("fd_form"):
                 col1, col2 = st.columns(2)
-                
                 with col1:
-                    principal = st.number_input(
-                        "💰 Principal Amount",
-                        min_value=1000.0,
-                        step=1000.0,
-                        value=10000.0
-                    )
-                    
-                    tenure = st.selectbox(
-                        "📅 Tenure (Months)",
-                        [1, 3, 6, 9, 12, 18, 24, 36, 48, 60]
-                    )
-                
+                    principal = st.number_input("💰 Principal Amount", min_value=1000.0, step=1000.0, value=10000.0)
+                    tenure = st.selectbox("📅 Tenure (Months)", [1, 3, 6, 9, 12, 18, 24, 36, 48, 60])
                 with col2:
-                    interest_rate = st.number_input(
-                        "📈 Interest Rate (%)",
-                        min_value=3.0,
-                        max_value=10.0,
-                        value=6.5,
-                        step=0.25
-                    )
-                    
-                    start_date = st.date_input(
-                        "📆 Start Date",
-                        get_ist_today()
-                    )
+                    interest_rate = st.number_input("📈 Interest Rate (%)", min_value=3.0, max_value=10.0, value=6.5, step=0.25)
+                    start_date = st.date_input("📆 Start Date", get_ist_today())
                 
                 maturity_date = start_date + relativedelta(months=tenure)
                 maturity_amount = calculate_fd_maturity(principal, interest_rate, tenure)
@@ -1768,12 +1505,7 @@ def fixed_deposits():
                 - Interest Earned: **₹ {interest_earned:,.2f}**
                 """)
                 
-                funding_mode = st.radio(
-                    "💳 Funding Mode",
-                    ["SB Transfer (Debit from SB)", "Cash", "Bank Transfer", "Cheque"],
-                    horizontal=True
-                )
-                
+                funding_mode = st.radio("💳 Funding Mode", ["SB Transfer (Debit from SB)", "Cash", "Bank Transfer", "Cheque"], horizontal=True)
                 col1, col2 = st.columns(2)
                 with col1:
                     nominee_name = st.text_input("👤 Nominee Name (Optional)")
@@ -1798,7 +1530,6 @@ def fixed_deposits():
                                     balance, interest_rate
                                 ) VALUES (?,?,?,0.00,?)
                             """, (fd_account_number, cust_id, 'FD', interest_rate))
-                            
                             fd_account_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                             
                             conn.execute("""
@@ -1852,7 +1583,6 @@ def fixed_deposits():
                             
                             conn.commit()
                             conn.close()
-                            
                             st.success(f"""
                             ✅ FD Opened Successfully! 🎉
                             
@@ -1864,7 +1594,6 @@ def fixed_deposits():
                             - Maturity Amount: **₹ {maturity_amount:,.2f}**
                             """)
                             st.balloons()
-                            
                         except Exception as e:
                             conn.rollback()
                             conn.close()
@@ -1897,14 +1626,12 @@ def fixed_deposits():
             fd_data = []
             for fd in fds:
                 fd_id, fd_number, cust_id, customer, sb_acc_id, sb_acc, principal, rate, start, maturity, maturity_amount, status, maturity_status, days_elapsed, total_days = fd
-                
                 if days_elapsed > 0 and total_days > 0:
                     accrued_interest = (principal * rate * days_elapsed) / (100 * 365)
                     max_interest = maturity_amount - principal
                     accrued_interest = min(accrued_interest, max_interest)
                 else:
                     accrued_interest = 0
-                
                 fd_data.append({
                     'ID': fd_id,
                     'FD No': fd_number,
@@ -1982,14 +1709,12 @@ def fixed_deposits():
         fd_options = []
         for fd in active_fds:
             fd_id, fd_number, cust_id, customer, fd_account_id, fd_account_number, sb_acc_id, sb_acc, sb_balance, principal, rate, start, maturity, maturity_amount, days_elapsed, total_days = fd
-            
             if days_elapsed > 0 and total_days > 0:
                 accrued_interest = (principal * rate * days_elapsed) / (100 * 365)
                 max_interest = maturity_amount - principal
                 accrued_interest = min(accrued_interest, max_interest)
             else:
                 accrued_interest = 0
-            
             total_value = principal + accrued_interest
             has_sb = sb_acc_id is not None
             
@@ -2017,11 +1742,7 @@ def fixed_deposits():
                 'has_sb': has_sb
             })
         
-        selected_fd = st.selectbox(
-            "📋 Select FD to Close",
-            fd_options,
-            format_func=lambda x: x['display']
-        )
+        selected_fd = st.selectbox("📋 Select FD to Close", fd_options, format_func=lambda x: x['display'])
         
         if selected_fd:
             st.markdown("---")
@@ -2057,18 +1778,10 @@ def fixed_deposits():
                 penalty_applied = False
             else:
                 st.warning(f"⚠️ Early Closure - Penalty applies!")
-                penalty_rate = st.number_input(
-                    "📉 Penalty Rate (%)",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=1.0,
-                    step=0.25
-                )
-                
+                penalty_rate = st.number_input("📉 Penalty Rate (%)", min_value=0.0, max_value=5.0, value=1.0, step=0.25)
                 penalty_amount = (selected_fd['principal'] * penalty_rate * selected_fd['days_elapsed']) / (100 * 365)
                 final_amount = selected_fd['total_value'] - penalty_amount
                 penalty_applied = True
-                
                 st.info(f"""
                 📊 **Early Closure Calculation:**
                 - Accrued Interest: **₹ {selected_fd['accrued_interest']:,.2f}**
@@ -2112,7 +1825,7 @@ def fixed_deposits():
                             ) VALUES (?,?,?,?,?,?,?)
                         """, (
                             generate_id('INC'),
-                            'Interest Earned',
+                            'Interest Received',
                             selected_fd['accrued_interest'],
                             f"FD Interest: {selected_fd['fd_number']}",
                             get_ist_today(),
@@ -2137,17 +1850,15 @@ def fixed_deposits():
                     """)
                     st.balloons()
                     st.rerun()
-                    
                 except Exception as e:
                     if conn:
                         conn.rollback()
                         conn.close()
                     st.error(f"❌ Error closing FD: {str(e)}")
     
-    # Tab 4: Closed FDs - DELETE FIXED
+    # Tab 4: Closed FDs
     with tab4:
         st.markdown("### 📋 Closed Fixed Deposits")
-        
         try:
             closed_fds = c.execute("""
                 SELECT 
@@ -2172,7 +1883,6 @@ def fixed_deposits():
                     'Start Date', 'Maturity Date', 'Maturity Amount',
                     'Closed Date', 'Closed Amount', 'Interest Earned', 'Status'
                 ])
-                
                 total_principal = df['Principal'].sum()
                 total_closed = df['Closed Amount'].sum()
                 total_interest = df['Interest Earned'].sum()
@@ -2184,7 +1894,6 @@ def fixed_deposits():
                 col4.metric("📈 Total Interest", f"₹ {total_interest:,.2f}")
                 
                 st.markdown("---")
-                
                 st.dataframe(
                     df.style.format({
                         'Principal': '₹ {:,.2f}',
@@ -2198,15 +1907,8 @@ def fixed_deposits():
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.download_button(
-                        "📥 Download Closed FDs CSV",
-                        df.to_csv(index=False),
-                        "closed_fixed_deposits.csv",
-                        "text/csv"
-                    )
-                
+                    st.download_button("📥 Download Closed FDs CSV", df.to_csv(index=False), "closed_fixed_deposits.csv", "text/csv")
                 with col2:
-                    # DELETE FD RECORD - FIXED
                     with st.expander("🗑️ Delete FD Record"):
                         st.warning("⚠️ This will permanently delete the FD record.")
                         fd_num = st.text_input("Enter FD Number to delete:", key="del_fd")
@@ -2228,7 +1930,6 @@ def fixed_deposits():
                                     st.error(f"❌ Error: {str(e)}")
             else:
                 st.info("No closed fixed deposits found")
-                
         except Exception as e:
             st.error(f"❌ Error loading closed FDs: {str(e)}")
     
@@ -2246,11 +1947,7 @@ def recurring_deposits():
     # Tab 1: Open RD
     with tab1:
         st.markdown("### 📝 Open Recurring Deposit")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer for RD",
-            "rd_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer for RD", "rd_customer")
         
         if cust_id and acc_id:
             st.success(f"""
@@ -2262,33 +1959,12 @@ def recurring_deposits():
             
             with st.form("rd_form"):
                 col1, col2 = st.columns(2)
-                
                 with col1:
-                    monthly_amount = st.number_input(
-                        "💰 Monthly Amount",
-                        min_value=100.0,
-                        step=100.0,
-                        value=1000.0
-                    )
-                    
-                    tenure = st.selectbox(
-                        "📅 Tenure (Months)",
-                        [3, 6, 9, 12, 18, 24, 36, 48, 60]
-                    )
-                
+                    monthly_amount = st.number_input("💰 Monthly Amount", min_value=100.0, step=100.0, value=1000.0)
+                    tenure = st.selectbox("📅 Tenure (Months)", [3, 6, 9, 12, 18, 24, 36, 48, 60])
                 with col2:
-                    interest_rate = st.number_input(
-                        "📈 Interest Rate (%)",
-                        min_value=3.0,
-                        max_value=10.0,
-                        value=6.0,
-                        step=0.25
-                    )
-                    
-                    start_date = st.date_input(
-                        "📆 Start Date",
-                        get_ist_today()
-                    )
+                    interest_rate = st.number_input("📈 Interest Rate (%)", min_value=3.0, max_value=10.0, value=6.0, step=0.25)
+                    start_date = st.date_input("📆 Start Date", get_ist_today())
                 
                 maturity_date = start_date + relativedelta(months=tenure)
                 maturity_amount = calculate_rd_maturity(monthly_amount, interest_rate, tenure)
@@ -2304,12 +1980,7 @@ def recurring_deposits():
                 - Installments: **{tenure} monthly payments**
                 """)
                 
-                funding_mode = st.radio(
-                    "💳 First Installment Funding",
-                    ["SB Transfer (Debit from SB)", "Cash", "Bank Transfer", "Cheque"],
-                    horizontal=True
-                )
-                
+                funding_mode = st.radio("💳 First Installment Funding", ["SB Transfer (Debit from SB)", "Cash", "Bank Transfer", "Cheque"], horizontal=True)
                 col1, col2 = st.columns(2)
                 with col1:
                     nominee_name = st.text_input("👤 Nominee Name (Optional)")
@@ -2334,7 +2005,6 @@ def recurring_deposits():
                                     balance, interest_rate
                                 ) VALUES (?,?,?,0.00,?)
                             """, (rd_account_number, cust_id, 'RD', interest_rate))
-                            
                             rd_account_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                             
                             conn.execute("""
@@ -2388,7 +2058,6 @@ def recurring_deposits():
                             
                             conn.commit()
                             conn.close()
-                            
                             st.success(f"""
                             ✅ RD Opened Successfully! 🎉
                             
@@ -2401,7 +2070,6 @@ def recurring_deposits():
                             - Maturity Amount: **₹ {maturity_amount:,.2f}**
                             """)
                             st.balloons()
-                            
                         except Exception as e:
                             st.error(f"❌ Error: {str(e)}")
     
@@ -2427,7 +2095,6 @@ def recurring_deposits():
             for rd in rds:
                 rd_id, rd_number, cust_id, customer, sb_acc_id, sb_acc, monthly, paid, total, maturity, status, progress = rd
                 remaining = total - paid
-                
                 rd_data.append({
                     'ID': rd_id,
                     'RD No': rd_number,
@@ -2502,7 +2169,6 @@ def recurring_deposits():
         rd_options = []
         for rd in pending_rds:
             rd_id, rd_number, cust_id, customer, rd_account_id, rd_account_number, sb_acc_id, sb_acc, sb_balance, monthly, paid, total, rate, start, maturity, maturity_amount = rd
-            
             remaining = total - paid
             has_sb = sb_acc_id is not None
             is_last = (paid + 1) == total
@@ -2530,11 +2196,7 @@ def recurring_deposits():
                 'is_last_installment': is_last
             })
         
-        selected_rd = st.selectbox(
-            "📋 Select RD for Payment",
-            rd_options,
-            format_func=lambda x: x['display']
-        )
+        selected_rd = st.selectbox("📋 Select RD for Payment", rd_options, format_func=lambda x: x['display'])
         
         if selected_rd:
             st.markdown("---")
@@ -2570,14 +2232,8 @@ def recurring_deposits():
             st.info(f"📊 **Next Installment Amount: ₹ {selected_rd['monthly_amount']:,.2f}**")
             
             col1, col2 = st.columns(2)
-            
             with col1:
-                payment_mode = st.selectbox(
-                    "💳 Payment Mode",
-                    ["SB Transfer (Debit from SB)", "Cash", "Bank Transfer", "Cheque"],
-                    key="rd_payment_mode"
-                )
-                
+                payment_mode = st.selectbox("💳 Payment Mode", ["SB Transfer (Debit from SB)", "Cash", "Bank Transfer", "Cheque"], key="rd_payment_mode")
                 if payment_mode == "SB Transfer (Debit from SB)":
                     if selected_rd['has_sb']:
                         if selected_rd['monthly_amount'] > selected_rd['sb_balance']:
@@ -2632,12 +2288,9 @@ def recurring_deposits():
                             sb_balance_result = conn.execute("""
                                 SELECT balance FROM accounts WHERE id=?
                             """, (selected_rd['sb_account_id'],)).fetchone()
-                            
                             current_sb_balance = sb_balance_result[0] if sb_balance_result else 0
                             new_sb_balance = current_sb_balance - selected_rd['monthly_amount']
-                            
                             conn.execute("UPDATE accounts SET balance=? WHERE id=?", (new_sb_balance, selected_rd['sb_account_id']))
-                            
                             conn.execute("""
                                 INSERT INTO transactions (
                                     transaction_id, account_id, transaction_type,
@@ -2677,7 +2330,6 @@ def recurring_deposits():
                         if is_completed:
                             total_investment = selected_rd['monthly_amount'] * selected_rd['total_installments']
                             interest_earned = selected_rd['maturity_amount'] - total_investment
-                            
                             ret_acc_number, new_ret_balance = add_to_retrieval_account(
                                 selected_rd['customer_id'],
                                 'RD',
@@ -2686,7 +2338,6 @@ def recurring_deposits():
                                 interest_earned,
                                 selected_rd['maturity_date']
                             )
-                            
                             st.success(f"""
                             🎉 **RD COMPLETED!** 
                             
@@ -2707,18 +2358,15 @@ def recurring_deposits():
                             - Amount: **₹ {selected_rd['monthly_amount']:,.2f}**
                             - Remaining: **{selected_rd['remaining_installments'] - 1} installments**
                             """)
-                        
                         st.rerun()
-                        
                     except Exception as e:
                         conn.rollback()
                         conn.close()
                         st.error(f"❌ Error: {str(e)}")
     
-    # Tab 4: Closed RDs - DELETE FIXED
+    # Tab 4: Closed RDs
     with tab4:
         st.markdown("### 📋 Closed/Completed Recurring Deposits")
-        
         try:
             closed_rds = c.execute("""
                 SELECT 
@@ -2749,7 +2397,6 @@ def recurring_deposits():
                     'Rate', 'Start Date', 'Maturity Date', 'Maturity Amount', 
                     'Status', 'Closed Date', 'Closed Amount', 'Status Display'
                 ])
-                
                 total_principal = df['Monthly'].sum()
                 total_maturity = df['Maturity Amount'].sum()
                 total_closed = df['Closed Amount'].sum()
@@ -2762,7 +2409,6 @@ def recurring_deposits():
                 col4.metric("📈 Total Interest", f"₹ {total_interest:,.2f}")
                 
                 st.markdown("---")
-                
                 st.dataframe(
                     df.style.format({
                         'Monthly': '₹ {:,.2f}',
@@ -2775,15 +2421,8 @@ def recurring_deposits():
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.download_button(
-                        "📥 Download Closed RDs CSV",
-                        df.to_csv(index=False),
-                        "closed_recurring_deposits.csv",
-                        "text/csv"
-                    )
-                
+                    st.download_button("📥 Download Closed RDs CSV", df.to_csv(index=False), "closed_recurring_deposits.csv", "text/csv")
                 with col2:
-                    # DELETE RD RECORD - FIXED
                     with st.expander("🗑️ Delete RD Record"):
                         st.warning("⚠️ This will permanently delete the RD record.")
                         rd_num = st.text_input("Enter RD Number to delete:", key="del_rd")
@@ -2805,7 +2444,6 @@ def recurring_deposits():
                                     st.error(f"❌ Error: {str(e)}")
             else:
                 st.info("No closed recurring deposits found")
-                
         except Exception as e:
             st.error(f"❌ Error loading closed RDs: {str(e)}")
     
@@ -2823,16 +2461,11 @@ def retrieval_account():
     # Tab 1: Overview
     with tab1:
         st.markdown("### 💰 Retrieval Account Overview")
-        
-        cust_id, cust_name, acc_id, acc_number, sb_balance = customer_selector(
-            "👤 Select Customer",
-            "retrieval_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, sb_balance = customer_selector("👤 Select Customer", "retrieval_customer")
         
         if cust_id:
             try:
                 ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
-                
                 sb_acc = c.execute("""
                     SELECT id, account_number, balance 
                     FROM accounts 
@@ -2841,7 +2474,6 @@ def retrieval_account():
                 
                 st.markdown(f"""
                 ### 📋 Account Details
-                
                 | Field | Value |
                 |-------|-------|
                 | **Customer** | {cust_name} |
@@ -2883,11 +2515,7 @@ def retrieval_account():
     # Tab 2: Matured Deposits
     with tab2:
         st.markdown("### 📊 Matured Deposits")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer",
-            "matured_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer", "matured_customer")
         
         if cust_id:
             try:
@@ -2922,7 +2550,6 @@ def retrieval_account():
                         interest = float(m[5]) if m[5] is not None else 0
                         total = float(m[6]) if m[6] is not None else 0
                         status = m[9] if m[9] else 'ACTIVE'
-                        
                         total_principal += principal
                         total_interest += interest
                         total_amount += total
@@ -2930,7 +2557,6 @@ def retrieval_account():
                             active_total += total
                         else:
                             withdrawn_total += total
-                        
                         matured_data.append({
                             'Deposit ID': m[1],
                             'Type': m[2],
@@ -2946,14 +2572,12 @@ def retrieval_account():
                         })
                     
                     df = pd.DataFrame(matured_data)
-                    
                     col1, col2, col3, col4, col5 = st.columns(5)
                     col1.metric("📊 Total", f"{len(matured)}")
                     col2.metric("💰 Principal", f"₹ {total_principal:,.2f}")
                     col3.metric("📈 Interest", f"₹ {total_interest:,.2f}")
                     col4.metric("🟢 Active", f"₹ {active_total:,.2f}")
                     col5.metric("🔴 Withdrawn", f"₹ {withdrawn_total:,.2f}")
-                    
                     st.markdown("---")
                     st.dataframe(df, use_container_width=True)
                     
@@ -2975,12 +2599,7 @@ def retrieval_account():
                                 'Withdrawn Amount': float(m[11]) if m[11] is not None else 0
                             })
                         raw_df = pd.DataFrame(raw_data)
-                        st.download_button(
-                            "📥 Download Matured Deposits CSV",
-                            raw_df.to_csv(index=False),
-                            "matured_deposits.csv",
-                            "text/csv"
-                        )
+                        st.download_button("📥 Download Matured Deposits CSV", raw_df.to_csv(index=False), "matured_deposits.csv", "text/csv")
                     
                     with col2:
                         with st.expander("🗑️ Delete Matured Deposit"):
@@ -3009,16 +2628,11 @@ def retrieval_account():
     # Tab 3: Transfer to SB
     with tab3:
         st.markdown("### 🏦 Transfer to SB Account")
-        
-        cust_id, cust_name, acc_id, acc_number, sb_balance = customer_selector(
-            "👤 Select Customer",
-            "transfer_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, sb_balance = customer_selector("👤 Select Customer", "transfer_customer")
         
         if cust_id and acc_id:
             try:
                 ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
-                
                 st.markdown(f"""
                 ✅ **Account Details:**
                 - Customer: **{cust_name}**
@@ -3032,21 +2646,12 @@ def retrieval_account():
                     st.warning("⚠️ No balance available in retrieval account!")
                 else:
                     with st.form("transfer_to_sb_form"):
-                        amount = st.number_input(
-                            "💰 Amount to Transfer (₹)",
-                            min_value=1.0,
-                            max_value=float(ret_balance),
-                            step=100.0,
-                            value=min(1000.0, float(ret_balance))
-                        )
-                        
+                        amount = st.number_input("💰 Amount to Transfer (₹)", min_value=1.0, max_value=float(ret_balance), step=100.0, value=min(1000.0, float(ret_balance)))
                         if st.form_submit_button("🏦 Transfer to SB", use_container_width=True, type="primary"):
                             try:
                                 new_ret_balance, new_sb_balance = transfer_to_sb(cust_id, amount, acc_id)
-                                
                                 st.success(f"""
                                 ✅ Transfer Successful! 🎉
-                                
                                 📋 **Details:**
                                 - Amount: **₹ {amount:,.2f}**
                                 - From: **Retrieval Account ({ret_acc_number})**
@@ -3056,7 +2661,6 @@ def retrieval_account():
                                 """)
                                 st.balloons()
                                 st.rerun()
-                                
                             except Exception as e:
                                 st.error(f"❌ Error during transfer: {str(e)}")
             except Exception as e:
@@ -3065,16 +2669,11 @@ def retrieval_account():
     # Tab 4: Withdraw
     with tab4:
         st.markdown("### 💳 Withdraw from Retrieval Account")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer",
-            "withdraw_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer", "withdraw_customer")
         
         if cust_id:
             try:
                 ret_acc_id, ret_acc_number, ret_balance = get_retrieval_account(cust_id)
-                
                 st.markdown(f"""
                 ✅ **Retrieval Account:**
                 - Customer: **{cust_name}**
@@ -3086,19 +2685,8 @@ def retrieval_account():
                     st.warning("⚠️ No balance available for withdrawal!")
                 else:
                     with st.form("withdraw_form"):
-                        amount = st.number_input(
-                            "💰 Amount to Withdraw (₹)",
-                            min_value=1.0,
-                            max_value=float(ret_balance),
-                            step=100.0,
-                            value=min(1000.0, float(ret_balance))
-                        )
-                        
-                        mode = st.selectbox(
-                            "💳 Withdrawal Mode",
-                            ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"]
-                        )
-                        
+                        amount = st.number_input("💰 Amount to Withdraw (₹)", min_value=1.0, max_value=float(ret_balance), step=100.0, value=min(1000.0, float(ret_balance)))
+                        mode = st.selectbox("💳 Withdrawal Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
                         if st.form_submit_button("💳 Withdraw", use_container_width=True, type="primary"):
                             try:
                                 conn = get_db()
@@ -3108,7 +2696,6 @@ def retrieval_account():
                                     SET balance = ? 
                                     WHERE id = ?
                                 """, (new_balance, ret_acc_id))
-                                
                                 conn.execute("""
                                     INSERT INTO transactions (
                                         transaction_id, account_id, transaction_type,
@@ -3124,13 +2711,10 @@ def retrieval_account():
                                     generate_voucher_number('PAYMENT'),
                                     st.session_state.user['id']
                                 ))
-                                
                                 conn.commit()
                                 conn.close()
-                                
                                 st.success(f"""
                                 ✅ Withdrawal Successful! 🎉
-                                
                                 📋 **Details:**
                                 - Amount: **₹ {amount:,.2f}**
                                 - Account: **{ret_acc_number}**
@@ -3139,7 +2723,6 @@ def retrieval_account():
                                 """)
                                 st.balloons()
                                 st.rerun()
-                                
                             except Exception as e:
                                 conn.rollback()
                                 conn.close()
@@ -3160,7 +2743,6 @@ def chart_of_accounts():
     
     with tab1:
         st.markdown("### 📊 Chart of Accounts")
-        
         accounts = c.execute("""
             SELECT id, account_code, account_name, account_type, category, is_active
             FROM chart_of_accounts
@@ -3169,34 +2751,18 @@ def chart_of_accounts():
         
         if accounts:
             df = pd.DataFrame(accounts, columns=['ID', 'Code', 'Account Name', 'Type', 'Category', 'Active'])
-            
             col1, col2 = st.columns(2)
             with col1:
-                type_filter = st.multiselect(
-                    "Filter by Type",
-                    options=df['Type'].unique(),
-                    default=df['Type'].unique()
-                )
+                type_filter = st.multiselect("Filter by Type", options=df['Type'].unique(), default=df['Type'].unique())
             with col2:
-                category_filter = st.multiselect(
-                    "Filter by Category",
-                    options=df['Category'].unique(),
-                    default=df['Category'].unique()
-                )
+                category_filter = st.multiselect("Filter by Category", options=df['Category'].unique(), default=df['Category'].unique())
             
             filtered_df = df[df['Type'].isin(type_filter) & df['Category'].isin(category_filter)]
-            
             st.dataframe(filtered_df, use_container_width=True)
             
             col1, col2 = st.columns(2)
             with col1:
-                st.download_button(
-                    "📥 Download CSV",
-                    filtered_df.to_csv(index=False),
-                    "chart_of_accounts.csv",
-                    "text/csv"
-                )
-            
+                st.download_button("📥 Download CSV", filtered_df.to_csv(index=False), "chart_of_accounts.csv", "text/csv")
             with col2:
                 with st.expander("🗑️ Delete Account"):
                     acc_code = st.text_input("Enter Account Code to delete:")
@@ -3226,26 +2792,18 @@ def chart_of_accounts():
     
     with tab2:
         st.markdown("### ➕ Add New Account")
-        
         with st.form("add_account_form"):
             col1, col2 = st.columns(2)
-            
             with col1:
                 account_code = st.text_input("Account Code*", placeholder="e.g., EXP016")
                 account_name = st.text_input("Account Name*", placeholder="e.g., Office Rent")
-            
             with col2:
-                account_type = st.selectbox(
-                    "Account Type*",
-                    ["Income", "Expense", "Asset", "Liability", "Equity"]
-                )
-                category = st.selectbox(
-                    "Category*",
-                    ["Banking Income", "Other Income", "Operating Expenses", 
-                     "Administrative Expenses", "Other Expenses", "Current Assets",
-                     "Fixed Assets", "Current Liabilities", "Long Term Liabilities"]
-                )
-            
+                account_type = st.selectbox("Account Type*", ["Income", "Expense", "Asset", "Liability", "Equity"])
+                category = st.selectbox("Category*", [
+                    "Interest Income", "Fee Based Income", "Other Income",
+                    "Interest Expense", "Operating Expenses", "Provisions", "Other Expenses",
+                    "Current Assets", "Fixed Assets", "Current Liabilities", "Long Term Liabilities"
+                ])
             description = st.text_area("Description (Optional)")
             
             if st.form_submit_button("✅ Add Account", use_container_width=True, type="primary"):
@@ -3264,7 +2822,6 @@ def chart_of_accounts():
                         st.error(f"❌ Error: {str(e)}")
                 else:
                     st.error("❌ Please fill all required fields (*)")
-    
     c.close()
 
 # ==================== INTEREST RATE SETTINGS ====================
@@ -3314,12 +2871,10 @@ def interest_rate_settings():
             </p>
         </div>
         """, unsafe_allow_html=True)
-        
         st.info("💡 This rate is used for calculating interest on SB accounts")
     
     with col2:
         st.markdown("### ✏️ Update Interest Rate")
-        
         new_rate = st.number_input(
             "📊 New Interest Rate (%)",
             min_value=0.0,
@@ -3328,12 +2883,7 @@ def interest_rate_settings():
             step=0.25,
             help="Enter the new interest rate for SB accounts"
         )
-        
-        effective_from = st.date_input(
-            "📅 Effective From",
-            get_ist_today(),
-            help="Date from which this rate will be applied"
-        )
+        effective_from = st.date_input("📅 Effective From", get_ist_today(), help="Date from which this rate will be applied")
         
         if st.button("💾 Update Interest Rate", use_container_width=True, type="primary"):
             if new_rate != float(current_rate[0]):
@@ -3342,20 +2892,16 @@ def interest_rate_settings():
                     SET value = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE key = 'SB_INTEREST_RATE'
                 """, (str(new_rate),))
-                
                 c.execute("""
                     INSERT INTO interest_rate_history (
                         rate, effective_from, changed_by, notes
                     ) VALUES (?, ?, ?, ?)
                 """, (new_rate, effective_from, st.session_state.user['id'], 
                        f"Rate changed from {current_rate[0]}% to {new_rate}%"))
-                
                 c.commit()
                 c.close()
-                
                 st.success(f"""
                 ✅ Interest Rate Updated Successfully! 🎉
-                
                 📋 **Details:**
                 - Old Rate: **{current_rate[0]}%**
                 - New Rate: **{new_rate}%**
@@ -3367,7 +2913,6 @@ def interest_rate_settings():
                 st.warning("⚠️ New rate is same as current rate. No changes made.")
     
     st.markdown("### 📋 Rate Change History")
-    
     try:
         history = c.execute("""
             SELECT 
@@ -3405,7 +2950,6 @@ def interest_rate_settings():
 # ==================== TRANSACTIONS ====================
 def transactions():
     c = get_db()
-    
     st.markdown("### 💳 All Transactions")
     
     col1, col2, col3 = st.columns(3)
@@ -3430,11 +2974,9 @@ def transactions():
         WHERE DATE(t.created_at) BETWEEN ? AND ?
     """
     params = [from_date, to_date]
-    
     if txn_type != "All":
         query += " AND t.transaction_type = ?"
         params.append(txn_type)
-    
     query += " ORDER BY t.created_at DESC LIMIT 200"
     
     txns = c.execute(query, params).fetchall()
@@ -3456,7 +2998,6 @@ def transactions():
                 'Balance': f"₹ {txn[10]:,.2f}" if txn[10] is not None else "₹ 0.00"
             })
         df = pd.DataFrame(data)
-        
         st.dataframe(df, use_container_width=True, height=500)
         
         total_credit = sum(txn[6] for txn in txns if txn[5] == 'CREDIT')
@@ -3467,12 +3008,7 @@ def transactions():
         col2.metric("💳 Total Debits", f"₹ {total_debit:,.2f}")
         col3.metric("📊 Net Balance", f"₹ {(total_credit - total_debit):,.2f}")
         
-        st.download_button(
-            "📥 Download Transactions CSV",
-            df.to_csv(index=False),
-            f"transactions_{from_date}_{to_date}.csv",
-            "text/csv"
-        )
+        st.download_button("📥 Download Transactions CSV", df.to_csv(index=False), f"transactions_{from_date}_{to_date}.csv", "text/csv")
         
         with st.expander("🗑️ Delete Transaction"):
             txn_id = st.text_input("Enter Transaction ID to delete:")
@@ -3507,10 +3043,8 @@ def transactions():
                 "DETAILED TRANSACTIONS:",
                 "-" * 50
             ]
-            
             for txn in txns:
                 content.append(f"{txn[1]} | {txn[2]} | {txn[5]} | ₹ {txn[6]:,.2f} | {txn[8]} | {txn[9]}")
-            
             pdf_file = create_pdf("Transactions Report", content, "transactions")
             if pdf_file:
                 create_download_button(pdf_file, "transactions_report", "📥 Download PDF Report")
@@ -3528,11 +3062,7 @@ def journal_vouchers():
     
     with tab1:
         st.markdown("### 📝 Create Journal Voucher")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Link Customer (Optional)",
-            "jv_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Link Customer (Optional)", "jv_customer")
         
         if cust_id and acc_id:
             st.info(f"📌 Linking JV to: **{cust_name}** (Account: {acc_number})")
@@ -3540,7 +3070,6 @@ def journal_vouchers():
         with st.form("jv_form"):
             voucher_date = st.date_input("📅 Voucher Date", get_ist_today())
             description = st.text_area("📝 Narration", placeholder="Describe the transaction")
-            
             num_entries = st.number_input("📊 Number of Entries", min_value=2, max_value=10, value=2)
             
             st.markdown("### 📊 Journal Entries")
@@ -3556,54 +3085,32 @@ def journal_vouchers():
                 WHERE is_active = 1
                 ORDER BY account_type, account_name
             """).fetchall()
-            
             coa_options = {f"{acc[1]} - {acc[2]}": acc[0] for acc in coa_list}
             coa_list_options = list(coa_options.keys())
             
             for i in range(int(num_entries)):
                 st.markdown(f"**Entry {i+1}**")
                 col1, col2, col3 = st.columns([2, 1, 1])
-                
                 with col1:
                     if coa_list_options:
-                        selected_coa = st.selectbox(
-                            f"Account", 
-                            coa_list_options, 
-                            key=f"jv_coa_{i}",
-                            index=0
-                        )
+                        selected_coa = st.selectbox(f"Account", coa_list_options, key=f"jv_coa_{i}", index=0)
                         head = selected_coa
                     else:
-                        head = st.text_input(
-                            f"Account Head", 
-                            key=f"jh_{i}", 
-                            placeholder="e.g., Cash A/c, Bank A/c"
-                        )
+                        head = st.text_input(f"Account Head", key=f"jh_{i}", placeholder="e.g., Cash A/c, Bank A/c")
                 with col2:
                     dr = st.number_input(f"Debit", min_value=0.0, step=100.0, key=f"jd_{i}")
                 with col3:
                     cr = st.number_input(f"Credit", min_value=0.0, step=100.0, key=f"jc_{i}")
-                
                 total_dr += dr
                 total_cr += cr
-                entries.append({
-                    'head': head,
-                    'dr': dr,
-                    'cr': cr
-                })
+                entries.append({'head': head, 'dr': dr, 'cr': cr})
             
             st.markdown("---")
             st.info(f"💰 **Total Debit: ₹ {total_dr:,.2f} | Total Credit: ₹ {total_cr:,.2f}**")
-            
             if abs(total_dr - total_cr) > 0.01:
                 st.error(f"❌ Difference: ₹ {abs(total_dr - total_cr):,.2f} - Must balance!")
             
-            status = st.radio(
-                "📌 Voucher Status",
-                ["DRAFT", "POSTED"],
-                horizontal=True,
-                help="DRAFT: Can be edited later, POSTED: Will appear in Trial Balance"
-            )
+            status = st.radio("📌 Voucher Status", ["DRAFT", "POSTED"], horizontal=True, help="DRAFT: Can be edited later, POSTED: Will appear in Trial Balance")
             
             if st.form_submit_button("✅ Create JV", use_container_width=True, type="primary"):
                 if abs(total_dr - total_cr) > 0.01:
@@ -3612,17 +3119,13 @@ def journal_vouchers():
                     conn = get_db()
                     try:
                         voucher_number = generate_voucher_number('JOURNAL')
-                        
                         conn.execute("""
                             INSERT INTO journal_vouchers (
                                 voucher_number, voucher_date, description,
-                                total_amount, created_by, customer_id, status
-                            ) VALUES (?,?,?,?,?,?,?)
+                                total_amount, created_by, customer_id, status                            ) VALUES (?,?,?,?,?,?,?)
                         """, (voucher_number, voucher_date, description, total_dr, 
                               st.session_state.user['id'], cust_id, status))
-                        
                         voucher_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                        
                         for entry in entries:
                             if (entry['dr'] > 0 or entry['cr'] > 0) and entry['head'].strip():
                                 conn.execute("""
@@ -3631,36 +3134,29 @@ def journal_vouchers():
                                         debit_amount, credit_amount
                                     ) VALUES (?,?,?,?)
                                 """, (voucher_id, entry['head'].strip(), entry['dr'], entry['cr']))
-                        
                         conn.commit()
                         conn.close()
-                        
                         if status == "POSTED":
                             st.success(f"""
                             ✅ Journal Voucher Created & POSTED! 🎉
-                            
                             📋 **JV Details:**
                             - Voucher Number: **{voucher_number}**
                             - Total Amount: **₹ {total_dr:,.2f}**
                             - Entries: **{num_entries}**
                             - Status: **POSTED** ✅
-                            
                             💡 **This JV will appear in Trial Balance & Balance Sheet**
                             """)
                         else:
                             st.success(f"""
                             ✅ Journal Voucher Created! 📝
-                            
                             📋 **JV Details:**
                             - Voucher Number: **{voucher_number}**
                             - Total Amount: **₹ {total_dr:,.2f}**
                             - Entries: **{num_entries}**
                             - Status: **DRAFT** ⏳
-                            
                             💡 **Post this JV from 'Manage JVs' tab to appear in financial statements**
                             """)
                         st.balloons()
-                        
                     except Exception as e:
                         conn.rollback()
                         conn.close()
@@ -3668,7 +3164,6 @@ def journal_vouchers():
     
     with tab2:
         st.markdown("### 📋 Manage Journal Vouchers")
-        
         vouchers = c.execute("""
             SELECT jv.id, jv.voucher_number, jv.voucher_date,
                    jv.description, jv.total_amount, jv.status,
@@ -3683,7 +3178,6 @@ def journal_vouchers():
         if vouchers:
             for v in vouchers:
                 status_color = "🟢" if v[5] == 'POSTED' else "🟡" if v[5] == 'DRAFT' else "🔴"
-                
                 with st.expander(f"{status_color} {v[1]} | {v[2]} | ₹ {v[4]:,.2f} | {v[5]}"):
                     st.markdown(f"""
                     **📋 Voucher Details:**
@@ -3704,19 +3198,11 @@ def journal_vouchers():
                     
                     if entries:
                         df = pd.DataFrame(entries, columns=['ID', 'Account Head', 'Debit', 'Credit'])
-                        st.dataframe(
-                            df.style.format({
-                                'Debit': '₹ {:,.2f}',
-                                'Credit': '₹ {:,.2f}'
-                            }),
-                            use_container_width=True
-                        )
-                        
+                        st.dataframe(df.style.format({'Debit': '₹ {:,.2f}', 'Credit': '₹ {:,.2f}'}), use_container_width=True)
                         total_debit = df['Debit'].sum()
                         total_credit = df['Credit'].sum()
                         st.info(f"📊 Total Debit: ₹ {total_debit:,.2f} | Total Credit: ₹ {total_credit:,.2f}")
                         
-                        # DELETE ENTRY - FIXED
                         with st.expander("🗑️ Delete Entry"):
                             entry_id = st.text_input("Enter Entry ID to delete:", key=f"del_entry_{v[0]}")
                             if entry_id:
@@ -3747,7 +3233,6 @@ def journal_vouchers():
                                 st.success("✅ JV Posted! It will now appear in Trial Balance & Balance Sheet")
                                 st.balloons()
                                 st.rerun()
-                        
                         with col2:
                             if st.button("❌ Cancel JV", key=f"cancel_{v[0]}", use_container_width=True):
                                 conn = get_db()
@@ -3756,7 +3241,6 @@ def journal_vouchers():
                                 conn.close()
                                 st.warning("❌ JV Cancelled")
                                 st.rerun()
-                        
                         with col3:
                             if st.button("🗑️ Delete JV", key=f"delete_jv_{v[0]}", use_container_width=True, type="secondary"):
                                 confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key=f"confirm_jv_{v[0]}")
@@ -3803,41 +3287,27 @@ def income_expenses():
     
     with tab1:
         st.markdown("### 💰 Record Income")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer (Optional)",
-            "income_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer (Optional)", "income_customer")
         
         with st.form("income_form"):
             col1, col2 = st.columns(2)
-            
             with col1:
                 income_type = st.selectbox(
                     "📊 Income Type",
-                    ["Interest Received", "Fees & Charges", "Commission Income", "Other Income"]
+                    ["Interest Received", "Processing Fees", "Service Charges", "Commission Income", "Other Income"]
                 )
-                
                 if income_accounts:
                     coa_options = {f"{acc[1]} - {acc[2]}": acc[0] for acc in income_accounts}
-                    selected_coa = st.selectbox(
-                        "📋 Chart of Account",
-                        options=list(coa_options.keys()),
-                        index=0
-                    )
+                    selected_coa = st.selectbox("📋 Chart of Account", options=list(coa_options.keys()), index=0)
                     chart_of_accounts_id = coa_options[selected_coa]
                 else:
                     chart_of_accounts_id = None
                     st.info("No income accounts found in Chart of Accounts. Please add some first.")
-                
                 amount = st.number_input("💰 Amount (₹)", min_value=1.0, step=100.0)
-            
             with col2:
                 mode = st.selectbox("💳 Mode", ["CASH", "BANK", "CHEQUE", "ONLINE"])
                 date_recorded = st.date_input("📅 Date", get_ist_today())
-            
             description = st.text_area("📝 Description")
-            
             if cust_id:
                 st.info(f"👤 This income is linked to customer: {cust_name}")
             
@@ -3856,7 +3326,6 @@ def income_expenses():
                             cust_id if cust_id else None,
                             st.session_state.user['id']
                         ))
-                        
                         conn.execute("""
                             INSERT INTO transactions (
                                 transaction_id, account_id, transaction_type,
@@ -3872,15 +3341,12 @@ def income_expenses():
                             generate_voucher_number('RECEIPT'),
                             st.session_state.user['id']
                         ))
-                        
                         conn.commit()
                         conn.close()
-                        
                         st.success(f"✅ Income recorded: ₹ {amount:,.2f}")
                         if cust_id:
                             st.success(f"👤 Linked to customer: {cust_name}")
                         st.balloons()
-                        
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
                 else:
@@ -3888,42 +3354,28 @@ def income_expenses():
     
     with tab2:
         st.markdown("### 💸 Record Expense")
-        
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer (Optional)",
-            "expense_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer (Optional)", "expense_customer")
         
         with st.form("expense_form"):
             col1, col2 = st.columns(2)
-            
             with col1:
                 expense_type = st.selectbox(
                     "📊 Expense Type",
-                    ["Salary & Wages", "Rent & Utilities", "Operating Expenses", 
-                     "Administrative Expenses", "Other Expenses"]
+                    ["Interest Paid", "Salaries & Benefits", "Rent & Utilities", 
+                     "Operating Expenses", "Administrative Expenses", "Other Expenses"]
                 )
-                
                 if expense_accounts:
                     coa_options = {f"{acc[1]} - {acc[2]}": acc[0] for acc in expense_accounts}
-                    selected_coa = st.selectbox(
-                        "📋 Chart of Account",
-                        options=list(coa_options.keys()),
-                        index=0
-                    )
+                    selected_coa = st.selectbox("📋 Chart of Account", options=list(coa_options.keys()), index=0)
                     chart_of_accounts_id = coa_options[selected_coa]
                 else:
                     chart_of_accounts_id = None
                     st.info("No expense accounts found in Chart of Accounts. Please add some first.")
-                
                 amount = st.number_input("💰 Amount (₹)", min_value=1.0, step=100.0)
-            
             with col2:
                 mode = st.selectbox("💳 Mode", ["CASH", "BANK", "CHEQUE", "ONLINE"])
                 date_recorded = st.date_input("📅 Date", get_ist_today())
-            
             description = st.text_area("📝 Description")
-            
             if cust_id:
                 st.info(f"👤 This expense is linked to customer: {cust_name}")
             
@@ -3942,7 +3394,6 @@ def income_expenses():
                             cust_id if cust_id else None,
                             st.session_state.user['id']
                         ))
-                        
                         conn.execute("""
                             INSERT INTO transactions (
                                 transaction_id, account_id, transaction_type,
@@ -3958,14 +3409,11 @@ def income_expenses():
                             generate_voucher_number('PAYMENT'),
                             st.session_state.user['id']
                         ))
-                        
                         conn.commit()
                         conn.close()
-                        
                         st.success(f"✅ Expense recorded: ₹ {amount:,.2f}")
                         if cust_id:
                             st.success(f"👤 Linked to customer: {cust_name}")
-                        
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
                 else:
@@ -3973,7 +3421,6 @@ def income_expenses():
     
     with tab3:
         st.markdown("### 📊 Income Summary")
-        
         cust_filter = st.selectbox(
             "👤 Filter by Customer",
             ["All Customers"] + [f"{c[0]} - {c[1]}" for c in c.execute("SELECT id, first_name || ' ' || last_name FROM customers ORDER BY first_name").fetchall()],
@@ -4024,7 +3471,6 @@ def income_expenses():
             total_income = sum(item[4] for item in income_data)
             st.info(f"💰 Total Income: ₹ {total_income:,.2f}")
             
-            # Group by Chart Account
             if income_data:
                 chart_summary = {}
                 for item in income_data:
@@ -4045,15 +3491,8 @@ def income_expenses():
             
             col1, col2 = st.columns(2)
             with col1:
-                st.download_button(
-                    "📥 Download Income CSV",
-                    df.to_csv(index=False),
-                    "income.csv",
-                    "text/csv"
-                )
-            
+                st.download_button("📥 Download Income CSV", df.to_csv(index=False), "income.csv", "text/csv")
             with col2:
-                # DELETE INCOME - FIXED
                 with st.expander("🗑️ Delete Income Record"):
                     st.warning("⚠️ This will permanently delete the income record.")
                     inc_id = st.text_input("Enter Income ID to delete:", key="del_inc")
@@ -4078,7 +3517,6 @@ def income_expenses():
     
     with tab4:
         st.markdown("### 📊 Expense Summary")
-        
         cust_filter = st.selectbox(
             "👤 Filter by Customer",
             ["All Customers"] + [f"{c[0]} - {c[1]}" for c in c.execute("SELECT id, first_name || ' ' || last_name FROM customers ORDER BY first_name").fetchall()],
@@ -4129,7 +3567,6 @@ def income_expenses():
             total_expense = sum(item[4] for item in expense_data)
             st.info(f"💸 Total Expenses: ₹ {total_expense:,.2f}")
             
-            # Group by Chart Account
             if expense_data:
                 chart_summary = {}
                 for item in expense_data:
@@ -4150,15 +3587,8 @@ def income_expenses():
             
             col1, col2 = st.columns(2)
             with col1:
-                st.download_button(
-                    "📥 Download Expense CSV",
-                    df.to_csv(index=False),
-                    "expenses.csv",
-                    "text/csv"
-                )
-            
+                st.download_button("📥 Download Expense CSV", df.to_csv(index=False), "expenses.csv", "text/csv")
             with col2:
-                # DELETE EXPENSE - FIXED
                 with st.expander("🗑️ Delete Expense Record"):
                     st.warning("⚠️ This will permanently delete the expense record.")
                     exp_id = st.text_input("Enter Expense ID to delete:", key="del_exp")
@@ -4193,6 +3623,7 @@ def interest_calculation():
     
     c = get_db()
     
+    # Get current rate
     current_rate = get_current_sb_interest_rate()
     st.info(f"📈 Current SB Interest Rate: **{current_rate}%** per annum")
     
@@ -4207,6 +3638,7 @@ def interest_calculation():
         "int_customer"
     )
     
+    # Option to use custom rate for this calculation
     use_custom_rate = st.checkbox("🔧 Use custom rate for this calculation")
     custom_rate = None
     if use_custom_rate:
@@ -4217,6 +3649,24 @@ def interest_calculation():
             value=current_rate,
             step=0.25
         )
+    
+    # Option to delete existing interest records
+    with st.expander("🗑️ Delete Interest Records"):
+        st.warning("⚠️ This will delete ALL interest calculation records. This cannot be undone!")
+        if st.button("🗑️ Delete All Interest Records", use_container_width=True, type="secondary"):
+            confirm = st.checkbox("☑️ I confirm I want to delete ALL interest records!", key="del_all_int_confirm")
+            if confirm:
+                try:
+                    conn = get_db()
+                    # Also reset total_interest_earned in accounts
+                    conn.execute("UPDATE accounts SET total_interest_earned = 0 WHERE account_type='SB'")
+                    conn.execute("DELETE FROM interest_calculations")
+                    conn.commit()
+                    conn.close()
+                    st.success("✅ All interest records deleted and SB interest reset to 0!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error deleting interest records: {str(e)}")
     
     if st.button("📊 Calculate & Post Interest", use_container_width=True, type="primary"):
         conn = get_db()
@@ -4332,19 +3782,29 @@ def interest_calculation():
         df = pd.DataFrame(data)
         st.dataframe(df, use_container_width=True)
         
-        # DELETE INTEREST RECORD - FIXED
-        with st.expander("🗑️ Delete Interest Record"):
+        # Delete individual interest record
+        with st.expander("🗑️ Delete Individual Interest Record"):
             int_id = st.text_input("Enter Interest Calculation ID to delete:")
             if int_id:
-                confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!")
+                confirm = st.checkbox("☑️ I confirm this deletion cannot be undone!", key="del_int_confirm")
                 if confirm and st.button("🗑️ Delete Interest Record", use_container_width=True, type="secondary"):
                     try:
                         conn = get_db()
-                        conn.execute("DELETE FROM interest_calculations WHERE id=?", (int_id,))
-                        conn.commit()
-                        conn.close()
-                        st.success("✅ Interest record deleted successfully!")
-                        st.rerun()
+                        # Get the interest amount to subtract from account
+                        interest_rec = conn.execute("SELECT account_id, interest_earned FROM interest_calculations WHERE id=?", (int_id,)).fetchone()
+                        if interest_rec:
+                            conn.execute("""
+                                UPDATE accounts 
+                                SET total_interest_earned = total_interest_earned - ? 
+                                WHERE id = ?
+                            """, (interest_rec[1], interest_rec[0]))
+                            conn.execute("DELETE FROM interest_calculations WHERE id=?", (int_id,))
+                            conn.commit()
+                            conn.close()
+                            st.success("✅ Interest record deleted and account balance adjusted!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Interest record not found!")
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
 
@@ -4384,6 +3844,16 @@ def trial_balance():
         if ret_total > 0:
             trial.append({'head': 'Retrieval Account Balance', 'cat': 'Asset', 'dr': ret_total, 'cr': 0})
         
+        # === INTEREST RECEIVABLE (Income accrued but not received) ===
+        interest_rec = c.execute("""
+            SELECT COALESCE(SUM(amount), 0) 
+            FROM income 
+            WHERE income_type = 'Interest Received' 
+            AND customer_id IS NOT NULL
+        """).fetchone()[0]
+        if interest_rec > 0:
+            trial.append({'head': 'Interest Receivable', 'cat': 'Asset', 'dr': interest_rec, 'cr': 0})
+        
         # === JOURNAL VOUCHER DEBIT ENTRIES (POSTED ONLY) ===
         jv_dr = c.execute("""
             SELECT je.account_head, SUM(je.debit_amount) as total
@@ -4393,7 +3863,6 @@ def trial_balance():
             GROUP BY je.account_head
             ORDER BY total DESC
         """).fetchall()
-        
         for e in jv_dr:
             if e[1] > 0:
                 trial.append({'head': f"JV: {e[0]}", 'cat': 'JV Debit', 'dr': e[1], 'cr': 0})
@@ -4407,7 +3876,6 @@ def trial_balance():
             GROUP BY je.account_head
             ORDER BY total DESC
         """).fetchall()
-        
         for e in jv_cr:
             if e[1] > 0:
                 trial.append({'head': f"JV: {e[0]}", 'cat': 'JV Credit', 'dr': 0, 'cr': e[1]})
@@ -4431,7 +3899,6 @@ def trial_balance():
             GROUP BY income_name
             ORDER BY total DESC
         """).fetchall()
-        
         for item in income_data:
             if item[1] > 0:
                 trial.append({'head': item[0], 'cat': 'Income', 'dr': 0, 'cr': item[1]})
@@ -4446,7 +3913,6 @@ def trial_balance():
             GROUP BY expense_name
             ORDER BY total DESC
         """).fetchall()
-        
         for item in expense_data:
             if item[1] > 0:
                 trial.append({'head': item[0], 'cat': 'Expense', 'dr': item[1], 'cr': 0})
@@ -4454,7 +3920,6 @@ def trial_balance():
         # === CAPITAL ===
         tdr = sum(i['dr'] for i in trial)
         tcr = sum(i['cr'] for i in trial)
-        
         if abs(tdr - tcr) > 0.01:
             diff = tdr - tcr
             if diff > 0:
@@ -4513,12 +3978,7 @@ def trial_balance():
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.download_button(
-                        "📥 Download CSV",
-                        df.to_csv(index=False),
-                        "trial_balance.csv",
-                        "text/csv"
-                    )
+                    st.download_button("📥 Download CSV", df.to_csv(index=False), "trial_balance.csv", "text/csv")
                 with col2:
                     if st.button("📄 Print/PDF Trial Balance", use_container_width=True):
                         content = [
@@ -4535,17 +3995,14 @@ def trial_balance():
                             "DETAILED TRIAL BALANCE:",
                             "-" * 50
                         ]
-                        
                         for item in trial:
                             content.append(f"{item['head']} | {item['cat']} | ₹ {item['dr']:,.2f} | ₹ {item['cr']:,.2f}")
-                        
                         content.append("")
                         content.append(f"Assets (Dr): ₹ {asset_total:,.2f}")
                         content.append(f"Liabilities (Cr): ₹ {liability_total:,.2f}")
                         content.append(f"Income (Cr): ₹ {income_total:,.2f}")
                         content.append(f"Expenses (Dr): ₹ {expense_total:,.2f}")
                         content.append(f"Capital/Equity: ₹ {capital:,.2f}")
-                        
                         pdf_file = create_pdf("Trial Balance Report", content, "trial_balance")
                         if pdf_file:
                             create_download_button(pdf_file, "trial_balance", "📥 Download PDF Report")
@@ -4597,6 +4054,17 @@ def balance_sheet():
             assets.append({'name': 'Retrieval Account Balance', 'amount': ret_total})
             ta += ret_total
         
+        # === INTEREST RECEIVABLE ===
+        interest_rec = c.execute("""
+            SELECT COALESCE(SUM(amount), 0) 
+            FROM income 
+            WHERE income_type = 'Interest Received' 
+            AND customer_id IS NOT NULL
+        """).fetchone()[0]
+        if interest_rec > 0:
+            assets.append({'name': 'Interest Receivable', 'amount': interest_rec})
+            ta += interest_rec
+        
         # === JV ASSETS (POSTED JV DEBIT ENTRIES) ===
         jv_assets = c.execute("""
             SELECT je.account_head, SUM(je.debit_amount) as total
@@ -4606,7 +4074,6 @@ def balance_sheet():
             GROUP BY je.account_head
             ORDER BY total DESC
         """).fetchall()
-        
         for e in jv_assets:
             if e[1] > 0:
                 assets.append({'name': f"JV: {e[0]}", 'amount': e[1]})
@@ -4632,7 +4099,6 @@ def balance_sheet():
             GROUP BY je.account_head
             ORDER BY total DESC
         """).fetchall()
-        
         for e in jv_liabilities:
             if e[1] > 0:
                 liabilities.append({'name': f"JV: {e[0]}", 'amount': e[1]})
@@ -4644,11 +4110,7 @@ def balance_sheet():
         
         # === CAPITAL ===
         capital = ta - tl
-        
-        # Calculate net profit/loss
         net_profit = income_total - expense_total
-        
-        # Total equity
         total_equity = capital + net_profit
         
         # === DISPLAY ===
@@ -4700,7 +4162,6 @@ def balance_sheet():
         if abs(ta - (tl + total_equity)) < 0.01:
             st.success(f"""
             ### ✅ PERFECTLY BALANCED! 🎉
-            
             **Assets (₹ {ta:,.2f}) = Liabilities (₹ {tl:,.2f}) + Equity (₹ {total_equity:,.2f})**
             """)
             
@@ -4712,14 +4173,8 @@ def balance_sheet():
                 for item in liabilities:
                     bs_data.append({'Category': 'Liability', 'Name': item['name'], 'Amount': item['amount']})
                 bs_data.append({'Category': 'Equity', 'Name': 'Total Equity', 'Amount': total_equity})
-                
                 df_bs = pd.DataFrame(bs_data)
-                st.download_button(
-                    "📥 Download CSV",
-                    df_bs.to_csv(index=False),
-                    "balance_sheet.csv",
-                    "text/csv"
-                )
+                st.download_button("📥 Download CSV", df_bs.to_csv(index=False), "balance_sheet.csv", "text/csv")
             
             with col2:
                 if st.button("📄 Print/PDF Balance Sheet", use_container_width=True):
@@ -4751,9 +4206,7 @@ def balance_sheet():
                     content.append(f"Total Equity: ₹ {total_equity:,.2f}")
                     content.append("")
                     content.append(f"CHECK: Assets (₹ {ta:,.2f}) = Liabilities (₹ {tl:,.2f}) + Equity (₹ {total_equity:,.2f})")
-                    content.append("")
                     content.append("✅ PERFECTLY BALANCED!")
-                    
                     pdf_file = create_pdf("Balance Sheet Report", content, "balance_sheet")
                     if pdf_file:
                         create_download_button(pdf_file, "balance_sheet", "📥 Download PDF Report")
@@ -4778,11 +4231,11 @@ def profit_loss():
         to_date = st.date_input("📅 To Date", get_ist_today())
     
     if st.button("🔄 Generate P&L", use_container_width=True, type="primary"):
-        # === INCOME FROM ALL SOURCES ===
+        # === INCOME ===
         income_data = []
         total_income = 0
         
-        # 1. Interest Received on Loans (from income table)
+        # 1. Interest Received on Loans
         loan_interest = c.execute("""
             SELECT 
                 'Interest Received on Loans' as income_name,
@@ -4801,48 +4254,121 @@ def profit_loss():
             })
             total_income += loan_interest[1]
         
-        # 2. Fees & Charges Income
+        # 2. Interest Received on Investments
+        inv_interest = c.execute("""
+            SELECT 
+                'Interest Received on Investments' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Investment' as source
+            FROM income
+            WHERE income_type = 'Interest Received' 
+            AND customer_id IS NULL
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if inv_interest and inv_interest[1] > 0:
+            income_data.append({
+                'Income Name': 'Interest Received on Investments',
+                'Amount': inv_interest[1],
+                'Source': 'Investment'
+            })
+            total_income += inv_interest[1]
+        
+        # 3. Processing Fees
+        processing_fees = c.execute("""
+            SELECT 
+                'Processing Fees' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Fee Income' as source
+            FROM income
+            WHERE income_type = 'Processing Fees' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if processing_fees and processing_fees[1] > 0:
+            income_data.append({
+                'Income Name': 'Processing Fees',
+                'Amount': processing_fees[1],
+                'Source': 'Fee Income'
+            })
+            total_income += processing_fees[1]
+        
+        # 4. Service Charges
+        service_charges = c.execute("""
+            SELECT 
+                'Service Charges' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Fee Income' as source
+            FROM income
+            WHERE income_type = 'Service Charges' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if service_charges and service_charges[1] > 0:
+            income_data.append({
+                'Income Name': 'Service Charges',
+                'Amount': service_charges[1],
+                'Source': 'Fee Income'
+            })
+            total_income += service_charges[1]
+        
+        # 5. Commission Income
+        commission_income = c.execute("""
+            SELECT 
+                'Commission Income' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Fee Income' as source
+            FROM income
+            WHERE income_type = 'Commission Income' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if commission_income and commission_income[1] > 0:
+            income_data.append({
+                'Income Name': 'Commission Income',
+                'Amount': commission_income[1],
+                'Source': 'Fee Income'
+            })
+            total_income += commission_income[1]
+        
+        # 6. Other Income
+        other_income = c.execute("""
+            SELECT 
+                'Other Income' as income_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Other Income' as source
+            FROM income
+            WHERE income_type = 'Other Income' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if other_income and other_income[1] > 0:
+            income_data.append({
+                'Income Name': 'Other Income',
+                'Amount': other_income[1],
+                'Source': 'Other Income'
+            })
+            total_income += other_income[1]
+        
+        # 7. Fees & Charges from Transactions
         fees_income = c.execute("""
             SELECT 
-                'Processing & Service Fees' as income_name,
+                'Transaction Fees' as income_name,
                 COALESCE(SUM(amount), 0) as total,
                 'Transactions' as source
             FROM transactions
             WHERE transaction_type = 'CREDIT' 
-            AND reference_type IN ('FEE', 'CHARGE', 'COMMISSION', 'PROCESSING')
+            AND reference_type IN ('FEE', 'CHARGE', 'COMMISSION')
             AND DATE(created_at) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()
         
         if fees_income and fees_income[1] > 0:
             income_data.append({
-                'Income Name': 'Processing & Service Fees',
+                'Income Name': 'Transaction Fees',
                 'Amount': fees_income[1],
                 'Source': 'Transactions'
             })
             total_income += fees_income[1]
-        
-        # 3. Other Income (manual entries)
-        manual_income = c.execute("""
-            SELECT 
-                COALESCE(c.account_name, i.income_type) as income_name,
-                SUM(i.amount) as total,
-                'Manual Entry' as source
-            FROM income i
-            LEFT JOIN chart_of_accounts c ON i.chart_of_accounts_id = c.id
-            WHERE DATE(i.date) BETWEEN ? AND ?
-            AND i.income_type NOT LIKE '%Interest Received%'
-            GROUP BY income_name
-            ORDER BY total DESC
-        """, (from_date, to_date)).fetchall()
-        
-        for item in manual_income:
-            if item[1] > 0:
-                income_data.append({
-                    'Income Name': item[0],
-                    'Amount': item[1],
-                    'Source': 'Manual Entry'
-                })
-                total_income += item[1]
         
         # === EXPENSES ===
         expense_data = []
@@ -4904,60 +4430,151 @@ def profit_loss():
             })
             total_expense += rd_interest[1]
         
-        # 4. Manual Expenses
-        manual_expenses = c.execute("""
+        # 4. Interest on Borrowings (from Journal Voucher)
+        borrowing_interest = c.execute("""
             SELECT 
-                COALESCE(c.account_name, e.expense_type) as expense_name,
-                SUM(e.amount) as total,
-                'Manual Entry' as source
-            FROM expenses e
-            LEFT JOIN chart_of_accounts c ON e.chart_of_accounts_id = c.id
-            WHERE DATE(e.date) BETWEEN ? AND ?
-            GROUP BY expense_name
-            ORDER BY total DESC
-        """, (from_date, to_date)).fetchall()
-        
-        for item in manual_expenses:
-            if item[1] > 0:
-                expense_data.append({
-                    'Expense Name': item[0],
-                    'Amount': item[1],
-                    'Source': 'Manual Entry'
-                })
-                total_expense += item[1]
-        
-        # 5. Operating Expenses (from JV)
-        operating_expenses = c.execute("""
-            SELECT 
-                'Operating & Administrative Expenses' as expense_name,
+                'Interest on Borrowings' as expense_name,
                 COALESCE(SUM(je.debit_amount), 0) as total,
                 'Journal Voucher' as source
             FROM journal_entries je
             JOIN journal_vouchers jv ON je.voucher_id = jv.id
             WHERE jv.status = 'POSTED' 
-            AND (je.account_head LIKE '%Salary%' 
-                 OR je.account_head LIKE '%Rent%' 
-                 OR je.account_head LIKE '%Electricity%'
-                 OR je.account_head LIKE '%Water%'
-                 OR je.account_head LIKE '%Internet%'
-                 OR je.account_head LIKE '%Stationary%'
-                 OR je.account_head LIKE '%Conveyance%')
+            AND je.account_head LIKE '%Interest%' 
+            AND je.account_head LIKE '%Borrowing%'
             AND DATE(jv.voucher_date) BETWEEN ? AND ?
         """, (from_date, to_date)).fetchone()
         
-        if operating_expenses and operating_expenses[1] > 0:
+        if borrowing_interest and borrowing_interest[1] > 0:
             expense_data.append({
-                'Expense Name': 'Operating & Administrative Expenses',
-                'Amount': operating_expenses[1],
+                'Expense Name': 'Interest on Borrowings',
+                'Amount': borrowing_interest[1],
                 'Source': 'Journal Voucher'
             })
-            total_expense += operating_expenses[1]
+            total_expense += borrowing_interest[1]
+        
+        # 5. Salaries & Benefits
+        salaries = c.execute("""
+            SELECT 
+                'Salaries & Benefits' as expense_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Manual Entry' as source
+            FROM expenses
+            WHERE expense_type = 'Salaries & Benefits' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if salaries and salaries[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Salaries & Benefits',
+                'Amount': salaries[1],
+                'Source': 'Manual Entry'
+            })
+            total_expense += salaries[1]
+        
+        # 6. Rent & Utilities
+        rent_utilities = c.execute("""
+            SELECT 
+                'Rent & Utilities' as expense_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Manual Entry' as source
+            FROM expenses
+            WHERE expense_type = 'Rent & Utilities' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if rent_utilities and rent_utilities[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Rent & Utilities',
+                'Amount': rent_utilities[1],
+                'Source': 'Manual Entry'
+            })
+            total_expense += rent_utilities[1]
+        
+        # 7. Operating Expenses
+        operating_exp = c.execute("""
+            SELECT 
+                'Operating Expenses' as expense_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Manual Entry' as source
+            FROM expenses
+            WHERE expense_type = 'Operating Expenses' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if operating_exp and operating_exp[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Operating Expenses',
+                'Amount': operating_exp[1],
+                'Source': 'Manual Entry'
+            })
+            total_expense += operating_exp[1]
+        
+        # 8. Administrative Expenses
+        admin_exp = c.execute("""
+            SELECT 
+                'Administrative Expenses' as expense_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Manual Entry' as source
+            FROM expenses
+            WHERE expense_type = 'Administrative Expenses' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if admin_exp and admin_exp[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Administrative Expenses',
+                'Amount': admin_exp[1],
+                'Source': 'Manual Entry'
+            })
+            total_expense += admin_exp[1]
+        
+        # 9. Other Expenses
+        other_exp = c.execute("""
+            SELECT 
+                'Other Expenses' as expense_name,
+                COALESCE(SUM(amount), 0) as total,
+                'Manual Entry' as source
+            FROM expenses
+            WHERE expense_type = 'Other Expenses' 
+            AND DATE(date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if other_exp and other_exp[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Other Expenses',
+                'Amount': other_exp[1],
+                'Source': 'Manual Entry'
+            })
+            total_expense += other_exp[1]
+        
+        # 10. Provisions (from JV)
+        provisions = c.execute("""
+            SELECT 
+                'Provisions' as expense_name,
+                COALESCE(SUM(je.debit_amount), 0) as total,
+                'Journal Voucher' as source
+            FROM journal_entries je
+            JOIN journal_vouchers jv ON je.voucher_id = jv.id
+            WHERE jv.status = 'POSTED' 
+            AND (je.account_head LIKE '%Provision%' OR je.account_head LIKE '%NPA%')
+            AND DATE(jv.voucher_date) BETWEEN ? AND ?
+        """, (from_date, to_date)).fetchone()
+        
+        if provisions and provisions[1] > 0:
+            expense_data.append({
+                'Expense Name': 'Provisions',
+                'Amount': provisions[1],
+                'Source': 'Journal Voucher'
+            })
+            total_expense += provisions[1]
         
         # Calculate net profit/loss
         net_profit = total_income - total_expense
         
         # === DISPLAY ===
         st.markdown("### 📊 Profit & Loss Summary")
+        st.markdown(f"**Period:** {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}")
+        st.markdown("---")
         
         col1, col2 = st.columns(2)
         
@@ -4965,22 +4582,24 @@ def profit_loss():
             st.markdown("#### 💰 INCOME")
             st.markdown("---")
             if income_data:
+                # Group by category
+                income_by_category = {}
                 for item in income_data:
-                    emoji = "💰" if "Interest" in item['Income Name'] else "📊"
-                    st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
-                        <span>{emoji} <strong>{item['Income Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
-                        <span style="font-weight: 600; color: #28a745;">+ ₹ {item['Amount']:,.2f}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    cat = item['Source']
+                    if cat not in income_by_category:
+                        income_by_category[cat] = []
+                    income_by_category[cat].append(item)
                 
-                st.markdown("---")
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 10px; background: #e8f5e9; border-radius: 8px;">
-                    <span style="font-size: 1.1rem; font-weight: 700;">Total Income</span>
-                    <span style="font-size: 1.1rem; font-weight: 700; color: #2e7d32;">₹ {total_income:,.2f}</span>
-                </div>
-                """, unsafe_allow_html=True)
+                # Display by category
+                for category, items in income_by_category.items():
+                    st.markdown(f"**{category}**")
+                    for item in items:
+                        st.markdown(f"• {item['Income Name']}: **₹ {item['Amount']:,.2f}**")
+                    total_cat = sum(item['Amount'] for item in items)
+                    st.markdown(f"*Total {category}: ₹ {total_cat:,.2f}*")
+                    st.markdown("---")
+                
+                st.markdown(f"### **Total Income: ₹ {total_income:,.2f}**")
             else:
                 st.info("No income in this period")
         
@@ -4988,27 +4607,30 @@ def profit_loss():
             st.markdown("#### 💸 EXPENSES")
             st.markdown("---")
             if expense_data:
+                # Group by category
+                expense_by_category = {}
                 for item in expense_data:
-                    emoji = "🏦" if "Interest Paid" in item['Expense Name'] else "📊"
-                    st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
-                        <span>{emoji} <strong>{item['Expense Name']}</strong> <span style="color: #6c757d; font-size: 0.8rem;">({item['Source']})</span></span>
-                        <span style="font-weight: 600; color: #dc3545;">- ₹ {item['Amount']:,.2f}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    cat = item['Source']
+                    if cat not in expense_by_category:
+                        expense_by_category[cat] = []
+                    expense_by_category[cat].append(item)
                 
-                st.markdown("---")
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 10px; background: #fce4ec; border-radius: 8px;">
-                    <span style="font-size: 1.1rem; font-weight: 700;">Total Expenses</span>
-                    <span style="font-size: 1.1rem; font-weight: 700; color: #c62828;">₹ {total_expense:,.2f}</span>
-                </div>
-                """, unsafe_allow_html=True)
+                # Display by category
+                for category, items in expense_by_category.items():
+                    st.markdown(f"**{category}**")
+                    for item in items:
+                        st.markdown(f"• {item['Expense Name']}: **₹ {item['Amount']:,.2f}**")
+                    total_cat = sum(item['Amount'] for item in items)
+                    st.markdown(f"*Total {category}: ₹ {total_cat:,.2f}*")
+                    st.markdown("---")
+                
+                st.markdown(f"### **Total Expenses: ₹ {total_expense:,.2f}**")
             else:
                 st.info("No expenses in this period")
         
         st.markdown("---")
         
+        # Net Result
         if net_profit >= 0:
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); padding: 2rem; border-radius: 12px; text-align: center;">
@@ -5032,22 +4654,22 @@ def profit_loss():
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### 📈 Interest Received (Income)")
-            interest_received = sum(item['Amount'] for item in income_data if "Interest" in item['Income Name'])
+            interest_received = sum(item['Amount'] for item in income_data if 'Interest Received' in item['Income Name'])
             if interest_received > 0:
                 st.metric("Total Interest Received", f"₹ {interest_received:,.2f}")
                 for item in income_data:
-                    if "Interest" in item['Income Name']:
+                    if 'Interest Received' in item['Income Name']:
                         st.write(f"• {item['Income Name']}: ₹ {item['Amount']:,.2f}")
             else:
                 st.info("No interest received recorded")
         
         with col2:
             st.markdown("#### 📉 Interest Paid (Expenses)")
-            interest_paid = sum(item['Amount'] for item in expense_data if "Interest Paid" in item['Expense Name'])
+            interest_paid = sum(item['Amount'] for item in expense_data if 'Interest Paid' in item['Expense Name'] or 'Interest on Borrowings' in item['Expense Name'])
             if interest_paid > 0:
                 st.metric("Total Interest Paid", f"₹ {interest_paid:,.2f}")
                 for item in expense_data:
-                    if "Interest Paid" in item['Expense Name']:
+                    if 'Interest Paid' in item['Expense Name'] or 'Interest on Borrowings' in item['Expense Name']:
                         st.write(f"• {item['Expense Name']}: ₹ {item['Amount']:,.2f}")
             else:
                 st.info("No interest paid recorded")
@@ -5099,6 +4721,7 @@ def profit_loss():
                 content.append("")
                 if net_profit >= 0:
                     content.append(f"NET PROFIT: ₹ {net_profit:,.2f}")
+                    content.append(f"Profit Margin: {((net_profit/total_income*100) if total_income > 0 else 0):.1f}%")
                 else:
                     content.append(f"NET LOSS: ₹ {abs(net_profit):,.2f}")
                 
@@ -5157,7 +4780,6 @@ def reports():
                     content.append("")
                     for cust in customers:
                         content.append(f"ID: {cust[0]} | Name: {cust[1]} {cust[2]} | Email: {cust[3]} | Phone: {cust[4]} | KYC: {cust[5]}")
-                    
                     pdf_file = create_pdf("Customer List Report", content, "customer_list")
                     if pdf_file:
                         create_download_button(pdf_file, "customer_list", "📥 Download PDF Report")
@@ -5217,7 +4839,6 @@ def reports():
                 ]
                 for txn in transactions:
                     content.append(f"{txn[0]} | {txn[1]} | {txn[2]} | ₹ {txn[3]:,.2f} | {txn[4]} | {txn[6]}")
-                
                 pdf_file = create_pdf("Daily Transactions Report", content, "daily_transactions")
                 if pdf_file:
                     create_download_button(pdf_file, "daily_transactions", "📥 Download PDF Report")
@@ -5225,10 +4846,7 @@ def reports():
             st.info("No transactions on this date")
     
     elif report_type == "Account Statement":
-        cust_id, cust_name, acc_id, acc_number, balance = customer_selector(
-            "👤 Select Customer",
-            "report_customer"
-        )
+        cust_id, cust_name, acc_id, acc_number, balance = customer_selector("👤 Select Customer", "report_customer")
         
         if cust_id and acc_id:
             col1, col2 = st.columns(2)
@@ -5284,11 +4902,9 @@ def reports():
                             ]
                             for txn in txns:
                                 content.append(f"{txn[0]} | {txn[1]} | ₹ {txn[2]:,.2f} | ₹ {txn[3]:,.2f} | {txn[4]} | {txn[6]}")
-                            
                             content.append("")
                             content.append(f"Opening Balance: ₹ {balance:,.2f}")
                             content.append(f"Closing Balance: ₹ {txns[0][3] if txns else balance:,.2f}")
-                            
                             pdf_file = create_pdf(f"Account Statement - {acc_number}", content, f"statement_{acc_number}")
                             if pdf_file:
                                 create_download_button(pdf_file, f"statement_{acc_number}", "📥 Download PDF Report")
@@ -5334,7 +4950,6 @@ def reports():
                 ]
                 for item in interest_data:
                     content.append(f"{item[0]} | {item[1]} | ₹ {item[2]:,.2f} | {item[3]}%")
-                
                 pdf_file = create_pdf("Interest Summary Report", content, "interest_summary")
                 if pdf_file:
                     create_download_button(pdf_file, "interest_summary", "📥 Download PDF Report")
@@ -5343,7 +4958,6 @@ def reports():
     
     elif report_type == "FD Summary":
         st.markdown("### 📊 FD Summary Report")
-        
         fds = c.execute("""
             SELECT fd.fd_number, c.first_name||' '||c.last_name as customer,
                    fd.principal_amount, fd.interest_rate,
@@ -5395,7 +5009,6 @@ def reports():
                 ]
                 for fd in fds:
                     content.append(f"{fd[0]} | {fd[1]} | ₹ {fd[2]:,.2f} | {fd[3]}% | {fd[4]} | {fd[5]} | {fd[7]}")
-                
                 pdf_file = create_pdf("FD Summary Report", content, "fd_summary")
                 if pdf_file:
                     create_download_button(pdf_file, "fd_summary", "📥 Download PDF Report")
@@ -5404,7 +5017,6 @@ def reports():
     
     elif report_type == "RD Summary":
         st.markdown("### 📊 RD Summary Report")
-        
         rds = c.execute("""
             SELECT rd.rd_number, c.first_name||' '||c.last_name as customer,
                    rd.monthly_amount, rd.installments_paid,
@@ -5459,7 +5071,6 @@ def reports():
                 ]
                 for rd in rds:
                     content.append(f"{rd[0]} | {rd[1]} | ₹ {rd[2]:,.2f} | {rd[3]}/{rd[4]} | {rd[5]}% | {rd[6]} | {rd[7]} | {rd[9]}")
-                
                 pdf_file = create_pdf("RD Summary Report", content, "rd_summary")
                 if pdf_file:
                     create_download_button(pdf_file, "rd_summary", "📥 Download PDF Report")
@@ -5468,7 +5079,6 @@ def reports():
     
     elif report_type == "Retrieval Summary":
         st.markdown("### 📊 Retrieval Account Summary")
-        
         retrieval_data = c.execute("""
             SELECT 
                 c.first_name||' '||c.last_name as customer,
@@ -5517,7 +5127,6 @@ def reports():
                 ]
                 for item in retrieval_data:
                     content.append(f"{item[0]} | {item[1]} | ₹ {item[2]:,.2f} | {item[3]} deposits")
-                
                 pdf_file = create_pdf("Retrieval Account Summary Report", content, "retrieval_summary")
                 if pdf_file:
                     create_download_button(pdf_file, "retrieval_summary", "📥 Download PDF Report")
@@ -5526,7 +5135,6 @@ def reports():
     
     elif report_type == "Income by Customer":
         st.markdown("### 📊 Income by Customer")
-        
         income_by_customer = c.execute("""
             SELECT 
                 cu.first_name || ' ' || cu.last_name as customer,
@@ -5561,18 +5169,12 @@ def reports():
             st.markdown("### 📊 Income by Customer - Pivot View")
             st.dataframe(pd.DataFrame(pivot_data).fillna(0).style.format('₹ {:,.2f}'), use_container_width=True)
             
-            st.download_button(
-                "📥 Download CSV",
-                df.to_csv(index=False),
-                "income_by_customer.csv",
-                "text/csv"
-            )
+            st.download_button("📥 Download CSV", df.to_csv(index=False), "income_by_customer.csv", "text/csv")
         else:
             st.info("No customer-linked income found")
     
     elif report_type == "Expense by Customer":
         st.markdown("### 📊 Expense by Customer")
-        
         expense_by_customer = c.execute("""
             SELECT 
                 cu.first_name || ' ' || cu.last_name as customer,
@@ -5607,12 +5209,7 @@ def reports():
             st.markdown("### 📊 Expense by Customer - Pivot View")
             st.dataframe(pd.DataFrame(pivot_data).fillna(0).style.format('₹ {:,.2f}'), use_container_width=True)
             
-            st.download_button(
-                "📥 Download CSV",
-                df.to_csv(index=False),
-                "expense_by_customer.csv",
-                "text/csv"
-            )
+            st.download_button("📥 Download CSV", df.to_csv(index=False), "expense_by_customer.csv", "text/csv")
         else:
             st.info("No customer-linked expenses found")
     
@@ -5622,7 +5219,6 @@ def reports():
 def my_accounts():
     c = get_db()
     uid = st.session_state.user['id']
-    
     customer = c.execute("SELECT * FROM customers WHERE user_id=?", (uid,)).fetchone()
     
     if not customer:
@@ -5631,7 +5227,6 @@ def my_accounts():
         return
     
     st.markdown(f"### 👋 Welcome, {customer[3]} {customer[4]}!")
-    
     accounts = c.execute("""
         SELECT account_number, account_type, balance,
                COALESCE(total_interest_earned, 0) as interest,
@@ -5647,21 +5242,17 @@ def my_accounts():
                 col1.metric("💰 Balance", f"₹ {acc[2]:,.2f}")
                 col2.metric("📈 Interest Earned", f"₹ {acc[3]:,.2f}")
                 col3.metric("📊 Interest Rate", f"{acc[4]}%")
-        
         total_balance = sum(acc[2] for acc in accounts)
         total_interest = sum(acc[3] for acc in accounts)
-        
         st.info(f"💰 **Total Portfolio: ₹ {total_balance + total_interest:,.2f}**")
     else:
         st.info("No active accounts found")
-    
     c.close()
 
 # ==================== MY TRANSACTIONS ====================
 def my_transactions():
     c = get_db()
     uid = st.session_state.user['id']
-    
     customer = c.execute("SELECT id FROM customers WHERE user_id=?", (uid,)).fetchone()
     
     if not customer:
@@ -5670,7 +5261,6 @@ def my_transactions():
         return
     
     st.markdown("### 💳 Your Transactions")
-    
     txns = c.execute("""
         SELECT t.transaction_id, a.account_number, t.transaction_type,
                t.amount, t.balance_after, t.description,
@@ -5707,7 +5297,6 @@ def my_transactions():
         col3.metric("📊 Net Change", f"₹ {(total_credit - total_debit):,.2f}")
     else:
         st.info("No transactions found")
-    
     c.close()
 
 # ==================== MAIN EXECUTION ====================

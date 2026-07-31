@@ -765,10 +765,11 @@ elif menu == "Journal Vouchers":
         else:
             st.info("No journal vouchers found.")
 
+
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
-    st.title("💰 Operational Income & Expenses Ledger")
-    tab1, tab2, tab3 = st.tabs(["Record Income/Expense", "View All Entries", "Ledger Report & Print"])
+    st.title("💰 Operational Income & Expenses - Cash Book")
+    tab1, tab2, tab3 = st.tabs(["Record Income/Expense", "View All Entries", "Cash Book Report & Print"])
     
     with tab1:
         st.subheader("Record New Financial Entry")
@@ -837,50 +838,45 @@ elif menu == "Income & Expenses":
             st.info("No operational financial logs recorded.")
 
     with tab3:
-        st.subheader("📊 Detailed Account Ledger Report")
+        st.subheader("📖 Cash Book / Day Book Report")
         
-        # Pull comprehensive data mapping to requested fields: Date, JV No, Mode, Particulars, Account Code, Account Name, Debit, Credit
-        ledger_query = """
-            JVs.voucher_date AS Date,
-            JE.jv_id AS 'JV No',
-            COALESCE(OFIN.mode, 'JV') AS Mode,
-            JVs.narration AS Particulars,
-            JE.account_code AS 'Account Code',
-            CO.account_name AS 'Account Name',
-            JE.debit AS Debit,
-            JE.credit AS Credit
-        """
-        raw_ledger = run_query(f"""
-            SELECT {ledger_query}
-            FROM jv_entries JE
-            JOIN journal_vouchers JVs ON JE.jv_id = JVs.jv_id
-            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-            LEFT JOIN operational_finances OFIN ON OFIN.narration LIKE '%' || JVs.narration || '%'
-            ORDER BY JVs.jv_id ASC, JE.entry_id ASC
+        # Fetch operational finances mapped to standard Cash Book columns
+        cashbook_data = run_query("""
+            date,
+            id AS 'Voucher No',
+            mode AS Mode,
+            narration AS Particulars,
+            account_code AS 'Account Code',
+            CASE WHEN type = 'INCOME' THEN amount ELSE 0.0 END AS 'Receipts (Debit)',
+            CASE WHEN type = 'EXPENSE' THEN amount ELSE 0.0 END AS 'Payments (Credit)'
+            FROM operational_finances
+            ORDER BY date ASC, id ASC
         """)
         
-        if raw_ledger:
-            df_ledger = pd.DataFrame(raw_ledger, columns=["Date", "JV No", "Mode", "Particulars", "Account Code", "Account Name", "Debit", "Credit"])
+        if cashbook_data:
+            df_cb = pd.DataFrame(cashbook_data, columns=["Date", "Voucher No", "Mode", "Particulars", "Account Code", "Receipts (Debit)", "Payments (Credit)"])
             
-            # Calculate running balance column
-            df_ledger['Balance'] = (df_ledger['Debit'] - df_ledger['Credit']).cumsum()
+            # Compute traditional Cash Book running balance: Receipts add, Payments subtract
+            df_cb['Balance'] = (df_cb['Receipts (Debit)'] - df_cb['Payments (Credit)']).cumsum()
             
-            st.dataframe(df_ledger, use_container_width=True)
+            st.dataframe(df_cb, use_container_width=True)
             
-            col_print1, col_print2 = st.columns(2)
-            with col_print1:
+            col_cb1, col_cb2 = st.columns(2)
+            with col_cb1:
                 st.download_button(
-                    "📥 Download Ledger Report PDF", 
-                    create_pdf_report("Comprehensive Income & Expense Ledger Statement", df_ledger), 
-                    "income_expense_ledger.pdf", 
+                    "📥 Download Cash Book PDF", 
+                    create_pdf_report("Cash Book / Day Book Statement", df_cb), 
+                    "cash_book_report.pdf", 
                     "application/pdf"
                 )
-            with col_print2:
-                if st.button("🖨️ Print Report View"):
+            with col_cb2:
+                if st.button("🖨️ Print Cash Book View"):
                     st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
-                    st.info("Triggered print layout dialog.")
+                    st.info("Triggered print command for Cash Book layout.")
         else:
-            st.info("No ledger entries found to generate report.")
+            st.info("No cash book transactions logged yet.")
+
+
 
 # --- 12. INTEREST CALCULATION ---
 elif menu == "Interest Calculation":

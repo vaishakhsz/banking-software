@@ -766,16 +766,18 @@ elif menu == "Journal Vouchers":
             st.info("No journal vouchers found.")
 
 
+
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
-    st.title("💰 Operational Income & Expenses - Cash Book")
-    tab1, tab2, tab3 = st.tabs(["Record Income/Expense", "View All Entries", "Cash Book Report & Print"])
+    st.title("💰 Operational Income, Expenses, Assets & Liabilities")
+    tab1, tab2, tab3 = st.tabs(["Record Entry", "View All Entries", "Cash Book Report & Print"])
     
     with tab1:
         st.subheader("Record New Financial Entry")
         with st.form("income_expense_form"):
             col1, col2 = st.columns(2)
-            entry_type = col1.selectbox("Entry Classification", ["INCOME", "EXPENSE"])
+            # Added ASSET and LIABILITY options to entry classifications
+            entry_type = col1.selectbox("Entry Classification", ["INCOME", "EXPENSE", "ASSET", "LIABILITY"])
             
             coa_records = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]} ({c[2]})": c[0] for c in coa_records}
@@ -800,9 +802,9 @@ elif menu == "Income & Expenses":
             debit_account = d_col1.selectbox("Debit Account Code", list(coa_dict.keys()), index=0)
             credit_account = d_col2.selectbox("Credit Account Code", list(coa_dict.keys()), index=min(1, len(coa_dict)-1))
             
-            narration = st.text_input("Narration / Particulars", value="Operational financial transaction")
+            narration = st.text_input("Narration / Particulars", value="Financial transaction entry")
             
-            submitted = st.form_submit_button("Post Income/Expense Entry")
+            submitted = st.form_submit_button("Post Financial Entry")
             if submitted:
                 d_code = coa_dict[debit_account]
                 c_code = coa_dict[credit_account]
@@ -822,10 +824,10 @@ elif menu == "Income & Expenses":
                 conn.commit()
                 conn.close()
                 
-                st.success("Financial entry recorded and Journal Voucher posted successfully!")
+                st.success("Entry recorded and Journal Voucher posted successfully!")
 
     with tab2:
-        st.subheader("All Operational Financial Entries")
+        st.subheader("All Financial Entries")
         finances = run_query("""
             SELECT o.id, o.type, c.name, o.account_code, o.amount, o.mode, o.date, o.narration 
             FROM operational_finances o LEFT JOIN customers c ON o.customer_id = c.id
@@ -833,31 +835,33 @@ elif menu == "Income & Expenses":
         if finances:
             df_fin = pd.DataFrame(finances, columns=["ID", "Type", "Customer Name", "Account Code", "Amount (₹)", "Mode", "Date", "Narration"])
             st.dataframe(df_fin, use_container_width=True)
-            st.download_button("Download Income/Expense PDF", create_pdf_report("Operational Finances Report", df_fin), "income_expenses.pdf", "application/pdf")
+            st.download_button("Download All Entries PDF", create_pdf_report("All Financial Entries Report", df_fin), "all_finances.pdf", "application/pdf")
         else:
-            st.info("No operational financial logs recorded.")
+            st.info("No financial logs recorded.")
 
     with tab3:
-        st.subheader("📖 Cash Book / Day Book Report")
+        st.subheader("📖 Cash Book / Day Book Report (Strictly Income & Expenses Only)")
         
-        # Added missing SELECT keyword to fix the SQL syntax error
+        # Strictly filters out ASSET and LIABILITY entries, rendering only INCOME and EXPENSE records
         cashbook_data = run_query("""
             SELECT 
-                date,
-                id AS 'Voucher No',
-                mode AS Mode,
-                narration AS Particulars,
-                account_code AS 'Account Code',
-                CASE WHEN type = 'INCOME' THEN amount ELSE 0.0 END AS 'Receipts (Debit)',
-                CASE WHEN type = 'EXPENSE' THEN amount ELSE 0.0 END AS 'Payments (Credit)'
-            FROM operational_finances
-            ORDER BY date ASC, id ASC
+                o.date,
+                o.id AS 'Voucher No',
+                o.mode AS Mode,
+                o.narration AS Particulars,
+                o.account_code AS 'Account Code',
+                CASE WHEN o.type = 'INCOME' THEN o.amount ELSE 0.0 END AS 'Receipts (Debit)',
+                CASE WHEN o.type = 'EXPENSE' THEN o.amount ELSE 0.0 END AS 'Payments (Credit)'
+            FROM operational_finances o
+            JOIN chart_of_accounts c ON o.account_code = c.account_code
+            WHERE o.type IN ('INCOME', 'EXPENSE') AND c.account_type IN ('Income', 'Expense')
+            ORDER BY o.date ASC, o.id ASC
         """)
         
         if cashbook_data:
             df_cb = pd.DataFrame(cashbook_data, columns=["Date", "Voucher No", "Mode", "Particulars", "Account Code", "Receipts (Debit)", "Payments (Credit)"])
             
-            # Compute traditional Cash Book running balance: Receipts add, Payments subtract
+            # Compute running cash book balance for income & expenses
             df_cb['Balance'] = (df_cb['Receipts (Debit)'] - df_cb['Payments (Credit)']).cumsum()
             
             st.dataframe(df_cb, use_container_width=True)
@@ -866,7 +870,7 @@ elif menu == "Income & Expenses":
             with col_cb1:
                 st.download_button(
                     "📥 Download Cash Book PDF", 
-                    create_pdf_report("Cash Book / Day Book Statement", df_cb), 
+                    create_pdf_report("Cash Book Report (Income & Expenses)", df_cb), 
                     "cash_book_report.pdf", 
                     "application/pdf"
                 )
@@ -875,8 +879,7 @@ elif menu == "Income & Expenses":
                     st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
                     st.info("Triggered print command for Cash Book layout.")
         else:
-            st.info("No cash book transactions logged yet.")
-
+            st.info("No operational income or expense entries found for the Cash Book report.")
 
 
 # --- 12. INTEREST CALCULATION ---

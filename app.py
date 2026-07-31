@@ -768,7 +768,7 @@ elif menu == "Journal Vouchers":
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income & Expenses Ledger")
-    tab1, tab2 = st.tabs(["Record Income/Expense", "View All Entries"])
+    tab1, tab2, tab3 = st.tabs(["Record Income/Expense", "View All Entries", "Ledger Report & Print"])
     
     with tab1:
         st.subheader("Record New Financial Entry")
@@ -776,14 +776,12 @@ elif menu == "Income & Expenses":
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Entry Classification", ["INCOME", "EXPENSE"])
             
-            # Fetch ALL Chart of Accounts from the database
             coa_records = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]} ({c[2]})": c[0] for c in coa_records}
             
             selected_coa = col2.selectbox("Select Chart of Accounts (COA)", list(coa_dict.keys()))
             account_code = coa_dict[selected_coa]
             
-            # Optional Customer Mapping
             customers = run_query("SELECT id, name FROM customers")
             cust_dict = {"None / General": None}
             if customers:
@@ -796,26 +794,23 @@ elif menu == "Income & Expenses":
             amount = col_amt1.number_input("Amount (₹)", min_value=1.0, value=1000.0, step=100.0)
             pay_mode = col_amt2.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
             
-            # Debit & Credit Account Routing Options
             st.markdown("### Journal Entry Routing (Debit & Credit)")
             d_col1, d_col2 = st.columns(2)
             debit_account = d_col1.selectbox("Debit Account Code", list(coa_dict.keys()), index=0)
             credit_account = d_col2.selectbox("Credit Account Code", list(coa_dict.keys()), index=min(1, len(coa_dict)-1))
             
-            narration = st.text_input("Narration / Remarks", value="Operational financial transaction")
+            narration = st.text_input("Narration / Particulars", value="Operational financial transaction")
             
             submitted = st.form_submit_button("Post Income/Expense Entry")
             if submitted:
                 d_code = coa_dict[debit_account]
                 c_code = coa_dict[credit_account]
                 
-                # Insert into operational finances table
                 run_query("""
                     INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                 
-                # Automatically Post Balanced Journal Voucher entry with chosen Debit & Credit accounts
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
@@ -840,6 +835,52 @@ elif menu == "Income & Expenses":
             st.download_button("Download Income/Expense PDF", create_pdf_report("Operational Finances Report", df_fin), "income_expenses.pdf", "application/pdf")
         else:
             st.info("No operational financial logs recorded.")
+
+    with tab3:
+        st.subheader("📊 Detailed Account Ledger Report")
+        
+        # Pull comprehensive data mapping to requested fields: Date, JV No, Mode, Particulars, Account Code, Account Name, Debit, Credit
+        ledger_query = """
+            JVs.voucher_date AS Date,
+            JE.jv_id AS 'JV No',
+            COALESCE(OFIN.mode, 'JV') AS Mode,
+            JVs.narration AS Particulars,
+            JE.account_code AS 'Account Code',
+            CO.account_name AS 'Account Name',
+            JE.debit AS Debit,
+            JE.credit AS Credit
+        """
+        raw_ledger = run_query(f"""
+            SELECT {ledger_query}
+            FROM jv_entries JE
+            JOIN journal_vouchers JVs ON JE.jv_id = JVs.jv_id
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+            LEFT JOIN operational_finances OFIN ON OFIN.narration LIKE '%' || JVs.narration || '%'
+            ORDER BY JVs.jv_id ASC, JE.entry_id ASC
+        """)
+        
+        if raw_ledger:
+            df_ledger = pd.DataFrame(raw_ledger, columns=["Date", "JV No", "Mode", "Particulars", "Account Code", "Account Name", "Debit", "Credit"])
+            
+            # Calculate running balance column
+            df_ledger['Balance'] = (df_ledger['Debit'] - df_ledger['Credit']).cumsum()
+            
+            st.dataframe(df_ledger, use_container_width=True)
+            
+            col_print1, col_print2 = st.columns(2)
+            with col_print1:
+                st.download_button(
+                    "📥 Download Ledger Report PDF", 
+                    create_pdf_report("Comprehensive Income & Expense Ledger Statement", df_ledger), 
+                    "income_expense_ledger.pdf", 
+                    "application/pdf"
+                )
+            with col_print2:
+                if st.button("🖨️ Print Report View"):
+                    st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
+                    st.info("Triggered print layout dialog.")
+        else:
+            st.info("No ledger entries found to generate report.")
 
 # --- 12. INTEREST CALCULATION ---
 elif menu == "Interest Calculation":

@@ -6,4 +6,4 @@ Pillow
 python-dateutil
 pytz
 fpdf
-
+reportlab

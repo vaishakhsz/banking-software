@@ -257,18 +257,14 @@ def create_pdf_report(title, df):
     elements.append(Spacer(1, 10))
     
     if not df.empty:
-        # Convert all values to safe clean strings using native Python functions
         cleaned_data = []
         columns = list(df.columns)
         
         for row in df.values:
             cleaned_row = []
             for val in row:
-                # Convert anything (None, int, float, timestamp) to string safely
                 val_str = str(val) if val is not None else ""
-                # Replace currency symbol
                 val_str = val_str.replace('₹', 'Rs.')
-                # Strip non-ASCII characters natively without Pandas .str accessor
                 ascii_val = val_str.encode('ascii', 'ignore').decode('ascii')
                 cleaned_row.append(ascii_val)
             cleaned_data.append(cleaned_row)
@@ -307,7 +303,7 @@ if role == "Admin/Staff":
         "Dashboard", "Customer Management", "KYC Verification", "SB Accounts",
         "Fixed Deposits (FD)", "Recurring Deposits (RD)", "Retrieval Account",
         "Chart of Accounts", "Transactions", "Journal Vouchers", "Income & Expenses",
-        "Interest Calculation", "Admin Record Editor", "Financial Statements (Trial/BS/PL)", "Reports"
+        "Interest Calculation", "Admin Record Editor", "Financial Statements (Trial/BS/PL)", "Reports", "SB FD RD PDF Viewer"
     ])
 else:
     menu = "Customer Portal"
@@ -322,14 +318,12 @@ if menu == "Dashboard":
     total_sb_dep = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
     total_fd = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
     total_rd = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-    
 
-    col1, col2, col3, col4,col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Customers", total_cust, f"Pending KYC: {kyc_pending}")
     col2.metric("SB Accounts Active", sb_count, f"Balance: ₹{total_sb_dep:,.2f}")
     col3.metric("Active FD Portfolio", f"₹{total_fd:,.2f}")
     col4.metric("Active RD Portfolio", f"₹{total_rd:,.2f}")
-    col5.metric("Active SB Portfolio", f"₹{total_sb_dep:,.2f}")
 
     st.markdown("---")
     st.subheader("Recent Activity (Last 10 Transactions)")
@@ -794,9 +788,6 @@ elif menu == "Journal Vouchers":
         else:
             st.info("No journal vouchers found.")
 
-
-
-
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income, Expenses, Assets & Liabilities")
@@ -1087,12 +1078,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # Fetch dynamic live totals from database
         tot_sb_assets = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_liabilities = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_liabilities = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         
-        # Fetch Capital / Equity directly from Journal Entry credits posted to Equity accounts
         tot_capital_equity = run_query("""
             SELECT COALESCE(SUM(JE.credit - JE.debit), 0.0) 
             FROM jv_entries JE 
@@ -1146,7 +1135,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab3:
         st.subheader("Profit & Loss Statement (Strictly Operational Revenue vs Expenses)")
         
-        # P&L STRICTLY restricts summation to account_type = 'Income' or 'Expense'
         total_income = run_query("""
             SELECT COALESCE(SUM(o.amount), 0.0) 
             FROM operational_finances o 
@@ -1208,7 +1196,51 @@ elif menu == "Reports":
             st.dataframe(df, use_container_width=True)
             st.download_button("Download PDF", create_pdf_report("Income & Expense Breakdown", df), "income_expense_breakdown.pdf", "application/pdf")
 
-# --- 16. CUSTOMER PORTAL ---
+# --- 16. SB FD RD PDF VIEWER ---
+elif menu == "SB FD RD PDF Viewer":
+    st.title("📂 SB, FD & RD PDF Documents Viewer")
+    st.write("View or download stored customer document files (Aadhaar/PAN PDFs or images) associated with SB, FD, and RD customer accounts.")
+    
+    customers_with_docs = run_query("SELECT id, name, adhar_file, pan_file, signature_file FROM customers WHERE adhar_file IS NOT NULL OR pan_file IS NOT NULL")
+    if customers_with_docs:
+        cust_choices = {f"{c[1]} (ID: {c[0]})": c for c in customers_with_docs}
+        chosen_cust_key = st.selectbox("Select Customer", list(cust_choices.keys()))
+        selected_cust_rec = cust_choices[chosen_cust_key]
+        
+        cust_id, cust_name, adhar_path, pan_path, sig_path = selected_cust_rec
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("### Aadhaar Document")
+            if adhar_path and os.path.exists(adhar_path):
+                st.success(f"File found: `{adhar_path}`")
+                with open(adhar_path, "rb") as f:
+                    st.download_button("Download Aadhaar File", f.read(), file_name=os.path.basename(adhar_path))
+            else:
+                st.info("No Aadhaar document uploaded.")
+                
+        with col2:
+            st.markdown("### PAN Document")
+            if pan_path and os.path.exists(pan_path):
+                st.success(f"File found: `{pan_path}`")
+                with open(pan_path, "rb") as f:
+                    st.download_button("Download PAN File", f.read(), file_name=os.path.basename(pan_path))
+            else:
+                st.info("No PAN document uploaded.")
+                
+        with col3:
+            st.markdown("### Signature File")
+            if sig_path and os.path.exists(sig_path):
+                st.success(f"File found: `{sig_path}`")
+                with open(sig_path, "rb") as f:
+                    st.download_button("Download Signature", f.read(), file_name=os.path.basename(sig_path))
+            else:
+                st.info("No signature file uploaded.")
+    else:
+        st.info("No customer records with uploaded documents found.")
+
+# --- 17. CUSTOMER PORTAL ---
 elif menu == "Customer Portal":
     st.title("👤 Customer Account Portal")
     cust_id_login = st.number_input("Enter Your Customer ID", min_value=1, step=1)

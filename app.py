@@ -533,10 +533,11 @@ elif menu == "Fixed Deposits (FD)":
             SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.customer_id
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
-        if fds:
-            df_fds = pd.DataFrame(fds[:, :-1] if len(fds[0]) > 7 else fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
+     if fds:
+            # Safely drop the last column (customer_id) if it was included in the query selection
+            cleaned_fds = [row[:-1] if len(row) > 7 else row for row in fds]
+            df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
             st.dataframe(df_fds, use_container_width=True)
-            st.download_button("Download FDs PDF", create_pdf_report("Fixed Deposits Report", df_fds), "fds.pdf", "application/pdf")
             
             st.markdown("---")
             st.subheader("Close / Settle or Delete FD Account")

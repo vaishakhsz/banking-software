@@ -767,16 +767,16 @@ elif menu == "Journal Vouchers":
 
 
 
+
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income, Expenses, Assets & Liabilities")
-    tab1, tab2, tab3 = st.tabs(["Record Entry", "View All Entries", "Cash Book Report & Print"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Record Entry", "Edit / Delete Entry", "View All Entries", "Cash Book Report & Print"])
     
     with tab1:
         st.subheader("Record New Financial Entry")
         with st.form("income_expense_form"):
             col1, col2 = st.columns(2)
-            # Added ASSET and LIABILITY options to entry classifications
             entry_type = col1.selectbox("Entry Classification", ["INCOME", "EXPENSE", "ASSET", "LIABILITY"])
             
             coa_records = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
@@ -827,6 +827,56 @@ elif menu == "Income & Expenses":
                 st.success("Entry recorded and Journal Voucher posted successfully!")
 
     with tab2:
+        st.subheader("✏️ Edit or 🗑️ Delete Financial Entry")
+        finances_list = run_query("SELECT id, type, account_code, amount, mode, date, narration FROM operational_finances ORDER BY id DESC")
+        if finances_list:
+            fin_dict = {f"ID: {f[0]} | {f[1]} | ₹{f[3]:,.2f} | {f[5]} | {f[6]}": f for f in finances_list}
+            selected_fin_str = st.selectbox("Select Financial Entry", list(fin_dict.keys()))
+            selected_record = fin_dict[selected_fin_str]
+            
+            rec_id, curr_type, curr_code, curr_amt, curr_mode, curr_date, curr_narr = selected_record
+            
+            action_col1, action_col2 = st.columns(2)
+            action = action_col1.radio("Choose Action", ["Edit Entry", "Delete Entry"])
+            
+            if action == "Edit Entry":
+                with st.form("edit_income_expense_form"):
+                    e_type = st.selectbox("Update Classification", ["INCOME", "EXPENSE", "ASSET", "LIABILITY"], index=["INCOME", "EXPENSE", "ASSET", "LIABILITY"].index(curr_type) if curr_type in ["INCOME", "EXPENSE", "ASSET", "LIABILITY"] else 0)
+                    
+                    coa_records = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
+                    coa_dict = {f"{c[0]} - {c[1]} ({c[2]})": c[0] for c in coa_records}
+                    
+                    default_idx = 0
+                    for idx, (k, v) in enumerate(coa_dict.items()):
+                        if v == curr_code:
+                            default_idx = idx
+                            break
+                            
+                    e_coa = st.selectbox("Update Chart of Accounts (COA)", list(coa_dict.keys()), index=default_idx)
+                    e_amount = st.number_input("Update Amount (₹)", min_value=1.0, value=float(curr_amt), step=100.0)
+                    e_mode = st.selectbox("Update Payment Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"], index=["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"].index(curr_mode) if curr_mode in ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"] else 0)
+                    e_narration = st.text_input("Update Narration / Particulars", value=curr_narr)
+                    
+                    update_submitted = st.form_submit_button("Save Changes")
+                    if update_submitted:
+                        new_code = coa_dict[e_coa]
+                        run_query("""
+                            UPDATE operational_finances 
+                            SET type=?, account_code=?, amount=?, mode=?, narration=? 
+                            WHERE id=?
+                        """, (e_type, new_code, e_amount, e_mode, e_narration, rec_id), fetch=False)
+                        st.success(f"Financial Entry ID #{rec_id} updated successfully!")
+                        st.rerun()
+            else:
+                st.warning(f"You are about to delete Financial Entry ID #{rec_id} ({curr_type} - ₹{curr_amt:,.2f}). This action cannot be undone.")
+                if st.button("Confirm & Delete Entry", type="primary"):
+                    run_query("DELETE FROM operational_finances WHERE id = ?", (rec_id,), fetch=False)
+                    st.success(f"Financial Entry ID #{rec_id} deleted successfully!")
+                    st.rerun()
+        else:
+            st.info("No financial entries available to edit or delete.")
+
+    with tab3:
         st.subheader("All Financial Entries")
         finances = run_query("""
             SELECT o.id, o.type, c.name, o.account_code, o.amount, o.mode, o.date, o.narration 
@@ -839,10 +889,9 @@ elif menu == "Income & Expenses":
         else:
             st.info("No financial logs recorded.")
 
-    with tab3:
+    with tab4:
         st.subheader("📖 Cash Book / Day Book Report (Strictly Income & Expenses Only)")
         
-        # Strictly filters out ASSET and LIABILITY entries, rendering only INCOME and EXPENSE records
         cashbook_data = run_query("""
             SELECT 
                 o.date,
@@ -861,7 +910,6 @@ elif menu == "Income & Expenses":
         if cashbook_data:
             df_cb = pd.DataFrame(cashbook_data, columns=["Date", "Voucher No", "Mode", "Particulars", "Account Code", "Receipts (Debit)", "Payments (Credit)"])
             
-            # Compute running cash book balance for income & expenses
             df_cb['Balance'] = (df_cb['Receipts (Debit)'] - df_cb['Payments (Credit)']).cumsum()
             
             st.dataframe(df_cb, use_container_width=True)

@@ -204,7 +204,6 @@ def run_query(query, params=(), fetch=True):
     return res
 
 def post_automated_jv(narration, debit_acc, credit_acc, amount):
-    """Automatically posts a balanced ledger entry for deposits/withdrawals so Trial Balance updates instantly."""
     if amount <= 0:
         return
     conn = get_connection()
@@ -258,7 +257,7 @@ if role == "Admin/Staff":
         "Dashboard", "Customer Management", "KYC Verification", "SB Accounts",
         "Fixed Deposits (FD)", "Recurring Deposits (RD)", "Retrieval Account",
         "Chart of Accounts", "Transactions", "Journal Vouchers", "Income & Expenses",
-        "Interest Calculation", "Financial Statements (Trial/BS/PL)", "Reports"
+        "Interest Calculation", "Admin Record Editor", "Financial Statements (Trial/BS/PL)", "Reports"
     ])
 else:
     menu = "Customer Portal"
@@ -719,16 +718,111 @@ elif menu == "Income & Expenses":
 
 # --- 12. INTEREST CALCULATION ---
 elif menu == "Interest Calculation":
-    st.title("📊 SB Interest Management & Posting")
-    rate = run_query("SELECT DISTINCT interest_rate FROM sb_accounts")
-    st.write(f"Current System Savings Account Interest Rate: **{rate[0][0] if rate else 3.5}% p.a.**")
+    st.title("📊 SB Interest Calculation & Drill-Down")
     
-    new_rate = st.number_input("Update SB Interest Rate (%)", value=3.5)
-    if st.button("Update System Rate for All SB Accounts"):
+    st.subheader("Global Rate Configuration")
+    rate_res = run_query("SELECT DISTINCT interest_rate FROM sb_accounts")
+    current_rate = rate_res[0][0] if rate_res else 3.5
+    
+    new_rate = st.number_input("Update Global SB Interest Rate (%)", value=float(current_rate))
+    if st.button("Apply Global Rate to All SB Accounts"):
         run_query("UPDATE sb_accounts SET interest_rate=?", (new_rate,), fetch=False)
         st.success(f"Interest rate updated to {new_rate}% for all active savings accounts!")
+        st.rerun()
 
-# --- 13. FINANCIAL STATEMENTS ---
+    st.markdown("---")
+    st.subheader("Account-Wise Interest Drill-Down & Posting")
+    
+    sb_records = run_query("""
+        SELECT s.account_no, c.name, s.balance, s.interest_rate 
+        FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
+    """)
+    
+    if sb_records:
+        acc_dict = {f"{r[0]} - {r[1]} (Bal: ₹{r[2]:,.2f}, Rate: {r[3]}%)": r for r in sb_records}
+        chosen_acc_str = st.selectbox("Select Account for Interest Drill-Down", list(acc_dict.keys()))
+        selected_data = acc_dict[chosen_acc_str]
+        
+        acc_no, cust_name, balance, rate = selected_data
+        
+        st.markdown(f"### Drill-Down Details: Account `{acc_no}`")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Customer Name", cust_name)
+        col2.metric("Current Balance", f"₹{balance:,.2f}")
+        col3.metric("Assigned Rate", f"{rate}% p.a.")
+        
+        calc_period_months = st.slider("Calculation Period (Months)", 1, 12, 12, key="drill_months")
+        computed_interest = balance * (rate / 100.0) * (calc_period_months / 12.0)
+        
+        st.info(f"Calculated Interest for {calc_period_months} month(s): **₹{computed_interest:,.2f}**")
+        
+        if st.button("Credit Interest to Account & Post Entry"):
+            if computed_interest > 0:
+                new_balance = balance + computed_interest
+                run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_balance, acc_no), fetch=False)
+                run_query("""
+                    INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) 
+                    VALUES (?, ?, 'CREDIT', ?, 'INTEREST', ?, ?)
+                """, (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, computed_interest, f"SB Interest Credited ({calc_period_months}M)", datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                
+                post_automated_jv(f"SB Interest Credited to {acc_no}", "EXP-101", "LIA-101", computed_interest)
+                st.success(f"Successfully credited ₹{computed_interest:,.2f} to account {acc_no}! New Balance: ₹{new_balance:,.2f}")
+                st.rerun()
+            else:
+                st.warning("Interest amount must be greater than zero.")
+    else:
+        st.info("No savings accounts available for interest calculation.")
+
+# --- 13. ADMIN RECORD EDITOR ---
+elif menu == "Admin Record Editor":
+    st.title("🛠️ Universal Database Record Editor")
+    st.write("Admin tool to manually inspect and edit **any column** across any database table.")
+    
+    tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    table_list = [t[0] for t in tables_res]
+    
+    selected_table = st.selectbox("Select Database Table to Edit", table_list)
+    
+    if selected_table:
+        rows = run_query(f"SELECT * FROM {selected_table}")
+        columns_info = run_query(f"PRAGMA table_info({selected_table})")
+        col_names = [col[1] for col in columns_info]
+        pk_col = next((col[1] for col in columns_info if col[5] == 1), col_names[0])
+        
+        if rows:
+            df_table = pd.DataFrame(rows, columns=col_names)
+            st.dataframe(df_table, use_container_width=True)
+            
+            st.markdown("---")
+            st.subheader(f"Edit Record in `{selected_table}`")
+            
+            record_ids = [r[col_names.index(pk_col)] for r in rows]
+            selected_id = st.selectbox(f"Select Record `{pk_col}` to Edit", record_ids)
+            
+            if selected_id is not None:
+                current_data = run_query(f"SELECT * FROM {selected_table} WHERE {pk_col}=?", (selected_id,))
+                if current_data:
+                    row_vals = current_data[0]
+                    with st.form("universal_edit_form"):
+                        updated_values = {}
+                        for idx, col in enumerate(col_names):
+                            val = row_vals[idx]
+                            if col == pk_col:
+                                st.text_input(f"{col} (Primary Key - Read Only)", value=str(val), disabled=True)
+                                updated_values[col] = val
+                            else:
+                                updated_values[col] = st.text_input(f"Column: `{col}`", value="" if val is None else str(val))
+                        
+                        if st.form_submit_button("Save Changes to Database"):
+                            set_clauses = ", ".join([f"{c}=?" for c in col_names if c != pk_col])
+                            params = [updated_values[c] for c in col_names if c != pk_col] + [selected_id]
+                            run_query(f"UPDATE {selected_table} SET {set_clauses} WHERE {pk_col}=?", tuple(params), fetch=False)
+                            st.success(f"Record `{selected_id}` in table `{selected_table}` updated successfully!")
+                            st.rerun()
+        else:
+            st.info(f"Table `{selected_table}` is currently empty.")
+
+# --- 14. FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Accounting Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -767,7 +861,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col2.metric("Total Expenses", f"₹{total_expense:,.2f}")
         col3.metric("Net Profit / Loss", f"₹{net_pl:,.2f}", delta=f"₹{net_pl:,.2f}")
 
-# --- 14. REPORTS ---
+# --- 15. REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
     report_type = st.selectbox("Select Report to Generate", [
@@ -801,7 +895,7 @@ elif menu == "Reports":
             st.dataframe(df, use_container_width=True)
             st.download_button("Download PDF", create_pdf_report("Income & Expense Breakdown", df), "income_expense_breakdown.pdf", "application/pdf")
 
-# --- 15. CUSTOMER PORTAL ---
+# --- 16. CUSTOMER PORTAL ---
 elif menu == "Customer Portal":
     st.title("👤 Customer Account Portal")
     cust_id_login = st.number_input("Enter Your Customer ID", min_value=1, step=1)

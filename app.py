@@ -56,7 +56,7 @@ def init_db():
         try:
             cursor.execute(f"ALTER TABLE customers ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
-            pass # Column already exists
+            pass
     
     # SB Accounts Table
     cursor.execute("""
@@ -529,34 +529,25 @@ elif menu == "Fixed Deposits (FD)":
             st.warning("Register a customer first.")
 
     with tab2:
-        
         fds = run_query("""
             SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.customer_id
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
-     if fds:
-         
-         
-         
-            # Safely drop the last column (customer_id) if it was included in the query selection
-         cleaned_fds = [row[:-1] if len(row) > 7 else row for row in fds]
-         df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
-         st.dataframe(df_fds, use_container_width=True)
-         
-         
+        if fds:
+            cleaned_fds = [row[:-1] if len(row) > 7 else row for row in fds]
+            df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
+            st.dataframe(df_fds, use_container_width=True)
+            st.download_button("Download FDs PDF", create_pdf_report("Fixed Deposits Report", df_fds), "fds.pdf", "application/pdf")
             
-         st.markdown("---")
-         st.subheader("Close / Settle or Delete FD Account")
-         active_fds = [f for f in fds if f[6] == 'ACTIVE']
-         
+            st.markdown("---")
+            st.subheader("Close / Settle or Delete FD Account")
+            active_fds = [f for f in fds if f[6] == 'ACTIVE']
             if active_fds:
-                
                 fd_choice = st.selectbox("Select Active FD ID to Close/Settle", [f[0] for f in active_fds])
                 selected_fd_record = next(f for f in fds if f[0] == fd_choice)
                 
                 cust_id = selected_fd_record[7]
                 maturity_amt = selected_fd_record[5]
-                principal_amt = selected_fd_record[2]
                 
                 settlement_mode = st.selectbox("Settlement Mode", ["CASH", "TRANSFER TO RETRIEVAL POOL", "BANK TRANSFER"])
                 
@@ -564,7 +555,6 @@ elif menu == "Fixed Deposits (FD)":
                     run_query("UPDATE fixed_deposits SET status='CLOSED' WHERE fd_id=?", (fd_choice,), fetch=False)
                     
                     if settlement_mode == "TRANSFER TO RETRIEVAL POOL":
-                        # Check if retrieval account exists, else create
                         ret_exists = run_query("SELECT balance FROM retrieval_accounts WHERE customer_id=?", (cust_id,))
                         if ret_exists:
                             new_ret_bal = ret_exists[0][0] + maturity_amt
@@ -889,7 +879,7 @@ elif menu == "Interest Calculation":
 # --- 13. ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":
     st.title("🛠️ Universal Database Record Editor")
-    st.write("Admin tool to manually inspect and edit **any column** across any table, including financial ledgers (Trial Balance, P&L, Journal Entries, Balance Sheet assets/liabilities).")
+    st.write("Admin tool to manually inspect and edit **any column** across any table, including financial ledgers.")
     
     tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
     table_list = [t[0] for t in tables_res]

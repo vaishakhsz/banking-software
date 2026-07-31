@@ -240,36 +240,63 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
     conn.close()
 
 def create_pdf_report(title, df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    clean_title = title.encode('ascii', 'ignore').decode('ascii')
-    pdf.cell(0, 10, clean_title, 0, 1, "C")
-    pdf.set_font("Arial", "I", 10)
-    pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Aasha Nidhi Bank", 0, 1, "C")
-    pdf.ln(5)
-    
-    pdf.set_font("Arial", "B", 10)
-    if not df.empty:
-        df_clean = df.copy()
-        df_clean.columns = [str(col).replace('₹', 'Rs.').encode('ascii', 'ignore').decode('ascii') for col in df_clean.columns]
-        for col in df_clean.columns:
-            df_clean[col] = df_clean[col].astype(str).str.replace('₹', 'Rs.').str.encode('ascii', 'ignore').str.decode('ascii')
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    import io
 
-        cols = list(df_clean.columns)
-        col_width = 190 / len(cols) if len(cols) > 0 else 190
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#1f4e78'), spaceAfter=12)
+    
+    elements.append(Paragraph(title, title_style))
+    elements.append(Spacer(1, 10))
+    
+    if not df.empty:
+        # Convert all values to safe clean strings using native Python functions
+        cleaned_data = []
+        columns = list(df.columns)
         
-        for col in cols:
-            pdf.cell(col_width, 8, str(col)[:15], 1, 0, "C")
-        pdf.ln()
-        
-        pdf.set_font("Arial", "", 9)
-        for row in df_clean.itertuples(index=False):
+        for row in df.values:
+            cleaned_row = []
             for val in row:
-                pdf.cell(col_width, 6, str(val)[:20], 1, 0, "C")
-            pdf.ln()
+                # Convert anything (None, int, float, timestamp) to string safely
+                val_str = str(val) if val is not None else ""
+                # Replace currency symbol
+                val_str = val_str.replace('₹', 'Rs.')
+                # Strip non-ASCII characters natively without Pandas .str accessor
+                ascii_val = val_str.encode('ascii', 'ignore').decode('ascii')
+                cleaned_row.append(ascii_val)
+            cleaned_data.append(cleaned_row)
             
-    return pdf.output(dest='S').encode('latin1', errors='ignore')
+        table_data = [columns] + cleaned_data
+        
+        col_width = 550 / max(1, len(columns))
+        t = Table(table_data, colWidths=[col_width] * len(columns))
+        
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f9f9f9')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ]))
+        elements.append(t)
+    else:
+        elements.append(Paragraph("No records found for this report.", styles['Normal']))
+        
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("🏦 Aasha Nidhi Bank")

@@ -335,6 +335,51 @@ if menu == "Dashboard":
     else:
         st.info("No recent transaction logs found.")
 
+# --- CIRCULAR PERCENTAGE GRAPH (DONUT CHART) ---
+    col_chart, col_info = st.columns([2, 1])
+    
+    with col_chart:
+        st.subheader("📈 Deposit Portfolio Share (%)")
+        
+        # Prepare data for SB, FD, and RD
+        portfolio_data = {
+            "Deposit Type": ["Savings Bank (SB)", "Fixed Deposits (FD)", "Recurring Deposits (RD)"],
+            "Amount": [total_sb_dep, total_fd, total_rd]
+        }
+        df_portfolio = pd.DataFrame(portfolio_data)
+        
+        # Check if there is actual financial data to display
+        if df_portfolio["Amount"].sum() > 0:
+            import plotly.express as px
+            # Create a donut chart displaying percentages automatically
+            fig = px.pie(
+                df_portfolio, 
+                names="Deposit Type", 
+                values="Amount", 
+                hole=0.4, # Makes it a circle/donut graph
+                color_discrete_sequence=px.colors.qualitative.Prism
+            )
+            fig.update_traces(textposition='inside', textinfo='percent+label')
+            fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=300)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No active deposit funds available to render percentage chart.")
+
+    with col_info:
+        st.subheader("Quick Summary")
+        grand_total = total_sb_dep + total_fd + total_rd
+        st.metric("Total Bank Deposits", f"₹{grand_total:,.2f}")
+        st.write("This circular breakdown reflects the share percentage of capital held across Savings, Fixed, and Recurring deposits.")
+
+    st.markdown("---")
+    st.subheader("Recent Activity (Last 10 Transactions)")
+    recent_tx = run_query("SELECT tx_id, account_no, type, amount, mode, date FROM transactions ORDER BY id DESC LIMIT 10")
+    if recent_tx:
+        df_tx = pd.DataFrame(recent_tx, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Date"])
+        st.dataframe(df_tx, use_container_width=True)
+    else:
+        st.info("No recent transaction logs found.")
+
 # --- 2. CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":
     st.title("👥 Customer Management Module")

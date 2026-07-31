@@ -997,8 +997,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             sb_deposits_liab = st.number_input("Savings Bank (SB) Deposits Control (₹)", value=tot_sb_assets, step=1000.0)
             fd_deposits_liab = st.number_input("Fixed Deposits (FD) Control (₹)", value=tot_fd_liabilities, step=1000.0)
             rd_deposits_liab = st.number_input("Recurring Deposits (RD) Control (₹)", value=tot_rd_liabilities, step=1000.0)
-            
-            # Capital / Equity explicitly restricted to Balance Sheet Liability/Equity section
             capital_equity = st.number_input("Capital & Reserves (₹)", value=float(tot_capital_equity), step=1000.0)
             
             total_liabilities = sb_deposits_liab + fd_deposits_liab + rd_deposits_liab + capital_equity
@@ -1028,21 +1026,21 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
 
     with tab3:
-        st.subheader("Profit & Loss Statement (Strictly Revenue vs Expenses)")
+        st.subheader("Profit & Loss Statement (Strictly Operational Revenue vs Expenses)")
         
-        # P&L strictly filters operational financials and excludes any equity or capital accounts
+        # P&L STRICTLY restricts summation to account_type = 'Income' or 'Expense'
         total_income = run_query("""
             SELECT COALESCE(SUM(o.amount), 0.0) 
             FROM operational_finances o 
             JOIN chart_of_accounts c ON o.account_code = c.account_code 
-            WHERE o.type='INCOME' AND c.account_type != 'Equity'
+            WHERE c.account_type = 'Income'
         """)[0][0]
         
         total_expense = run_query("""
             SELECT COALESCE(SUM(o.amount), 0.0) 
             FROM operational_finances o 
             JOIN chart_of_accounts c ON o.account_code = c.account_code 
-            WHERE o.type='EXPENSE' AND c.account_type != 'Equity'
+            WHERE c.account_type = 'Expense'
         """)[0][0]
         
         net_pl = total_income - total_expense
@@ -1056,7 +1054,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
             
         st.markdown("---")
-        st.info("Note: Capital and Equity injections are structurally isolated to the Balance Sheet and Trial Balance modules and do not mix with operational P&L earnings.")
+        st.info("Note: The P&L statement exclusively evaluates accounts mapped as Income or Expense. Capital injections are safely isolated to the Balance Sheet and Trial Balance.")
 
 # --- 15. REPORTS ---
 elif menu == "Reports":

@@ -8,7 +8,7 @@ import os
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Aasha Nidhi Banking Software",
+    page_title="Aasha Nidhi Banking Software"
     page_icon="🏦",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -529,15 +529,20 @@ elif menu == "Fixed Deposits (FD)":
             st.warning("Register a customer first.")
 
     with tab2:
+        
         fds = run_query("""
             SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.customer_id
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
      if fds:
+         
+         
+         
             # Safely drop the last column (customer_id) if it was included in the query selection
-            cleaned_fds = [row[:-1] if len(row) > 7 else row for row in fds]
-            df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
-            st.dataframe(df_fds, use_container_width=True)
+         cleaned_fds = [row[:-1] if len(row) > 7 else row for row in fds]
+         df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
+         st.dataframe(df_fds, use_container_width=True)
+         
             
             st.markdown("---")
             st.subheader("Close / Settle or Delete FD Account")

@@ -840,15 +840,16 @@ elif menu == "Income & Expenses":
     with tab3:
         st.subheader("📖 Cash Book / Day Book Report")
         
-        # Fetch operational finances mapped to standard Cash Book columns
+        # Added missing SELECT keyword to fix the SQL syntax error
         cashbook_data = run_query("""
-            date,
-            id AS 'Voucher No',
-            mode AS Mode,
-            narration AS Particulars,
-            account_code AS 'Account Code',
-            CASE WHEN type = 'INCOME' THEN amount ELSE 0.0 END AS 'Receipts (Debit)',
-            CASE WHEN type = 'EXPENSE' THEN amount ELSE 0.0 END AS 'Payments (Credit)'
+            SELECT 
+                date,
+                id AS 'Voucher No',
+                mode AS Mode,
+                narration AS Particulars,
+                account_code AS 'Account Code',
+                CASE WHEN type = 'INCOME' THEN amount ELSE 0.0 END AS 'Receipts (Debit)',
+                CASE WHEN type = 'EXPENSE' THEN amount ELSE 0.0 END AS 'Payments (Credit)'
             FROM operational_finances
             ORDER BY date ASC, id ASC
         """)

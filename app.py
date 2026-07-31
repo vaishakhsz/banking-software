@@ -257,22 +257,26 @@ def create_pdf_report(title, df):
     elements.append(Spacer(1, 10))
     
     if not df.empty:
-        # Safely cast and clean columns piece by piece
-        df_clean = df.copy()
-        for col in df_clean.columns:
-            # Convert to string first
-            s_col = df_clean[col].astype(str)
-            # Replace currency symbols
-            s_col = s_col.str.replace('₹', 'Rs.', regex=False)
-            # Encode/decode to strip unsupported unicode/ascii characters safely
-            s_col = s_col.str.encode('ascii', 'ignore').str.decode('ascii')
-            # Assign back as explicit string series
-            df_clean[col] = s_col.astype(str)
+        # Convert all values to safe clean strings using native Python functions
+        cleaned_data = []
+        columns = list(df.columns)
         
-        table_data = [list(df_clean.columns)] + df_clean.values.tolist()
+        for row in df.values:
+            cleaned_row = []
+            for val in row:
+                # Convert anything (None, int, float, timestamp) to string safely
+                val_str = str(val) if val is not None else ""
+                # Replace currency symbol
+                val_str = val_str.replace('₹', 'Rs.')
+                # Strip non-ASCII characters natively without Pandas .str accessor
+                ascii_val = val_str.encode('ascii', 'ignore').decode('ascii')
+                cleaned_row.append(ascii_val)
+            cleaned_data.append(cleaned_row)
+            
+        table_data = [columns] + cleaned_data
         
-        col_width = 550 / max(1, len(df_clean.columns))
-        t = Table(table_data, colWidths=[col_width] * len(df_clean.columns))
+        col_width = 550 / max(1, len(columns))
+        t = Table(table_data, colWidths=[col_width] * len(columns))
         
         t.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),

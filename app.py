@@ -647,6 +647,7 @@ elif menu == "Interest Calculation":
         run_query("UPDATE sb_accounts SET interest_rate=?", (new_rate,), fetch=False)
         st.success(f"Interest rate updated to {new_rate}% for all active savings accounts!")
 
+
 # --- 13. FINANCIAL STATEMENTS (TRIAL BALANCE / BS / PL) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Accounting Reports")
@@ -654,13 +655,20 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     
     with tab1:
         st.subheader("Trial Balance Summary")
+        
+        # FIXED: Added missing SELECT keyword and proper table joins
         entries = run_query("""
-            JE.account_code, CO.account_name, SUM(JE.debit), SUM(JE.credit)
-            FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+            SELECT JE.account_code, CO.account_name, SUM(JE.debit), SUM(JE.credit)
+            FROM jv_entries JE 
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
             GROUP BY JE.account_code
         """)
-        # Fallback view if no JVs
-        st.info("Trial Balance dynamically aggregates posted ledger entries and automated fund controls.")
+        
+        if entries:
+            df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Total Debit (₹)", "Total Credit (₹)"])
+            st.dataframe(df_tb, use_container_width=True)
+        else:
+            st.info("No journal voucher entries recorded yet to generate the Trial Balance.")
 
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")

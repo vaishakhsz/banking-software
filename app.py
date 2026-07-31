@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime, date
 import io
 from fpdf import FPDF
+import os
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -12,6 +13,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# --- UPLOAD FOLDER SETUP ---
+UPLOAD_DIR = "customer_uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # --- DATABASE SETUP ---
 DB_NAME = "aasha_nidhi.db"
@@ -23,7 +28,7 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
     
-    # Customers Table
+    # Customers Table (with file path storage)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +43,9 @@ def init_db():
             pincode TEXT,
             pan TEXT,
             adhar TEXT,
+            adhar_file TEXT,
+            pan_file TEXT,
+            signature_file TEXT,
             kyc_status TEXT DEFAULT 'PENDING',
             created_at TEXT
         )
@@ -203,6 +211,14 @@ def run_query(query, params=(), fetch=True):
     conn.close()
     return res
 
+def save_uploaded_file(uploaded_file):
+    if uploaded_file is not None:
+        file_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        return file_path
+    return None
+
 def post_automated_jv(narration, debit_acc, credit_acc, amount):
     if amount <= 0:
         return
@@ -294,7 +310,7 @@ elif menu == "Customer Management":
     tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer"])
     
     with tab1:
-        st.subheader("New Customer Registration")
+        st.subheader("New Customer Registration (with Document & Signature Upload)")
         with st.form("reg_form"):
             col1, col2 = st.columns(2)
             name = col1.text_input("Full Name *")
@@ -307,16 +323,26 @@ elif menu == "Customer Management":
             state = col2.text_input("State")
             pincode = col1.text_input("Pincode")
             pan = col1.text_input("PAN Number")
-            adhar = col1.text_input("Aadhar Number [Redacted Policy Active]")
+            adhar_num = col1.text_input("Aadhaar Number [Redacted Policy Active]")
+            
+            st.markdown("---")
+            st.subheader("Document & Signature Uploads")
+            adhar_upload = st.file_uploader("Upload Aadhaar Document", type=["pdf", "png", "jpg", "jpeg"])
+            pan_upload = st.file_uploader("Upload PAN Card Document", type=["pdf", "png", "jpg", "jpeg"])
+            sig_upload = st.file_uploader("Upload Signature", type=["png", "jpg", "jpeg"])
             
             submitted = st.form_submit_button("Register Customer")
             if submitted:
                 if name and phone:
+                    adhar_path = save_uploaded_file(adhar_upload)
+                    pan_path = save_uploaded_file(pan_upload)
+                    sig_path = save_uploaded_file(sig_upload)
+                    
                     run_query("""
-                        INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, kyc_status, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-                    """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    st.success(f"Customer {name} registered successfully with status PENDING!")
+                        INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, pan_file, signature_file, kyc_status, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+                    """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adhar_path, pan_path, sig_path, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    st.success(f"Customer {name} registered successfully with status PENDING and documents uploaded!")
                 else:
                     st.error("Please fill in mandatory fields: Name and Phone.")
 
@@ -343,7 +369,7 @@ elif menu == "Customer Management":
     with tab3:
         st.subheader("Edit Customer Information")
         cust_id_edit = st.number_input("Enter Customer ID to Edit", min_value=1, step=1, key="edit_cust_id")
-        cust_data = run_query("SELECT name, email, phone, street, city, state, pincode FROM customers WHERE id=?", (cust_id_edit,))
+        cust_data = run_query("SELECT name, email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
         if cust_data:
             c = cust_data[0]
             with st.form("edit_form"):
@@ -355,6 +381,10 @@ elif menu == "Customer Management":
                 new_state = st.text_input("State", value=c[5])
                 new_pincode = st.text_input("Pincode", value=c[6])
                 
+                st.write(f"Current Aadhaar File: `{c[7]}`")
+                st.write(f"Current PAN File: `{c[8]}`")
+                st.write(f"Current Signature File: `{c[9]}`")
+                
                 if st.form_submit_button("Update Details"):
                     run_query("""
                         UPDATE customers SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? WHERE id=?
@@ -364,11 +394,11 @@ elif menu == "Customer Management":
 # --- 3. KYC VERIFICATION ---
 elif menu == "KYC Verification":
     st.title("✅ KYC Verification Panel")
-    pending = run_query("SELECT id, name, phone, pan, created_at FROM customers WHERE kyc_status='PENDING'")
+    pending = run_query("SELECT id, name, phone, pan, adhar_file, pan_file, signature_file, created_at FROM customers WHERE kyc_status='PENDING'")
     if pending:
         for p in pending:
             with st.expander(f"Customer: {p[1]} (ID: {p[0]}) - Phone: {p[2]}"):
-                st.write(f"**PAN:** {p[3]} | **Aadhar:** [Redacted Securely]")
+                st.write(f"**PAN:** {p[3]} | **Aadhar Document:** `{p[4]}` | **PAN Document:** `{p[5]}` | **Signature:** `{p[6]}`")
                 col1, col2 = st.columns(2)
                 if col1.button(f"Approve KYC #{p[0]}", key=f"app_{p[0]}"):
                     run_query("UPDATE customers SET kyc_status='APPROVED' WHERE id=?", (p[0],), fetch=False)
@@ -776,7 +806,7 @@ elif menu == "Interest Calculation":
 # --- 13. ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":
     st.title("🛠️ Universal Database Record Editor")
-    st.write("Admin tool to manually inspect and edit **any column** across any database table.")
+    st.write("Admin tool to manually inspect and edit **any column** across any table, including financial ledgers (Trial Balance, P&L, Journal Entries, Balance Sheet assets/liabilities).")
     
     tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
     table_list = [t[0] for t in tables_res]

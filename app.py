@@ -257,11 +257,17 @@ def create_pdf_report(title, df):
     elements.append(Spacer(1, 10))
     
     if not df.empty:
-        # Safely cast dataframe columns to string and clean special characters per column
+        # Safely cast and clean columns piece by piece
         df_clean = df.copy()
         for col in df_clean.columns:
-            df_clean[col] = df_clean[col].astype(str).str.replace('₹', 'Rs.', regex=False)
-            df_clean[col] = df_clean[col].str.encode('ascii', 'ignore').str.decode('ascii')
+            # Convert to string first
+            s_col = df_clean[col].astype(str)
+            # Replace currency symbols
+            s_col = s_col.str.replace('₹', 'Rs.', regex=False)
+            # Encode/decode to strip unsupported unicode/ascii characters safely
+            s_col = s_col.str.encode('ascii', 'ignore').str.decode('ascii')
+            # Assign back as explicit string series
+            df_clean[col] = s_col.astype(str)
         
         table_data = [list(df_clean.columns)] + df_clean.values.tolist()
         

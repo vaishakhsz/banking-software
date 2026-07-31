@@ -767,41 +767,69 @@ elif menu == "Journal Vouchers":
 
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
-    st.title("💰 Operational Income & Expenses & Deletion")
-    tab1, tab2 = st.tabs(["Record Entry", "View & Delete Entries"])
+    st.title("💰 Operational Income & Expenses Ledger")
+    tab1, tab2 = st.tabs(["Record Income/Expense", "View All Entries"])
     
     with tab1:
-        with st.form("ie_form"):
-            entry_type = st.selectbox("Entry Type", ["INCOME", "EXPENSE"])
+        st.subheader("Record New Financial Entry")
+        with st.form("income_expense_form"):
+            col1, col2 = st.columns(2)
+            entry_type = col1.selectbox("Entry Classification", ["INCOME", "EXPENSE"])
             
+            # Fetch ALL Chart of Accounts from the database
+            coa_records = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
+            coa_dict = {f"{c[0]} - {c[1]} ({c[2]})": c[0] for c in coa_records}
+            
+            selected_coa = col2.selectbox("Select Chart of Accounts (COA)", list(coa_dict.keys()))
+            account_code = coa_dict[selected_coa]
+            
+            # Optional Customer Mapping
             customers = run_query("SELECT id, name FROM customers")
-            cust_dict = {"None (General Ledger)": None}
+            cust_dict = {"None / General": None}
             if customers:
-                cust_dict.update({f"{c[1]} (ID: {c[0]})": c[0] for c in customers})
-            selected_cust = st.selectbox("Associated Customer Name", list(cust_dict.keys()))
+                for c in customers:
+                    cust_dict[f"{c[1]} (ID: {c[0]})"] = c[0]
+            selected_cust_str = st.selectbox("Associated Customer (Optional)", list(cust_dict.keys()))
+            customer_id = cust_dict[selected_cust_str]
             
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type=?", ("Income" if entry_type=="INCOME" else "Expense",))
-            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+            col_amt1, col_amt2 = st.columns(2)
+            amount = col_amt1.number_input("Amount (₹)", min_value=1.0, value=1000.0, step=100.0)
+            pay_mode = col_amt2.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
             
-            account_head = st.selectbox("Chart of Account Head", list(coa_dict.keys()))
-            amount = st.number_input("Amount (₹)", min_value=1.0, value=500.0)
-            mode = st.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "ONLINE", "CHEQUE"])
-            narration = st.text_input("Remarks / Narration")
+            # Debit & Credit Account Routing Options
+            st.markdown("### Journal Entry Routing (Debit & Credit)")
+            d_col1, d_col2 = st.columns(2)
+            debit_account = d_col1.selectbox("Debit Account Code", list(coa_dict.keys()), index=0)
+            credit_account = d_col2.selectbox("Credit Account Code", list(coa_dict.keys()), index=min(1, len(coa_dict)-1))
             
-            if st.form_submit_button("Record Entry"):
+            narration = st.text_input("Narration / Remarks", value="Operational financial transaction")
+            
+            submitted = st.form_submit_button("Post Income/Expense Entry")
+            if submitted:
+                d_code = coa_dict[debit_account]
+                c_code = coa_dict[credit_account]
+                
+                # Insert into operational finances table
                 run_query("""
                     INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (entry_type, cust_dict[selected_cust], coa_dict[account_head], amount, mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
+                """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                 
-                if entry_type == "INCOME":
-                    post_automated_jv(f"Income: {narration}", "AST-101", coa_dict[account_head], amount)
-                else:
-                    post_automated_jv(f"Expense: {narration}", coa_dict[account_head], "AST-101", amount)
-
-                st.success("Income/Expense entry recorded & posted successfully!")
+                # Automatically Post Balanced Journal Voucher entry with chosen Debit & Credit accounts
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                               (str(date.today()), f"{entry_type}: {narration}"))
+                jv_id = cursor.lastrowid
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, d_code, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, c_code, amount))
+                conn.commit()
+                conn.close()
+                
+                st.success("Financial entry recorded and Journal Voucher posted successfully!")
 
     with tab2:
+        st.subheader("All Operational Financial Entries")
         finances = run_query("""
             SELECT o.id, o.type, c.name, o.account_code, o.amount, o.mode, o.date, o.narration 
             FROM operational_finances o LEFT JOIN customers c ON o.customer_id = c.id
@@ -809,13 +837,7 @@ elif menu == "Income & Expenses":
         if finances:
             df_fin = pd.DataFrame(finances, columns=["ID", "Type", "Customer Name", "Account Code", "Amount (₹)", "Mode", "Date", "Narration"])
             st.dataframe(df_fin, use_container_width=True)
-            
-            st.markdown("### Delete Financial Entry")
-            del_fin_id = st.number_input("Enter Entry ID to Delete", min_value=1, step=1, key="del_fin")
-            if st.button("Delete Financial Record"):
-                run_query("DELETE FROM operational_finances WHERE id=?", (del_fin_id,), fetch=False)
-                st.warning(f"Financial Entry ID {del_fin_id} deleted.")
-                st.rerun()
+            st.download_button("Download Income/Expense PDF", create_pdf_report("Operational Finances Report", df_fin), "income_expenses.pdf", "application/pdf")
         else:
             st.info("No operational financial logs recorded.")
 

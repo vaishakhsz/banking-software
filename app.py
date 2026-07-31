@@ -974,7 +974,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         tot_fd_liabilities = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_liabilities = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         
-        # Fetch Capital / Equity directly from Journal Entry credits posted to Equity accounts (e.g., EQT-101)
+        # Fetch Capital / Equity directly from Journal Entry credits posted to Equity accounts
         tot_capital_equity = run_query("""
             SELECT COALESCE(SUM(JE.credit - JE.debit), 0.0) 
             FROM jv_entries JE 
@@ -985,7 +985,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### Assets")
-            # Automatically set default vault cash to match customer liabilities + equity pool
             default_vault = tot_sb_assets + tot_fd_liabilities + tot_rd_liabilities + tot_capital_equity
             cash_in_hand = st.number_input("Vault Cash / Physical Currency (₹)", value=float(default_vault), step=1000.0)
             loans_advances = st.number_input("Loans & Advances Receivable (₹)", value=0.0, step=1000.0)
@@ -999,7 +998,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             fd_deposits_liab = st.number_input("Fixed Deposits (FD) Control (₹)", value=tot_fd_liabilities, step=1000.0)
             rd_deposits_liab = st.number_input("Recurring Deposits (RD) Control (₹)", value=tot_rd_liabilities, step=1000.0)
             
-            # Capital / Equity dynamically pulled from database JVs
+            # Capital / Equity explicitly restricted to Balance Sheet Liability/Equity section
             capital_equity = st.number_input("Capital & Reserves (₹)", value=float(tot_capital_equity), step=1000.0)
             
             total_liabilities = sb_deposits_liab + fd_deposits_liab + rd_deposits_liab + capital_equity
@@ -1029,11 +1028,23 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
 
     with tab3:
-        st.subheader("Profit & Loss Statement (Income vs Expenses)")
+        st.subheader("Profit & Loss Statement (Strictly Revenue vs Expenses)")
         
-        # Strictly calculate Income and Expenses from operational finances (Capital/Equity excluded)
-        total_income = run_query("SELECT SUM(amount) FROM operational_finances WHERE type='INCOME'")[0][0] or 0.0
-        total_expense = run_query("SELECT SUM(amount) FROM operational_finances WHERE type='EXPENSE'")[0][0] or 0.0
+        # P&L strictly filters operational financials and excludes any equity or capital accounts
+        total_income = run_query("""
+            SELECT COALESCE(SUM(o.amount), 0.0) 
+            FROM operational_finances o 
+            JOIN chart_of_accounts c ON o.account_code = c.account_code 
+            WHERE o.type='INCOME' AND c.account_type != 'Equity'
+        """)[0][0]
+        
+        total_expense = run_query("""
+            SELECT COALESCE(SUM(o.amount), 0.0) 
+            FROM operational_finances o 
+            JOIN chart_of_accounts c ON o.account_code = c.account_code 
+            WHERE o.type='EXPENSE' AND c.account_type != 'Equity'
+        """)[0][0]
+        
         net_pl = total_income - total_expense
         
         col1, col2, col3 = st.columns(3)
@@ -1043,6 +1054,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
         else:
             col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
+            
+        st.markdown("---")
+        st.info("Note: Capital and Equity injections are structurally isolated to the Balance Sheet and Trial Balance modules and do not mix with operational P&L earnings.")
 
 # --- 15. REPORTS ---
 elif menu == "Reports":

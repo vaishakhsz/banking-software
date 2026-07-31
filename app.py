@@ -501,8 +501,8 @@ elif menu == "SB Accounts":
 
 # --- 5. FIXED DEPOSITS (FD) ---
 elif menu == "Fixed Deposits (FD)":
-    st.title("📈 Fixed Deposits Management & Deletion")
-    tab1, tab2 = st.tabs(["Open FD", "Active FDs & Deletion"])
+    st.title("📈 Fixed Deposits Management & Closure")
+    tab1, tab2 = st.tabs(["Open FD", "Active FDs, Close & Delete"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -530,16 +530,48 @@ elif menu == "Fixed Deposits (FD)":
 
     with tab2:
         fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status
+            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.customer_id
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
         if fds:
-            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
+            df_fds = pd.DataFrame(fds[:, :-1] if len(fds[0]) > 7 else fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
             st.dataframe(df_fds, use_container_width=True)
             st.download_button("Download FDs PDF", create_pdf_report("Fixed Deposits Report", df_fds), "fds.pdf", "application/pdf")
             
-            st.markdown("### Delete or Settle FD Record")
-            del_fd_id = st.number_input("Enter FD ID to Delete", min_value=1, step=1)
+            st.markdown("---")
+            st.subheader("Close / Settle or Delete FD Account")
+            active_fds = [f for f in fds if f[6] == 'ACTIVE']
+            if active_fds:
+                fd_choice = st.selectbox("Select Active FD ID to Close/Settle", [f[0] for f in active_fds])
+                selected_fd_record = next(f for f in fds if f[0] == fd_choice)
+                
+                cust_id = selected_fd_record[7]
+                maturity_amt = selected_fd_record[5]
+                principal_amt = selected_fd_record[2]
+                
+                settlement_mode = st.selectbox("Settlement Mode", ["CASH", "TRANSFER TO RETRIEVAL POOL", "BANK TRANSFER"])
+                
+                if st.button("Close & Settle FD Account"):
+                    run_query("UPDATE fixed_deposits SET status='CLOSED' WHERE fd_id=?", (fd_choice,), fetch=False)
+                    
+                    if settlement_mode == "TRANSFER TO RETRIEVAL POOL":
+                        # Check if retrieval account exists, else create
+                        ret_exists = run_query("SELECT balance FROM retrieval_accounts WHERE customer_id=?", (cust_id,))
+                        if ret_exists:
+                            new_ret_bal = ret_exists[0][0] + maturity_amt
+                            run_query("UPDATE retrieval_accounts SET balance=? WHERE customer_id=?", (new_ret_bal, cust_id))
+                        else:
+                            ret_acc_no = f"RET{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                            run_query("INSERT INTO retrieval_accounts VALUES (?, ?, ?)", (ret_acc_no, cust_id, maturity_amt))
+                    
+                    post_automated_jv(f"FD Closure Settlement (FD #{fd_choice})", "LIA-102", "AST-101", maturity_amt)
+                    st.success(f"FD #{fd_choice} successfully closed and settled for amount ₹{maturity_amt:,.2f}!")
+                    st.rerun()
+            else:
+                st.info("No active FDs available for settlement.")
+
+            st.markdown("### Delete FD Record")
+            del_fd_id = st.number_input("Enter FD ID to Delete Record", min_value=1, step=1, key="del_fd_rec")
             if st.button("Delete FD Record"):
                 run_query("DELETE FROM fixed_deposits WHERE fd_id=?", (del_fd_id,), fetch=False)
                 st.warning(f"FD Record ID {del_fd_id} deleted successfully.")
@@ -549,8 +581,8 @@ elif menu == "Fixed Deposits (FD)":
 
 # --- 6. RECURRING DEPOSITS (RD) ---
 elif menu == "Recurring Deposits (RD)":
-    st.title("🔄 Recurring Deposits Management")
-    tab1, tab2 = st.tabs(["Open RD", "Active RDs & Deletion"])
+    st.title("🔄 Recurring Deposits Management & Installment Payment")
+    tab1, tab2, tab3 = st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -572,6 +604,41 @@ elif menu == "Recurring Deposits (RD)":
             st.warning("Register customers first.")
 
     with tab2:
+        st.subheader("Pay Monthly Installment for RD")
+        active_rds = run_query("""
+            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.installments_paid 
+            FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id 
+            WHERE r.status='ACTIVE'
+        """)
+        if active_rds:
+            rd_dict = {f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[2]:,.2f}, Paid: {r[4]}/{r[3]})": r for r in active_rds}
+            chosen_rd_str = st.selectbox("Select Active RD Account", list(rd_dict.keys()))
+            selected_rd = rd_dict[chosen_rd_str]
+            
+            rd_id, cust_name, monthly_amt, tenure_m, paid_inst = selected_rd
+            
+            st.info(f"Installment Amount Due: **₹{monthly_amt:,.2f}** | Current Installments Paid: **{paid_inst} / {tenure_m}**")
+            pay_mode = st.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "ONLINE", "CHEQUE"], key="rd_pay_mode")
+            
+            if st.button("Confirm & Pay Installment"):
+                if paid_inst < tenure_m:
+                    new_paid = paid_inst + 1
+                    run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
+                    
+                    run_query("""
+                        INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
+                        VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)
+                    """, (f"TX{datetime.now().strftime('%M%S%f')}", f"RD-{rd_id}", monthly_amt, pay_mode, f"RD Installment Payment #{new_paid}", datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    
+                    post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid})", "AST-101", "LIA-103", monthly_amt)
+                    st.success(f"Installment #{new_paid} of ₹{monthly_amt:,.2f} successfully paid for RD #{rd_id}!")
+                    st.rerun()
+                else:
+                    st.warning("This Recurring Deposit account has already completed all installments!")
+        else:
+            st.info("No active recurring deposits found.")
+
+    with tab3:
         rds = run_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
@@ -952,4 +1019,3 @@ elif menu == "Customer Portal":
                 st.info("No savings account mapped to this ID.")
         else:
             st.error("Customer ID not found in system records.")
-

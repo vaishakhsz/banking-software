@@ -257,13 +257,14 @@ def create_pdf_report(title, df):
     elements.append(Spacer(1, 10))
     
     if not df.empty:
-        # Safely convert all columns and data values to strings to prevent AttributeError
-        df_clean = df.astype(str)
-        df_clean = df_clean.apply(lambda col: col.str.replace('₹', 'Rs.').str.encode('ascii', 'ignore').str.decode('ascii'))
+        # Safely cast dataframe columns to string and clean special characters per column
+        df_clean = df.copy()
+        for col in df_clean.columns:
+            df_clean[col] = df_clean[col].astype(str).str.replace('₹', 'Rs.', regex=False)
+            df_clean[col] = df_clean[col].str.encode('ascii', 'ignore').str.decode('ascii')
         
         table_data = [list(df_clean.columns)] + df_clean.values.tolist()
         
-        # Calculate column widths to fit page nicely
         col_width = 550 / max(1, len(df_clean.columns))
         t = Table(table_data, colWidths=[col_width] * len(df_clean.columns))
         

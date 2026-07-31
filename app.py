@@ -28,7 +28,7 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
     
-    # Customers Table (with file path storage)
+    # Customers Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +50,13 @@ def init_db():
             created_at TEXT
         )
     """)
+    
+    # Migration safety check for existing databases missing upload columns
+    for col, col_type in [("adhar_file", "TEXT"), ("pan_file", "TEXT"), ("signature_file", "TEXT")]:
+        try:
+            cursor.execute(f"ALTER TABLE customers ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass # Column already exists
     
     # SB Accounts Table
     cursor.execute("""
@@ -945,5 +952,4 @@ elif menu == "Customer Portal":
                 st.info("No savings account mapped to this ID.")
         else:
             st.error("Customer ID not found in system records.")
-
 

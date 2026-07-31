@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -180,6 +181,7 @@ def init_db():
             ("AST-103", "Retrieval Pool Account", "Asset", "Current Assets"),
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
+            ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
             ("EQT-101", "Capital Account", "Equity", "Capital"),
             ("EQT-102", "Retained Earnings", "Equity", "Reserves")
         ]
@@ -200,22 +202,34 @@ def run_query(query, params=(), fetch=True):
     conn.close()
     return res
 
+def post_automated_jv(narration, debit_acc, credit_acc, amount):
+    """Automatically posts a balanced ledger entry for deposits/withdrawals so Trial Balance updates instantly."""
+    if amount <= 0:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                   (str(date.today()), narration))
+    jv_id = cursor.lastrowid
+    # Debit entry
+    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, debit_acc, amount))
+    # Credit entry
+    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
+    conn.commit()
+    conn.close()
+
 def create_pdf_report(title, df):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    
-    # Clean title of any non-latin characters like ₹
     clean_title = title.encode('ascii', 'ignore').decode('ascii')
     pdf.cell(0, 10, clean_title, 0, 1, "C")
-    
     pdf.set_font("Arial", "I", 10)
     pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Aasha Nidhi Bank", 0, 1, "C")
     pdf.ln(5)
     
     pdf.set_font("Arial", "B", 10)
     if not df.empty:
-        # Clean dataframe column names and string cells of non-latin characters (e.g. ₹)
         df_clean = df.copy()
         df_clean.columns = [str(col).replace('₹', 'Rs.').encode('ascii', 'ignore').decode('ascii') for col in df_clean.columns]
         for col in df_clean.columns:
@@ -388,9 +402,14 @@ elif menu == "SB Accounts":
                 acc_no = f"SB{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
                           (acc_no, cust_id, init_bal, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                
+                # AUTOMATED TRIAL BALANCE HOOK
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    # Debit Cash in Hand (AST-101) / Credit SB Deposits Control (LIA-101)
+                    post_automated_jv(f"SB Opening Balance - Account {acc_no}", "AST-101", "LIA-101", init_bal)
+
                 st.success(f"SB Account created successfully! Account No: {acc_no}")
         else:
             st.warning("Please register a customer first.")
@@ -416,6 +435,13 @@ elif menu == "SB Accounts":
                     run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, db_type, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    
+                    # AUTOMATED TRIAL BALANCE HOOK
+                    if tx_type == "DEPOSIT":
+                        post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", "AST-101", "LIA-101", amount)
+                    else:
+                        post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", "AST-101", amount)
+
                     st.success(f"Transaction successful! New Balance: ₹{new_bal:,.2f}")
         else:
             st.info("No active SB accounts found.")
@@ -464,7 +490,11 @@ elif menu == "Fixed Deposits (FD)":
                     INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                st.success("Fixed Deposit opened successfully!")
+                
+                # AUTOMATED TRIAL BALANCE HOOK FOR FD
+                post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal}", "AST-101", "LIA-102", principal)
+
+                st.success("Fixed Deposit opened and recorded in Trial Balance successfully!")
         else:
             st.warning("Register a customer first.")
 
@@ -532,14 +562,18 @@ elif menu == "Recurring Deposits (RD)":
             
             rd_pay_id = st.number_input("Enter RD ID to Pay Installment", min_value=1, step=1)
             if st.button("Pay Next Installment"):
-                curr_paid = run_query("SELECT installments_paid, tenure_months FROM recurring_deposits WHERE rd_id=?", (rd_pay_id,))
-                if curr_paid:
-                    paid, tenure = curr_paid[0]
+                rd_data = run_query("SELECT installments_paid, tenure_months, monthly_amount FROM recurring_deposits WHERE rd_id=?", (rd_pay_id,))
+                if rd_data:
+                    paid, tenure, monthly_amt = rd_data[0]
                     if paid < tenure:
                         new_paid = paid + 1
                         new_status = 'MATURED' if new_paid == tenure else 'ACTIVE'
                         run_query("UPDATE recurring_deposits SET installments_paid=?, status=? WHERE rd_id=?", (new_paid, new_status, rd_pay_id), fetch=False)
-                        st.success(f"Installment paid successfully! Total Paid: {new_paid}/{tenure}")
+                        
+                        # AUTOMATED TRIAL BALANCE HOOK FOR RD INSTALLMENT
+                        post_automated_jv(f"RD Installment Payment - ID {rd_pay_id}", "AST-101", "LIA-103", monthly_amt)
+
+                        st.success(f"Installment paid & posted to Trial Balance! Total Paid: {new_paid}/{tenure}")
                         st.rerun()
                     else:
                         st.warning("RD is already fully paid/matured.")
@@ -678,7 +712,14 @@ elif menu == "Income & Expenses":
                     INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (entry_type, cust_dict[selected_cust], coa_dict[account_head], amount, mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
-                st.success(f"{entry_type} entry recorded and mapped successfully!")
+                
+                # AUTOMATED TRIAL BALANCE HOOK FOR INCOME/EXPENSE
+                if entry_type == "INCOME":
+                    post_automated_jv(f"Income: {narration}", "AST-101", coa_dict[account_head], amount)
+                else:
+                    post_automated_jv(f"Expense: {narration}", coa_dict[account_head], "AST-101", amount)
+
+                st.success(f"{entry_type} entry recorded & posted to Trial Balance successfully!")
 
     with tab2:
         finances = run_query("""
@@ -709,7 +750,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
     
     with tab1:
-        st.subheader("Trial Balance Summary")
+        st.subheader("Trial Balance Summary (Auto-Updated)")
         entries = run_query("""
             SELECT JE.account_code, CO.account_name, SUM(JE.debit), SUM(JE.credit)
             FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
@@ -720,7 +761,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.dataframe(df_tb, use_container_width=True)
             st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
-            st.info("No journal entries recorded to construct Trial Balance.")
+            st.info("No deposit or transaction entries recorded yet.")
 
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
@@ -796,4 +837,5 @@ elif menu == "Customer Portal":
                 st.info("No savings account mapped to this ID.")
         else:
             st.error("Customer ID not found in system records.")
-               
+
+

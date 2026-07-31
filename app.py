@@ -946,12 +946,57 @@ elif menu == "Financial Statements (Trial/BS/PL)":
 
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
-        tot_assets = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
-        tot_liabilities = tot_assets
+        
+        # Calculate dynamic totals from system records
+        tot_sb_assets = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
+        tot_fd_liabilities = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+        tot_rd_liabilities = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+        
         col1, col2 = st.columns(2)
-        col1.metric("Total Asset Holdings", f"₹{tot_assets:,.2f}")
-        col2.metric("Total Liabilities & Deposits", f"₹{tot_liabilities:,.2f}")
-        st.success("Balance Sheet Perfectly Balanced!")
+        with col1:
+            st.markdown("### Assets")
+            cash_in_hand = st.number_input("Cash in Hand / Vault Cash (₹)", value=100000.0, step=5000.0)
+            bank_balance = st.number_input("Bank Balance (₹)", value=tot_sb_assets, step=5000.0)
+            loans_advances = st.number_input("Loans & Advances Receivable (₹)", value=0.0, step=5000.0)
+            other_assets = st.number_input("Other Fixed/Current Assets (₹)", value=0.0, step=5000.0)
+            
+            total_assets = cash_in_hand + bank_balance + loans_advances + other_assets
+            st.metric("Total Asset Holdings", f"₹{total_assets:,.2f}")
+            
+        with col2:
+            st.markdown("### Liabilities & Equity")
+            sb_deposits_liab = st.number_input("Savings Bank (SB) Deposits Control (₹)", value=tot_sb_assets, step=5000.0)
+            fd_deposits_liab = st.number_input("Fixed Deposits (FD) Control (₹)", value=tot_fd_liabilities, step=5000.0)
+            rd_deposits_liab = st.number_input("Recurring Deposits (RD) Control (₹)", value=tot_rd_liabilities, step=5000.0)
+            capital_equity = st.number_input("Capital & Reserves (₹)", value=50000.0, step=5000.0)
+            
+            total_liabilities = sb_deposits_liab + fd_deposits_liab + rd_deposits_liab + capital_equity
+            st.metric("Total Liabilities & Equity", f"₹{total_liabilities:,.2f}")
+            
+        st.markdown("---")
+        diff = total_assets - total_liabilities
+        if abs(diff) < 0.01:
+            st.success("Balance Sheet Perfectly Balanced!")
+        else:
+            st.warning(f"Balance Sheet Discrepancy / Difference: ₹{diff:,.2f} (Adjust asset or liability fields to balance)")
+
+        if st.button("Export Balance Sheet Report"):
+            bs_data = [
+                ["Assets Section", "Amount (₹)"],
+                ["Cash in Hand", cash_in_hand],
+                ["Bank Balance", bank_balance],
+                ["Loans & Advances", loans_advances],
+                ["Other Assets", other_assets],
+                ["Total Assets", total_assets],
+                ["Liabilities & Equity", "Amount (₹)"],
+                ["SB Deposits", sb_deposits_liab],
+                ["FD Deposits", fd_deposits_liab],
+                ["RD Deposits", rd_deposits_liab],
+                ["Capital & Reserves", capital_equity],
+                ["Total Liabilities & Equity", total_liabilities]
+            ]
+            df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
+            st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
 
     with tab3:
         st.subheader("Profit & Loss Statement")

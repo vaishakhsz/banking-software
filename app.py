@@ -445,7 +445,7 @@ elif menu == "KYC Verification":
 # --- 4. SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
-    tab1, tab2, tab3, tab4 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts", "SB Reports & Documents Viewer"])
+    tab1, tab2, tab3= st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -523,53 +523,12 @@ elif menu == "SB Accounts":
         else:
             st.info("No active SB accounts found.")
 
-    with tab4:
-        st.subheader("📂 SB Reports & Customer Document Viewer")
-        st.write("View or download stored PDF reports and customer files linked to SB accounts.")
-        
-        sb_docs = run_query("""
-            SELECT DISTINCT c.id, c.name, c.adhar_file, c.pan_file, c.signature_file 
-            FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
-        """)
-        if sb_docs:
-            cust_choices = {f"{c[1]} (Customer ID: {c[0]})": c for c in sb_docs}
-            chosen_cust_key = st.selectbox("Select SB Customer", list(cust_choices.keys()), key="sb_viewer_cust")
-            selected_cust_rec = cust_choices[chosen_cust_key]
-            
-            cust_id, cust_name, adhar_path, pan_path, sig_path = selected_cust_rec
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown("### Aadhaar Document")
-                if adhar_path and os.path.exists(adhar_path):
-                    st.success(f"File: `{os.path.basename(adhar_path)}`")
-                    with open(adhar_path, "rb") as f:
-                        st.download_button("Download Aadhaar", f.read(), file_name=os.path.basename(adhar_path), key="dl_sb_adh")
-                else:
-                    st.info("No Aadhaar document uploaded.")
-            with col2:
-                st.markdown("### PAN Document")
-                if pan_path and os.path.exists(pan_path):
-                    st.success(f"File: `{os.path.basename(pan_path)}`")
-                    with open(pan_path, "rb") as f:
-                        st.download_button("Download PAN", f.read(), file_name=os.path.basename(pan_path), key="dl_sb_pan")
-                else:
-                    st.info("No PAN document uploaded.")
-            with col3:
-                st.markdown("### Signature File")
-                if sig_path and os.path.exists(sig_path):
-                    st.success(f"File: `{os.path.basename(sig_path)}`")
-                    with open(sig_path, "rb") as f:
-                        st.download_button("Download Signature", f.read(), file_name=os.path.basename(sig_path), key="dl_sb_sig")
-                else:
-                    st.info("No signature file uploaded.")
-        else:
-            st.info("No customer documents linked to active SB accounts found.")
+    
 
 # --- 5. FIXED DEPOSITS (FD) ---
 elif menu == "Fixed Deposits (FD)":
     st.title("📈 Fixed Deposits Management & Closure")
-    tab1, tab2, tab3 = st.tabs(["Open FD", "Active FDs, Close & Delete", "FD Reports & Document Viewer"])
+    tab1, tab2 = st.tabs(["Open FD", "Active FDs, Close & Delete"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -646,53 +605,12 @@ elif menu == "Fixed Deposits (FD)":
         else:
             st.info("No fixed deposits found.")
 
-    with tab3:
-        st.subheader("📂 FD Reports & Customer Document Viewer")
-        st.write("Inspect customer records and documents linked to Fixed Deposits.")
-        
-        fd_docs = run_query("""
-            SELECT DISTINCT c.id, c.name, c.adhar_file, c.pan_file, c.signature_file 
-            FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
-        """)
-        if fd_docs:
-            cust_choices = {f"{c[1]} (Customer ID: {c[0]})": c for c in fd_docs}
-            chosen_cust_key = st.selectbox("Select FD Customer", list(cust_choices.keys()), key="fd_viewer_cust")
-            selected_cust_rec = cust_choices[chosen_cust_key]
-            
-            cust_id, cust_name, adhar_path, pan_path, sig_path = selected_cust_rec
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown("### Aadhaar Document")
-                if adhar_path and os.path.exists(adhar_path):
-                    st.success(f"File: `{os.path.basename(adhar_path)}`")
-                    with open(adhar_path, "rb") as f:
-                        st.download_button("Download Aadhaar", f.read(), file_name=os.path.basename(adhar_path), key="dl_fd_adh")
-                else:
-                    st.info("No Aadhaar document uploaded.")
-            with col2:
-                st.markdown("### PAN Document")
-                if pan_path and os.path.exists(pan_path):
-                    st.success(f"File: `{os.path.basename(pan_path)}`")
-                    with open(pan_path, "rb") as f:
-                        st.download_button("Download PAN", f.read(), file_name=os.path.basename(pan_path), key="dl_fd_pan")
-                else:
-                    st.info("No PAN document uploaded.")
-            with col3:
-                st.markdown("### Signature File")
-                if sig_path and os.path.exists(sig_path):
-                    st.success(f"File: `{os.path.basename(sig_path)}`")
-                    with open(sig_path, "rb") as f:
-                        st.download_button("Download Signature", f.read(), file_name=os.path.basename(sig_path), key="dl_fd_sig")
-                else:
-                    st.info("No signature file uploaded.")
-        else:
-            st.info("No customer documents linked to active FD accounts found.")
+   
 
 # --- 6. RECURRING DEPOSITS (RD) ---
 elif menu == "Recurring Deposits (RD)":
     st.title("🔄 Recurring Deposits Management & Installment Payment")
-    tab1, tab2, tab3, tab4 = st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion", "RD Reports & Document Viewer"])
+    tab1, tab2, tab3= st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -768,48 +686,7 @@ elif menu == "Recurring Deposits (RD)":
         else:
             st.info("No recurring deposits found.")
 
-    with tab4:
-        st.subheader("📂 RD Reports & Customer Document Viewer")
-        st.write("Inspect customer records and files linked to Recurring Deposits.")
-        
-        rd_docs = run_query("""
-            SELECT DISTINCT c.id, c.name, c.adhar_file, c.pan_file, c.signature_file 
-            FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
-        """)
-        if rd_docs:
-            cust_choices = {f"{c[1]} (Customer ID: {c[0]})": c for c in rd_docs}
-            chosen_cust_key = st.selectbox("Select RD Customer", list(cust_choices.keys()), key="rd_viewer_cust")
-            selected_cust_rec = cust_choices[chosen_cust_key]
-            
-            cust_id, cust_name, adhar_path, pan_path, sig_path = selected_cust_rec
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown("### Aadhaar Document")
-                if adhar_path and os.path.exists(adhar_path):
-                    st.success(f"File: `{os.path.basename(adhar_path)}`")
-                    with open(adhar_path, "rb") as f:
-                        st.download_button("Download Aadhaar", f.read(), file_name=os.path.basename(adhar_path), key="dl_rd_adh")
-                else:
-                    st.info("No Aadhaar document uploaded.")
-            with col2:
-                st.markdown("### PAN Document")
-                if pan_path and os.path.exists(pan_path):
-                    st.success(f"File: `{os.path.basename(pan_path)}`")
-                    with open(pan_path, "rb") as f:
-                        st.download_button("Download PAN", f.read(), file_name=os.path.basename(pan_path), key="dl_rd_pan")
-                else:
-                    st.info("No PAN document uploaded.")
-            with col3:
-                st.markdown("### Signature File")
-                if sig_path and os.path.exists(sig_path):
-                    st.success(f"File: `{os.path.basename(sig_path)}`")
-                    with open(sig_path, "rb") as f:
-                        st.download_button("Download Signature", f.read(), file_name=os.path.basename(sig_path), key="dl_rd_sig")
-                else:
-                    st.info("No signature file uploaded.")
-        else:
-            st.info("No customer documents linked to active RD accounts found.")
+    
 
 # --- 7. RETRIEVAL ACCOUNT ---
 elif menu == "Retrieval Account":

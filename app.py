@@ -51,7 +51,7 @@ def init_db():
             balance REAL DEFAULT 0.0,
             interest_rate REAL DEFAULT 3.5,
             created_at TEXT,
-            FOREIGN KEY(customer_id) REFERENCES customers(id)
+            FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
         )
     """)
     
@@ -80,7 +80,8 @@ def init_db():
             maturity_amount REAL,
             nominee TEXT,
             status TEXT DEFAULT 'ACTIVE',
-            created_at TEXT
+            created_at TEXT,
+            FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
         )
     """)
 
@@ -95,7 +96,8 @@ def init_db():
             installments_paid INTEGER DEFAULT 0,
             nominee TEXT,
             status TEXT DEFAULT 'ACTIVE',
-            created_at TEXT
+            created_at TEXT,
+            FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
         )
     """)
 
@@ -105,7 +107,7 @@ def init_db():
             account_no TEXT PRIMARY KEY,
             customer_id INTEGER,
             balance REAL DEFAULT 0.0,
-            FOREIGN KEY(customer_id) REFERENCES customers(id)
+            FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
         )
     """)
 
@@ -114,7 +116,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS chart_of_accounts (
             account_code TEXT PRIMARY KEY,
             account_name TEXT,
-            account_type TEXT, -- Income / Expense / Asset / Liability / Equity
+            account_type TEXT, 
             category TEXT
         )
     """)
@@ -125,7 +127,7 @@ def init_db():
             jv_id INTEGER PRIMARY KEY AUTOINCREMENT,
             voucher_date TEXT,
             narration TEXT,
-            status TEXT DEFAULT 'DRAFT'
+            status TEXT DEFAULT 'POSTED'
         )
     """)
 
@@ -136,12 +138,12 @@ def init_db():
             account_code TEXT,
             debit REAL DEFAULT 0,
             credit REAL DEFAULT 0,
-            FOREIGN KEY(jv_id) REFERENCES journal_vouchers(jv_id),
+            FOREIGN KEY(jv_id) REFERENCES journal_vouchers(jv_id) ON DELETE CASCADE,
             FOREIGN KEY(account_code) REFERENCES chart_of_accounts(account_code)
         )
     """)
 
-    # Income & Expense Table with Customer Mapping
+    # Income & Expense Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS operational_finances (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,7 +154,7 @@ def init_db():
             mode TEXT,
             date TEXT,
             narration TEXT,
-            FOREIGN KEY(customer_id) REFERENCES customers(id)
+            FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL
         )
     """)
 
@@ -210,9 +212,7 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
                    (str(date.today()), narration))
     jv_id = cursor.lastrowid
-    # Debit entry
     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, debit_acc, amount))
-    # Credit entry
     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
     conn.commit()
     conn.close()
@@ -322,7 +322,7 @@ elif menu == "Customer Management":
                     st.error("Please fill in mandatory fields: Name and Phone.")
 
     with tab2:
-        st.subheader("Customer Directory")
+        st.subheader("Customer Directory & Deletion")
         customers = run_query("SELECT id, name, phone, email, kyc_status, pan, created_at FROM customers")
         if customers:
             df_cust = pd.DataFrame(customers, columns=["ID", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
@@ -332,10 +332,11 @@ elif menu == "Customer Management":
             col_csv.download_button("Download CSV Report", df_cust.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv")
             col_pdf.download_button("Download PDF Report", create_pdf_report("Customer Directory Report", df_cust), "customers_report.pdf", "application/pdf")
             
-            del_id = st.number_input("Enter Customer ID to Delete", min_value=1, step=1)
-            if st.button("Delete Customer (Cascade)"):
+            st.markdown("### Delete Customer")
+            del_id = st.number_input("Enter Customer ID to Delete", min_value=1, step=1, key="del_cust")
+            if st.button("Delete Customer Record"):
                 run_query("DELETE FROM customers WHERE id=?", (del_id,), fetch=False)
-                st.warning(f"Customer ID {del_id} deleted.")
+                st.warning(f"Customer ID {del_id} and associated mapping records deleted.")
                 st.rerun()
         else:
             st.info("No customers found.")
@@ -359,7 +360,7 @@ elif menu == "Customer Management":
                     run_query("""
                         UPDATE customers SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? WHERE id=?
                     """, (new_name, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
-                    st.success("Customer details updated successfully!")
+                    st.success("Customer details updated successfully across records!")
 
 # --- 3. KYC VERIFICATION ---
 elif menu == "KYC Verification":
@@ -384,10 +385,9 @@ elif menu == "KYC Verification":
 # --- 4. SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
-    tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View Accounts & Statements"])
+    tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts"])
     
     with tab1:
-        st.subheader("Open New Savings Account (Drill-Down by Person)")
         customers = run_query("SELECT id, name FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
@@ -402,11 +402,9 @@ elif menu == "SB Accounts":
                 run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
                           (acc_no, cust_id, init_bal, datetime.now().strftime("%Y-%m-%d")), fetch=False)
                 
-                # AUTOMATED TRIAL BALANCE HOOK
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    # Debit Cash in Hand (AST-101) / Credit SB Deposits Control (LIA-101)
                     post_automated_jv(f"SB Opening Balance - Account {acc_no}", "AST-101", "LIA-101", init_bal)
 
                 st.success(f"SB Account created successfully! Account No: {acc_no}")
@@ -435,7 +433,6 @@ elif menu == "SB Accounts":
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, db_type, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
                     
-                    # AUTOMATED TRIAL BALANCE HOOK
                     if tx_type == "DEPOSIT":
                         post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", "AST-101", "LIA-101", amount)
                     else:
@@ -446,7 +443,7 @@ elif menu == "SB Accounts":
             st.info("No active SB accounts found.")
 
     with tab3:
-        st.subheader("Active SB Accounts & Ledger Statements")
+        st.subheader("Active SB Accounts & Deletion")
         accounts = run_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at 
             FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
@@ -456,20 +453,20 @@ elif menu == "SB Accounts":
             st.dataframe(df_sb, use_container_width=True)
             st.download_button("Download SB Accounts PDF", create_pdf_report("Savings Bank Accounts Report", df_sb), "sb_accounts.pdf", "application/pdf")
             
-            st.markdown("### Account Statement Lookup")
-            acc_lookup = st.selectbox("Choose Account for Statement", [a[0] for a in accounts], key="stmt_lookup")
-            txs = run_query("SELECT tx_id, type, amount, mode, narration, date FROM transactions WHERE account_no=?", (acc_lookup,))
-            if txs:
-                df_txs = pd.DataFrame(txs, columns=["Tx ID", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
-                st.dataframe(df_txs, use_container_width=True)
-                st.download_button("Download Statement PDF", create_pdf_report(f"Account Statement - {acc_lookup}", df_txs), f"statement_{acc_lookup}.pdf", "application/pdf")
-            else:
-                st.info("No transaction history available for this account.")
+            st.markdown("### Delete SB Account")
+            del_sb_no = st.selectbox("Select Account No to Delete", [a[0] for a in accounts])
+            if st.button("Delete SB Account Record"):
+                run_query("DELETE FROM sb_accounts WHERE account_no=?", (del_sb_no,), fetch=False)
+                run_query("DELETE FROM transactions WHERE account_no=?", (del_sb_no,), fetch=False)
+                st.warning(f"SB Account {del_sb_no} and its transaction logs were successfully deleted.")
+                st.rerun()
+        else:
+            st.info("No active SB accounts found.")
 
 # --- 5. FIXED DEPOSITS (FD) ---
 elif menu == "Fixed Deposits (FD)":
-    st.title("📈 Fixed Deposits Management")
-    tab1, tab2, tab3 = st.tabs(["Open FD", "Active FDs", "Closed FDs"])
+    st.title("📈 Fixed Deposits Management & Deletion")
+    tab1, tab2 = st.tabs(["Open FD", "Active FDs & Deletion"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -490,45 +487,34 @@ elif menu == "Fixed Deposits (FD)":
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d")), fetch=False)
                 
-                # AUTOMATED TRIAL BALANCE HOOK FOR FD
                 post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal}", "AST-101", "LIA-102", principal)
-
-                st.success("Fixed Deposit opened and recorded in Trial Balance successfully!")
+                st.success("Fixed Deposit opened & recorded in Trial Balance successfully!")
         else:
             st.warning("Register a customer first.")
 
     with tab2:
-        st.subheader("Active Fixed Deposits")
         fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.nominee, f.created_at
-            FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id WHERE f.status='ACTIVE'
+            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status
+            FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
         if fds:
-            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Nominee", "Opened"])
+            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
             st.dataframe(df_fds, use_container_width=True)
-            st.download_button("Download Active FDs PDF", create_pdf_report("Active Fixed Deposits Report", df_fds), "active_fds.pdf", "application/pdf")
+            st.download_button("Download FDs PDF", create_pdf_report("Fixed Deposits Report", df_fds), "fds.pdf", "application/pdf")
             
-            close_id = st.number_input("Enter FD ID to Close", min_value=1, step=1)
-            if st.button("Close & Settle FD"):
-                run_query("UPDATE fixed_deposits SET status='CLOSED' WHERE fd_id=?", (close_id,), fetch=False)
-                st.success(f"FD ID {close_id} successfully closed and settled!")
+            st.markdown("### Delete or Settle FD Record")
+            del_fd_id = st.number_input("Enter FD ID to Delete", min_value=1, step=1)
+            if st.button("Delete FD Record"):
+                run_query("DELETE FROM fixed_deposits WHERE fd_id=?", (del_fd_id,), fetch=False)
+                st.warning(f"FD Record ID {del_fd_id} deleted successfully.")
                 st.rerun()
         else:
-            st.info("No active fixed deposits found.")
-
-    with tab3:
-        st.subheader("Closed Fixed Deposits")
-        closed_fds = run_query("SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.created_at FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id WHERE f.status='CLOSED'")
-        if closed_fds:
-            df_closed = pd.DataFrame(closed_fds, columns=["FD ID", "Customer Name", "Principal", "Maturity Amount", "Opened Date"])
-            st.dataframe(df_closed, use_container_width=True)
-        else:
-            st.info("No closed FDs found.")
+            st.info("No fixed deposits found.")
 
 # --- 6. RECURRING DEPOSITS (RD) ---
 elif menu == "Recurring Deposits (RD)":
-    st.title("🔄 Recurring Deposits (RD) Management")
-    tab1, tab2 = st.tabs(["Open RD", "Active RDs & Installments"])
+    st.title("🔄 Recurring Deposits Management")
+    tab1, tab2 = st.tabs(["Open RD", "Active RDs & Deletion"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -557,33 +543,19 @@ elif menu == "Recurring Deposits (RD)":
         if rds:
             df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status"])
             st.dataframe(df_rds, use_container_width=True)
-            st.download_button("Download RDs PDF Report", create_pdf_report("Recurring Deposits Summary", df_rds), "rd_summary.pdf", "application/pdf")
             
-            rd_pay_id = st.number_input("Enter RD ID to Pay Installment", min_value=1, step=1)
-            if st.button("Pay Next Installment"):
-                rd_data = run_query("SELECT installments_paid, tenure_months, monthly_amount FROM recurring_deposits WHERE rd_id=?", (rd_pay_id,))
-                if rd_data:
-                    paid, tenure, monthly_amt = rd_data[0]
-                    if paid < tenure:
-                        new_paid = paid + 1
-                        new_status = 'MATURED' if new_paid == tenure else 'ACTIVE'
-                        run_query("UPDATE recurring_deposits SET installments_paid=?, status=? WHERE rd_id=?", (new_paid, new_status, rd_pay_id), fetch=False)
-                        
-                        # AUTOMATED TRIAL BALANCE HOOK FOR RD INSTALLMENT
-                        post_automated_jv(f"RD Installment Payment - ID {rd_pay_id}", "AST-101", "LIA-103", monthly_amt)
-
-                        st.success(f"Installment paid & posted to Trial Balance! Total Paid: {new_paid}/{tenure}")
-                        st.rerun()
-                    else:
-                        st.warning("RD is already fully paid/matured.")
+            st.markdown("### Delete RD Record")
+            del_rd_id = st.number_input("Enter RD ID to Delete", min_value=1, step=1, key="del_rd")
+            if st.button("Delete RD Record"):
+                run_query("DELETE FROM recurring_deposits WHERE rd_id=?", (del_rd_id,), fetch=False)
+                st.warning(f"RD Record ID {del_rd_id} deleted successfully.")
+                st.rerun()
         else:
-            st.info("No active recurring deposits found.")
+            st.info("No recurring deposits found.")
 
 # --- 7. RETRIEVAL ACCOUNT ---
 elif menu == "Retrieval Account":
     st.title("💰 Matured Deposits Retrieval Account")
-    st.info("Dedicated pool for matured FD/RD returns awaiting customer withdrawal or transfer to SB.")
-    
     ret_accs = run_query("""
         SELECT r.account_no, c.name, r.balance 
         FROM retrieval_accounts r JOIN customers c ON r.customer_id = c.id
@@ -591,7 +563,6 @@ elif menu == "Retrieval Account":
     if ret_accs:
         df_ret = pd.DataFrame(ret_accs, columns=["Retrieval Account No", "Customer Name", "Balance (₹)"])
         st.dataframe(df_ret, use_container_width=True)
-        st.download_button("Download Retrieval Summary PDF", create_pdf_report("Retrieval Accounts Summary", df_ret), "retrieval_summary.pdf", "application/pdf")
     else:
         st.write("No funds currently resting in the Retrieval Accounts pool.")
 
@@ -601,9 +572,8 @@ elif menu == "Chart of Accounts":
     accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
     df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
     st.dataframe(df_coa, use_container_width=True)
-    st.download_button("Download Chart of Accounts PDF", create_pdf_report("Chart of Accounts Report", df_coa), "chart_of_accounts.pdf", "application/pdf")
     
-    st.subheader("Add Custom Account Head")
+    st.subheader("Add or Delete Account Head")
     with st.form("coa_form"):
         col1, col2 = st.columns(2)
         code = col1.text_input("Account Code (e.g., INC-401)")
@@ -616,35 +586,38 @@ elif menu == "Chart of Accounts":
                 st.success(f"Account Head {name} added successfully!")
                 st.rerun()
 
+    del_code = st.text_input("Enter Account Code to Delete (Custom heads only)")
+    if st.button("Delete Account Head"):
+        run_query("DELETE FROM chart_of_accounts WHERE account_code=?", (del_code,), fetch=False)
+        st.warning(f"Account code {del_code} deleted.")
+        st.rerun()
+
 # --- 9. TRANSACTIONS ---
 elif menu == "Transactions":
-    st.title("💳 All System Transactions Ledger")
-    txs = run_query("SELECT tx_id, account_no, type, amount, mode, narration, date FROM transactions ORDER BY id DESC")
+    st.title("💳 All System Transactions Ledger & Deletion")
+    txs = run_query("SELECT id, tx_id, account_no, type, amount, mode, narration, date FROM transactions ORDER BY id DESC")
     if txs:
-        df_all_tx = pd.DataFrame(txs, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
+        df_all_tx = pd.DataFrame(txs, columns=["ID", "Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
         st.dataframe(df_all_tx, use_container_width=True)
-        col1, col2 = st.columns(2)
-        col1.download_button("Export Ledger (CSV)", df_all_tx.to_csv(index=False).encode('utf-8'), "transactions_ledger.csv", "text/csv")
-        col2.download_button("Export Ledger (PDF)", create_pdf_report("Complete Transactions Ledger", df_all_tx), "transactions_ledger.pdf", "application/pdf")
+        
+        st.markdown("### Delete Transaction Log")
+        del_tx_id = st.number_input("Enter Transaction ID (ID column) to Delete", min_value=1, step=1)
+        if st.button("Delete Transaction Record"):
+            run_query("DELETE FROM transactions WHERE id=?", (del_tx_id,), fetch=False)
+            st.warning(f"Transaction ID {del_tx_id} deleted successfully.")
+            st.rerun()
     else:
         st.info("No transaction logs recorded.")
 
 # --- 10. JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
-    st.title("📝 Journal Vouchers Management")
-    tab1, tab2 = st.tabs(["Create Journal Voucher", "View & Post Vouchers"])
+    st.title("📝 Journal Vouchers Management & Deletion")
+    tab1, tab2 = st.tabs(["Create Journal Voucher", "View & Delete Vouchers"])
     
     with tab1:
         with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
             narration = st.text_input("Narration / Description")
-            
-            st.write("### Voucher Entries with Person Drill-Down")
-            customers = run_query("SELECT id, name FROM customers")
-            cust_dict = {"None (General Entry)": None}
-            if customers:
-                cust_dict.update({f"{c[1]} (ID: {c[0]})": c[0] for c in customers})
-            selected_person = st.selectbox("Map to Person / Customer (Optional)", list(cust_dict.keys()))
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
@@ -664,7 +637,7 @@ elif menu == "Journal Vouchers":
                 if total_dr == total_cr and total_dr > 0:
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), f"{narration} [Mapped Cust ID: {cust_dict[selected_person]}]"))
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
                     jv_id = cursor.lastrowid
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
@@ -672,21 +645,28 @@ elif menu == "Journal Vouchers":
                     conn.close()
                     st.success("Balanced Journal Voucher posted successfully!")
                 else:
-                    st.error("Journal Voucher is unbalanced! Total Debits must equal Total Credits.")
+                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
-            st.download_button("Download JVs PDF", create_pdf_report("Journal Vouchers Report", df_jvs), "journal_vouchers.pdf", "application/pdf")
+            
+            st.markdown("### Delete Journal Voucher")
+            del_jv_id = st.number_input("Enter JV ID to Delete", min_value=1, step=1, key="del_jv")
+            if st.button("Delete JV and Entries"):
+                run_query("DELETE FROM jv_entries WHERE jv_id=?", (del_jv_id,), fetch=False)
+                run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (del_jv_id,), fetch=False)
+                st.warning(f"Journal Voucher ID {del_jv_id} deleted successfully.")
+                st.rerun()
         else:
             st.info("No journal vouchers found.")
 
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
-    st.title("💰 Operational Income & Expenses")
-    tab1, tab2 = st.tabs(["Record Financial Entry with Person Drill-Down", "View Income/Expense Logs"])
+    st.title("💰 Operational Income & Expenses & Deletion")
+    tab1, tab2 = st.tabs(["Record Entry", "View & Delete Entries"])
     
     with tab1:
         with st.form("ie_form"):
@@ -696,7 +676,7 @@ elif menu == "Income & Expenses":
             cust_dict = {"None (General Ledger)": None}
             if customers:
                 cust_dict.update({f"{c[1]} (ID: {c[0]})": c[0] for c in customers})
-            selected_cust = st.selectbox("Drill-Down: Select Associated Customer Name", list(cust_dict.keys()))
+            selected_cust = st.selectbox("Associated Customer Name", list(cust_dict.keys()))
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type=?", ("Income" if entry_type=="INCOME" else "Expense",))
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
@@ -712,13 +692,12 @@ elif menu == "Income & Expenses":
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (entry_type, cust_dict[selected_cust], coa_dict[account_head], amount, mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                 
-                # AUTOMATED TRIAL BALANCE HOOK FOR INCOME/EXPENSE
                 if entry_type == "INCOME":
                     post_automated_jv(f"Income: {narration}", "AST-101", coa_dict[account_head], amount)
                 else:
                     post_automated_jv(f"Expense: {narration}", coa_dict[account_head], "AST-101", amount)
 
-                st.success(f"{entry_type} entry recorded & posted to Trial Balance successfully!")
+                st.success("Income/Expense entry recorded & posted successfully!")
 
     with tab2:
         finances = run_query("""
@@ -728,7 +707,13 @@ elif menu == "Income & Expenses":
         if finances:
             df_fin = pd.DataFrame(finances, columns=["ID", "Type", "Customer Name", "Account Code", "Amount (₹)", "Mode", "Date", "Narration"])
             st.dataframe(df_fin, use_container_width=True)
-            st.download_button("Download Income/Expense PDF", create_pdf_report("Income and Expenses Statement", df_fin), "income_expenses.pdf", "application/pdf")
+            
+            st.markdown("### Delete Financial Entry")
+            del_fin_id = st.number_input("Enter Entry ID to Delete", min_value=1, step=1, key="del_fin")
+            if st.button("Delete Financial Record"):
+                run_query("DELETE FROM operational_finances WHERE id=?", (del_fin_id,), fetch=False)
+                st.warning(f"Financial Entry ID {del_fin_id} deleted.")
+                st.rerun()
         else:
             st.info("No operational financial logs recorded.")
 
@@ -743,7 +728,7 @@ elif menu == "Interest Calculation":
         run_query("UPDATE sb_accounts SET interest_rate=?", (new_rate,), fetch=False)
         st.success(f"Interest rate updated to {new_rate}% for all active savings accounts!")
 
-# --- 13. FINANCIAL STATEMENTS (TRIAL BALANCE / BS / PL) ---
+# --- 13. FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Accounting Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])

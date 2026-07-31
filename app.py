@@ -141,7 +141,7 @@ def init_db():
         )
     """)
 
-    # Income & Expense Table
+    # Income & Expense Table with Customer Mapping
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS operational_finances (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,7 +151,8 @@ def init_db():
             amount REAL,
             mode TEXT,
             date TEXT,
-            narration TEXT
+            narration TEXT,
+            FOREIGN KEY(customer_id) REFERENCES customers(id)
         )
     """)
 
@@ -159,7 +160,6 @@ def init_db():
     cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")
     if cursor.fetchone()[0] == 0:
         default_accounts = [
-            # Income
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
             ("INC-102", "Investment Income", "Income", "Primary Revenue"),
             ("INC-201", "Processing Fees", "Income", "Service Income"),
@@ -167,7 +167,6 @@ def init_db():
             ("INC-203", "Commission Income", "Income", "Service Income"),
             ("INC-204", "Transaction Fees", "Income", "Service Income"),
             ("INC-301", "Miscellaneous Income", "Income", "Other Income"),
-            # Expenses
             ("EXP-101", "SB Interest Paid", "Expense", "Cost of Funds"),
             ("EXP-102", "FD Interest Paid", "Expense", "Cost of Funds"),
             ("EXP-103", "RD Interest Paid", "Expense", "Cost of Funds"),
@@ -176,14 +175,11 @@ def init_db():
             ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
             ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
-            # Assets
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
             ("AST-102", "Bank Balance", "Asset", "Current Assets"),
             ("AST-103", "Retrieval Pool Account", "Asset", "Current Assets"),
-            # Liabilities
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
-            # Equity
             ("EQT-101", "Capital Account", "Equity", "Capital"),
             ("EQT-102", "Retained Earnings", "Equity", "Reserves")
         ]
@@ -204,6 +200,31 @@ def run_query(query, params=(), fetch=True):
     conn.close()
     return res
 
+def create_pdf_report(title, df):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, title, 0, 1, "C")
+    pdf.set_font("Arial", "I", 10)
+    pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Aasha Nidhi Bank", 0, 1, "C")
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", "B", 10)
+    if not df.empty:
+        cols = list(df.columns)
+        col_width = 190 / len(cols)
+        for col in cols:
+            pdf.cell(col_width, 8, str(col)[:15], 1, 0, "C")
+        pdf.ln()
+        
+        pdf.set_font("Arial", "", 9)
+        for row in df.itertuples(index=False):
+            for val in row:
+                pdf.cell(col_width, 6, str(val)[:20], 1, 0, "C")
+            pdf.ln()
+            
+    return pdf.output(dest='S').encode('latin1')
+
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("🏦 Aasha Nidhi Bank")
 role = st.sidebar.selectbox("User Role", ["Admin/Staff", "Customer Portal"])
@@ -222,7 +243,6 @@ else:
 if menu == "Dashboard":
     st.title("📊 Bank Dashboard & Overview")
     
-    # Metrics retrieval
     total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0]
     kyc_pending = run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'")[0][0]
     sb_count = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0]
@@ -284,15 +304,14 @@ elif menu == "Customer Management":
             df_cust = pd.DataFrame(customers, columns=["ID", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
             st.dataframe(df_cust, use_container_width=True)
             
-            # Export CSV
-            csv = df_cust.to_csv(index=False).encode('utf-8')
-            st.download_button("Download CSV Report", csv, "customers_report.csv", "text/csv")
+            col_csv, col_pdf = st.columns(2)
+            col_csv.download_button("Download CSV Report", df_cust.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv")
+            col_pdf.download_button("Download PDF Report", create_pdf_report("Customer Directory Report", df_cust), "customers_report.pdf", "application/pdf")
             
-            # Delete Customer Section
             del_id = st.number_input("Enter Customer ID to Delete", min_value=1, step=1)
             if st.button("Delete Customer (Cascade)"):
                 run_query("DELETE FROM customers WHERE id=?", (del_id,), fetch=False)
-                st.warning(f"Customer ID {del_id} and dependencies deleted.")
+                st.warning(f"Customer ID {del_id} deleted.")
                 st.rerun()
         else:
             st.info("No customers found.")
@@ -344,11 +363,11 @@ elif menu == "SB Accounts":
     tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View Accounts & Statements"])
     
     with tab1:
-        st.subheader("Open New Savings Account")
+        st.subheader("Open New Savings Account (Drill-Down by Person)")
         customers = run_query("SELECT id, name FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
-            selected_cust = st.selectbox("Select Customer", list(cust_dict.keys()))
+            selected_cust = st.selectbox("Select Customer Name", list(cust_dict.keys()))
             cust_id = cust_dict[selected_cust]
             
             init_bal = st.number_input("Opening Balance (₹)", min_value=0.0, value=500.0)
@@ -399,6 +418,7 @@ elif menu == "SB Accounts":
         if accounts:
             df_sb = pd.DataFrame(accounts, columns=["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created"])
             st.dataframe(df_sb, use_container_width=True)
+            st.download_button("Download SB Accounts PDF", create_pdf_report("Savings Bank Accounts Report", df_sb), "sb_accounts.pdf", "application/pdf")
             
             st.markdown("### Account Statement Lookup")
             acc_lookup = st.selectbox("Choose Account for Statement", [a[0] for a in accounts], key="stmt_lookup")
@@ -406,6 +426,7 @@ elif menu == "SB Accounts":
             if txs:
                 df_txs = pd.DataFrame(txs, columns=["Tx ID", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
                 st.dataframe(df_txs, use_container_width=True)
+                st.download_button("Download Statement PDF", create_pdf_report(f"Account Statement - {acc_lookup}", df_txs), f"statement_{acc_lookup}.pdf", "application/pdf")
             else:
                 st.info("No transaction history available for this account.")
 
@@ -418,7 +439,7 @@ elif menu == "Fixed Deposits (FD)":
         customers = run_query("SELECT id, name FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
-            selected_cust = st.selectbox("Select Customer for FD", list(cust_dict.keys()), key="fd_cust")
+            selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
             principal = st.number_input("Principal Amount (₹)", min_value=1000.0, value=10000.0, step=500.0)
             tenure = st.slider("Tenure (Months)", 1, 60, 12)
             interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5)
@@ -445,6 +466,7 @@ elif menu == "Fixed Deposits (FD)":
         if fds:
             df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Nominee", "Opened"])
             st.dataframe(df_fds, use_container_width=True)
+            st.download_button("Download Active FDs PDF", create_pdf_report("Active Fixed Deposits Report", df_fds), "active_fds.pdf", "application/pdf")
             
             close_id = st.number_input("Enter FD ID to Close", min_value=1, step=1)
             if st.button("Close & Settle FD"):
@@ -456,9 +478,9 @@ elif menu == "Fixed Deposits (FD)":
 
     with tab3:
         st.subheader("Closed Fixed Deposits")
-        closed_fds = run_query("SELECT * FROM fixed_deposits WHERE status='CLOSED'")
+        closed_fds = run_query("SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.created_at FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id WHERE f.status='CLOSED'")
         if closed_fds:
-            df_closed = pd.DataFrame(closed_fds, columns=["FD ID", "Customer ID", "Principal", "Tenure", "Rate", "Maturity", "Nominee", "Status", "Created"])
+            df_closed = pd.DataFrame(closed_fds, columns=["FD ID", "Customer Name", "Principal", "Maturity Amount", "Opened Date"])
             st.dataframe(df_closed, use_container_width=True)
         else:
             st.info("No closed FDs found.")
@@ -472,7 +494,7 @@ elif menu == "Recurring Deposits (RD)":
         customers = run_query("SELECT id, name FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
-            selected_cust = st.selectbox("Select Customer for RD", list(cust_dict.keys()), key="rd_cust")
+            selected_cust = st.selectbox("Select Customer Name for RD", list(cust_dict.keys()), key="rd_cust")
             monthly_amt = st.number_input("Monthly Installment Amount (₹)", min_value=100.0, value=1000.0)
             tenure = st.slider("Tenure (Months)", 6, 60, 12, key="rd_tenure")
             interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.0, key="rd_rate")
@@ -495,6 +517,7 @@ elif menu == "Recurring Deposits (RD)":
         if rds:
             df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status"])
             st.dataframe(df_rds, use_container_width=True)
+            st.download_button("Download RDs PDF Report", create_pdf_report("Recurring Deposits Summary", df_rds), "rd_summary.pdf", "application/pdf")
             
             rd_pay_id = st.number_input("Enter RD ID to Pay Installment", min_value=1, step=1)
             if st.button("Pay Next Installment"):
@@ -524,6 +547,7 @@ elif menu == "Retrieval Account":
     if ret_accs:
         df_ret = pd.DataFrame(ret_accs, columns=["Retrieval Account No", "Customer Name", "Balance (₹)"])
         st.dataframe(df_ret, use_container_width=True)
+        st.download_button("Download Retrieval Summary PDF", create_pdf_report("Retrieval Accounts Summary", df_ret), "retrieval_summary.pdf", "application/pdf")
     else:
         st.write("No funds currently resting in the Retrieval Accounts pool.")
 
@@ -533,6 +557,7 @@ elif menu == "Chart of Accounts":
     accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
     df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
     st.dataframe(df_coa, use_container_width=True)
+    st.download_button("Download Chart of Accounts PDF", create_pdf_report("Chart of Accounts Report", df_coa), "chart_of_accounts.pdf", "application/pdf")
     
     st.subheader("Add Custom Account Head")
     with st.form("coa_form"):
@@ -554,7 +579,9 @@ elif menu == "Transactions":
     if txs:
         df_all_tx = pd.DataFrame(txs, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
         st.dataframe(df_all_tx, use_container_width=True)
-        st.download_button("Export Transaction Ledger (CSV)", df_all_tx.to_csv(index=False).encode('utf-8'), "transactions_ledger.csv", "text/csv")
+        col1, col2 = st.columns(2)
+        col1.download_button("Export Ledger (CSV)", df_all_tx.to_csv(index=False).encode('utf-8'), "transactions_ledger.csv", "text/csv")
+        col2.download_button("Export Ledger (PDF)", create_pdf_report("Complete Transactions Ledger", df_all_tx), "transactions_ledger.pdf", "application/pdf")
     else:
         st.info("No transaction logs recorded.")
 
@@ -568,7 +595,13 @@ elif menu == "Journal Vouchers":
             v_date = st.date_input("Voucher Date", value=date.today())
             narration = st.text_input("Narration / Description")
             
-            st.write("### Voucher Entries")
+            st.write("### Voucher Entries with Person Drill-Down")
+            customers = run_query("SELECT id, name FROM customers")
+            cust_dict = {"None (General Entry)": None}
+            if customers:
+                cust_dict.update({f"{c[1]} (ID: {c[0]})": c[0] for c in customers})
+            selected_person = st.selectbox("Map to Person / Customer (Optional)", list(cust_dict.keys()))
+            
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
@@ -581,19 +614,19 @@ elif menu == "Journal Vouchers":
             dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
             cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
-            if st.form_submit_button("Save as DRAFT / POST"):
+            if st.form_submit_button("Save and Post JV"):
                 total_dr = dr1 + dr2
                 total_cr = cr1 + cr2
                 if total_dr == total_cr and total_dr > 0:
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), f"{narration} [Mapped Cust ID: {cust_dict[selected_person]}]"))
                     jv_id = cursor.lastrowid
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
                     conn.commit()
                     conn.close()
-                    st.success("Balanced Journal Voucher successfully posted!")
+                    st.success("Balanced Journal Voucher posted successfully!")
                 else:
                     st.error("Journal Voucher is unbalanced! Total Debits must equal Total Credits.")
 
@@ -602,17 +635,25 @@ elif menu == "Journal Vouchers":
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
+            st.download_button("Download JVs PDF", create_pdf_report("Journal Vouchers Report", df_jvs), "journal_vouchers.pdf", "application/pdf")
         else:
             st.info("No journal vouchers found.")
 
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income & Expenses")
-    tab1, tab2 = st.tabs(["Record Financial Entry", "View Income/Expense Logs"])
+    tab1, tab2 = st.tabs(["Record Financial Entry with Person Drill-Down", "View Income/Expense Logs"])
     
     with tab1:
         with st.form("ie_form"):
             entry_type = st.selectbox("Entry Type", ["INCOME", "EXPENSE"])
+            
+            customers = run_query("SELECT id, name FROM customers")
+            cust_dict = {"None (General Ledger)": None}
+            if customers:
+                cust_dict.update({f"{c[1]} (ID: {c[0]})": c[0] for c in customers})
+            selected_cust = st.selectbox("Drill-Down: Select Associated Customer Name", list(cust_dict.keys()))
+            
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type=?", ("Income" if entry_type=="INCOME" else "Expense",))
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
@@ -624,15 +665,19 @@ elif menu == "Income & Expenses":
             if st.form_submit_button("Record Entry"):
                 run_query("""
                     INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
-                    VALUES (?, NULL, ?, ?, ?, ?, ?)
-                """, (entry_type, coa_dict[account_head], amount, mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
-                st.success(f"{entry_type} entry recorded successfully!")
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (entry_type, cust_dict[selected_cust], coa_dict[account_head], amount, mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
+                st.success(f"{entry_type} entry recorded and mapped successfully!")
 
     with tab2:
-        finances = run_query("SELECT id, type, account_code, amount, mode, date, narration FROM operational_finances")
+        finances = run_query("""
+            SELECT o.id, o.type, c.name, o.account_code, o.amount, o.mode, o.date, o.narration 
+            FROM operational_finances o LEFT JOIN customers c ON o.customer_id = c.id
+        """)
         if finances:
-            df_fin = pd.DataFrame(finances, columns=["ID", "Type", "Account Code", "Amount (₹)", "Mode", "Date", "Narration"])
+            df_fin = pd.DataFrame(finances, columns=["ID", "Type", "Customer Name", "Account Code", "Amount (₹)", "Mode", "Date", "Narration"])
             st.dataframe(df_fin, use_container_width=True)
+            st.download_button("Download Income/Expense PDF", create_pdf_report("Income and Expenses Statement", df_fin), "income_expenses.pdf", "application/pdf")
         else:
             st.info("No operational financial logs recorded.")
 
@@ -647,7 +692,6 @@ elif menu == "Interest Calculation":
         run_query("UPDATE sb_accounts SET interest_rate=?", (new_rate,), fetch=False)
         st.success(f"Interest rate updated to {new_rate}% for all active savings accounts!")
 
-
 # --- 13. FINANCIAL STATEMENTS (TRIAL BALANCE / BS / PL) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Accounting Reports")
@@ -655,27 +699,25 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     
     with tab1:
         st.subheader("Trial Balance Summary")
-        
-        # FIXED: Added missing SELECT keyword and proper table joins
         entries = run_query("""
             SELECT JE.account_code, CO.account_name, SUM(JE.debit), SUM(JE.credit)
-            FROM jv_entries JE 
-            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+            FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
             GROUP BY JE.account_code
         """)
-        
         if entries:
             df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Total Debit (₹)", "Total Credit (₹)"])
             st.dataframe(df_tb, use_container_width=True)
+            st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
-            st.info("No journal voucher entries recorded yet to generate the Trial Balance.")
+            st.info("No journal entries recorded to construct Trial Balance.")
 
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         tot_assets = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_liabilities = tot_assets
-        st.metric("Total Asset Holdings", f"₹{tot_assets:,.2f}")
-        st.metric("Total Liabilities & Deposits", f"₹{tot_liabilities:,.2f}")
+        col1, col2 = st.columns(2)
+        col1.metric("Total Asset Holdings", f"₹{tot_assets:,.2f}")
+        col2.metric("Total Liabilities & Deposits", f"₹{tot_liabilities:,.2f}")
         st.success("Balance Sheet Perfectly Balanced!")
 
     with tab3:
@@ -693,22 +735,35 @@ elif menu == "Financial Statements (Trial/BS/PL)":
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
     report_type = st.selectbox("Select Report to Generate", [
-        "Customer List Report", "Daily Transactions Report", "FD Summary Report", "RD Summary Report"
+        "Customer List Report", "Daily Transactions Report", "FD Summary Report", "RD Summary Report", "Income & Expense Breakdown"
     ])
     
-    if st.button("Generate & Export CSV Report"):
+    if st.button("Generate & Display Report"):
         if "Customer" in report_type:
             data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
             df = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status", "Joined"])
             st.dataframe(df, use_container_width=True)
-            st.download_button("Download CSV", df.to_csv(index=False).encode('utf-8'), "customer_report.csv", "text/csv")
+            st.download_button("Download PDF", create_pdf_report("Customer Directory", df), "customer_list.pdf", "application/pdf")
         elif "Transaction" in report_type:
             data = run_query("SELECT tx_id, account_no, type, amount, mode, date FROM transactions")
             df = pd.DataFrame(data, columns=["Tx ID", "Account No", "Type", "Amount", "Mode", "Date"])
             st.dataframe(df, use_container_width=True)
-            st.download_button("Download CSV", df.to_csv(index=False).encode('utf-8'), "transaction_report.csv", "text/csv")
+            st.download_button("Download PDF", create_pdf_report("Daily Transactions Report", df), "transactions_report.pdf", "application/pdf")
+        elif "FD" in report_type:
+            data = run_query("SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.status FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id")
+            df = pd.DataFrame(data, columns=["FD ID", "Customer Name", "Principal", "Maturity", "Status"])
+            st.dataframe(df, use_container_width=True)
+            st.download_button("Download PDF", create_pdf_report("Fixed Deposits Summary", df), "fd_summary.pdf", "application/pdf")
+        elif "RD" in report_type:
+            data = run_query("SELECT r.rd_id, c.name, r.monthly_amount, r.installments_paid, r.status FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id")
+            df = pd.DataFrame(data, columns=["RD ID", "Customer Name", "Monthly", "Paid", "Status"])
+            st.dataframe(df, use_container_width=True)
+            st.download_button("Download PDF", create_pdf_report("Recurring Deposits Summary", df), "rd_summary.pdf", "application/pdf")
         else:
-            st.info("Report generated successfully.")
+            data = run_query("SELECT type, amount, mode, date FROM operational_finances")
+            df = pd.DataFrame(data, columns=["Type", "Amount", "Mode", "Date"])
+            st.dataframe(df, use_container_width=True)
+            st.download_button("Download PDF", create_pdf_report("Income & Expense Breakdown", df), "income_expense_breakdown.pdf", "application/pdf")
 
 # --- 15. CUSTOMER PORTAL ---
 elif menu == "Customer Portal":
@@ -718,12 +773,14 @@ elif menu == "Customer Portal":
         cust_info = run_query("SELECT name, phone, kyc_status FROM customers WHERE id=?", (cust_id_login,))
         if cust_info:
             name, phone, kyc = cust_info[0]
-            st.success(welc := f"Welcome back, **{name}**! KYC Status: `{kyc}`")
+            st.success(f"Welcome back, **{name}**! KYC Status: `{kyc}`")
             
             st.subheader("Your Savings Accounts")
             sb = run_query("SELECT account_no, balance, interest_rate FROM sb_accounts WHERE customer_id=?", (cust_id_login,))
             if sb:
-                st.dataframe(pd.DataFrame(sb, columns=["Account No", "Balance (₹)", "Interest Rate (%)"]), use_container_width=True)
+                df_cust_sb = pd.DataFrame(sb, columns=["Account No", "Balance (₹)", "Interest Rate (%)"])
+                st.dataframe(df_cust_sb, use_container_width=True)
+                st.download_button("Download My Account Summary PDF", create_pdf_report(f"Account Statement - {name}", df_cust_sb), "my_accounts.pdf", "application/pdf")
             else:
                 st.info("No savings account mapped to this ID.")
         else:

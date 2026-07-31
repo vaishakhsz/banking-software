@@ -303,7 +303,7 @@ if role == "Admin/Staff":
         "Dashboard", "Customer Management", "KYC Verification", "SB Accounts",
         "Fixed Deposits (FD)", "Recurring Deposits (RD)", "Retrieval Account",
         "Chart of Accounts", "Transactions", "Journal Vouchers", "Income & Expenses",
-        "Interest Calculation", "Admin Record Editor", "Financial Statements (Trial/BS/PL)", "Reports", "SB FD RD PDF Viewer"
+        "Interest Calculation", "Admin Record Editor", "Financial Statements (Trial/BS/PL)", "Reports"
     ])
 else:
     menu = "Customer Portal"
@@ -319,11 +319,12 @@ if menu == "Dashboard":
     total_fd = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
     total_rd = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4,col5 = st.columns(5)
     col1.metric("Total Customers", total_cust, f"Pending KYC: {kyc_pending}")
     col2.metric("SB Accounts Active", sb_count, f"Balance: ₹{total_sb_dep:,.2f}")
     col3.metric("Active FD Portfolio", f"₹{total_fd:,.2f}")
     col4.metric("Active RD Portfolio", f"₹{total_rd:,.2f}")
+    col5.metric("Active SB Portfolio", f"₹{total_sb_dep:,.2f}")
 
     st.markdown("---")
     st.subheader("Recent Activity (Last 10 Transactions)")
@@ -444,7 +445,7 @@ elif menu == "KYC Verification":
 # --- 4. SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
-    tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts", "SB Reports & Documents Viewer"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -522,10 +523,53 @@ elif menu == "SB Accounts":
         else:
             st.info("No active SB accounts found.")
 
+    with tab4:
+        st.subheader("📂 SB Reports & Customer Document Viewer")
+        st.write("View or download stored PDF reports and customer files linked to SB accounts.")
+        
+        sb_docs = run_query("""
+            SELECT DISTINCT c.id, c.name, c.adhar_file, c.pan_file, c.signature_file 
+            FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
+        """)
+        if sb_docs:
+            cust_choices = {f"{c[1]} (Customer ID: {c[0]})": c for c in sb_docs}
+            chosen_cust_key = st.selectbox("Select SB Customer", list(cust_choices.keys()), key="sb_viewer_cust")
+            selected_cust_rec = cust_choices[chosen_cust_key]
+            
+            cust_id, cust_name, adhar_path, pan_path, sig_path = selected_cust_rec
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("### Aadhaar Document")
+                if adhar_path and os.path.exists(adhar_path):
+                    st.success(f"File: `{os.path.basename(adhar_path)}`")
+                    with open(adhar_path, "rb") as f:
+                        st.download_button("Download Aadhaar", f.read(), file_name=os.path.basename(adhar_path), key="dl_sb_adh")
+                else:
+                    st.info("No Aadhaar document uploaded.")
+            with col2:
+                st.markdown("### PAN Document")
+                if pan_path and os.path.exists(pan_path):
+                    st.success(f"File: `{os.path.basename(pan_path)}`")
+                    with open(pan_path, "rb") as f:
+                        st.download_button("Download PAN", f.read(), file_name=os.path.basename(pan_path), key="dl_sb_pan")
+                else:
+                    st.info("No PAN document uploaded.")
+            with col3:
+                st.markdown("### Signature File")
+                if sig_path and os.path.exists(sig_path):
+                    st.success(f"File: `{os.path.basename(sig_path)}`")
+                    with open(sig_path, "rb") as f:
+                        st.download_button("Download Signature", f.read(), file_name=os.path.basename(sig_path), key="dl_sb_sig")
+                else:
+                    st.info("No signature file uploaded.")
+        else:
+            st.info("No customer documents linked to active SB accounts found.")
+
 # --- 5. FIXED DEPOSITS (FD) ---
 elif menu == "Fixed Deposits (FD)":
     st.title("📈 Fixed Deposits Management & Closure")
-    tab1, tab2 = st.tabs(["Open FD", "Active FDs, Close & Delete"])
+    tab1, tab2, tab3 = st.tabs(["Open FD", "Active FDs, Close & Delete", "FD Reports & Document Viewer"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -560,7 +604,8 @@ elif menu == "Fixed Deposits (FD)":
             cleaned_fds = [row[:-1] if len(row) > 7 else row for row in fds]
             df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
             st.dataframe(df_fds, use_container_width=True)
-            st.download_button("Download FDs PDF", create_pdf_report("Fixed Deposits Report", df_fds), "fds.pdf", "application/pdf")
+            
+            st.download_button("Download FDs PDF Report", create_pdf_report("Fixed Deposits Report", df_fds), "fixed_deposits.pdf", "application/pdf")
             
             st.markdown("---")
             st.subheader("Close / Settle or Delete FD Account")
@@ -601,10 +646,53 @@ elif menu == "Fixed Deposits (FD)":
         else:
             st.info("No fixed deposits found.")
 
+    with tab3:
+        st.subheader("📂 FD Reports & Customer Document Viewer")
+        st.write("Inspect customer records and documents linked to Fixed Deposits.")
+        
+        fd_docs = run_query("""
+            SELECT DISTINCT c.id, c.name, c.adhar_file, c.pan_file, c.signature_file 
+            FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
+        """)
+        if fd_docs:
+            cust_choices = {f"{c[1]} (Customer ID: {c[0]})": c for c in fd_docs}
+            chosen_cust_key = st.selectbox("Select FD Customer", list(cust_choices.keys()), key="fd_viewer_cust")
+            selected_cust_rec = cust_choices[chosen_cust_key]
+            
+            cust_id, cust_name, adhar_path, pan_path, sig_path = selected_cust_rec
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("### Aadhaar Document")
+                if adhar_path and os.path.exists(adhar_path):
+                    st.success(f"File: `{os.path.basename(adhar_path)}`")
+                    with open(adhar_path, "rb") as f:
+                        st.download_button("Download Aadhaar", f.read(), file_name=os.path.basename(adhar_path), key="dl_fd_adh")
+                else:
+                    st.info("No Aadhaar document uploaded.")
+            with col2:
+                st.markdown("### PAN Document")
+                if pan_path and os.path.exists(pan_path):
+                    st.success(f"File: `{os.path.basename(pan_path)}`")
+                    with open(pan_path, "rb") as f:
+                        st.download_button("Download PAN", f.read(), file_name=os.path.basename(pan_path), key="dl_fd_pan")
+                else:
+                    st.info("No PAN document uploaded.")
+            with col3:
+                st.markdown("### Signature File")
+                if sig_path and os.path.exists(sig_path):
+                    st.success(f"File: `{os.path.basename(sig_path)}`")
+                    with open(sig_path, "rb") as f:
+                        st.download_button("Download Signature", f.read(), file_name=os.path.basename(sig_path), key="dl_fd_sig")
+                else:
+                    st.info("No signature file uploaded.")
+        else:
+            st.info("No customer documents linked to active FD accounts found.")
+
 # --- 6. RECURRING DEPOSITS (RD) ---
 elif menu == "Recurring Deposits (RD)":
     st.title("🔄 Recurring Deposits Management & Installment Payment")
-    tab1, tab2, tab3 = st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion", "RD Reports & Document Viewer"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -669,6 +757,8 @@ elif menu == "Recurring Deposits (RD)":
             df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status"])
             st.dataframe(df_rds, use_container_width=True)
             
+            st.download_button("Download RDs PDF Report", create_pdf_report("Recurring Deposits Report", df_rds), "recurring_deposits.pdf", "application/pdf")
+            
             st.markdown("### Delete RD Record")
             del_rd_id = st.number_input("Enter RD ID to Delete", min_value=1, step=1, key="del_rd")
             if st.button("Delete RD Record"):
@@ -677,6 +767,49 @@ elif menu == "Recurring Deposits (RD)":
                 st.rerun()
         else:
             st.info("No recurring deposits found.")
+
+    with tab4:
+        st.subheader("📂 RD Reports & Customer Document Viewer")
+        st.write("Inspect customer records and files linked to Recurring Deposits.")
+        
+        rd_docs = run_query("""
+            SELECT DISTINCT c.id, c.name, c.adhar_file, c.pan_file, c.signature_file 
+            FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
+        """)
+        if rd_docs:
+            cust_choices = {f"{c[1]} (Customer ID: {c[0]})": c for c in rd_docs}
+            chosen_cust_key = st.selectbox("Select RD Customer", list(cust_choices.keys()), key="rd_viewer_cust")
+            selected_cust_rec = cust_choices[chosen_cust_key]
+            
+            cust_id, cust_name, adhar_path, pan_path, sig_path = selected_cust_rec
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("### Aadhaar Document")
+                if adhar_path and os.path.exists(adhar_path):
+                    st.success(f"File: `{os.path.basename(adhar_path)}`")
+                    with open(adhar_path, "rb") as f:
+                        st.download_button("Download Aadhaar", f.read(), file_name=os.path.basename(adhar_path), key="dl_rd_adh")
+                else:
+                    st.info("No Aadhaar document uploaded.")
+            with col2:
+                st.markdown("### PAN Document")
+                if pan_path and os.path.exists(pan_path):
+                    st.success(f"File: `{os.path.basename(pan_path)}`")
+                    with open(pan_path, "rb") as f:
+                        st.download_button("Download PAN", f.read(), file_name=os.path.basename(pan_path), key="dl_rd_pan")
+                else:
+                    st.info("No PAN document uploaded.")
+            with col3:
+                st.markdown("### Signature File")
+                if sig_path and os.path.exists(sig_path):
+                    st.success(f"File: `{os.path.basename(sig_path)}`")
+                    with open(sig_path, "rb") as f:
+                        st.download_button("Download Signature", f.read(), file_name=os.path.basename(sig_path), key="dl_rd_sig")
+                else:
+                    st.info("No signature file uploaded.")
+        else:
+            st.info("No customer documents linked to active RD accounts found.")
 
 # --- 7. RETRIEVAL ACCOUNT ---
 elif menu == "Retrieval Account":
@@ -949,7 +1082,6 @@ elif menu == "Income & Expenses":
         else:
             st.info("No operational income or expense entries found for the Cash Book report.")
 
-
 # --- 12. INTEREST CALCULATION ---
 elif menu == "Interest Calculation":
     st.title("📊 SB Interest Calculation & Drill-Down")
@@ -1196,51 +1328,7 @@ elif menu == "Reports":
             st.dataframe(df, use_container_width=True)
             st.download_button("Download PDF", create_pdf_report("Income & Expense Breakdown", df), "income_expense_breakdown.pdf", "application/pdf")
 
-# --- 16. SB FD RD PDF VIEWER ---
-elif menu == "SB FD RD PDF Viewer":
-    st.title("📂 SB, FD & RD PDF Documents Viewer")
-    st.write("View or download stored customer document files (Aadhaar/PAN PDFs or images) associated with SB, FD, and RD customer accounts.")
-    
-    customers_with_docs = run_query("SELECT id, name, adhar_file, pan_file, signature_file FROM customers WHERE adhar_file IS NOT NULL OR pan_file IS NOT NULL")
-    if customers_with_docs:
-        cust_choices = {f"{c[1]} (ID: {c[0]})": c for c in customers_with_docs}
-        chosen_cust_key = st.selectbox("Select Customer", list(cust_choices.keys()))
-        selected_cust_rec = cust_choices[chosen_cust_key]
-        
-        cust_id, cust_name, adhar_path, pan_path, sig_path = selected_cust_rec
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("### Aadhaar Document")
-            if adhar_path and os.path.exists(adhar_path):
-                st.success(f"File found: `{adhar_path}`")
-                with open(adhar_path, "rb") as f:
-                    st.download_button("Download Aadhaar File", f.read(), file_name=os.path.basename(adhar_path))
-            else:
-                st.info("No Aadhaar document uploaded.")
-                
-        with col2:
-            st.markdown("### PAN Document")
-            if pan_path and os.path.exists(pan_path):
-                st.success(f"File found: `{pan_path}`")
-                with open(pan_path, "rb") as f:
-                    st.download_button("Download PAN File", f.read(), file_name=os.path.basename(pan_path))
-            else:
-                st.info("No PAN document uploaded.")
-                
-        with col3:
-            st.markdown("### Signature File")
-            if sig_path and os.path.exists(sig_path):
-                st.success(f"File found: `{sig_path}`")
-                with open(sig_path, "rb") as f:
-                    st.download_button("Download Signature", f.read(), file_name=os.path.basename(sig_path))
-            else:
-                st.info("No signature file uploaded.")
-    else:
-        st.info("No customer records with uploaded documents found.")
-
-# --- 17. CUSTOMER PORTAL ---
+# --- 16. CUSTOMER PORTAL ---
 elif menu == "Customer Portal":
     st.title("👤 Customer Account Portal")
     cust_id_login = st.number_input("Enter Your Customer ID", min_value=1, step=1)

@@ -204,26 +204,37 @@ def create_pdf_report(title, df):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, title, 0, 1, "C")
+    
+    # Clean title of any non-latin characters like ₹
+    clean_title = title.encode('ascii', 'ignore').decode('ascii')
+    pdf.cell(0, 10, clean_title, 0, 1, "C")
+    
     pdf.set_font("Arial", "I", 10)
     pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Aasha Nidhi Bank", 0, 1, "C")
     pdf.ln(5)
     
     pdf.set_font("Arial", "B", 10)
     if not df.empty:
-        cols = list(df.columns)
-        col_width = 190 / len(cols)
+        # Clean dataframe column names and string cells of non-latin characters (e.g. ₹)
+        df_clean = df.copy()
+        df_clean.columns = [str(col).replace('₹', 'Rs.').encode('ascii', 'ignore').decode('ascii') for col in df_clean.columns]
+        for col in df_clean.columns:
+            df_clean[col] = df_clean[col].astype(str).str.replace('₹', 'Rs.').str.encode('ascii', 'ignore').str.decode('ascii')
+
+        cols = list(df_clean.columns)
+        col_width = 190 / len(cols) if len(cols) > 0 else 190
+        
         for col in cols:
             pdf.cell(col_width, 8, str(col)[:15], 1, 0, "C")
         pdf.ln()
         
         pdf.set_font("Arial", "", 9)
-        for row in df.itertuples(index=False):
+        for row in df_clean.itertuples(index=False):
             for val in row:
                 pdf.cell(col_width, 6, str(val)[:20], 1, 0, "C")
             pdf.ln()
             
-    return pdf.output(dest='S').encode('latin1')
+    return pdf.output(dest='S').encode('latin1', errors='ignore')
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("🏦 Aasha Nidhi Bank")

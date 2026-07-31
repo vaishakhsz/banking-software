@@ -543,11 +543,14 @@ elif menu == "Fixed Deposits (FD)":
          df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
          st.dataframe(df_fds, use_container_width=True)
          
+         
             
-            st.markdown("---")
-            st.subheader("Close / Settle or Delete FD Account")
-            active_fds = [f for f in fds if f[6] == 'ACTIVE']
+         st.markdown("---")
+         st.subheader("Close / Settle or Delete FD Account")
+         active_fds = [f for f in fds if f[6] == 'ACTIVE']
+         
             if active_fds:
+                
                 fd_choice = st.selectbox("Select Active FD ID to Close/Settle", [f[0] for f in active_fds])
                 selected_fd_record = next(f for f in fds if f[0] == fd_choice)
                 

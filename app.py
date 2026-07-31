@@ -949,11 +949,11 @@ elif menu == "Admin Record Editor":
 
 # --- 14. FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
-    st.title("⚖️ Financial Statements & Accounting Reports")
+    st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
     
     with tab1:
-        st.subheader("Trial Balance Summary (Auto-Updated)")
+        st.subheader("Trial Balance Summary")
         entries = run_query("""
             SELECT JE.account_code, CO.account_name, SUM(JE.debit), SUM(JE.credit)
             FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
@@ -964,28 +964,33 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.dataframe(df_tb, use_container_width=True)
             st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
-            st.info("No deposit or transaction entries recorded yet.")
+            st.info("No entries recorded yet.")
 
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # 1. Fetch exact live totals from your active database records
+        # Fetch dynamic live totals from database
         tot_sb_assets = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_liabilities = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_liabilities = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         
-        # Total customer liabilities (SB 50,000 + FD 3,00,000 = 3,50,000)
-        total_customer_funds = tot_sb_assets + tot_fd_liabilities + tot_rd_liabilities
+        # Fetch Capital / Equity directly from Journal Entry credits posted to Equity accounts (e.g., EQT-101)
+        tot_capital_equity = run_query("""
+            SELECT COALESCE(SUM(JE.credit - JE.debit), 0.0) 
+            FROM jv_entries JE 
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+            WHERE CO.account_type = 'Equity'
+        """)[0][0] or 0.0
         
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### Assets")
-            # Vault cash automatically matches total deposits received (₹3,50,000)
-            cash_in_hand = st.number_input("Vault Cash / Physical Currency (₹)", value=float(total_customer_funds), step=1000.0)
+            # Automatically set default vault cash to match customer liabilities + equity pool
+            default_vault = tot_sb_assets + tot_fd_liabilities + tot_rd_liabilities + tot_capital_equity
+            cash_in_hand = st.number_input("Vault Cash / Physical Currency (₹)", value=float(default_vault), step=1000.0)
             loans_advances = st.number_input("Loans & Advances Receivable (₹)", value=0.0, step=1000.0)
-            other_assets = st.number_input("Other Current Assets (₹)", value=0.0, step=1000.0)
             
-            total_assets = cash_in_hand + loans_advances + other_assets
+            total_assets = cash_in_hand + loans_advances
             st.metric("Total Asset Holdings", f"₹{total_assets:,.2f}")
             
         with col2:
@@ -993,7 +998,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             sb_deposits_liab = st.number_input("Savings Bank (SB) Deposits Control (₹)", value=tot_sb_assets, step=1000.0)
             fd_deposits_liab = st.number_input("Fixed Deposits (FD) Control (₹)", value=tot_fd_liabilities, step=1000.0)
             rd_deposits_liab = st.number_input("Recurring Deposits (RD) Control (₹)", value=tot_rd_liabilities, step=1000.0)
-            capital_equity = st.number_input("Capital & Reserves (₹)", value=0.0, step=1000.0)
+            
+            # Capital / Equity dynamically pulled from database JVs
+            capital_equity = st.number_input("Capital & Reserves (₹)", value=float(tot_capital_equity), step=1000.0)
             
             total_liabilities = sb_deposits_liab + fd_deposits_liab + rd_deposits_liab + capital_equity
             st.metric("Total Liabilities & Equity", f"₹{total_liabilities:,.2f}")
@@ -1001,7 +1008,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         st.markdown("---")
         diff = total_assets - total_liabilities
         if abs(diff) < 0.01:
-            st.success("Balance Sheet Perfectly Balanced at ₹3,50,000!")
+            st.success("Balance Sheet Perfectly Balanced!")
         else:
             st.warning(f"Balance Sheet Discrepancy / Difference: ₹{diff:,.2f}")
 
@@ -1010,7 +1017,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 ["Assets Section", "Amount (₹)"],
                 ["Vault Cash / Physical Currency", cash_in_hand],
                 ["Loans & Advances", loans_advances],
-                ["Other Assets", other_assets],
                 ["Total Assets", total_assets],
                 ["Liabilities & Equity", "Amount (₹)"],
                 ["SB Deposits Control", sb_deposits_liab],
@@ -1023,7 +1029,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
 
     with tab3:
-        st.subheader("Profit & Loss Statement")
+        st.subheader("Profit & Loss Statement (Income vs Expenses)")
+        
+        # Strictly calculate Income and Expenses from operational finances (Capital/Equity excluded)
         total_income = run_query("SELECT SUM(amount) FROM operational_finances WHERE type='INCOME'")[0][0] or 0.0
         total_expense = run_query("SELECT SUM(amount) FROM operational_finances WHERE type='EXPENSE'")[0][0] or 0.0
         net_pl = total_income - total_expense
@@ -1031,7 +1039,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Income", f"₹{total_income:,.2f}")
         col2.metric("Total Expenses", f"₹{total_expense:,.2f}")
-        col3.metric("Net Profit / Loss", f"₹{net_pl:,.2f}", delta=f"₹{net_pl:,.2f}")
+        if net_pl >= 0:
+            col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
+        else:
+            col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
 
 # --- 15. REPORTS ---
 elif menu == "Reports":

@@ -322,12 +322,14 @@ if menu == "Dashboard":
     total_sb_dep = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
     total_fd = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
     total_rd = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+    
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4,col5 = st.columns(5)
     col1.metric("Total Customers", total_cust, f"Pending KYC: {kyc_pending}")
     col2.metric("SB Accounts Active", sb_count, f"Balance: ₹{total_sb_dep:,.2f}")
     col3.metric("Active FD Portfolio", f"₹{total_fd:,.2f}")
     col4.metric("Active RD Portfolio", f"₹{total_rd:,.2f}")
+    col5.metric("Active SB Portfolio", f"₹{total_sb_dep:,.2f}")
 
     st.markdown("---")
     st.subheader("Recent Activity (Last 10 Transactions)")

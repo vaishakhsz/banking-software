@@ -1142,132 +1142,186 @@ elif menu == "Admin Record Editor":
         else:
             st.info(f"Table `{selected_table}` is currently empty.")
 
-# --- 14. FINANCIAL STATEMENTS ---
-elif menu == "Financial Statements (Trial/BS/PL)":
-    st.title("⚖️ Financial Statements & Reports")
-    tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
+
+# --- FINANCIAL STATEMENTS & MODULES (With Profit & Loss Integration) ---
+elif menu == "Financial Statements":
+    st.title("📈 Financial Statements & Accounting Reports")
+    tab1, tab2, tab3, tab4 = st.tabs(["Trial Balance", "Profit & Loss (P&L)", "Balance Sheet", "Cash / Day Book"])
     
     with tab1:
-        st.subheader("Trial Balance Summary")
-        entries = run_query("""
-            SELECT JE.account_code, CO.account_name, SUM(JE.debit), SUM(JE.credit)
-            FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-            GROUP BY JE.account_code
+        st.subheader("Trial Balance Summary Reference")
+        tb_data = run_query("""
+            SELECT 
+                CO.account_code, 
+                CO.account_name, 
+                CO.account_type,
+                COALESCE(SUM(JE.debit), 0.0) AS total_debit,
+                COALESCE(SUM(JE.credit), 0.0) AS total_credit
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            GROUP BY CO.account_code, CO.account_name, CO.account_type
         """)
-        if entries:
-            df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Total Debit (₹)", "Total Credit (₹)"])
+        if tb_data:
+            df_tb = pd.DataFrame(tb_data, columns=["Code", "Account Name", "Type", "Total Debit", "Total Credit"])
             st.dataframe(df_tb, use_container_width=True)
-            st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
-            st.info("No entries recorded yet.")
+            st.info("No entries found for Trial Balance.")
 
     with tab2:
-        st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
+        st.subheader("Profit & Loss Statement (Income vs. Expenses)")
         
-        # Pull live balances from database for Assets (Cash vs Bank)
-        cash_in_hand_bal = run_query("""
-            COALESCE(SUM(JE.debit - JE.credit), 0.0)
-            FROM jv_entries JE 
-            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
-            WHERE CO.account_code = 'AST-101'
-        """)[0][0] or 0.0
-
-        bank_balance_val = run_query("""
-            COALESCE(SUM(JE.debit - JE.credit), 0.0)
-            FROM jv_entries JE 
-            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
-            WHERE CO.account_code = 'AST-102'
-        """)[0][0] or 0.0
-
-        # Fallback to total SB deposits if bank balance ledger is empty yet
-        tot_sb_assets = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
-        if bank_balance_val == 0.0:
-            bank_balance_val = tot_sb_assets
-
-        tot_fd_liabilities = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-        tot_rd_liabilities = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+        pl_data = run_query("""
+            SELECT 
+                CO.account_code, 
+                CO.account_name, 
+                CO.account_type,
+                COALESCE(SUM(JE.credit - JE.debit), 0.0) AS net_income,
+                COALESCE(SUM(JE.debit - JE.credit), 0.0) AS net_expense
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            WHERE CO.account_type IN ('Income', 'Expense')
+            GROUP BY CO.account_code, CO.account_name, CO.account_type
+        """)
         
-        tot_capital_equity = run_query("""
-            COALESCE(SUM(JE.credit - JE.debit), 0.0) 
-            FROM jv_entries JE 
-            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
-            WHERE CO.account_type = 'Equity'
-        """)[0][0] or 0.0
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("### Assets")
-            vault_cash = st.number_input("Vault Cash / Physical Currency (AST-101)", value=float(cash_in_hand_bal), step=1000.0)
-            bank_balance = st.number_input("Bank Balance (AST-102)", value=float(bank_balance_val), step=1000.0)
-            loans_advances = st.number_input("Loans & Advances Receivable (₹)", value=0.0, step=1000.0)
+        if pl_data:
+            df_pl = pd.DataFrame(pl_data, columns=["Code", "Name", "Type", "Net Income", "Net Expense"])
             
-            total_assets = vault_cash + bank_balance + loans_advances
-            st.metric("Total Asset Holdings", f"₹{total_assets:,.2f}")
+            # Separate Incomes and Expenses
+            income_rows = df_pl[df_pl['Type'] == 'Income']
+            expense_rows = df_pl[df_pl['Type'] == 'Expense']
             
-        with col2:
-            st.markdown("### Liabilities & Equity")
-            sb_deposits_liab = st.number_input("Savings Bank (SB) Deposits Control (₹)", value=tot_sb_assets, step=1000.0)
-            fd_deposits_liab = st.number_input("Fixed Deposits (FD) Control (₹)", value=tot_fd_liabilities, step=1000.0)
-            rd_deposits_liab = st.number_input("Recurring Deposits (RD) Control (₹)", value=tot_rd_liabilities, step=1000.0)
-            capital_equity = st.number_input("Capital & Reserves (₹)", value=float(tot_capital_equity), step=1000.0)
+            total_revenue = income_rows['Net Income'].sum()
+            total_exp = expense_rows['Net Expense'].sum()
+            net_profit_loss = total_revenue - total_exp
             
-            total_liabilities = sb_deposits_liab + fd_deposits_liab + rd_deposits_liab + capital_equity
-            st.metric("Total Liabilities & Equity", f"₹{total_liabilities:,.2f}")
-            
-        st.markdown("---")
-        diff = total_assets - total_liabilities
-        if abs(diff) < 0.01:
-            st.success("Balance Sheet Perfectly Balanced!")
+            col_pl1, col_pl2 = st.columns(2)
+            with col_pl1:
+                st.markdown("### 🟢 Incomes / Revenues")
+                if not income_rows.empty:
+                    st.dataframe(income_rows[['Code', 'Name', 'Net Income']], use_container_width=True)
+                else:
+                    st.info("No income records found.")
+                st.metric("Total Revenue", f"₹{total_revenue:,.2f}")
+                
+            with col_pl2:
+                st.markdown("### 🔴 Expenses")
+                if not expense_rows.empty:
+                    st.dataframe(expense_rows[['Code', 'Name', 'Net Expense']], use_container_width=True)
+                else:
+                    st.info("No expense records found.")
+                st.metric("Total Expenses", f"₹{total_exp:,.2f}")
+                
+            st.markdown("---")
+            if net_profit_loss >= 0:
+                st.success(f"🟢 Net Profit for the Period: ₹{net_profit_loss:,.2f}")
+            else:
+                st.error(f"🔴 Net Loss for the Period: ₹{abs(net_profit_loss):,.2f}")
+                
+            if st.button("Download P&L PDF Report"):
+                st.download_button(
+                    "Download Profit & Loss PDF", 
+                    create_pdf_report("Profit & Loss Statement", df_pl), 
+                    "profit_and_loss.pdf", 
+                    "application/pdf"
+                )
         else:
-            st.warning(f"Balance Sheet Discrepancy / Difference: ₹{diff:,.2f}")
-
-        if st.button("Export Balance Sheet Report"):
-            bs_data = [
-                ["Assets Section", "Amount (₹)"],
-                ["Vault Cash / Physical Currency", vault_cash],
-                ["Bank Balance", bank_balance],
-                ["Loans & Advances", loans_advances],
-                ["Total Assets", total_assets],
-                ["Liabilities & Equity", "Amount (₹)"],
-                ["SB Deposits Control", sb_deposits_liab],
-                ["FD Deposits Control", fd_deposits_liab],
-                ["RD Deposits Control", rd_deposits_liab],
-                ["Capital & Reserves", capital_equity],
-                ["Total Liabilities & Equity", total_liabilities]
-            ]
-            df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
-            st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
-```[cite: 1]
+            st.info("No income or expense entries found.")
 
     with tab3:
-        st.subheader("Profit & Loss Statement (Strictly Operational Revenue vs Expenses)")
+        st.subheader("Automated Balance Sheet (Derived from Chart of Accounts & Trial Balance)")
         
-        total_income = run_query("""
-            SELECT COALESCE(SUM(o.amount), 0.0) 
-            FROM operational_finances o 
-            JOIN chart_of_accounts c ON o.account_code = c.account_code 
-            WHERE c.account_type = 'Income'
-        """)[0][0]
+        coa_balances = run_query("""
+            SELECT 
+                CO.account_code, 
+                CO.account_name, 
+                CO.account_type,
+                COALESCE(SUM(JE.debit - JE.credit), 0.0) AS net_balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            GROUP BY CO.account_code, CO.account_name, CO.account_type
+        """)
         
-        total_expense = run_query("""
-            SELECT COALESCE(SUM(o.amount), 0.0) 
-            FROM operational_finances o 
-            JOIN chart_of_accounts c ON o.account_code = c.account_code 
-            WHERE c.account_type = 'Expense'
-        """)[0][0]
-        
-        net_pl = total_income - total_expense
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"₹{total_income:,.2f}")
-        col2.metric("Total Expenses", f"₹{total_expense:,.2f}")
-        if net_pl >= 0:
-            col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
-        else:
-            col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
+        if coa_balances:
+            df_coa = pd.DataFrame(coa_balances, columns=["Code", "Name", "Type", "Net Balance"])
             
-        st.markdown("---")
-        st.info("Note: The P&L statement exclusively evaluates accounts mapped as Income or Expense. Capital injections are safely isolated to the Balance Sheet and Trial Balance.")
+            df_coa['Presentation Balance'] = df_coa.apply(
+                lambda row: row['Net Balance'] if row['Type'] in ['Asset', 'Expenses'] else -row['Net Balance'], 
+                axis=1
+            )
+            
+            assets_df = df_coa[df_coa['Type'] == 'Asset']
+            liabilities_df = df_coa[df_coa['Type'] == 'Liability']
+            equity_df = df_coa[df_coa['Type'] == 'Equity']
+            income_df = df_coa[df_coa['Type'] == 'Income']
+            expense_df = df_coa[df_coa['Type'] == 'Expense']
+            
+            total_income = income_df['Presentation Balance'].sum()
+            total_expense = expense_df['Presentation Balance'].sum()
+            retained_earnings = total_income - total_expense
+            
+            col_bs1, col_bs2 = st.columns(2)
+            
+            with col_bs1:
+                st.markdown("### 🏛️ ASSETS")
+                if not assets_df.empty:
+                    st.dataframe(assets_df[['Code', 'Name', 'Presentation Balance']], use_container_width=True)
+                    total_assets = assets_df['Presentation Balance'].sum()
+                else:
+                    st.info("No asset heads found.")
+                    total_assets = 0.0
+                st.metric("Total Assets", f"₹{total_assets:,.2f}")
+                
+            with col_bs2:
+                st.markdown("### 📋 LIABILITIES & EQUITY")
+                
+                liab_eq_combined = pd.concat([
+                    liabilities_df[['Code', 'Name', 'Presentation Balance']],
+                    equity_df[['Code', 'Name', 'Presentation Balance']]
+                ])
+                
+                if not liab_eq_combined.empty:
+                    st.dataframe(liab_eq_combined, use_container_width=True)
+                
+                st.markdown(f"**Net Profit / Retained Earnings (Income - Expenses):** ₹{retained_earnings:,.2f}")
+                
+                total_liabilities = liabilities_df['Presentation Balance'].sum()
+                total_equity = equity_df['Presentation Balance'].sum() + retained_earnings
+                total_liab_equity = total_liabilities + total_equity
+                
+                st.metric("Total Liabilities & Equity", f"₹{total_liab_equity:,.2f}")
+                
+            st.markdown("---")
+            diff = total_assets - total_liab_equity
+            if abs(diff) < 0.01:
+                st.success("✅ Balance Sheet is Balanced (Assets = Liabilities + Equity)")
+            else:
+                st.warning(f"⚠️ Balance Sheet Imbalance / Difference: ₹{diff:,.2f}")
+
+    with tab4:
+        st.subheader("📖 Cash Book / Day Book Report")
+        cashbook_data = run_query("""
+            SELECT 
+                o.date,
+                o.id AS 'Voucher No',
+                o.mode AS Mode,
+                o.narration AS Particulars,
+                COALESCE(o.debit_account, o.account_code) AS 'Debit Leg',
+                COALESCE(o.credit_account, o.account_code) AS 'Credit Leg',
+                CASE WHEN o.type = 'INCOME' THEN o.amount ELSE 0.0 END AS 'Receipts (Debit)',
+                CASE WHEN o.type = 'EXPENSE' THEN o.amount ELSE 0.0 END AS 'Payments (Credit)'
+            FROM operational_finances o
+            JOIN chart_of_accounts c ON o.account_code = c.account_code
+            WHERE o.type IN ('INCOME', 'EXPENSE') AND c.account_type IN ('Income', 'Expense')
+            ORDER BY o.date ASC, o.id ASC
+        """)
+        
+        if cashbook_data:
+            df_cb = pd.DataFrame(cashbook_data, columns=["Date", "Voucher No", "Mode", "Particulars", "Debit Leg", "Credit Leg", "Receipts (Debit)", "Payments (Credit)"])
+            df_cb['Balance'] = (df_cb['Receipts (Debit)'] - df_cb['Payments (Credit)']).cumsum()
+            st.dataframe(df_cb, use_container_width=True)
+        else:
+            st.info("No cash book entries recorded yet.")
+
 
 # --- 15. REPORTS ---
 elif menu == "Reports":

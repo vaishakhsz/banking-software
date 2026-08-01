@@ -1250,7 +1250,7 @@ elif menu == "Admin Record Editor":
         else:
             st.info(f"Table `{selected_table}` is currently empty.")
 
-# --- 14. FINANCIAL STATEMENTS (COMPLETE WITH P&L TRANSFER) ---
+# --- 14. FINANCIAL STATEMENTS (CORRECTED - No P&L if no entries) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -1272,22 +1272,32 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # --- CALCULATE P&L NET PROFIT/LOSS ---
-        total_income = run_query("""
-            SELECT COALESCE(SUM(o.amount), 0.0) 
-            FROM operational_finances o 
-            JOIN chart_of_accounts c ON o.account_code = c.account_code 
-            WHERE c.account_type = 'Income'
-        """)[0][0] or 0.0
+        # --- CHECK IF ANY OPERATIONAL FINANCE ENTRIES EXIST ---
+        has_income = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'INCOME'")
+        has_expense = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'EXPENSE'")
+        has_entries = (has_income[0][0] > 0) or (has_expense[0][0] > 0)
         
-        total_expense = run_query("""
-            SELECT COALESCE(SUM(o.amount), 0.0) 
-            FROM operational_finances o 
-            JOIN chart_of_accounts c ON o.account_code = c.account_code 
-            WHERE c.account_type = 'Expense'
-        """)[0][0] or 0.0
-        
-        net_profit_loss = total_income - total_expense
+        # --- CALCULATE P&L NET PROFIT/LOSS (ONLY IF ENTRIES EXIST) ---
+        if has_entries:
+            total_income = run_query("""
+                SELECT COALESCE(SUM(o.amount), 0.0) 
+                FROM operational_finances o 
+                JOIN chart_of_accounts c ON o.account_code = c.account_code 
+                WHERE c.account_type = 'Income'
+            """)[0][0] or 0.0
+            
+            total_expense = run_query("""
+                SELECT COALESCE(SUM(o.amount), 0.0) 
+                FROM operational_finances o 
+                JOIN chart_of_accounts c ON o.account_code = c.account_code 
+                WHERE c.account_type = 'Expense'
+            """)[0][0] or 0.0
+            
+            net_profit_loss = total_income - total_expense
+        else:
+            total_income = 0
+            total_expense = 0
+            net_profit_loss = 0
         
         # Get all account balances from trial balance
         account_balances = run_query("""
@@ -1315,7 +1325,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             elif acc_type == "Equity":
                 equity[acc_name] = net_bal if net_bal != 0 else 0
         
-        # --- CRITICAL: Add Net Profit/Loss to Retained Earnings ---
+        # --- ONLY UPDATE RETAINED EARNINGS IF THERE ARE ENTRIES ---
         retained_earnings_balance = run_query("""
             SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
             FROM jv_entries JE 
@@ -1323,7 +1333,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_name = 'Retained Earnings'
         """)
         retained_earnings = retained_earnings_balance[0][0] if retained_earnings_balance else 0
-        updated_retained_earnings = retained_earnings + net_profit_loss
+        
+        # Only add P&L to Retained Earnings if there are entries
+        if has_entries:
+            updated_retained_earnings = retained_earnings + net_profit_loss
+        else:
+            updated_retained_earnings = retained_earnings
         
         # Get Cash in Hand balance
         cash_in_hand = get_cash_in_hand()
@@ -1390,7 +1405,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             
             for (acc_name,) in all_equity_accounts:
                 if acc_name == "Retained Earnings":
-                    equity_data.append(["Retained Earnings (incl. P&L)", f"₹{updated_retained_earnings:,.2f}"])
+                    # Only show Retained Earnings if it has a value OR if there are P&L entries
+                    if updated_retained_earnings != 0 or has_entries:
+                        label = "Retained Earnings"
+                        if has_entries and net_profit_loss != 0:
+                            label += " (incl. P&L)"
+                        equity_data.append([label, f"₹{updated_retained_earnings:,.2f}"])
                 elif acc_name != "Income Summary":
                     balance = equity.get(acc_name, 0)
                     if balance != 0:
@@ -1413,21 +1433,25 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         st.markdown("---")
         
-        # --- DISPLAY P&L TRANSFER SUMMARY ---
-        st.subheader("📊 Profit & Loss Transfer to Balance Sheet")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Income", f"₹{total_income:,.2f}")
-        with col2:
-            st.metric("Total Expenses", f"₹{total_expense:,.2f}")
-        with col3:
-            if net_profit_loss >= 0:
-                st.metric("Net Profit (Added to Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Profit")
+        # --- DISPLAY P&L TRANSFER SUMMARY (ONLY IF ENTRIES EXIST) ---
+        if has_entries:
+            st.subheader("📊 Profit & Loss Transfer to Balance Sheet")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Income", f"₹{total_income:,.2f}")
+            with col2:
+                st.metric("Total Expenses", f"₹{total_expense:,.2f}")
+            with col3:
+                if net_profit_loss >= 0:
+                    st.metric("Net Profit (Added to Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Profit")
+                else:
+                    st.metric("Net Loss (Deducted from Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
+            
+            if net_profit_loss != 0:
+                st.info(f"💡 **Retained Earnings updated:** ₹{retained_earnings:,.2f} → ₹{updated_retained_earnings:,.2f}")
             else:
-                st.metric("Net Loss (Deducted from Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
-        
-        st.info(f"💡 **Retained Earnings updated:** ₹{retained_earnings:,.2f} → ₹{updated_retained_earnings:,.2f}")
+                st.info("💰 No profit or loss to transfer (Income = Expenses)")
         
         # Balance check
         diff = total_assets - total_liabilities_equity
@@ -1436,8 +1460,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.warning(f"⚠️ Balance Sheet Discrepancy: ₹{diff:,.2f}")
         
-        # --- AUTO-POST JOURNAL ENTRY FOR P&L TRANSFER ---
-        if net_profit_loss != 0:
+        # --- AUTO-POST JOURNAL ENTRY FOR P&L TRANSFER (ONLY IF PROFIT/LOSS EXISTS) ---
+        if has_entries and net_profit_loss != 0:
             st.markdown("---")
             st.subheader("📝 P&L Transfer Journal Entry")
             
@@ -1525,7 +1549,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 if balance != 0:
                     bs_data.append([acc_name, f"₹{balance:,.2f}"])
             
-            bs_data.append(["Retained Earnings (incl. P&L)", f"₹{updated_retained_earnings:,.2f}"])
+            if has_entries and updated_retained_earnings != 0:
+                bs_data.append(["Retained Earnings (incl. P&L)", f"₹{updated_retained_earnings:,.2f}"])
+            elif updated_retained_earnings != 0:
+                bs_data.append(["Retained Earnings", f"₹{updated_retained_earnings:,.2f}"])
             
             for (acc_name,) in all_equity_accounts:
                 if acc_name not in ["Retained Earnings", "Income Summary"]:
@@ -1540,6 +1567,14 @@ elif menu == "Financial Statements (Trial/BS/PL)":
 
     with tab3:
         st.subheader("Profit & Loss Statement")
+        
+        # Check if any entries exist
+        has_income = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'INCOME'")
+        has_expense = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'EXPENSE'")
+        
+        if has_income[0][0] == 0 and has_expense[0][0] == 0:
+            st.info("📋 No income or expense entries recorded yet. Your P&L is empty.")
+            st.stop()
         
         income_details = run_query("""
             SELECT o.account_code, c.account_name, SUM(o.amount) as total
@@ -1599,8 +1634,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
         
-        st.markdown("---")
-        st.info(f"💡 **Net {'Profit' if net_pl >= 0 else 'Loss'}** of ₹{abs(net_pl):,.2f} will be transferred to **Retained Earnings** in the Balance Sheet.")
+        if net_pl != 0:
+            st.markdown("---")
+            st.info(f"💡 **Net {'Profit' if net_pl >= 0 else 'Loss'}** of ₹{abs(net_pl):,.2f} will be transferred to **Retained Earnings** in the Balance Sheet.")
 
 # --- 15. REPORTS ---
 elif menu == "Reports":

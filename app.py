@@ -1143,7 +1143,8 @@ elif menu == "Admin Record Editor":
             st.info(f"Table `{selected_table}` is currently empty.")
 
 
-# --- FINANCIAL STATEMENTS & MODULES (With Profit & Loss Integration) ---
+
+# --- FINANCIAL STATEMENTS & MODULES ---
 elif menu == "Financial Statements":
     st.title("📈 Financial Statements & Accounting Reports")
     tab1, tab2, tab3, tab4 = st.tabs(["Trial Balance", "Profit & Loss (P&L)", "Balance Sheet", "Cash / Day Book"])
@@ -1186,7 +1187,6 @@ elif menu == "Financial Statements":
         if pl_data:
             df_pl = pd.DataFrame(pl_data, columns=["Code", "Name", "Type", "Net Income", "Net Expense"])
             
-            # Separate Incomes and Expenses
             income_rows = df_pl[df_pl['Type'] == 'Income']
             expense_rows = df_pl[df_pl['Type'] == 'Expense']
             
@@ -1297,6 +1297,17 @@ elif menu == "Financial Statements":
             else:
                 st.warning(f"⚠️ Balance Sheet Imbalance / Difference: ₹{diff:,.2f}")
 
+            if st.button("Generate Balance Sheet PDF"):
+                df_export = pd.DataFrame(coa_balances, columns=["Code", "Account Name", "Type", "Balance"])
+                st.download_button(
+                    "Download PDF Report", 
+                    create_pdf_report("Comprehensive Balance Sheet Report", df_export), 
+                    "balance_sheet_comprehensive.pdf", 
+                    "application/pdf"
+                )
+        else:
+            st.info("No Chart of Accounts or Journal entries available to generate the Balance Sheet.")
+
     with tab4:
         st.subheader("📖 Cash Book / Day Book Report")
         cashbook_data = run_query("""
@@ -1321,6 +1332,7 @@ elif menu == "Financial Statements":
             st.dataframe(df_cb, use_container_width=True)
         else:
             st.info("No cash book entries recorded yet.")
+
 
 
 # --- 15. REPORTS ---

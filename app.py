@@ -1221,7 +1221,7 @@ elif menu == "Admin Record Editor":
             st.info(f"Table `{selected_table}` is currently empty.")
 
 # --- FINANCIAL STATEMENTS (FIXED) ---
-# --- 14. FINANCIAL STATEMENTS (FIXED BALANCE SHEET DISPLAY) ---
+# --- 14. FINANCIAL STATEMENTS (FIXED BALANCE SHEET) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -1300,7 +1300,16 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             total_expense = 0
             net_profit_loss = 0
         
-        # --- GET RETAINED EARNINGS ---
+        # --- GET CASH IN HAND DIRECTLY FROM TRIAL BALANCE ---
+        cash_balance = run_query("""
+            SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
+            FROM jv_entries JE 
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+            WHERE CO.account_name = 'Cash in Hand'
+        """)
+        cash_in_hand = cash_balance[0][0] if cash_balance else 0
+        
+        # --- GET RETAINED EARNINGS (or create if needed) ---
         retained_earnings_balance = run_query("""
             SELECT COALESCE(SUM(JE.credit - JE.debit), 0) 
             FROM jv_entries JE 
@@ -1309,13 +1318,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         """)
         retained_earnings = retained_earnings_balance[0][0] if retained_earnings_balance else 0
         
+        # --- CRITICAL: Update Retained Earnings with P&L ---
         if has_entries:
             updated_retained_earnings = retained_earnings + net_profit_loss
         else:
             updated_retained_earnings = retained_earnings
         
-        # --- GET CASH IN HAND ---
-        cash_in_hand = assets.get("Cash in Hand", 0)
+        # --- CRITICAL: Cash in Hand should equal Retained Earnings (if no other assets/liabilities) ---
+        # Show the relationship clearly
+        if has_entries:
+            st.info(f"💡 **Profit/Loss Relationship:** Cash in Hand (₹{cash_in_hand:,.2f}) = Retained Earnings (₹{updated_retained_earnings:,.2f})" if cash_in_hand == updated_retained_earnings else 
+                   f"⚠️ **Note:** Cash in Hand (₹{cash_in_hand:,.2f}) ≠ Retained Earnings (₹{updated_retained_earnings:,.2f})")
         
         # --- DISPLAY ASSETS ---
         col1, col2 = st.columns(2)
@@ -1333,10 +1346,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             asset_data = []
             total_assets = 0
             
-            # FIX: Iterate properly with column indices
             for row in all_asset_accounts:
-                acc_name = row[0]  # First column is account_name
-                acc_code = row[1]  # Second column is account_code
+                acc_name = row[0]
+                acc_code = row[1]
                 
                 if "Deposits" not in acc_name and "Retrieval" not in acc_name:
                     balance = assets.get(acc_name, 0)
@@ -1347,6 +1359,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 asset_data.append(["**Total Assets**", f"**₹{total_assets:,.2f}**"])
                 df_assets = pd.DataFrame(asset_data, columns=["Account", "Amount"])
                 st.dataframe(df_assets, use_container_width=True)
+                
+                # Highlight Cash in Hand
+                st.info(f"💰 **Cash in Hand:** ₹{cash_in_hand:,.2f}")
             else:
                 st.info("No asset data available")
         
@@ -1378,15 +1393,23 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             for row in all_equity_accounts:
                 acc_name = row[0]
                 if acc_name == "Retained Earnings":
-                    if updated_retained_earnings != 0:
+                    if updated_retained_earnings != 0 or has_entries:
                         label = "Retained Earnings"
                         if has_entries and net_profit_loss != 0:
-                            label += " (incl. P&L)"
+                            if net_profit_loss > 0:
+                                label += f" (Profit: ₹{net_profit_loss:,.2f})"
+                            else:
+                                label += f" (Loss: ₹{abs(net_profit_loss):,.2f})"
                         equity_data.append([label, f"₹{updated_retained_earnings:,.2f}"])
                 elif acc_name != "Income Summary":
                     balance = equity.get(acc_name, 0)
                     if balance != 0:
                         equity_data.append([acc_name, f"₹{balance:,.2f}"])
+            
+            # Also show Capital if it exists
+            capital_balance = equity.get("Capital Account", 0)
+            if capital_balance != 0:
+                equity_data.insert(0, ["Capital Account", f"₹{capital_balance:,.2f}"])
             
             combined_data = liability_data + equity_data
             
@@ -1394,7 +1417,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 total_liabilities_equity = 0
                 for name, val in combined_data:
                     if name != "**Total Liabilities & Equity**":
-                        total_liabilities_equity += float(val.replace('₹', '').replace(',', ''))
+                        try:
+                            total_liabilities_equity += float(val.replace('₹', '').replace(',', ''))
+                        except:
+                            pass
                 
                 combined_data.append(["**Total Liabilities & Equity**", f"**₹{total_liabilities_equity:,.2f}**"])
                 df_combined = pd.DataFrame(combined_data, columns=["Account", "Amount"])
@@ -1405,31 +1431,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         st.markdown("---")
         
-        # --- DISPLAY CASH IN HAND ---
-        st.info(f"💰 **Cash in Hand Balance:** ₹{cash_in_hand:,.2f}")
-        
-        # --- DISPLAY P&L SUMMARY ---
-        if has_entries:
-            st.subheader("📊 Profit & Loss Summary")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Income", f"₹{total_income:,.2f}")
-            with col2:
-                st.metric("Total Expenses", f"₹{total_expense:,.2f}")
-            with col3:
-                if net_profit_loss >= 0:
-                    st.metric("Net Profit", f"₹{net_profit_loss:,.2f}", delta="Profit")
-                else:
-                    st.metric("Net Loss", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
-        
         # --- BALANCE CHECK ---
         diff = total_assets - total_liabilities_equity
         if abs(diff) < 0.01:
             st.success("✅ Balance Sheet Perfectly Balanced!")
         else:
             st.warning(f"⚠️ Balance Sheet Discrepancy: ₹{diff:,.2f}")
-            # Show diagnostic
             with st.expander("🔍 Diagnostic Info"):
                 st.write(f"**Total Assets:** ₹{total_assets:,.2f}")
                 st.write(f"**Total Liabilities & Equity:** ₹{total_liabilities_equity:,.2f}")
@@ -1449,6 +1456,23 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 for name, bal in equity.items():
                     if bal != 0:
                         st.write(f"- {name}: ₹{bal:,.2f}")
+        
+        # --- P&L SUMMARY ---
+        if has_entries:
+            st.subheader("📊 Profit & Loss Summary")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Income", f"₹{total_income:,.2f}")
+            with col2:
+                st.metric("Total Expenses", f"₹{total_expense:,.2f}")
+            with col3:
+                if net_profit_loss >= 0:
+                    st.metric("Net Profit (Added to Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Profit")
+                else:
+                    st.metric("Net Loss (Deducted from Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
+            
+            st.info(f"💡 **Cash in Hand (₹{cash_in_hand:,.2f}) = Retained Earnings (₹{updated_retained_earnings:,.2f})**")
         
         if st.button("Export Balance Sheet Report"):
             bs_data = [["ASSETS", "Amount (₹)"]]
@@ -1550,6 +1574,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
             else:
                 col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
+            
+            st.markdown("---")
+            st.info(f"💡 **Net {'Profit' if net_pl >= 0 else 'Loss'}** of ₹{abs(net_pl):,.2f} will be transferred to **Retained Earnings** in the Balance Sheet.")
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")

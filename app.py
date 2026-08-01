@@ -1152,11 +1152,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         for acc_code, acc_name, acc_type, net_bal in account_balances:
             if acc_type == "Asset":
-                assets[acc_name] = net_bal
+                # For assets, positive net balance means asset
+                if net_bal != 0:
+                    assets[acc_name] = abs(net_bal)
             elif acc_type == "Liability":
-                liabilities[acc_name] = net_bal
+                # For liabilities, we want the absolute value (liabilities are credit balances)
+                if net_bal != 0:
+                    liabilities[acc_name] = abs(net_bal)
             elif acc_type == "Equity":
-                equity[acc_name] = net_bal
+                # For equity, we want the absolute value (equity is credit balance)
+                if net_bal != 0:
+                    equity[acc_name] = abs(net_bal)
         
         # Also get SB, FD, RD totals from their respective tables
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
@@ -1176,11 +1182,25 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     asset_data.append([name, f"₹{balance:,.2f}"])
             
             # Add SB, FD, RD balances if not already in assets
-            if "SB Deposits Control" not in assets:
+            if "Union Bank" not in assets and "Bank Balance" not in assets:
+                # Show bank accounts from chart of accounts
+                bank_accounts = run_query("""
+                    SELECT account_name, COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as balance
+                    FROM chart_of_accounts CO
+                    LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                    WHERE CO.account_type = 'Asset' AND CO.account_name IN ('Union Bank', 'State Bank', 'Cash in Hand')
+                    GROUP BY CO.account_name
+                """)
+                for bank_name, bank_bal in bank_accounts:
+                    if bank_bal != 0:
+                        asset_data.append([bank_name, f"₹{abs(bank_bal):,.2f}"])
+            
+            # Add deposit accounts
+            if tot_sb_balance > 0:
                 asset_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
-            if "FD Deposits Control" not in assets:
+            if tot_fd_principal > 0:
                 asset_data.append(["Fixed Deposits (FD) Control", f"₹{tot_fd_principal:,.2f}"])
-            if "RD Deposits Control" not in assets:
+            if tot_rd_invested > 0:
                 asset_data.append(["Recurring Deposits (RD) Control", f"₹{tot_rd_invested:,.2f}"])
             
             if asset_data:
@@ -1199,7 +1219,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             # Display liability accounts from trial balance
             liability_data = []
             for name, balance in liabilities.items():
-                if balance != 0:
+                if balance != 0 and "Deposits" not in name:
                     liability_data.append([name, f"₹{balance:,.2f}"])
             
             # Display equity accounts from trial balance
@@ -1207,6 +1227,14 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             for name, balance in equity.items():
                 if balance != 0:
                     equity_data.append([name, f"₹{balance:,.2f}"])
+            
+            # Add deposit liabilities if they exist
+            if tot_sb_balance > 0:
+                liability_data.append(["SB Deposits Liability", f"₹{tot_sb_balance:,.2f}"])
+            if tot_fd_principal > 0:
+                liability_data.append(["FD Deposits Liability", f"₹{tot_fd_principal:,.2f}"])
+            if tot_rd_invested > 0:
+                liability_data.append(["RD Deposits Liability", f"₹{tot_rd_invested:,.2f}"])
             
             # Combined data
             combined_data = liability_data + equity_data
@@ -1239,13 +1267,15 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             for name, balance in assets.items():
                 if balance != 0:
                     bs_data.append([name, f"₹{balance:,.2f}"])
-            bs_data.append(["---Additional Deposits---", ""])
-            if "SB Deposits Control" not in assets:
+            
+            bs_data.append(["---Deposits---", ""])
+            if tot_sb_balance > 0:
                 bs_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
-            if "FD Deposits Control" not in assets:
+            if tot_fd_principal > 0:
                 bs_data.append(["Fixed Deposits (FD) Control", f"₹{tot_fd_principal:,.2f}"])
-            if "RD Deposits Control" not in assets:
+            if tot_rd_invested > 0:
                 bs_data.append(["Recurring Deposits (RD) Control", f"₹{tot_rd_invested:,.2f}"])
+            
             bs_data.append(["Total Assets", f"₹{total_assets:,.2f}"])
             bs_data.append(["", ""])
             bs_data.append(["LIABILITIES & EQUITY", "Amount (₹)"])
@@ -1253,6 +1283,15 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             for name, balance in liabilities.items():
                 if balance != 0:
                     bs_data.append([name, f"₹{balance:,.2f}"])
+            
+            bs_data.append(["---Deposit Liabilities---", ""])
+            if tot_sb_balance > 0:
+                bs_data.append(["SB Deposits Liability", f"₹{tot_sb_balance:,.2f}"])
+            if tot_fd_principal > 0:
+                bs_data.append(["FD Deposits Liability", f"₹{tot_fd_principal:,.2f}"])
+            if tot_rd_invested > 0:
+                bs_data.append(["RD Deposits Liability", f"₹{tot_rd_invested:,.2f}"])
+                
             bs_data.append(["---Equity---", ""])
             for name, balance in equity.items():
                 if balance != 0:

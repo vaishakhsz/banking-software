@@ -852,7 +852,7 @@ elif menu == "Income & Expenses":
         st.subheader("Record New Financial Entry")
         with st.form("income_expense_form"):
             col1, col2 = st.columns(2)
-            entry_type = col1.selectbox("Entry Classification", ["INCOME", "EXPENSE", "ASSET", "LIABILITY"])
+            entry_type = col1.selectbox("Entry Classification", ["INCOME", "EXPENSE", "ASSET", "LIABILITY","EQUITY"])
             
             coa_records = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]} ({c[2]})": c[0] for c in coa_records}

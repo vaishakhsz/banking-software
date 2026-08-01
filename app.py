@@ -212,6 +212,7 @@ def init_db():
             ("INC-202", "Service Charges", "Income", "Service Income"),
             ("INC-203", "Commission Income", "Income", "Service Income"),
             ("INC-204", "Transaction Fees", "Income", "Service Income"),
+            ("INC-400","Petty Cash Income","Income","pettycash"),
             ("INC-301", "Miscellaneous Income", "Income", "Other Income"),
             ("EXP-101", "SB Interest Paid", "Expense", "Cost of Funds"),
             ("EXP-102", "FD Interest Paid", "Expense", "Cost of Funds"),
@@ -230,6 +231,7 @@ def init_db():
             ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
             ("EQT-101", "Capital Account", "Equity", "Capital"),
             ("EQT-102", "Retained Earnings", "Equity", "Reserves")
+            
         ]
         cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
     else:

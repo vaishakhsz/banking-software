@@ -136,25 +136,26 @@ def init_db():
         )
     """)
 
-    # Journal Vouchers Table
+  # Ensure Journal Voucher Master table exists
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS journal_vouchers (
-            jv_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            voucher_date TEXT,
-            narration TEXT,
-            status TEXT DEFAULT 'POSTED'
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            jv_id TEXT UNIQUE,
+            date TEXT,
+            description TEXT,
+            total_amount REAL
         )
     """)
-
+    
+    # Ensure Journal Voucher Line Items table exists
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS jv_entries (
-            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            jv_id INTEGER,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            jv_id TEXT,
             account_code TEXT,
-            debit REAL DEFAULT 0,
-            credit REAL DEFAULT 0,
-            FOREIGN KEY(jv_id) REFERENCES journal_vouchers(jv_id) ON DELETE CASCADE,
-            FOREIGN KEY(account_code) REFERENCES chart_of_accounts(account_code)
+            debit REAL,
+            credit REAL,
+            FOREIGN KEY (jv_id) REFERENCES journal_vouchers (jv_id)
         )
     """)
 

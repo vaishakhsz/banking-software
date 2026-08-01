@@ -916,7 +916,7 @@ elif menu == "Income & Expenses":
             
             if action == "Edit Entry":
                 with st.form("edit_income_expense_form"):
-                    e_type = st.selectbox("Update Classification", ["INCOME", "EXPENSE", "ASSET", "LIABILITY"], index=["INCOME", "EXPENSE", "ASSET", "LIABILITY"].index(curr_type) if curr_type in ["INCOME", "EXPENSE", "ASSET", "LIABILITY"] else 0)
+                    e_type = st.selectbox("Update Classification", ["INCOME", "EXPENSE", "ASSET", "LIABILITY","EQUITY"], index=["INCOME", "EXPENSE", "ASSET", "LIABILITY","EQUITY"].index(curr_type) if curr_type in ["INCOME", "EXPENSE", "ASSET", "LIABILITY","EQUITY"] else 0)
                     
                     coa_records = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
                     coa_dict = {f"{c[0]} - {c[1]} ({c[2]})": c[0] for c in coa_records}

@@ -80,7 +80,7 @@ def init_db():
         )
     """)
     
-    # Migration safety check for existing databases missing upload columns
+    # Migration safety check
     for col, col_type in [("adhar_file", "TEXT"), ("pan_file", "TEXT"), ("signature_file", "TEXT")]:
         try:
             cursor.execute(f"ALTER TABLE customers ADD COLUMN {col} {col_type}")
@@ -202,7 +202,7 @@ def init_db():
         )
     """)
 
-    # Preload Chart of Accounts if empty
+    # Preload Chart of Accounts
     cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")
     if cursor.fetchone()[0] == 0:
         default_accounts = [
@@ -234,27 +234,6 @@ def init_db():
             ("EQT-103", "Income Summary", "Equity", "Temporary")
         ]
         cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
-    else:
-        # Check and add missing accounts
-        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_code = 'INC-400'")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
-                         ("INC-400", "Petty Cash Income", "Income", "Petty Cash"))
-        
-        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_code = 'EQT-103'")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
-                         ("EQT-103", "Income Summary", "Equity", "Temporary"))
-        
-        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_code = 'AST-102'")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
-                         ("AST-102", "Union Bank of India", "Asset", "Current Assets"))
-        
-        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_code = 'AST-103'")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
-                         ("AST-103", "State Bank of India", "Asset", "Current Assets"))
 
     conn.commit()
     conn.close()
@@ -369,7 +348,7 @@ if role == "Admin/Staff":
 else:
     menu = "Customer Portal"
 
-# --- 1. DASHBOARD ---
+# --- DASHBOARD ---
 if menu == "Dashboard":
     st.title("📊 Bank Dashboard & Overview")
     
@@ -428,9 +407,8 @@ if menu == "Dashboard":
         grand_total = total_sb_dep + total_fd + total_rd
         st.metric("Total Bank Deposits", f"₹{grand_total:,.2f}")
         st.metric("Cash in Hand", f"₹{cash_in_hand:,.2f}")
-        st.write("This circular breakdown reflects the share percentage of capital held across Savings, Fixed, and Recurring deposits.")
 
-# --- 2. CUSTOMER MANAGEMENT ---
+# --- CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":
     st.title("👥 Customer Management Module")
     tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer"])
@@ -517,7 +495,7 @@ elif menu == "Customer Management":
                     """, (new_name, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
                     st.success("Customer details updated successfully across records!")
 
-# --- 3. KYC VERIFICATION ---
+# --- KYC VERIFICATION ---
 elif menu == "KYC Verification":
     st.title("✅ KYC Verification Panel")
     pending = run_query("SELECT id, name, phone, pan, adhar_file, pan_file, signature_file, created_at FROM customers WHERE kyc_status='PENDING'")
@@ -537,7 +515,7 @@ elif menu == "KYC Verification":
     else:
         st.info("No pending KYC verification requests.")
 
-# --- 4. SB ACCOUNTS ---
+# --- SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
     tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts"])
@@ -618,7 +596,7 @@ elif menu == "SB Accounts":
         else:
             st.info("No active SB accounts found.")
 
-# --- 5. FIXED DEPOSITS (FD) ---
+# --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
     st.title("📈 Fixed Deposits Management & Closure")
     tab1, tab2 = st.tabs(["Open FD", "Active FDs, Close & Delete"])
@@ -698,7 +676,7 @@ elif menu == "Fixed Deposits (FD)":
         else:
             st.info("No fixed deposits found.")
 
-# --- 6. RECURRING DEPOSITS (RD) ---
+# --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":
     st.title("🔄 Recurring Deposits Management & Installment Payment")
     tab1, tab2, tab3 = st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion"])
@@ -777,7 +755,7 @@ elif menu == "Recurring Deposits (RD)":
         else:
             st.info("No recurring deposits found.")
 
-# --- 7. RETRIEVAL ACCOUNT ---
+# --- RETRIEVAL ACCOUNT ---
 elif menu == "Retrieval Account":
     st.title("💰 Matured Deposits Retrieval Account")
     ret_accs = run_query("""
@@ -790,7 +768,7 @@ elif menu == "Retrieval Account":
     else:
         st.write("No funds currently resting in the Retrieval Accounts pool.")
 
-# --- 8. CHART OF ACCOUNTS ---
+# --- CHART OF ACCOUNTS ---
 elif menu == "Chart of Accounts":
     st.title("📊 Financial Chart of Accounts")
     accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
@@ -816,7 +794,7 @@ elif menu == "Chart of Accounts":
         st.warning(f"Account code {del_code} deleted.")
         st.rerun()
 
-# --- 9. TRANSACTIONS ---
+# --- TRANSACTIONS ---
 elif menu == "Transactions":
     st.title("💳 All System Transactions Ledger & Deletion")
     txs = run_query("SELECT id, tx_id, account_no, type, amount, mode, narration, date FROM transactions ORDER BY id DESC")
@@ -833,7 +811,7 @@ elif menu == "Transactions":
     else:
         st.info("No transaction logs recorded.")
 
-# --- 10. JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management & Deletion")
     tab1, tab2 = st.tabs(["Create Journal Voucher", "View & Delete Vouchers"])
@@ -887,7 +865,7 @@ elif menu == "Journal Vouchers":
         else:
             st.info("No journal vouchers found.")
 
-# --- 11. INCOME & EXPENSES (COMPLETE FIXED VERSION) ---
+# --- INCOME & EXPENSES (FIXED) ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income, Expenses, Assets & Liabilities")
     tab1, tab2, tab3, tab4 = st.tabs(["Record Entry", "Edit / Delete Entry", "View All Entries", "Cash Book Report & Print"])
@@ -967,10 +945,10 @@ elif menu == "Income & Expenses":
                                    (str(date.today()), f"Petty Cash Income: {narration}"))
                     jv_id = cursor.lastrowid
                     
-                    # DEBIT: Cash in Hand (Asset increases)
+                    # DEBIT: Cash in Hand (Asset increases) - CORRECT!
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
                                  (jv_id, cash_code, amount))
-                    # CREDIT: Petty Cash Income (Income increases)
+                    # CREDIT: Petty Cash Income (Income increases) - CORRECT!
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
                                  (jv_id, account_code, amount))
                     conn.commit()
@@ -978,36 +956,28 @@ elif menu == "Income & Expenses":
                     
                     new_cash = cash_in_hand + amount
                     st.success(f"✅ **Petty Cash Income of ₹{amount:,.2f} recorded successfully!**")
-                    st.info(f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (Increased)\n"
-                           f"📌 **P&L:** Income increased by ₹{amount:,.2f}")
+                    st.info(f"📌 **Journal Entry:** Dr. Cash in Hand ₹{amount:,.2f} | Cr. Petty Cash Income ₹{amount:,.2f}")
+                    st.info(f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f}")
                     st.rerun()
                 
-                # --- CASE 2: Expense from Cash in Hand (Spending Petty Cash) ---
+                # --- CASE 2: Expense from Cash in Hand ---
                 elif entry_type == "EXPENSE" and pay_mode == "CASH":
-                    # Check available Cash in Hand
                     if cash_in_hand < amount:
-                        st.error(f"❌ **Insufficient Cash in Hand!**\n\n"
-                                f"Available Cash: ₹{cash_in_hand:,.2f}\n"
-                                f"Required Amount: ₹{amount:,.2f}\n\n"
-                                f"💡 Please record Petty Cash Income first.")
+                        st.error(f"❌ **Insufficient Cash in Hand!** Available: ₹{cash_in_hand:,.2f}, Required: ₹{amount:,.2f}")
                     else:
-                        # Record in operational_finances
                         run_query("""
                             INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                         
-                        # Create Journal Voucher: Dr. Expense, Cr. Cash in Hand
                         conn = get_connection()
                         cursor = conn.cursor()
                         cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
                                        (str(date.today()), f"{entry_type}: {narration}"))
                         jv_id = cursor.lastrowid
                         
-                        # DEBIT: Expense account (Expense increases)
                         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
                                      (jv_id, account_code, amount))
-                        # CREDIT: Cash in Hand (Asset decreases)
                         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
                                      (jv_id, cash_code, amount))
                         conn.commit()
@@ -1015,11 +985,11 @@ elif menu == "Income & Expenses":
                         
                         remaining_cash = cash_in_hand - amount
                         st.success(f"✅ **Expense of ₹{amount:,.2f} recorded successfully!**")
-                        st.info(f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{remaining_cash:,.2f} (Decreased)\n"
-                               f"📌 **P&L:** Expense increased by ₹{amount:,.2f}")
+                        st.info(f"📌 **Journal Entry:** Dr. {acc_name} ₹{amount:,.2f} | Cr. Cash in Hand ₹{amount:,.2f}")
+                        st.info(f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{remaining_cash:,.2f}")
                         st.rerun()
                 
-                # --- CASE 3: Regular Entry (All other cases) ---
+                # --- CASE 3: Regular Entry ---
                 else:
                     run_query("""
                         INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
@@ -1144,7 +1114,7 @@ elif menu == "Income & Expenses":
         else:
             st.info("No operational income or expense entries found for the Cash Book report.")
 
-# --- 12. INTEREST CALCULATION ---
+# --- INTEREST CALCULATION ---
 elif menu == "Interest Calculation":
     st.title("📊 SB Interest Calculation & Drill-Down")
     
@@ -1201,7 +1171,7 @@ elif menu == "Interest Calculation":
     else:
         st.info("No savings accounts available for interest calculation.")
 
-# --- 13. ADMIN RECORD EDITOR ---
+# --- ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":
     st.title("🛠️ Universal Database Record Editor")
     st.write("Admin tool to manually inspect and edit **any column** across any table, including financial ledgers.")
@@ -1250,7 +1220,7 @@ elif menu == "Admin Record Editor":
         else:
             st.info(f"Table `{selected_table}` is currently empty.")
 
-# --- 14. FINANCIAL STATEMENTS (CORRECTED - No P&L if no entries) ---
+# --- FINANCIAL STATEMENTS (FIXED) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -1272,12 +1242,42 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # --- CHECK IF ANY OPERATIONAL FINANCE ENTRIES EXIST ---
+        # --- GET ALL ACCOUNT BALANCES ---
+        account_balances = run_query("""
+            SELECT 
+                CO.account_code,
+                CO.account_name,
+                CO.account_type,
+                COALESCE(SUM(JE.debit), 0) as total_debit,
+                COALESCE(SUM(JE.credit), 0) as total_credit
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            GROUP BY CO.account_code
+            ORDER BY CO.account_type, CO.account_name
+        """)
+        
+        # --- CALCULATE CORRECT BALANCES ---
+        assets = {}
+        liabilities = {}
+        equity = {}
+        
+        for acc_code, acc_name, acc_type, total_debit, total_credit in account_balances:
+            if acc_type == "Asset":
+                balance = total_debit - total_credit
+                assets[acc_name] = balance
+            elif acc_type == "Liability":
+                balance = total_credit - total_debit
+                liabilities[acc_name] = balance
+            elif acc_type == "Equity":
+                balance = total_credit - total_debit
+                equity[acc_name] = balance
+        
+        # --- CHECK IF OPERATIONAL ENTRIES EXIST ---
         has_income = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'INCOME'")
         has_expense = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'EXPENSE'")
         has_entries = (has_income[0][0] > 0) or (has_expense[0][0] > 0)
         
-        # --- CALCULATE P&L NET PROFIT/LOSS (ONLY IF ENTRIES EXIST) ---
+        # --- CALCULATE P&L ---
         if has_entries:
             total_income = run_query("""
                 SELECT COALESCE(SUM(o.amount), 0.0) 
@@ -1299,56 +1299,29 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             total_expense = 0
             net_profit_loss = 0
         
-        # Get all account balances from trial balance
-        account_balances = run_query("""
-            SELECT 
-                CO.account_code,
-                CO.account_name,
-                CO.account_type,
-                COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
-            FROM chart_of_accounts CO
-            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-            GROUP BY CO.account_code
-            ORDER BY CO.account_type, CO.account_name
-        """)
-        
-        # Separate assets, liabilities, and equity
-        assets = {}
-        liabilities = {}
-        equity = {}
-        
-        for acc_code, acc_name, acc_type, net_bal in account_balances:
-            if acc_type == "Asset":
-                assets[acc_name] = net_bal if net_bal != 0 else 0
-            elif acc_type == "Liability":
-                liabilities[acc_name] = net_bal if net_bal != 0 else 0
-            elif acc_type == "Equity":
-                equity[acc_name] = net_bal if net_bal != 0 else 0
-        
-        # --- ONLY UPDATE RETAINED EARNINGS IF THERE ARE ENTRIES ---
+        # --- GET RETAINED EARNINGS ---
         retained_earnings_balance = run_query("""
-            SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
+            SELECT COALESCE(SUM(JE.credit - JE.debit), 0) 
             FROM jv_entries JE 
             JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
             WHERE CO.account_name = 'Retained Earnings'
         """)
         retained_earnings = retained_earnings_balance[0][0] if retained_earnings_balance else 0
         
-        # Only add P&L to Retained Earnings if there are entries
         if has_entries:
             updated_retained_earnings = retained_earnings + net_profit_loss
         else:
             updated_retained_earnings = retained_earnings
         
-        # Get Cash in Hand balance
-        cash_in_hand = get_cash_in_hand()
+        # --- GET CASH IN HAND ---
+        cash_in_hand = assets.get("Cash in Hand", 0)
         
         # Get SB, FD, RD totals
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         
-        # Display assets
+        # --- DISPLAY ASSETS ---
         col1, col2 = st.columns(2)
         
         with col1:
@@ -1361,25 +1334,20 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             """)
             
             asset_data = []
+            total_assets = 0
+            
             for acc_name, acc_code in all_asset_accounts:
                 if "Deposits" not in acc_name and "Retrieval" not in acc_name:
                     balance = assets.get(acc_name, 0)
-                    if acc_name == "Cash in Hand":
-                        balance = cash_in_hand
                     asset_data.append([acc_name, f"₹{balance:,.2f}"])
+                    total_assets += balance
             
             if asset_data:
-                total_assets = 0
-                for name, val in asset_data:
-                    if name != "**Total Assets**":
-                        total_assets += float(val.replace('₹', '').replace(',', ''))
-                
                 asset_data.append(["**Total Assets**", f"**₹{total_assets:,.2f}**"])
                 df_assets = pd.DataFrame(asset_data, columns=["Account", "Amount"])
                 st.dataframe(df_assets, use_container_width=True)
             else:
                 st.info("No asset data available")
-                total_assets = 0
         
         with col2:
             st.markdown("### Liabilities & Equity")
@@ -1405,8 +1373,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             
             for (acc_name,) in all_equity_accounts:
                 if acc_name == "Retained Earnings":
-                    # Only show Retained Earnings if it has a value OR if there are P&L entries
-                    if updated_retained_earnings != 0 or has_entries:
+                    if updated_retained_earnings != 0:
                         label = "Retained Earnings"
                         if has_entries and net_profit_loss != 0:
                             label += " (incl. P&L)"
@@ -1433,9 +1400,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         st.markdown("---")
         
-        # --- DISPLAY P&L TRANSFER SUMMARY (ONLY IF ENTRIES EXIST) ---
+        # --- DISPLAY CASH IN HAND ---
+        st.info(f"💰 **Cash in Hand Balance:** ₹{cash_in_hand:,.2f}")
+        
+        # --- DISPLAY P&L SUMMARY ---
         if has_entries:
-            st.subheader("📊 Profit & Loss Transfer to Balance Sheet")
+            st.subheader("📊 Profit & Loss Summary")
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -1444,91 +1414,16 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.metric("Total Expenses", f"₹{total_expense:,.2f}")
             with col3:
                 if net_profit_loss >= 0:
-                    st.metric("Net Profit (Added to Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Profit")
+                    st.metric("Net Profit", f"₹{net_profit_loss:,.2f}", delta="Profit")
                 else:
-                    st.metric("Net Loss (Deducted from Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
-            
-            if net_profit_loss != 0:
-                st.info(f"💡 **Retained Earnings updated:** ₹{retained_earnings:,.2f} → ₹{updated_retained_earnings:,.2f}")
-            else:
-                st.info("💰 No profit or loss to transfer (Income = Expenses)")
+                    st.metric("Net Loss", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
         
-        # Balance check
+        # --- BALANCE CHECK ---
         diff = total_assets - total_liabilities_equity
         if abs(diff) < 0.01:
             st.success("✅ Balance Sheet Perfectly Balanced!")
         else:
             st.warning(f"⚠️ Balance Sheet Discrepancy: ₹{diff:,.2f}")
-        
-        # --- AUTO-POST JOURNAL ENTRY FOR P&L TRANSFER (ONLY IF PROFIT/LOSS EXISTS) ---
-        if has_entries and net_profit_loss != 0:
-            st.markdown("---")
-            st.subheader("📝 P&L Transfer Journal Entry")
-            
-            if net_profit_loss > 0:
-                st.code(f"""
-                Journal Entry for Profit Transfer:
-                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                Dr. Income Summary    ₹{net_profit_loss:,.2f}
-                    Cr. Retained Earnings ₹{net_profit_loss:,.2f}
-                
-                Effect:
-                ✅ Retained Earnings increased by ₹{net_profit_loss:,.2f}
-                """)
-            else:
-                loss_amount = abs(net_profit_loss)
-                st.code(f"""
-                Journal Entry for Loss Transfer:
-                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                Dr. Retained Earnings  ₹{loss_amount:,.2f}
-                    Cr. Income Summary   ₹{loss_amount:,.2f}
-                
-                Effect:
-                ❌ Retained Earnings decreased by ₹{loss_amount:,.2f}
-                """)
-            
-            if st.button("📤 Auto-Post P&L Transfer to Balance Sheet", key="post_pl_transfer"):
-                try:
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    
-                    income_summary = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Income Summary'")
-                    if not income_summary:
-                        cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
-                                     ("EQT-103", "Income Summary", "Equity", "Temporary"))
-                        income_summary_code = "EQT-103"
-                    else:
-                        income_summary_code = income_summary[0][0]
-                    
-                    retained_earnings_code = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Retained Earnings'")
-                    if retained_earnings_code:
-                        retained_code = retained_earnings_code[0][0]
-                        
-                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                                     (str(date.today()), f"P&L Transfer to Balance Sheet - Net {'Profit' if net_profit_loss > 0 else 'Loss'}"))
-                        jv_id = cursor.lastrowid
-                        
-                        if net_profit_loss > 0:
-                            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
-                                         (jv_id, income_summary_code, net_profit_loss))
-                            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
-                                         (jv_id, retained_code, net_profit_loss))
-                        else:
-                            loss_amount = abs(net_profit_loss)
-                            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
-                                         (jv_id, retained_code, loss_amount))
-                            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
-                                         (jv_id, income_summary_code, loss_amount))
-                        
-                        conn.commit()
-                        conn.close()
-                        
-                        st.success(f"✅ P&L Transfer posted successfully! Retained Earnings updated to ₹{updated_retained_earnings:,.2f}")
-                        st.rerun()
-                    else:
-                        st.error("Retained Earnings account not found!")
-                except Exception as e:
-                    st.error(f"Error posting P&L transfer: {str(e)}")
         
         if st.button("Export Balance Sheet Report"):
             bs_data = [["ASSETS", "Amount (₹)"]]
@@ -1536,8 +1431,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             for acc_name, acc_code in all_asset_accounts:
                 if "Deposits" not in acc_name and "Retrieval" not in acc_name:
                     balance = assets.get(acc_name, 0)
-                    if acc_name == "Cash in Hand":
-                        balance = cash_in_hand
                     bs_data.append([acc_name, f"₹{balance:,.2f}"])
             
             bs_data.append(["Total Assets", f"₹{total_assets:,.2f}"])
@@ -1549,16 +1442,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 if balance != 0:
                     bs_data.append([acc_name, f"₹{balance:,.2f}"])
             
-            if has_entries and updated_retained_earnings != 0:
-                bs_data.append(["Retained Earnings (incl. P&L)", f"₹{updated_retained_earnings:,.2f}"])
-            elif updated_retained_earnings != 0:
+            if updated_retained_earnings != 0:
                 bs_data.append(["Retained Earnings", f"₹{updated_retained_earnings:,.2f}"])
-            
-            for (acc_name,) in all_equity_accounts:
-                if acc_name not in ["Retained Earnings", "Income Summary"]:
-                    balance = equity.get(acc_name, 0)
-                    if balance != 0:
-                        bs_data.append([acc_name, f"₹{balance:,.2f}"])
             
             bs_data.append(["Total Liabilities & Equity", f"₹{total_liabilities_equity:,.2f}"])
             
@@ -1568,77 +1453,71 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab3:
         st.subheader("Profit & Loss Statement")
         
-        # Check if any entries exist
         has_income = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'INCOME'")
         has_expense = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'EXPENSE'")
         
         if has_income[0][0] == 0 and has_expense[0][0] == 0:
             st.info("📋 No income or expense entries recorded yet. Your P&L is empty.")
-            st.stop()
-        
-        income_details = run_query("""
-            SELECT o.account_code, c.account_name, SUM(o.amount) as total
-            FROM operational_finances o 
-            JOIN chart_of_accounts c ON o.account_code = c.account_code 
-            WHERE c.account_type = 'Income'
-            GROUP BY o.account_code
-        """)
-        
-        expense_details = run_query("""
-            SELECT o.account_code, c.account_name, SUM(o.amount) as total
-            FROM operational_finances o 
-            JOIN chart_of_accounts c ON o.account_code = c.account_code 
-            WHERE c.account_type = 'Expense'
-            GROUP BY o.account_code
-        """)
-        
-        st.markdown("### 📈 INCOME")
-        if income_details:
-            income_data = []
-            total_income_pl = 0
-            for code, name, amount in income_details:
-                income_data.append([name, f"₹{amount:,.2f}"])
-                total_income_pl += amount
-            income_data.append(["**Total Income**", f"**₹{total_income_pl:,.2f}**"])
-            df_income = pd.DataFrame(income_data, columns=["Account", "Amount"])
-            st.dataframe(df_income, use_container_width=True)
         else:
-            st.info("No income recorded")
-            total_income_pl = 0
-        
-        st.markdown("---")
-        
-        st.markdown("### 📉 EXPENSES")
-        if expense_details:
-            expense_data = []
-            total_expense_pl = 0
-            for code, name, amount in expense_details:
-                expense_data.append([name, f"₹{amount:,.2f}"])
-                total_expense_pl += amount
-            expense_data.append(["**Total Expenses**", f"**₹{total_expense_pl:,.2f}**"])
-            df_expense = pd.DataFrame(expense_data, columns=["Account", "Amount"])
-            st.dataframe(df_expense, use_container_width=True)
-        else:
-            st.info("No expenses recorded")
-            total_expense_pl = 0
-        
-        st.markdown("---")
-        
-        net_pl = total_income_pl - total_expense_pl
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"₹{total_income_pl:,.2f}")
-        col2.metric("Total Expenses", f"₹{total_expense_pl:,.2f}")
-        if net_pl >= 0:
-            col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
-        else:
-            col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
-        
-        if net_pl != 0:
+            income_details = run_query("""
+                SELECT o.account_code, c.account_name, SUM(o.amount) as total
+                FROM operational_finances o 
+                JOIN chart_of_accounts c ON o.account_code = c.account_code 
+                WHERE c.account_type = 'Income'
+                GROUP BY o.account_code
+            """)
+            
+            expense_details = run_query("""
+                SELECT o.account_code, c.account_name, SUM(o.amount) as total
+                FROM operational_finances o 
+                JOIN chart_of_accounts c ON o.account_code = c.account_code 
+                WHERE c.account_type = 'Expense'
+                GROUP BY o.account_code
+            """)
+            
+            st.markdown("### 📈 INCOME")
+            if income_details:
+                income_data = []
+                total_income_pl = 0
+                for code, name, amount in income_details:
+                    income_data.append([name, f"₹{amount:,.2f}"])
+                    total_income_pl += amount
+                income_data.append(["**Total Income**", f"**₹{total_income_pl:,.2f}**"])
+                df_income = pd.DataFrame(income_data, columns=["Account", "Amount"])
+                st.dataframe(df_income, use_container_width=True)
+            else:
+                st.info("No income recorded")
+                total_income_pl = 0
+            
             st.markdown("---")
-            st.info(f"💡 **Net {'Profit' if net_pl >= 0 else 'Loss'}** of ₹{abs(net_pl):,.2f} will be transferred to **Retained Earnings** in the Balance Sheet.")
+            
+            st.markdown("### 📉 EXPENSES")
+            if expense_details:
+                expense_data = []
+                total_expense_pl = 0
+                for code, name, amount in expense_details:
+                    expense_data.append([name, f"₹{amount:,.2f}"])
+                    total_expense_pl += amount
+                expense_data.append(["**Total Expenses**", f"**₹{total_expense_pl:,.2f}**"])
+                df_expense = pd.DataFrame(expense_data, columns=["Account", "Amount"])
+                st.dataframe(df_expense, use_container_width=True)
+            else:
+                st.info("No expenses recorded")
+                total_expense_pl = 0
+            
+            st.markdown("---")
+            
+            net_pl = total_income_pl - total_expense_pl
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Income", f"₹{total_income_pl:,.2f}")
+            col2.metric("Total Expenses", f"₹{total_expense_pl:,.2f}")
+            if net_pl >= 0:
+                col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
+            else:
+                col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
 
-# --- 15. REPORTS ---
+# --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
     report_type = st.selectbox("Select Report to Generate", [
@@ -1672,7 +1551,7 @@ elif menu == "Reports":
             st.dataframe(df, use_container_width=True)
             st.download_button("Download PDF", create_pdf_report("Income & Expense Breakdown", df), "income_expense_breakdown.pdf", "application/pdf")
 
-# --- 16. CUSTOMER PORTAL ---
+# --- CUSTOMER PORTAL ---
 elif menu == "Customer Portal":
     st.title("👤 Customer Account Portal")
     cust_id_login = st.number_input("Enter Your Customer ID", min_value=1, step=1)

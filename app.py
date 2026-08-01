@@ -203,11 +203,20 @@ def init_db():
             ("EQT-102", "Retained Earnings", "Equity", "Reserves")
         ]
         cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
+    else:
+        # Check if Union Bank and State Bank exist, if not add them
+        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_name = 'Union Bank'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
+                         ("AST-102", "Union Bank", "Asset", "Current Assets"))
+        
+        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_name = 'State Bank'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
+                         ("AST-103", "State Bank", "Asset", "Current Assets"))
 
     conn.commit()
     conn.close()
-
-init_db()
 
 # --- HELPER FUNCTIONS ---
 def run_query(query, params=(), fetch=True):

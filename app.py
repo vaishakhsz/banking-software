@@ -192,9 +192,10 @@ def init_db():
             ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
             ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
-            ("AST-101", "State bank of india", "Asset", "Current Assets"),
-            ("AST-102", "Union Bank of india", "Asset", "Current Assets"),
-            ("AST-103", "Retrieval Pool Account", "Asset", "Current Assets"),
+            ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
+            ("AST-102", "Union Bank", "Asset", "Current Assets"),
+            ("AST-103", "State Bank", "Asset", "Current Assets"),
+            ("AST-104", "Retrieval Pool Account", "Asset", "Current Assets"),
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
             ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
@@ -789,10 +790,10 @@ elif menu == "Transactions":
     else:
         st.info("No transaction logs recorded.")
 
-# --- 10. JOURNAL VOUCHERS (Enhanced with Classification Audit) ---
+# --- 10. JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
-    st.title("📝 Journal Vouchers Management & Classification Audit")
-    tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View & Delete Vouchers", "Classification Debit/Credit Audit"])
+    st.title("📝 Journal Vouchers Management & Deletion")
+    tab1, tab2 = st.tabs(["Create Journal Voucher", "View & Delete Vouchers"])
     
     with tab1:
         with st.form("jv_form"):
@@ -842,38 +843,6 @@ elif menu == "Journal Vouchers":
                 st.rerun()
         else:
             st.info("No journal vouchers found.")
-
-    with tab3:
-        st.subheader("🔍 Operational Finance Classifications & JV Mapping")
-        st.write("Inspect how Income, Expense, Asset, Liability, and Equity entries map directly into debit and credit line items.")
-        
-        mapping_data = run_query("""
-            SELECT 
-                o.id AS 'Op ID',
-                o.type AS 'Classification',
-                o.amount AS 'Amount (₹)',
-                o.account_code AS 'COA Code',
-                c.account_name AS 'Account Name',
-                c.account_type AS 'Account Type',
-                o.narration AS 'Particulars',
-                o.date AS 'Date'
-            FROM operational_finances o
-            JOIN chart_of_accounts c ON o.account_code = c.account_code
-            ORDER BY o.id DESC
-        """)
-        
-        if mapping_data:
-            df_mapping = pd.DataFrame(mapping_data, columns=["Op ID", "Classification", "Amount (₹)", "COA Code", "Account Name", "Account Type", "Particulars", "Date"])
-            st.dataframe(df_mapping, use_container_width=True)
-            
-            st.download_button(
-                "📥 Download Classification Audit PDF", 
-                create_pdf_report("Income & Expense Classification Audit Report", df_mapping), 
-                "classification_audit.pdf", 
-                "application/pdf"
-            )
-        else:
-            st.info("No operational finance entries recorded yet to map.")
 
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
@@ -1142,8 +1111,6 @@ elif menu == "Admin Record Editor":
         else:
             st.info(f"Table `{selected_table}` is currently empty.")
 
-
-
 # --- 14. FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
@@ -1166,57 +1133,132 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        tot_sb_assets = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
-        tot_fd_liabilities = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-        tot_rd_liabilities = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+        # Get all account balances from trial balance
+        account_balances = run_query("""
+            SELECT 
+                CO.account_code,
+                CO.account_name,
+                CO.account_type,
+                COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            GROUP BY CO.account_code
+        """)
         
-        tot_capital_equity = run_query("""
-            SELECT COALESCE(SUM(JE.credit - JE.debit), 0.0) 
-            FROM jv_entries JE 
-            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
-            WHERE CO.account_type = 'Equity'
-        """)[0][0] or 0.0
+        # Separate assets, liabilities, and equity
+        assets = {}
+        liabilities = {}
+        equity = {}
         
+        for acc_code, acc_name, acc_type, net_bal in account_balances:
+            if acc_type == "Asset":
+                assets[acc_name] = net_bal
+            elif acc_type == "Liability":
+                liabilities[acc_name] = net_bal
+            elif acc_type == "Equity":
+                equity[acc_name] = net_bal
+        
+        # Also get SB, FD, RD totals from their respective tables
+        tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
+        tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+        tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+        
+        # Display assets with calculated values
         col1, col2 = st.columns(2)
+        
         with col1:
             st.markdown("### Assets")
-            default_vault = tot_sb_assets + tot_fd_liabilities + tot_rd_liabilities + tot_capital_equity
-            cash_in_hand = st.number_input("Vault Cash / Physical Currency (₹)", value=float(default_vault), step=1000.0)
-            loans_advances = st.number_input("Loans & Advances Receivable (₹)", value=0.0, step=1000.0)
             
-            total_assets = cash_in_hand + loans_advances
-            st.metric("Total Asset Holdings", f"₹{total_assets:,.2f}")
+            # Display asset accounts from trial balance
+            asset_data = []
+            for name, balance in assets.items():
+                if balance != 0:
+                    asset_data.append([name, f"₹{balance:,.2f}"])
             
+            # Add SB, FD, RD balances if not already in assets
+            if "SB Deposits Control" not in assets:
+                asset_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
+            if "FD Deposits Control" not in assets:
+                asset_data.append(["Fixed Deposits (FD) Control", f"₹{tot_fd_principal:,.2f}"])
+            if "RD Deposits Control" not in assets:
+                asset_data.append(["Recurring Deposits (RD) Control", f"₹{tot_rd_invested:,.2f}"])
+            
+            if asset_data:
+                total_assets = sum(float(val.replace('₹', '').replace(',', '')) for _, val in asset_data)
+                asset_data.append(["**Total Assets**", f"**₹{total_assets:,.2f}**"])
+                
+                df_assets = pd.DataFrame(asset_data, columns=["Account", "Amount"])
+                st.dataframe(df_assets, use_container_width=True)
+            else:
+                st.info("No asset data available")
+                total_assets = 0
+        
         with col2:
             st.markdown("### Liabilities & Equity")
-            sb_deposits_liab = st.number_input("Savings Bank (SB) Deposits Control (₹)", value=tot_sb_assets, step=1000.0)
-            fd_deposits_liab = st.number_input("Fixed Deposits (FD) Control (₹)", value=tot_fd_liabilities, step=1000.0)
-            rd_deposits_liab = st.number_input("Recurring Deposits (RD) Control (₹)", value=tot_rd_liabilities, step=1000.0)
-            capital_equity = st.number_input("Capital & Reserves (₹)", value=float(tot_capital_equity), step=1000.0)
             
-            total_liabilities = sb_deposits_liab + fd_deposits_liab + rd_deposits_liab + capital_equity
-            st.metric("Total Liabilities & Equity", f"₹{total_liabilities:,.2f}")
+            # Display liability accounts from trial balance
+            liability_data = []
+            for name, balance in liabilities.items():
+                if balance != 0:
+                    liability_data.append([name, f"₹{balance:,.2f}"])
             
+            # Display equity accounts from trial balance
+            equity_data = []
+            for name, balance in equity.items():
+                if balance != 0:
+                    equity_data.append([name, f"₹{balance:,.2f}"])
+            
+            # Combined data
+            combined_data = liability_data + equity_data
+            
+            if combined_data:
+                total_liabilities_equity = sum(float(val.replace('₹', '').replace(',', '')) for _, val in combined_data)
+                combined_data.append(["**Total Liabilities & Equity**", f"**₹{total_liabilities_equity:,.2f}**"])
+                
+                df_combined = pd.DataFrame(combined_data, columns=["Account", "Amount"])
+                st.dataframe(df_combined, use_container_width=True)
+            else:
+                st.info("No liability or equity data available")
+                total_liabilities_equity = 0
+        
         st.markdown("---")
-        diff = total_assets - total_liabilities
+        
+        # Balance check
+        diff = total_assets - total_liabilities_equity
         if abs(diff) < 0.01:
-            st.success("Balance Sheet Perfectly Balanced!")
+            st.success("✅ Balance Sheet Perfectly Balanced!")
         else:
-            st.warning(f"Balance Sheet Discrepancy / Difference: ₹{diff:,.2f}")
-
+            st.warning(f"⚠️ Balance Sheet Discrepancy: ₹{diff:,.2f}")
+        
         if st.button("Export Balance Sheet Report"):
+            # Prepare balance sheet data
             bs_data = [
-                ["Assets Section", "Amount (₹)"],
-                ["Vault Cash / Physical Currency", cash_in_hand],
-                ["Loans & Advances", loans_advances],
-                ["Total Assets", total_assets],
-                ["Liabilities & Equity", "Amount (₹)"],
-                ["SB Deposits Control", sb_deposits_liab],
-                ["FD Deposits Control", fd_deposits_liab],
-                ["RD Deposits Control", rd_deposits_liab],
-                ["Capital & Reserves", capital_equity],
-                ["Total Liabilities & Equity", total_liabilities]
+                ["ASSETS", "Amount (₹)"],
+                ["---Assets from Trial Balance---", ""],
             ]
+            for name, balance in assets.items():
+                if balance != 0:
+                    bs_data.append([name, f"₹{balance:,.2f}"])
+            bs_data.append(["---Additional Deposits---", ""])
+            if "SB Deposits Control" not in assets:
+                bs_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
+            if "FD Deposits Control" not in assets:
+                bs_data.append(["Fixed Deposits (FD) Control", f"₹{tot_fd_principal:,.2f}"])
+            if "RD Deposits Control" not in assets:
+                bs_data.append(["Recurring Deposits (RD) Control", f"₹{tot_rd_invested:,.2f}"])
+            bs_data.append(["Total Assets", f"₹{total_assets:,.2f}"])
+            bs_data.append(["", ""])
+            bs_data.append(["LIABILITIES & EQUITY", "Amount (₹)"])
+            bs_data.append(["---Liabilities---", ""])
+            for name, balance in liabilities.items():
+                if balance != 0:
+                    bs_data.append([name, f"₹{balance:,.2f}"])
+            bs_data.append(["---Equity---", ""])
+            for name, balance in equity.items():
+                if balance != 0:
+                    bs_data.append([name, f"₹{balance:,.2f}"])
+            bs_data.append(["Total Liabilities & Equity", f"₹{total_liabilities_equity:,.2f}"])
+            
             df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
             st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
 
@@ -1249,9 +1291,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             
         st.markdown("---")
         st.info("Note: The P&L statement exclusively evaluates accounts mapped as Income or Expense. Capital injections are safely isolated to the Balance Sheet and Trial Balance.")
-
-
-
 
 # --- 15. REPORTS ---
 elif menu == "Reports":

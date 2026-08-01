@@ -790,58 +790,49 @@ elif menu == "Transactions":
         st.info("No transaction logs recorded.")
 
 # --- 10. JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHER MANAGEMENT & DELETION ---
 elif menu == "Journal Vouchers":
-    st.title("📝 Journal Vouchers Management & Deletion")
-    tab1, tab2 = st.tabs(["Create Journal Voucher", "View & Delete Vouchers"])
+    st.title("📋 Journal Voucher Management & Audit")
     
-    with tab1:
-        with st.form("jv_form"):
-            v_date = st.date_input("Voucher Date", value=date.today())
-            narration = st.text_input("Narration / Description")
-            
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
-            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            
-            col_acc, col_dr, col_cr = st.columns(3)
-            acc1 = col_acc.selectbox("Account Head 1", list(coa_dict.keys()), key="jv_acc1")
-            dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
-            cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
-            
-            acc2 = col_acc.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
-            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
-            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
-            
-            if st.form_submit_button("Save and Post JV"):
-                total_dr = dr1 + dr2
-                total_cr = cr1 + cr2
-                if total_dr == total_cr and total_dr > 0:
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
-                    jv_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
-                    conn.commit()
-                    conn.close()
-                    st.success("Balanced Journal Voucher posted successfully!")
+    st.subheader("All Posted Journal Vouchers")
+    
+    # Fetch master JV records
+    jvs = run_query("SELECT jv_id, date, description, total_amount FROM journal_vouchers ORDER BY id DESC")
+    
+    if jvs:
+        df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Description", "Total Amount (₹)"])
+        
+        # Display each JV with its detailed split lines (Debits and Credits across all accounts)
+        for index, row in df_jvs.iterrows():
+            jv_id = row["JV ID"]
+            with st.expander(f"📁 {jv_id} - {row['Description']} | Total: ₹{row['Total Amount (₹)']:,.2f} ({row['Date']})"):
+                
+                # Fetch line items for this specific JV, joining with chart_of_accounts to show names & classifications
+                lines = run_query(f"""
+                    SELECT JE.account_code, CO.account_name, CO.classification, JE.debit, JE.credit 
+                    FROM jv_entries JE 
+                    JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+                    WHERE JE.jv_id = '{jv_id}'
+                """)
+                
+                if lines:
+                    df_lines = pd.DataFrame(lines, columns=["Account Code", "Account Name", "Classification", "Debit (₹)", "Credit (₹)"])
+                    st.dataframe(df_lines, use_container_width=True)
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
-
-    with tab2:
-        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
-        if jvs:
-            df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
-            st.dataframe(df_jvs, use_container_width=True)
-            
-            st.markdown("### Delete Journal Voucher")
-            del_jv_id = st.number_input("Enter JV ID to Delete", min_value=1, step=1, key="del_jv")
-            if st.button("Delete JV and Entries"):
-                run_query("DELETE FROM jv_entries WHERE jv_id=?", (del_jv_id,), fetch=False)
-                run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (del_jv_id,), fetch=False)
-                st.warning(f"Journal Voucher ID {del_jv_id} deleted successfully.")
-                st.rerun()
-        else:
-            st.info("No journal vouchers found.")
+                    st.warning("No line items found for this Journal Voucher.")
+                
+                # Deletion option for the voucher
+                if st.button(f"🗑️ Delete Voucher {jv_id}", key=f"del_{jv_id}"):
+                    try:
+                        # Delete entries and master record
+                        run_query(f"DELETE FROM jv_entries WHERE jv_id = '{jv_id}'", commit=True)
+                        run_query(f"DELETE FROM journal_vouchers WHERE jv_id = '{jv_id}'", commit=True)
+                        st.success(f"Successfully deleted Journal Voucher {jv_id} and reversed its ledger impact.")
+                        st.experimental_rerun()
+                    except Exception as e:
+                        st.error(f"Error deleting voucher: {e}")
+    else:
+        st.info("No Journal Vouchers found.")
 
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":

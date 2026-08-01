@@ -789,10 +789,10 @@ elif menu == "Transactions":
     else:
         st.info("No transaction logs recorded.")
 
-# --- 10. JOURNAL VOUCHERS ---
+# --- 10. JOURNAL VOUCHERS (Enhanced with Classification Audit) ---
 elif menu == "Journal Vouchers":
-    st.title("📝 Journal Vouchers Management & Deletion")
-    tab1, tab2 = st.tabs(["Create Journal Voucher", "View & Delete Vouchers"])
+    st.title("📝 Journal Vouchers Management & Classification Audit")
+    tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View & Delete Vouchers", "Classification Debit/Credit Audit"])
     
     with tab1:
         with st.form("jv_form"):
@@ -842,6 +842,38 @@ elif menu == "Journal Vouchers":
                 st.rerun()
         else:
             st.info("No journal vouchers found.")
+
+    with tab3:
+        st.subheader("🔍 Operational Finance Classifications & JV Mapping")
+        st.write("Inspect how Income, Expense, Asset, Liability, and Equity entries map directly into debit and credit line items.")
+        
+        mapping_data = run_query("""
+            SELECT 
+                o.id AS 'Op ID',
+                o.type AS 'Classification',
+                o.amount AS 'Amount (₹)',
+                o.account_code AS 'COA Code',
+                c.account_name AS 'Account Name',
+                c.account_type AS 'Account Type',
+                o.narration AS 'Particulars',
+                o.date AS 'Date'
+            FROM operational_finances o
+            JOIN chart_of_accounts c ON o.account_code = c.account_code
+            ORDER BY o.id DESC
+        """)
+        
+        if mapping_data:
+            df_mapping = pd.DataFrame(mapping_data, columns=["Op ID", "Classification", "Amount (₹)", "COA Code", "Account Name", "Account Type", "Particulars", "Date"])
+            st.dataframe(df_mapping, use_container_width=True)
+            
+            st.download_button(
+                "📥 Download Classification Audit PDF", 
+                create_pdf_report("Income & Expense Classification Audit Report", df_mapping), 
+                "classification_audit.pdf", 
+                "application/pdf"
+            )
+        else:
+            st.info("No operational finance entries recorded yet to map.")
 
 # --- 11. INCOME & EXPENSES ---
 elif menu == "Income & Expenses":

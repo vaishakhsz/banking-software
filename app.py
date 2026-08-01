@@ -5,6 +5,7 @@ from datetime import datetime, date
 import io
 from fpdf import FPDF
 import os
+import plotly.express as px
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -22,7 +23,35 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 DB_NAME = "aasha_nidhi.db"
 
 def get_connection():
+    db_dir = os.path.dirname(DB_NAME)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
     return sqlite3.connect(DB_NAME, check_same_thread=False)
+
+def run_query(query, params=(), fetch=True):
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        res = cursor.fetchall() if fetch else None
+        conn.commit()
+        conn.close()
+        return res
+    except sqlite3.OperationalError as e:
+        st.error(f"Database error: {str(e)}")
+        try:
+            init_db()
+        except:
+            if os.path.exists(DB_NAME):
+                os.remove(DB_NAME)
+            init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        res = cursor.fetchall() if fetch else None
+        conn.commit()
+        conn.close()
+        return res
 
 def init_db():
     conn = get_connection()
@@ -76,7 +105,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tx_id TEXT,
             account_no TEXT,
-            type TEXT, -- CREDIT / DEBIT
+            type TEXT,
             amount REAL,
             mode TEXT,
             narration TEXT,
@@ -162,7 +191,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS operational_finances (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT, -- INCOME / EXPENSE
+            type TEXT,
             customer_id INTEGER,
             account_code TEXT,
             amount REAL,
@@ -204,13 +233,13 @@ def init_db():
         ]
         cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
     else:
-        # Check if Union Bank and State Bank exist, if not add them
-        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_name = 'Union Bank'")
+        # Check and add missing accounts
+        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_code = 'AST-102'")
         if cursor.fetchone()[0] == 0:
             cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
                          ("AST-102", "Union Bank", "Asset", "Current Assets"))
         
-        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_name = 'State Bank'")
+        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts WHERE account_code = 'AST-103'")
         if cursor.fetchone()[0] == 0:
             cursor.execute("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)", 
                          ("AST-103", "State Bank", "Asset", "Current Assets"))
@@ -218,16 +247,16 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- HELPER FUNCTIONS ---
-def run_query(query, params=(), fetch=True):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(query, params)
-    res = cursor.fetchall() if fetch else None
-    conn.commit()
-    conn.close()
-    return res
+# Initialize database
+try:
+    init_db()
+except Exception as e:
+    st.error(f"Database initialization error: {str(e)}")
+    if os.path.exists(DB_NAME):
+        os.remove(DB_NAME)
+    init_db()
 
+# --- HELPER FUNCTIONS ---
 def save_uploaded_file(uploaded_file):
     if uploaded_file is not None:
         file_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
@@ -345,28 +374,23 @@ if menu == "Dashboard":
     else:
         st.info("No recent transaction logs found.")
 
-# --- CIRCULAR PERCENTAGE GRAPH (DONUT CHART) ---
     col_chart, col_info = st.columns([2, 1])
     
     with col_chart:
         st.subheader("📈 Deposit Portfolio Share (%)")
         
-        # Prepare data for SB, FD, and RD
         portfolio_data = {
             "Deposit Type": ["Savings Bank (SB)", "Fixed Deposits (FD)", "Recurring Deposits (RD)"],
             "Amount": [total_sb_dep, total_fd, total_rd]
         }
         df_portfolio = pd.DataFrame(portfolio_data)
         
-        # Check if there is actual financial data to display
         if df_portfolio["Amount"].sum() > 0:
-            import plotly.express as px
-            # Create a donut chart displaying percentages automatically
             fig = px.pie(
                 df_portfolio, 
                 names="Deposit Type", 
                 values="Amount", 
-                hole=0.4, # Makes it a circle/donut graph
+                hole=0.4,
                 color_discrete_sequence=px.colors.qualitative.Prism
             )
             fig.update_traces(textposition='inside', textinfo='percent+label')
@@ -380,15 +404,6 @@ if menu == "Dashboard":
         grand_total = total_sb_dep + total_fd + total_rd
         st.metric("Total Bank Deposits", f"₹{grand_total:,.2f}")
         st.write("This circular breakdown reflects the share percentage of capital held across Savings, Fixed, and Recurring deposits.")
-
-    st.markdown("---")
-    st.subheader("Recent Activity (Last 10 Transactions)")
-    recent_tx = run_query("SELECT tx_id, account_no, type, amount, mode, date FROM transactions ORDER BY id DESC LIMIT 10")
-    if recent_tx:
-        df_tx = pd.DataFrame(recent_tx, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Date"])
-        st.dataframe(df_tx, use_container_width=True)
-    else:
-        st.info("No recent transaction logs found.")
 
 # --- 2. CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":
@@ -500,7 +515,7 @@ elif menu == "KYC Verification":
 # --- 4. SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
-    tab1, tab2, tab3= st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts"])
+    tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -577,8 +592,6 @@ elif menu == "SB Accounts":
                 st.rerun()
         else:
             st.info("No active SB accounts found.")
-
-    
 
 # --- 5. FIXED DEPOSITS (FD) ---
 elif menu == "Fixed Deposits (FD)":
@@ -660,12 +673,10 @@ elif menu == "Fixed Deposits (FD)":
         else:
             st.info("No fixed deposits found.")
 
-   
-
 # --- 6. RECURRING DEPOSITS (RD) ---
 elif menu == "Recurring Deposits (RD)":
     st.title("🔄 Recurring Deposits Management & Installment Payment")
-    tab1, tab2, tab3= st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion"])
+    tab1, tab2, tab3 = st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -740,8 +751,6 @@ elif menu == "Recurring Deposits (RD)":
                 st.rerun()
         else:
             st.info("No recurring deposits found.")
-
-    
 
 # --- 7. RETRIEVAL ACCOUNT ---
 elif menu == "Retrieval Account":
@@ -1128,12 +1137,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab1:
         st.subheader("Trial Balance Summary")
         entries = run_query("""
-            SELECT JE.account_code, CO.account_name, SUM(JE.debit), SUM(JE.credit)
+            SELECT JE.account_code, CO.account_name, CO.account_type, SUM(JE.debit), SUM(JE.credit)
             FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
             GROUP BY JE.account_code
         """)
         if entries:
-            df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Total Debit (₹)", "Total Credit (₹)"])
+            df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Account Type", "Total Debit (₹)", "Total Credit (₹)"])
             st.dataframe(df_tb, use_container_width=True)
             st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
@@ -1152,6 +1161,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             FROM chart_of_accounts CO
             LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
             GROUP BY CO.account_code
+            ORDER BY CO.account_type, CO.account_name
         """)
         
         # Separate assets, liabilities, and equity
@@ -1161,17 +1171,11 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         for acc_code, acc_name, acc_type, net_bal in account_balances:
             if acc_type == "Asset":
-                # For assets, positive net balance means asset
-                if net_bal != 0:
-                    assets[acc_name] = abs(net_bal)
+                assets[acc_name] = abs(net_bal) if net_bal != 0 else 0
             elif acc_type == "Liability":
-                # For liabilities, we want the absolute value (liabilities are credit balances)
-                if net_bal != 0:
-                    liabilities[acc_name] = abs(net_bal)
+                liabilities[acc_name] = abs(net_bal) if net_bal != 0 else 0
             elif acc_type == "Equity":
-                # For equity, we want the absolute value (equity is credit balance)
-                if net_bal != 0:
-                    equity[acc_name] = abs(net_bal)
+                equity[acc_name] = abs(net_bal) if net_bal != 0 else 0
         
         # Also get SB, FD, RD totals from their respective tables
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
@@ -1184,33 +1188,18 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col1:
             st.markdown("### Assets")
             
-            # Display asset accounts from trial balance
+            # Get all asset accounts from chart of accounts
+            all_asset_accounts = run_query("""
+                SELECT account_name, account_code FROM chart_of_accounts 
+                WHERE account_type = 'Asset'
+                ORDER BY account_name
+            """)
+            
             asset_data = []
-            for name, balance in assets.items():
-                if balance != 0:
-                    asset_data.append([name, f"₹{balance:,.2f}"])
-            
-            # Add SB, FD, RD balances if not already in assets
-            if "Union Bank" not in assets and "Bank Balance" not in assets:
-                # Show bank accounts from chart of accounts
-                bank_accounts = run_query("""
-                    SELECT account_name, COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as balance
-                    FROM chart_of_accounts CO
-                    LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                    WHERE CO.account_type = 'Asset' AND CO.account_name IN ('Union Bank', 'State Bank', 'Cash in Hand')
-                    GROUP BY CO.account_name
-                """)
-                for bank_name, bank_bal in bank_accounts:
-                    if bank_bal != 0:
-                        asset_data.append([bank_name, f"₹{abs(bank_bal):,.2f}"])
-            
-            # Add deposit accounts
-            if tot_sb_balance > 0:
-                asset_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
-            if tot_fd_principal > 0:
-                asset_data.append(["Fixed Deposits (FD) Control", f"₹{tot_fd_principal:,.2f}"])
-            if tot_rd_invested > 0:
-                asset_data.append(["Recurring Deposits (RD) Control", f"₹{tot_rd_invested:,.2f}"])
+            for acc_name, acc_code in all_asset_accounts:
+                if "Deposits" not in acc_name and "Retrieval" not in acc_name:
+                    balance = assets.get(acc_name, 0)
+                    asset_data.append([acc_name, f"₹{balance:,.2f}"])
             
             if asset_data:
                 total_assets = sum(float(val.replace('₹', '').replace(',', '')) for _, val in asset_data)
@@ -1225,27 +1214,32 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col2:
             st.markdown("### Liabilities & Equity")
             
-            # Display liability accounts from trial balance
+            # Display liability accounts
             liability_data = []
-            for name, balance in liabilities.items():
-                if balance != 0 and "Deposits" not in name:
-                    liability_data.append([name, f"₹{balance:,.2f}"])
+            all_liability_accounts = run_query("""
+                SELECT account_name FROM chart_of_accounts 
+                WHERE account_type = 'Liability'
+                ORDER BY account_name
+            """)
             
-            # Display equity accounts from trial balance
+            for (acc_name,) in all_liability_accounts:
+                balance = liabilities.get(acc_name, 0)
+                if balance > 0:
+                    liability_data.append([acc_name, f"₹{balance:,.2f}"])
+            
+            # Display equity accounts
             equity_data = []
-            for name, balance in equity.items():
-                if balance != 0:
-                    equity_data.append([name, f"₹{balance:,.2f}"])
+            all_equity_accounts = run_query("""
+                SELECT account_name FROM chart_of_accounts 
+                WHERE account_type = 'Equity'
+                ORDER BY account_name
+            """)
             
-            # Add deposit liabilities if they exist
-            if tot_sb_balance > 0:
-                liability_data.append(["SB Deposits Liability", f"₹{tot_sb_balance:,.2f}"])
-            if tot_fd_principal > 0:
-                liability_data.append(["FD Deposits Liability", f"₹{tot_fd_principal:,.2f}"])
-            if tot_rd_invested > 0:
-                liability_data.append(["RD Deposits Liability", f"₹{tot_rd_invested:,.2f}"])
+            for (acc_name,) in all_equity_accounts:
+                balance = equity.get(acc_name, 0)
+                if balance > 0:
+                    equity_data.append([acc_name, f"₹{balance:,.2f}"])
             
-            # Combined data
             combined_data = liability_data + equity_data
             
             if combined_data:
@@ -1269,42 +1263,27 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         if st.button("Export Balance Sheet Report"):
             # Prepare balance sheet data
-            bs_data = [
-                ["ASSETS", "Amount (₹)"],
-                ["---Assets from Trial Balance---", ""],
-            ]
-            for name, balance in assets.items():
-                if balance != 0:
-                    bs_data.append([name, f"₹{balance:,.2f}"])
+            bs_data = [["ASSETS", "Amount (₹)"]]
             
-            bs_data.append(["---Deposits---", ""])
-            if tot_sb_balance > 0:
-                bs_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
-            if tot_fd_principal > 0:
-                bs_data.append(["Fixed Deposits (FD) Control", f"₹{tot_fd_principal:,.2f}"])
-            if tot_rd_invested > 0:
-                bs_data.append(["Recurring Deposits (RD) Control", f"₹{tot_rd_invested:,.2f}"])
+            for acc_name, acc_code in all_asset_accounts:
+                if "Deposits" not in acc_name and "Retrieval" not in acc_name:
+                    balance = assets.get(acc_name, 0)
+                    bs_data.append([acc_name, f"₹{balance:,.2f}"])
             
             bs_data.append(["Total Assets", f"₹{total_assets:,.2f}"])
             bs_data.append(["", ""])
             bs_data.append(["LIABILITIES & EQUITY", "Amount (₹)"])
-            bs_data.append(["---Liabilities---", ""])
-            for name, balance in liabilities.items():
-                if balance != 0:
-                    bs_data.append([name, f"₹{balance:,.2f}"])
             
-            bs_data.append(["---Deposit Liabilities---", ""])
-            if tot_sb_balance > 0:
-                bs_data.append(["SB Deposits Liability", f"₹{tot_sb_balance:,.2f}"])
-            if tot_fd_principal > 0:
-                bs_data.append(["FD Deposits Liability", f"₹{tot_fd_principal:,.2f}"])
-            if tot_rd_invested > 0:
-                bs_data.append(["RD Deposits Liability", f"₹{tot_rd_invested:,.2f}"])
-                
-            bs_data.append(["---Equity---", ""])
-            for name, balance in equity.items():
-                if balance != 0:
-                    bs_data.append([name, f"₹{balance:,.2f}"])
+            for (acc_name,) in all_liability_accounts:
+                balance = liabilities.get(acc_name, 0)
+                if balance > 0:
+                    bs_data.append([acc_name, f"₹{balance:,.2f}"])
+            
+            for (acc_name,) in all_equity_accounts:
+                balance = equity.get(acc_name, 0)
+                if balance > 0:
+                    bs_data.append([acc_name, f"₹{balance:,.2f}"])
+            
             bs_data.append(["Total Liabilities & Equity", f"₹{total_liabilities_equity:,.2f}"])
             
             df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
@@ -1394,5 +1373,4 @@ elif menu == "Customer Portal":
                 st.info("No savings account mapped to this ID.")
         else:
             st.error("Customer ID not found in system records.")
-
 

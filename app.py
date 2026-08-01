@@ -1221,6 +1221,7 @@ elif menu == "Admin Record Editor":
             st.info(f"Table `{selected_table}` is currently empty.")
 
 # --- FINANCIAL STATEMENTS (FIXED) ---
+# --- 14. FINANCIAL STATEMENTS (FIXED BALANCE SHEET DISPLAY) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -1316,17 +1317,13 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         # --- GET CASH IN HAND ---
         cash_in_hand = assets.get("Cash in Hand", 0)
         
-        # Get SB, FD, RD totals
-        tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
-        tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-        tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-        
         # --- DISPLAY ASSETS ---
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("### Assets")
             
+            # Get all asset accounts
             all_asset_accounts = run_query("""
                 SELECT account_name, account_code FROM chart_of_accounts 
                 WHERE account_type = 'Asset'
@@ -1336,7 +1333,11 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             asset_data = []
             total_assets = 0
             
-            for acc_name, acc_code in all_asset_accounts:
+            # FIX: Iterate properly with column indices
+            for row in all_asset_accounts:
+                acc_name = row[0]  # First column is account_name
+                acc_code = row[1]  # Second column is account_code
+                
                 if "Deposits" not in acc_name and "Retrieval" not in acc_name:
                     balance = assets.get(acc_name, 0)
                     asset_data.append([acc_name, f"₹{balance:,.2f}"])
@@ -1352,26 +1353,30 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col2:
             st.markdown("### Liabilities & Equity")
             
-            liability_data = []
+            # Get all liability accounts
             all_liability_accounts = run_query("""
                 SELECT account_name FROM chart_of_accounts 
                 WHERE account_type = 'Liability'
                 ORDER BY account_name
             """)
             
-            for (acc_name,) in all_liability_accounts:
+            liability_data = []
+            for row in all_liability_accounts:
+                acc_name = row[0]
                 balance = liabilities.get(acc_name, 0)
                 if balance != 0:
                     liability_data.append([acc_name, f"₹{balance:,.2f}"])
             
-            equity_data = []
+            # Get all equity accounts
             all_equity_accounts = run_query("""
                 SELECT account_name FROM chart_of_accounts 
                 WHERE account_type = 'Equity'
                 ORDER BY account_name
             """)
             
-            for (acc_name,) in all_equity_accounts:
+            equity_data = []
+            for row in all_equity_accounts:
+                acc_name = row[0]
                 if acc_name == "Retained Earnings":
                     if updated_retained_earnings != 0:
                         label = "Retained Earnings"
@@ -1424,11 +1429,32 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.success("✅ Balance Sheet Perfectly Balanced!")
         else:
             st.warning(f"⚠️ Balance Sheet Discrepancy: ₹{diff:,.2f}")
+            # Show diagnostic
+            with st.expander("🔍 Diagnostic Info"):
+                st.write(f"**Total Assets:** ₹{total_assets:,.2f}")
+                st.write(f"**Total Liabilities & Equity:** ₹{total_liabilities_equity:,.2f}")
+                st.write(f"**Difference:** ₹{diff:,.2f}")
+                
+                st.write("**Asset Balances:**")
+                for name, bal in assets.items():
+                    if bal != 0:
+                        st.write(f"- {name}: ₹{bal:,.2f}")
+                
+                st.write("**Liability Balances:**")
+                for name, bal in liabilities.items():
+                    if bal != 0:
+                        st.write(f"- {name}: ₹{bal:,.2f}")
+                
+                st.write("**Equity Balances:**")
+                for name, bal in equity.items():
+                    if bal != 0:
+                        st.write(f"- {name}: ₹{bal:,.2f}")
         
         if st.button("Export Balance Sheet Report"):
             bs_data = [["ASSETS", "Amount (₹)"]]
             
-            for acc_name, acc_code in all_asset_accounts:
+            for row in all_asset_accounts:
+                acc_name = row[0]
                 if "Deposits" not in acc_name and "Retrieval" not in acc_name:
                     balance = assets.get(acc_name, 0)
                     bs_data.append([acc_name, f"₹{balance:,.2f}"])
@@ -1437,13 +1463,21 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             bs_data.append(["", ""])
             bs_data.append(["LIABILITIES & EQUITY", "Amount (₹)"])
             
-            for (acc_name,) in all_liability_accounts:
+            for row in all_liability_accounts:
+                acc_name = row[0]
                 balance = liabilities.get(acc_name, 0)
                 if balance != 0:
                     bs_data.append([acc_name, f"₹{balance:,.2f}"])
             
             if updated_retained_earnings != 0:
                 bs_data.append(["Retained Earnings", f"₹{updated_retained_earnings:,.2f}"])
+            
+            for row in all_equity_accounts:
+                acc_name = row[0]
+                if acc_name not in ["Retained Earnings", "Income Summary"]:
+                    balance = equity.get(acc_name, 0)
+                    if balance != 0:
+                        bs_data.append([acc_name, f"₹{balance:,.2f}"])
             
             bs_data.append(["Total Liabilities & Equity", f"₹{total_liabilities_equity:,.2f}"])
             
@@ -1516,7 +1550,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
             else:
                 col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
-
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")

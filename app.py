@@ -1164,12 +1164,31 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
+        # Pull live balances from database for Assets (Cash vs Bank)
+        cash_in_hand_bal = run_query("""
+            COALESCE(SUM(JE.debit - JE.credit), 0.0)
+            FROM jv_entries JE 
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+            WHERE CO.account_code = 'AST-101'
+        """)[0][0] or 0.0
+
+        bank_balance_val = run_query("""
+            COALESCE(SUM(JE.debit - JE.credit), 0.0)
+            FROM jv_entries JE 
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+            WHERE CO.account_code = 'AST-102'
+        """)[0][0] or 0.0
+
+        # Fallback to total SB deposits if bank balance ledger is empty yet
         tot_sb_assets = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
+        if bank_balance_val == 0.0:
+            bank_balance_val = tot_sb_assets
+
         tot_fd_liabilities = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_liabilities = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         
         tot_capital_equity = run_query("""
-            SELECT COALESCE(SUM(JE.credit - JE.debit), 0.0) 
+            COALESCE(SUM(JE.credit - JE.debit), 0.0) 
             FROM jv_entries JE 
             JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
             WHERE CO.account_type = 'Equity'
@@ -1178,11 +1197,11 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### Assets")
-            default_vault = tot_sb_assets + tot_fd_liabilities + tot_rd_liabilities + tot_capital_equity
-            cash_in_hand = st.number_input("Vault Cash / Physical Currency (₹)", value=float(default_vault), step=1000.0)
+            vault_cash = st.number_input("Vault Cash / Physical Currency (AST-101)", value=float(cash_in_hand_bal), step=1000.0)
+            bank_balance = st.number_input("Bank Balance (AST-102)", value=float(bank_balance_val), step=1000.0)
             loans_advances = st.number_input("Loans & Advances Receivable (₹)", value=0.0, step=1000.0)
             
-            total_assets = cash_in_hand + loans_advances
+            total_assets = vault_cash + bank_balance + loans_advances
             st.metric("Total Asset Holdings", f"₹{total_assets:,.2f}")
             
         with col2:
@@ -1205,7 +1224,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         if st.button("Export Balance Sheet Report"):
             bs_data = [
                 ["Assets Section", "Amount (₹)"],
-                ["Vault Cash / Physical Currency", cash_in_hand],
+                ["Vault Cash / Physical Currency", vault_cash],
+                ["Bank Balance", bank_balance],
                 ["Loans & Advances", loans_advances],
                 ["Total Assets", total_assets],
                 ["Liabilities & Equity", "Amount (₹)"],
@@ -1217,6 +1237,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             ]
             df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
             st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
+```[cite: 1]
 
     with tab3:
         st.subheader("Profit & Loss Statement (Strictly Operational Revenue vs Expenses)")

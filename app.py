@@ -866,7 +866,7 @@ elif menu == "Journal Vouchers":
             st.info("No journal vouchers found.")
 
 
-# --- 11. INCOME & EXPENSES (COMPLETE FIXED VERSION WITH BANK TRANSFER) ---
+# --- 11. INCOME & EXPENSES (FIXED - WITH PROPER BANK REDUCTION) ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income, Expenses, Assets & Liabilities")
     tab1, tab2, tab3, tab4 = st.tabs(["Record Entry", "Edit / Delete Entry", "View All Entries", "Cash Book Report & Print"])
@@ -874,10 +874,10 @@ elif menu == "Income & Expenses":
     with tab1:
         st.subheader("Record New Financial Entry")
         
-        # Get current balances
+        # Get current balances from jv_entries (trial balance)
         cash_in_hand = get_cash_in_hand()
         
-        # Get Union Bank balance
+        # Get Union Bank balance from trial balance
         union_balance = run_query("""
             SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
             FROM jv_entries JE 
@@ -886,7 +886,7 @@ elif menu == "Income & Expenses":
         """)
         union_bank_bal = union_balance[0][0] if union_balance else 0
         
-        # Get Capital Account balance
+        # Get Capital Account balance from trial balance
         capital_balance = run_query("""
             SELECT COALESCE(SUM(JE.credit - JE.debit), 0) 
             FROM jv_entries JE 
@@ -956,8 +956,11 @@ elif menu == "Income & Expenses":
                 # Get Union Bank account
                 union_bank_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Union Bank of India'")
                 if not union_bank_acc:
-                    st.error("❌ Union Bank account not found!")
-                    st.stop()
+                    # Try alternate name
+                    union_bank_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name LIKE '%Union%'")
+                    if not union_bank_acc:
+                        st.error("❌ Union Bank account not found!")
+                        st.stop()
                 union_bank_code = union_bank_acc[0][0]
                 
                 # Get Capital Account
@@ -991,7 +994,7 @@ elif menu == "Income & Expenses":
                         # DEBIT: Cash in Hand (Asset increases)
                         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
                                      (jv_id, cash_code, amount))
-                        # CREDIT: Union Bank (Asset decreases)
+                        # CREDIT: Union Bank (Asset decreases) - THIS REDUCES BANK!
                         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
                                      (jv_id, union_bank_code, amount))
                         
@@ -1010,6 +1013,7 @@ elif menu == "Income & Expenses":
                         conn.commit()
                         conn.close()
                         
+                        # Recalculate balances after transaction
                         new_cash = cash_in_hand + amount
                         new_union = union_bank_bal - amount
                         new_capital = capital_bal - amount
@@ -1021,6 +1025,14 @@ elif menu == "Income & Expenses":
                                f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)\n"
                                f"📌 **Union Bank:** ₹{union_bank_bal:,.2f} → ₹{new_union:,.2f} (↓)\n"
                                f"📌 **Capital Account:** ₹{capital_bal:,.2f} → ₹{new_capital:,.2f} (↓)")
+                        
+                        # Show debug info
+                        with st.expander("🔍 Verify the transaction"):
+                            st.write("**Check the Trial Balance to verify:**")
+                            st.write("1. Cash in Hand should show DEBIT of", amount)
+                            st.write("2. Union Bank should show CREDIT of", amount)
+                            st.write("3. Capital Account should show DEBIT of", amount)
+                            st.write("4. Petty Cash Income should show CREDIT of", amount)
                         st.rerun()
                 
                 # --- CASE 2: Petty Cash Income with CASH (Existing Cash) ---

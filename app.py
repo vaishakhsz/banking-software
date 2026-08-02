@@ -865,6 +865,7 @@ elif menu == "Journal Vouchers":
         else:
             st.info("No journal vouchers found.")
 
+
 # --- 11. INCOME & EXPENSES (COMPLETE FIXED VERSION WITH BANK TRANSFER) ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income, Expenses, Assets & Liabilities")
@@ -873,11 +874,10 @@ elif menu == "Income & Expenses":
     with tab1:
         st.subheader("Record New Financial Entry")
         
-        # Show current balances
+        # Get current balances
         cash_in_hand = get_cash_in_hand()
-        st.info(f"💰 **Current Cash in Hand:** ₹{cash_in_hand:,.2f}")
         
-        # Show Union Bank balance
+        # Get Union Bank balance
         union_balance = run_query("""
             SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
             FROM jv_entries JE 
@@ -885,7 +885,18 @@ elif menu == "Income & Expenses":
             WHERE CO.account_name = 'Union Bank of India'
         """)
         union_bank_bal = union_balance[0][0] if union_balance else 0
-        st.info(f"🏦 **Union Bank Balance:** ₹{union_bank_bal:,.2f}")
+        
+        # Get Capital Account balance
+        capital_balance = run_query("""
+            SELECT COALESCE(SUM(JE.credit - JE.debit), 0) 
+            FROM jv_entries JE 
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+            WHERE CO.account_name = 'Capital Account'
+        """)
+        capital_bal = capital_balance[0][0] if capital_balance else 0
+        
+        # Display current balances
+        st.info(f"💰 **Cash in Hand:** ₹{cash_in_hand:,.2f}  |  🏦 **Union Bank:** ₹{union_bank_bal:,.2f}  |  💼 **Capital:** ₹{capital_bal:,.2f}")
         
         with st.form("income_expense_form"):
             col1, col2 = st.columns(2)
@@ -919,7 +930,7 @@ elif menu == "Income & Expenses":
             
             # Show info based on selection
             if acc_name == "Petty Cash Income" and pay_mode == "BANK TRANSFER":
-                st.info("💡 **Bank Transfer Mode:** This will DEBIT Cash in Hand and CREDIT Union Bank (Bank balance decreases)")
+                st.info("💡 **Bank Transfer Mode:** This will DEBIT Cash in Hand, CREDIT Union Bank, and reduce Capital Account")
             elif acc_name == "Petty Cash Income" and pay_mode == "CASH":
                 st.info("💡 **Cash Mode:** This will DEBIT Cash in Hand and CREDIT Petty Cash Income (Income increases)")
             
@@ -949,7 +960,14 @@ elif menu == "Income & Expenses":
                     st.stop()
                 union_bank_code = union_bank_acc[0][0]
                 
-                # --- CASE 1: Petty Cash Income with BANK TRANSFER (Withdraw from Bank) ---
+                # Get Capital Account
+                capital_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Capital Account'")
+                if not capital_acc:
+                    st.error("❌ Capital Account not found!")
+                    st.stop()
+                capital_code = capital_acc[0][0]
+                
+                # --- CASE 1: Petty Cash Income with BANK TRANSFER (Withdraw from Bank + Reduce Capital) ---
                 if acc_name == "Petty Cash Income" and entry_type == "INCOME" and pay_mode == "BANK TRANSFER":
                     
                     # Check if Union Bank has sufficient balance
@@ -962,31 +980,47 @@ elif menu == "Income & Expenses":
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                         
-                        # Create Journal Voucher: Dr. Cash in Hand, Cr. Union Bank
                         conn = get_connection()
                         cursor = conn.cursor()
+                        
+                        # ---- VOUCHER 1: Withdraw from Bank to Cash ----
                         cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
                                        (str(date.today()), f"Petty Cash Withdrawal from Union Bank: {narration}"))
                         jv_id = cursor.lastrowid
                         
-                        # DEBIT: Cash in Hand (Asset increases) - THIS IS CORRECT
+                        # DEBIT: Cash in Hand (Asset increases)
                         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
                                      (jv_id, cash_code, amount))
-                        # CREDIT: Union Bank (Asset decreases) - THIS IS CORRECT
+                        # CREDIT: Union Bank (Asset decreases)
                         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
                                      (jv_id, union_bank_code, amount))
+                        
+                        # ---- VOUCHER 2: Capital Withdrawal ----
+                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                                       (str(date.today()), f"Capital Withdrawal for Petty Cash: {narration}"))
+                        jv_id2 = cursor.lastrowid
+                        
+                        # DEBIT: Capital Account (Equity decreases)
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                                     (jv_id2, capital_code, amount))
+                        # CREDIT: Petty Cash Income (Income increases)
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                                     (jv_id2, account_code, amount))
+                        
                         conn.commit()
                         conn.close()
                         
                         new_cash = cash_in_hand + amount
                         new_union = union_bank_bal - amount
+                        new_capital = capital_bal - amount
                         
                         st.success(f"✅ **Petty Cash Withdrawal of ₹{amount:,.2f} from Union Bank recorded!**")
-                        st.info(f"📌 **Journal Entry:**\n"
-                               f"   Dr. Cash in Hand    ₹{amount:,.2f}\n"
-                               f"   Cr. Union Bank of India ₹{amount:,.2f}\n\n"
+                        st.info(f"📌 **Journal Entries:**\n"
+                               f"1️⃣ Dr. Cash in Hand ₹{amount:,.2f} | Cr. Union Bank ₹{amount:,.2f}\n"
+                               f"2️⃣ Dr. Capital Account ₹{amount:,.2f} | Cr. Petty Cash Income ₹{amount:,.2f}\n\n"
                                f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)\n"
-                               f"📌 **Union Bank:** ₹{union_bank_bal:,.2f} → ₹{new_union:,.2f} (↓)")
+                               f"📌 **Union Bank:** ₹{union_bank_bal:,.2f} → ₹{new_union:,.2f} (↓)\n"
+                               f"📌 **Capital Account:** ₹{capital_bal:,.2f} → ₹{new_capital:,.2f} (↓)")
                         st.rerun()
                 
                 # --- CASE 2: Petty Cash Income with CASH (Existing Cash) ---

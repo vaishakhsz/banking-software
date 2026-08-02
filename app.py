@@ -1221,7 +1221,7 @@ elif menu == "Admin Record Editor":
             st.info(f"Table `{selected_table}` is currently empty.")
 
 # --- FINANCIAL STATEMENTS (FIXED) ---
-# --- 14. FINANCIAL STATEMENTS (FIXED - NO DUPLICATE CAPITAL) ---
+# --- 14. FINANCIAL STATEMENTS (FIXED - UNIQUE BUTTON KEYS) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -1236,7 +1236,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         if entries:
             df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Account Type", "Total Debit (₹)", "Total Credit (₹)"])
             st.dataframe(df_tb, use_container_width=True)
-            st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
+            st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf", key="download_tb_pdf")
         else:
             st.info("No entries recorded yet.")
 
@@ -1374,7 +1374,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 if balance != 0:
                     liability_data.append([acc_name, f"₹{balance:,.2f}"])
             
-            # Get all equity accounts - FIX: Don't duplicate Capital Account
+            # Get all equity accounts
             all_equity_accounts = run_query("""
                 SELECT account_name FROM chart_of_accounts 
                 WHERE account_type = 'Equity'
@@ -1433,23 +1433,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         st.markdown("---")
         
         # --- BALANCE CHECK ---
-        # Calculate totals from displayed data
-        total_assets = 0
-        for name, val in asset_data:
-            if name != "**Total Assets**":
-                try:
-                    total_assets += float(val.replace('₹', '').replace(',', ''))
-                except:
-                    pass
-        
-        total_liabilities_equity = 0
-        for name, val in combined_data:
-            if name != "**Total Liabilities & Equity**":
-                try:
-                    total_liabilities_equity += float(val.replace('₹', '').replace(',', ''))
-                except:
-                    pass
-        
         diff = total_assets - total_liabilities_equity
         if abs(diff) < 0.01:
             st.success("✅ Balance Sheet Perfectly Balanced!")
@@ -1477,7 +1460,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             
             st.info(f"💡 **Cash in Hand:** ₹{cash_in_hand:,.2f} | **Retained Earnings:** ₹{updated_retained_earnings:,.2f}")
         
-        if st.button("Export Balance Sheet Report"):
+        # --- EXPORT BUTTON WITH UNIQUE KEY ---
+        if st.button("Export Balance Sheet Report", key="export_bs_btn"):
             bs_data = [["ASSETS", "Amount (₹)"]]
             
             for row in all_asset_accounts:
@@ -1513,7 +1497,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             bs_data.append(["Total Liabilities & Equity", f"₹{total_liabilities_equity:,.2f}"])
             
             df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
-            st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
+            st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf", key="download_bs_pdf")
 
     with tab3:
         st.subheader("Profit & Loss Statement")
@@ -1584,6 +1568,23 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             
             st.markdown("---")
             st.info(f"💡 **Net {'Profit' if net_pl >= 0 else 'Loss'}** of ₹{abs(net_pl):,.2f} will be transferred to **Retained Earnings** in the Balance Sheet.")
+            
+            # Export P&L button with unique key
+            if st.button("Export P&L Report", key="export_pl_btn"):
+                pl_data = [["INCOME", "Amount (₹)"]]
+                for code, name, amount in income_details:
+                    pl_data.append([name, f"₹{amount:,.2f}"])
+                pl_data.append(["Total Income", f"₹{total_income_pl:,.2f}"])
+                pl_data.append(["", ""])
+                pl_data.append(["EXPENSES", "Amount (₹)"])
+                for code, name, amount in expense_details:
+                    pl_data.append([name, f"₹{amount:,.2f}"])
+                pl_data.append(["Total Expenses", f"₹{total_expense_pl:,.2f}"])
+                pl_data.append(["", ""])
+                pl_data.append(["NET PROFIT/LOSS", f"₹{net_pl:,.2f}"])
+                
+                df_pl = pd.DataFrame(pl_data[1:], columns=pl_data[0])
+                st.download_button("Download P&L PDF", create_pdf_report("Profit & Loss Statement", df_pl), "profit_loss.pdf", "application/pdf", key="download_pl_pdf")
 
         
         # --- P&L SUMMARY ------------

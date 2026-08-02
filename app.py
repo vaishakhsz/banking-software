@@ -1089,6 +1089,7 @@ elif menu == "Income & Expenses":
 
     # --- TAB 2: Edit/Delete Entry ---
     with tab2:
+        
         st.subheader("✏️ Edit or 🗑️ Delete Financial Entry")
         finances_list = run_query("SELECT id, type, account_code, amount, mode, date, narration FROM operational_finances ORDER BY id DESC")
         if finances_list:
@@ -1708,18 +1709,28 @@ with tab2:
 
 # --- REPORTS ---
 elif menu == "Reports":
-    st.title("📄 Comprehensive Bank Reports Center")
-    report_type = st.selectbox("Select Report to Generate", [
+
+
+
+st.title("📄 Comprehensive Bank Reports Center")
+report_type = st.selectbox("Select Report to Generate", [
         "Customer List Report", "Daily Transactions Report", "FD Summary Report", "RD Summary Report", "Income & Expense Breakdown"
     ])
+
+
     
-    if st.button("Generate & Display Report"):
-        if "Customer" in report_type:
-            data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
-            df = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status", "Joined"])
-            st.dataframe(df, use_container_width=True)
-            st.download_button("Download PDF", create_pdf_report("Customer Directory", df), "customer_list.pdf", "application/pdf")
+if st.button("Generate & Display Report"):
+    
+    if "Customer" in report_type:
+        
+        
+        data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
+        df = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status", "Joined"])
+        st.dataframe(df, use_container_width=True)
+        st.download_button("Download PDF", create_pdf_report("Customer Directory", df), "customer_list.pdf", "application/pdf")
+        
         elif "Transaction" in report_type:
+            
             data = run_query("SELECT tx_id, account_no, type, amount, mode, date FROM transactions")
             df = pd.DataFrame(data, columns=["Tx ID", "Account No", "Type", "Amount", "Mode", "Date"])
             st.dataframe(df, use_container_width=True)

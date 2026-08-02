@@ -936,11 +936,27 @@ elif menu == "Journal Vouchers":
                     
                     # If Petty Cash Income is involved, use special function
                     if acc1_name == "Petty Cash Income" or acc2_name == "Petty Cash Income":
-                        # Find the amount
                         jv_amount = dr1 if dr1 > 0 else cr1 if cr1 > 0 else dr2 if dr2 > 0 else cr2
                         if jv_amount > 0:
-                            post_petty_cash_jv(narration, jv_amount)
-                            st.success("✅ Petty Cash Income posted with automatic Bank and Capital adjustments!")
+                            # Find which account is Petty Cash Income
+                            petty_cash_code = acc1_code if acc1_name == "Petty Cash Income" else acc2_code
+                            
+                            # Record in operational_finances so P&L shows it
+                            run_query("""
+                                INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, ("INCOME", None, petty_cash_code, jv_amount, "BANK TRANSFER", datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
+                            
+                            # Use the special petty cash function
+                            if post_petty_cash_jv(narration, jv_amount):
+                                st.success(f"✅ Petty Cash Income of ₹{jv_amount:,.2f} posted with automatic Bank and Capital adjustments!")
+                                st.info("📌 This will:\n"
+                                       f"   • Increase Cash in Hand by ₹{jv_amount:,.2f}\n"
+                                       f"   • Decrease Union Bank by ₹{jv_amount:,.2f}\n"
+                                       f"   • Decrease Capital Account by ₹{jv_amount:,.2f}\n"
+                                       f"   • Increase Petty Cash Income in P&L by ₹{jv_amount:,.2f}")
+                            else:
+                                st.error("Error posting Petty Cash entry!")
                         else:
                             st.error("Invalid amount")
                     else:
@@ -1082,7 +1098,7 @@ elif menu == "Income & Expenses":
                     if cash_acc:
                         cash_code = cash_acc[0][0]
                         post_automated_jv(f"{entry_type}: {narration}", cash_code, account_code, amount)
-                        st.success("Petty Cash Income recorded with Cash in Hand!")
+                        st.success("✅ Petty Cash Income recorded with Cash in Hand!")
                     else:
                         st.error("Cash in Hand account not found!")
                 
@@ -1350,21 +1366,18 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         for acc_code, acc_name, acc_type, total_debit, total_credit in account_balances:
             if acc_type == "Asset":
-                # For Assets: Debit - Credit = Balance (should be positive)
                 balance = total_debit - total_credit
                 if balance >= 0:
                     assets[acc_name] = balance
                 else:
                     assets[acc_name] = 0
             elif acc_type == "Liability":
-                # For Liabilities: Credit - Debit = Balance (should be positive)
                 balance = total_credit - total_debit
                 if balance >= 0:
                     liabilities[acc_name] = balance
                 else:
                     liabilities[acc_name] = 0
             elif acc_type == "Equity":
-                # For Equity: Credit - Debit = Balance (should be positive)
                 balance = total_credit - total_debit
                 if balance >= 0:
                     equity[acc_name] = balance
@@ -1459,7 +1472,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         if has_entries and net_profit_loss >= 0:
             updated_retained_earnings = retained_earnings + net_profit_loss
         elif has_entries and net_profit_loss < 0:
-            updated_retained_earnings = retained_earnings + net_profit_loss  # Could be negative
+            updated_retained_earnings = retained_earnings + net_profit_loss
         else:
             updated_retained_earnings = retained_earnings
         

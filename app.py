@@ -866,6 +866,7 @@ elif menu == "Journal Vouchers":
             st.info("No journal vouchers found.")
 
 # --- INCOME & EXPENSES (FIXED) ---
+# --- 11. INCOME & EXPENSES (FIXED - WITH BANK TRANSFER SUPPORT) ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income, Expenses, Assets & Liabilities")
     tab1, tab2, tab3, tab4 = st.tabs(["Record Entry", "Edit / Delete Entry", "View All Entries", "Cash Book Report & Print"])
@@ -907,10 +908,6 @@ elif menu == "Income & Expenses":
             amount = col_amt1.number_input("Amount (₹)", min_value=1.0, value=1000.0, step=100.0)
             pay_mode = col_amt2.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
             
-            # Show warning for Petty Cash Income with wrong mode
-            if acc_name == "Petty Cash Income" and pay_mode != "CASH":
-                st.warning("⚠️ **For Petty Cash Income, use 'CASH' mode** to increase Cash in Hand.")
-            
             st.markdown("### Journal Entry Routing (Debit & Credit)")
             d_col1, d_col2 = st.columns(2)
             debit_account = d_col1.selectbox("Debit Account Code", list(coa_dict.keys()), index=0)
@@ -930,8 +927,46 @@ elif menu == "Income & Expenses":
                     st.stop()
                 cash_code = cash_acc[0][0]
                 
-                # --- CASE 1: Petty Cash Income (Creates Cash in Hand) ---
-                if acc_name == "Petty Cash Income" and entry_type == "INCOME":
+                # --- CASE 1: Petty Cash Income with BANK TRANSFER (Withdraw from Bank) ---
+                if acc_name == "Petty Cash Income" and entry_type == "INCOME" and pay_mode == "BANK TRANSFER":
+                    # This means: Withdraw from Bank to Cash in Hand
+                    # Get Union Bank account
+                    union_bank_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Union Bank of India'")
+                    if not union_bank_acc:
+                        st.error("❌ Union Bank account not found!")
+                        st.stop()
+                    union_bank_code = union_bank_acc[0][0]
+                    
+                    # Record in operational_finances
+                    run_query("""
+                        INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
+                    
+                    # Create Journal Voucher: Dr. Cash in Hand, Cr. Union Bank
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                                   (str(date.today()), f"Petty Cash Withdrawal from Bank: {narration}"))
+                    jv_id = cursor.lastrowid
+                    
+                    # DEBIT: Cash in Hand (Asset increases)
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                                 (jv_id, cash_code, amount))
+                    # CREDIT: Union Bank (Asset decreases)
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                                 (jv_id, union_bank_code, amount))
+                    conn.commit()
+                    conn.close()
+                    
+                    new_cash = cash_in_hand + amount
+                    st.success(f"✅ **Petty Cash Withdrawal of ₹{amount:,.2f} from Bank recorded!**")
+                    st.info(f"📌 **Journal Entry:** Dr. Cash in Hand ₹{amount:,.2f} | Cr. Union Bank ₹{amount:,.2f}")
+                    st.info(f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f}")
+                    st.rerun()
+                
+                # --- CASE 2: Petty Cash Income with CASH (Already have cash) ---
+                elif acc_name == "Petty Cash Income" and entry_type == "INCOME" and pay_mode == "CASH":
                     # Record in operational_finances
                     run_query("""
                         INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
@@ -942,25 +977,23 @@ elif menu == "Income & Expenses":
                     conn = get_connection()
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                                   (str(date.today()), f"Petty Cash Income: {narration}"))
+                                   (str(date.today()), f"Petty Cash Income (Existing Cash): {narration}"))
                     jv_id = cursor.lastrowid
                     
-                    # DEBIT: Cash in Hand (Asset increases) - CORRECT!
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
                                  (jv_id, cash_code, amount))
-                    # CREDIT: Petty Cash Income (Income increases) - CORRECT!
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
                                  (jv_id, account_code, amount))
                     conn.commit()
                     conn.close()
                     
                     new_cash = cash_in_hand + amount
-                    st.success(f"✅ **Petty Cash Income of ₹{amount:,.2f} recorded successfully!**")
+                    st.success(f"✅ **Petty Cash Income of ₹{amount:,.2f} recorded!**")
                     st.info(f"📌 **Journal Entry:** Dr. Cash in Hand ₹{amount:,.2f} | Cr. Petty Cash Income ₹{amount:,.2f}")
                     st.info(f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f}")
                     st.rerun()
                 
-                # --- CASE 2: Expense from Cash in Hand ---
+                # --- CASE 3: Expense from Cash in Hand ---
                 elif entry_type == "EXPENSE" and pay_mode == "CASH":
                     if cash_in_hand < amount:
                         st.error(f"❌ **Insufficient Cash in Hand!** Available: ₹{cash_in_hand:,.2f}, Required: ₹{amount:,.2f}")
@@ -989,7 +1022,7 @@ elif menu == "Income & Expenses":
                         st.info(f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{remaining_cash:,.2f}")
                         st.rerun()
                 
-                # --- CASE 3: Regular Entry ---
+                # --- CASE 4: Regular Entry ---
                 else:
                     run_query("""
                         INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)

@@ -1371,8 +1371,6 @@ elif menu == "Admin Record Editor":
         else:
             st.info(f"Table `{selected_table}` is currently empty.")
 
-# --- FINANCIAL STATEMENTS (FIXED) ---
-# --- 14. FINANCIAL STATEMENTS (FIXED - UNIQUE BUTTON KEYS) ---
 # --- 14. FINANCIAL STATEMENTS (FIXED BALANCE SHEET) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
@@ -1752,126 +1750,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.download_button("Download P&L PDF", create_pdf_report("Profit & Loss Statement", df_pl), "profit_loss.pdf", "application/pdf", key="download_pl_pdf")
 
         
-        # --- P&L SUMMARY ------------
-        if has_entries:
-            st.subheader("📊 Profit & Loss Summary")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Income", f"₹{total_income:,.2f}")
-            with col2:
-                st.metric("Total Expenses", f"₹{total_expense:,.2f}")
-            with col3:
-                if net_profit_loss >= 0:
-                    st.metric("Net Profit (Added to Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Profit")
-                else:
-                    st.metric("Net Loss (Deducted from Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
-            
-            st.info(f"💡 **Cash in Hand (₹{cash_in_hand:,.2f}) = Retained Earnings (₹{updated_retained_earnings:,.2f})**")
-        
-        if st.button("Export Balance Sheet Report"):
-            bs_data = [["ASSETS", "Amount (₹)"]]
-            
-            for row in all_asset_accounts:
-                acc_name = row[0]
-                if "Deposits" not in acc_name and "Retrieval" not in acc_name:
-                    balance = assets.get(acc_name, 0)
-                    bs_data.append([acc_name, f"₹{balance:,.2f}"])
-            
-            bs_data.append(["Total Assets", f"₹{total_assets:,.2f}"])
-            bs_data.append(["", ""])
-            bs_data.append(["LIABILITIES & EQUITY", "Amount (₹)"])
-            
-            for row in all_liability_accounts:
-                acc_name = row[0]
-                balance = liabilities.get(acc_name, 0)
-                if balance != 0:
-                    bs_data.append([acc_name, f"₹{balance:,.2f}"])
-            
-            if updated_retained_earnings != 0:
-                bs_data.append(["Retained Earnings", f"₹{updated_retained_earnings:,.2f}"])
-            
-            for row in all_equity_accounts:
-                acc_name = row[0]
-                if acc_name not in ["Retained Earnings", "Income Summary"]:
-                    balance = equity.get(acc_name, 0)
-                    if balance != 0:
-                        bs_data.append([acc_name, f"₹{balance:,.2f}"])
-            
-            bs_data.append(["Total Liabilities & Equity", f"₹{total_liabilities_equity:,.2f}"])
-            
-            df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
-            st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
-
-    with tab3:
-        st.subheader("Profit & Loss Statement")
-        
-        has_income = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'INCOME'")
-        has_expense = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'EXPENSE'")
-        
-        if has_income[0][0] == 0 and has_expense[0][0] == 0:
-            st.info("📋 No income or expense entries recorded yet. Your P&L is empty.")
-        else:
-            income_details = run_query("""
-                SELECT o.account_code, c.account_name, SUM(o.amount) as total
-                FROM operational_finances o 
-                JOIN chart_of_accounts c ON o.account_code = c.account_code 
-                WHERE c.account_type = 'Income'
-                GROUP BY o.account_code
-            """)
-            
-            expense_details = run_query("""
-                SELECT o.account_code, c.account_name, SUM(o.amount) as total
-                FROM operational_finances o 
-                JOIN chart_of_accounts c ON o.account_code = c.account_code 
-                WHERE c.account_type = 'Expense'
-                GROUP BY o.account_code
-            """)
-            
-            st.markdown("### 📈 INCOME")
-            if income_details:
-                income_data = []
-                total_income_pl = 0
-                for code, name, amount in income_details:
-                    income_data.append([name, f"₹{amount:,.2f}"])
-                    total_income_pl += amount
-                income_data.append(["**Total Income**", f"**₹{total_income_pl:,.2f}**"])
-                df_income = pd.DataFrame(income_data, columns=["Account", "Amount"])
-                st.dataframe(df_income, use_container_width=True)
-            else:
-                st.info("No income recorded")
-                total_income_pl = 0
-            
-            st.markdown("---")
-            
-            st.markdown("### 📉 EXPENSES")
-            if expense_details:
-                expense_data = []
-                total_expense_pl = 0
-                for code, name, amount in expense_details:
-                    expense_data.append([name, f"₹{amount:,.2f}"])
-                    total_expense_pl += amount
-                expense_data.append(["**Total Expenses**", f"**₹{total_expense_pl:,.2f}**"])
-                df_expense = pd.DataFrame(expense_data, columns=["Account", "Amount"])
-                st.dataframe(df_expense, use_container_width=True)
-            else:
-                st.info("No expenses recorded")
-                total_expense_pl = 0
-            
-            st.markdown("---")
-            
-            net_pl = total_income_pl - total_expense_pl
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Income", f"₹{total_income_pl:,.2f}")
-            col2.metric("Total Expenses", f"₹{total_expense_pl:,.2f}")
-            if net_pl >= 0:
-                col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
-            else:
-                col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
-            
-            st.markdown("---")
-            st.info(f"💡 **Net {'Profit' if net_pl >= 0 else 'Loss'}** of ₹{abs(net_pl):,.2f} will be transferred to **Retained Earnings** in the Balance Sheet.")
+       
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")

@@ -1373,6 +1373,7 @@ elif menu == "Admin Record Editor":
 
 # --- FINANCIAL STATEMENTS (FIXED) ---
 # --- 14. FINANCIAL STATEMENTS (FIXED - UNIQUE BUTTON KEYS) ---
+# --- 14. FINANCIAL STATEMENTS (FIXED BALANCE SHEET) ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -1394,7 +1395,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # --- GET ALL ACCOUNT BALANCES ---
+        # --- GET ALL ACCOUNT BALANCES FROM TRIAL BALANCE ---
         account_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -1423,6 +1424,21 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             elif acc_type == "Equity":
                 balance = total_credit - total_debit
                 equity[acc_name] = balance
+        
+        # --- ALSO GET UNION BANK FROM sb_accounts IF EXISTS ---
+        sb_accounts = run_query("""
+            SELECT account_no, balance FROM sb_accounts
+        """)
+        
+        # Check if any SB account might be Union Bank
+        union_sb_balance = 0
+        for acc_no, bal in sb_accounts:
+            if "UNION" in acc_no.upper() or "UB" in acc_no.upper():
+                union_sb_balance += bal
+        
+        # If Union Bank balance in assets is 0 but has balance in sb_accounts, use that
+        if assets.get("Union Bank of India", 0) == 0 and union_sb_balance > 0:
+            assets["Union Bank of India"] = union_sb_balance
         
         # --- CHECK IF OPERATIONAL ENTRIES EXIST ---
         has_income = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'INCOME'")
@@ -1611,7 +1627,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             
             st.info(f"💡 **Cash in Hand:** ₹{cash_in_hand:,.2f} | **Retained Earnings:** ₹{updated_retained_earnings:,.2f}")
         
-        # --- EXPORT BUTTON WITH UNIQUE KEY ---
         if st.button("Export Balance Sheet Report", key="export_bs_btn"):
             bs_data = [["ASSETS", "Amount (₹)"]]
             
@@ -1720,7 +1735,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.markdown("---")
             st.info(f"💡 **Net {'Profit' if net_pl >= 0 else 'Loss'}** of ₹{abs(net_pl):,.2f} will be transferred to **Retained Earnings** in the Balance Sheet.")
             
-            # Export P&L button with unique key
             if st.button("Export P&L Report", key="export_pl_btn"):
                 pl_data = [["INCOME", "Amount (₹)"]]
                 for code, name, amount in income_details:

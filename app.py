@@ -256,9 +256,106 @@ def save_uploaded_file(uploaded_file):
         return file_path
     return None
 
+def get_cash_in_hand():
+    """Get current Cash in Hand balance from trial balance"""
+    cash_balance = run_query("""
+        SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
+        FROM jv_entries JE 
+        JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+        WHERE CO.account_name = 'Cash in Hand'
+    """)
+    return cash_balance[0][0] if cash_balance else 0
+
+def post_petty_cash_jv(narration, amount):
+    """
+    Universal function to post Petty Cash Income entries.
+    This ensures consistency whether called from Income & Expenses or Journal Vouchers.
+    """
+    if amount <= 0:
+        return False
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Get account codes
+    cash_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Cash in Hand'")
+    if not cash_acc:
+        return False
+    cash_code = cash_acc[0][0]
+    
+    # Get Union Bank account
+    union_bank_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Union Bank of India'")
+    if not union_bank_acc:
+        union_bank_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name LIKE '%Union%'")
+    if not union_bank_acc:
+        return False
+    union_bank_code = union_bank_acc[0][0]
+    
+    # Get Capital Account
+    capital_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Capital Account'")
+    if not capital_acc:
+        return False
+    capital_code = capital_acc[0][0]
+    
+    # Get Petty Cash Income account
+    petty_cash_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Petty Cash Income'")
+    if not petty_cash_acc:
+        return False
+    petty_cash_code = petty_cash_acc[0][0]
+    
+    try:
+        # ---- VOUCHER 1: Withdraw from Bank to Cash ----
+        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                       (str(date.today()), f"Petty Cash Withdrawal: {narration}"))
+        jv_id = cursor.lastrowid
+        
+        # DEBIT: Cash in Hand (Asset increases)
+        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                     (jv_id, cash_code, amount))
+        # CREDIT: Union Bank (Asset decreases)
+        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                     (jv_id, union_bank_code, amount))
+        
+        # ---- VOUCHER 2: Capital Withdrawal ----
+        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                       (str(date.today()), f"Capital Withdrawal for Petty Cash: {narration}"))
+        jv_id2 = cursor.lastrowid
+        
+        # DEBIT: Capital Account (Equity decreases)
+        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                     (jv_id2, capital_code, amount))
+        # CREDIT: Petty Cash Income (Income increases)
+        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                     (jv_id2, petty_cash_code, amount))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return False
+
 def post_automated_jv(narration, debit_acc, credit_acc, amount):
+    """
+    Enhanced version that handles Petty Cash Income specially
+    """
     if amount <= 0:
         return
+    
+    # Check if this is a Petty Cash Income entry
+    debit_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (debit_acc,))
+    credit_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (credit_acc,))
+    
+    debit_name = debit_info[0][0] if debit_info else ""
+    credit_name = credit_info[0][0] if credit_info else ""
+    
+    # If it's Petty Cash Income, use the special function
+    if debit_name == "Petty Cash Income" or credit_name == "Petty Cash Income":
+        post_petty_cash_jv(narration, amount)
+        return
+    
+    # Regular entry for all other cases
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
@@ -323,16 +420,6 @@ def create_pdf_report(title, df):
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
-
-def get_cash_in_hand():
-    """Get current Cash in Hand balance from trial balance"""
-    cash_balance = run_query("""
-        SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
-        FROM jv_entries JE 
-        JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
-        WHERE CO.account_name = 'Cash in Hand'
-    """)
-    return cash_balance[0][0] if cash_balance else 0
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("🏦 Aasha Nidhi Bank")
@@ -837,15 +924,36 @@ elif menu == "Journal Vouchers":
                 total_dr = dr1 + dr2
                 total_cr = cr1 + cr2
                 if total_dr == total_cr and total_dr > 0:
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
-                    jv_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
-                    conn.commit()
-                    conn.close()
-                    st.success("Balanced Journal Voucher posted successfully!")
+                    # Check if this involves Petty Cash Income
+                    acc1_code = coa_dict[acc1]
+                    acc2_code = coa_dict[acc2]
+                    
+                    acc1_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (acc1_code,))
+                    acc2_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (acc2_code,))
+                    
+                    acc1_name = acc1_info[0][0] if acc1_info else ""
+                    acc2_name = acc2_info[0][0] if acc2_info else ""
+                    
+                    # If Petty Cash Income is involved, use special function
+                    if acc1_name == "Petty Cash Income" or acc2_name == "Petty Cash Income":
+                        # Find the amount
+                        jv_amount = dr1 if dr1 > 0 else cr1 if cr1 > 0 else dr2 if dr2 > 0 else cr2
+                        if jv_amount > 0:
+                            post_petty_cash_jv(narration, jv_amount)
+                            st.success("Petty Cash Income posted with automatic Bank and Capital adjustments!")
+                        else:
+                            st.error("Invalid amount")
+                    else:
+                        # Regular JV
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
+                        jv_id = cursor.lastrowid
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
+                        conn.commit()
+                        conn.close()
+                        st.success("Balanced Journal Voucher posted successfully!")
                 else:
                     st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
@@ -865,9 +973,7 @@ elif menu == "Journal Vouchers":
         else:
             st.info("No journal vouchers found.")
 
-
-# --- 11. INCOME & EXPENSES (FIXED - WITH PROPER BANK REDUCTION) ---
-# --- 11. INCOME & EXPENSES (FIXED - PROPER BANK REDUCTION) ---
+# --- INCOME & EXPENSES ---
 elif menu == "Income & Expenses":
     st.title("💰 Operational Income, Expenses, Assets & Liabilities")
     tab1, tab2, tab3, tab4 = st.tabs(["Record Entry", "Edit / Delete Entry", "View All Entries", "Cash Book Report & Print"])
@@ -875,32 +981,17 @@ elif menu == "Income & Expenses":
     with tab1:
         st.subheader("Record New Financial Entry")
         
-        # Get current balances from ALL sources
+        # Get current balances
         cash_in_hand = get_cash_in_hand()
         
-        # Get Union Bank balance - check BOTH trial balance AND sb_accounts
-        union_from_tb = run_query("""
+        union_balance = run_query("""
             SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
             FROM jv_entries JE 
             JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
             WHERE CO.account_name = 'Union Bank of India'
         """)
-        union_tb_bal = union_from_tb[0][0] if union_from_tb else 0
+        union_bank_bal = union_balance[0][0] if union_balance else 0
         
-        # Also check if Union Bank has balance in sb_accounts
-        union_sb = run_query("""
-            SELECT COALESCE(SUM(balance), 0) 
-            FROM sb_accounts 
-            WHERE account_no LIKE '%UNION%' OR account_no LIKE '%UB%'
-        """)
-        union_sb_bal = union_sb[0][0] if union_sb else 0
-        
-        # Use the larger balance or combine them
-        union_bank_bal = union_tb_bal + union_sb_bal
-        if union_bank_bal == 0:
-            union_bank_bal = 300000  # Default if not found
-        
-        # Get Capital Account balance
         capital_balance = run_query("""
             SELECT COALESCE(SUM(JE.credit - JE.debit), 0) 
             FROM jv_entries JE 
@@ -909,7 +1000,6 @@ elif menu == "Income & Expenses":
         """)
         capital_bal = capital_balance[0][0] if capital_balance else 0
         
-        # Display current balances
         st.info(f"💰 **Cash in Hand:** ₹{cash_in_hand:,.2f}  |  🏦 **Union Bank:** ₹{union_bank_bal:,.2f}  |  💼 **Capital:** ₹{capital_bal:,.2f}")
         
         with st.form("income_expense_form"):
@@ -922,7 +1012,6 @@ elif menu == "Income & Expenses":
             selected_coa = col2.selectbox("Select Chart of Accounts (COA)", list(coa_dict.keys()))
             account_code = coa_dict[selected_coa]
             
-            # Get account name and type
             acc_info = run_query("SELECT account_name, account_type FROM chart_of_accounts WHERE account_code = ?", (account_code,))
             if acc_info:
                 acc_name, acc_type = acc_info[0]
@@ -942,11 +1031,8 @@ elif menu == "Income & Expenses":
             amount = col_amt1.number_input("Amount (₹)", min_value=1.0, value=1000.0, step=100.0)
             pay_mode = col_amt2.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
             
-            # Show info based on selection
             if acc_name == "Petty Cash Income" and pay_mode == "BANK TRANSFER":
-                st.info("💡 **Bank Transfer Mode:** This will DEBIT Cash in Hand, CREDIT Union Bank, and reduce Capital Account")
-            elif acc_name == "Petty Cash Income" and pay_mode == "CASH":
-                st.info("💡 **Cash Mode:** This will DEBIT Cash in Hand and CREDIT Petty Cash Income (Income increases)")
+                st.info("💡 **Bank Transfer Mode:** This will automatically deduct from Union Bank and Capital Account, and add to Cash in Hand.")
             
             st.markdown("### Journal Entry Routing (Debit & Credit)")
             d_col1, d_col2 = st.columns(2)
@@ -960,37 +1046,17 @@ elif menu == "Income & Expenses":
                 d_code = coa_dict[debit_account]
                 c_code = coa_dict[credit_account]
                 
-                # Get account codes
+                # Get Cash in Hand account code
                 cash_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Cash in Hand'")
                 if not cash_acc:
-                    st.error("❌ Cash in Hand account (AST-101) not found!")
+                    st.error("❌ Cash in Hand account not found!")
                     st.stop()
                 cash_code = cash_acc[0][0]
                 
-                # Get Union Bank account
-                union_bank_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Union Bank of India'")
-                if not union_bank_acc:
-                    union_bank_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name LIKE '%Union%'")
-                if not union_bank_acc:
-                    union_bank_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = 'AST-102'")
-                if not union_bank_acc:
-                    st.error("❌ Union Bank account not found!")
-                    st.stop()
-                union_bank_code = union_bank_acc[0][0]
-                
-                # Get Capital Account
-                capital_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Capital Account'")
-                if not capital_acc:
-                    st.error("❌ Capital Account not found!")
-                    st.stop()
-                capital_code = capital_acc[0][0]
-                
-                # --- CASE 1: Petty Cash Income with BANK TRANSFER (Withdraw from Bank + Reduce Capital) ---
+                # --- Petty Cash Income with BANK TRANSFER ---
                 if acc_name == "Petty Cash Income" and entry_type == "INCOME" and pay_mode == "BANK TRANSFER":
-                    
-                    # Check if Union Bank has sufficient balance
                     if union_bank_bal < amount:
-                        st.error(f"❌ **Insufficient Union Bank Balance!** Available: ₹{union_bank_bal:,.2f}, Required: ₹{amount:,.2f}")
+                        st.error(f"❌ Insufficient Union Bank Balance! Available: ₹{union_bank_bal:,.2f}, Required: ₹{amount:,.2f}")
                     else:
                         # Record in operational_finances
                         run_query("""
@@ -998,165 +1064,27 @@ elif menu == "Income & Expenses":
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                         
-                        conn = get_connection()
-                        cursor = conn.cursor()
-                        
-                        # ---- VOUCHER 1: Withdraw from Bank to Cash ----
-                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                                       (str(date.today()), f"Petty Cash Withdrawal from Union Bank: {narration}"))
-                        jv_id = cursor.lastrowid
-                        
-                        # DEBIT: Cash in Hand (Asset increases)
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
-                                     (jv_id, cash_code, amount))
-                        # CREDIT: Union Bank (Asset decreases) - THIS REDUCES BANK!
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
-                                     (jv_id, union_bank_code, amount))
-                        
-                        # ---- ALSO UPDATE sb_accounts if Union Bank is there ----
-                        # Check if Union Bank exists in sb_accounts
-                        sb_check = run_query("SELECT account_no FROM sb_accounts WHERE account_no LIKE '%UNION%' OR account_no LIKE '%UB%'")
-                        if sb_check:
-                            sb_acc_no = sb_check[0][0]
-                            current_sb_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no = ?", (sb_acc_no,))
-                            if current_sb_bal:
-                                new_sb_bal = current_sb_bal[0][0] - amount
-                                run_query("UPDATE sb_accounts SET balance = ? WHERE account_no = ?", (new_sb_bal, sb_acc_no), fetch=False)
-                        
-                        # ---- VOUCHER 2: Capital Withdrawal ----
-                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                                       (str(date.today()), f"Capital Withdrawal for Petty Cash: {narration}"))
-                        jv_id2 = cursor.lastrowid
-                        
-                        # DEBIT: Capital Account (Equity decreases)
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
-                                     (jv_id2, capital_code, amount))
-                        # CREDIT: Petty Cash Income (Income increases)
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
-                                     (jv_id2, account_code, amount))
-                        
-                        conn.commit()
-                        conn.close()
-                        
-                        # Recalculate balances after transaction
-                        new_cash = cash_in_hand + amount
-                        new_union = union_bank_bal - amount
-                        new_capital = capital_bal - amount
-                        
-                        st.success(f"✅ **Petty Cash Withdrawal of ₹{amount:,.2f} from Union Bank recorded!**")
-                        st.info(f"📌 **Journal Entries:**\n"
-                               f"1️⃣ Dr. Cash in Hand ₹{amount:,.2f} | Cr. Union Bank ₹{amount:,.2f}\n"
-                               f"2️⃣ Dr. Capital Account ₹{amount:,.2f} | Cr. Petty Cash Income ₹{amount:,.2f}\n\n"
-                               f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)\n"
-                               f"📌 **Union Bank:** ₹{union_bank_bal:,.2f} → ₹{new_union:,.2f} (↓)\n"
-                               f"📌 **Capital Account:** ₹{capital_bal:,.2f} → ₹{new_capital:,.2f} (↓)")
-                        
-                        # Show debug info
-                        with st.expander("🔍 Verify the transaction"):
-                            st.write("**Check these accounts in Trial Balance:**")
-                            st.write("1. Cash in Hand (AST-101) - Should show DEBIT of", amount)
-                            st.write("2. Union Bank of India (AST-102) - Should show CREDIT of", amount)
-                            st.write("3. Capital Account (EQT-101) - Should show DEBIT of", amount)
-                            st.write("4. Petty Cash Income (INC-400) - Should show CREDIT of", amount)
-                            
-                            # Show current balances from jv_entries
-                            st.write("\n**Current Trial Balance for these accounts:**")
-                            for acc_code in [cash_code, union_bank_code, capital_code, account_code]:
-                                tb = run_query("""
-                                    SELECT CO.account_name, SUM(JE.debit), SUM(JE.credit)
-                                    FROM jv_entries JE 
-                                    JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
-                                    WHERE JE.account_code = ?
-                                    GROUP BY CO.account_name
-                                """, (acc_code,))
-                                if tb:
-                                    st.write(f"- {tb[0][0]}: Debit {tb[0][1]:,.2f}, Credit {tb[0][2]:,.2f}")
-                        st.rerun()
+                        # Use the special petty cash function
+                        if post_petty_cash_jv(narration, amount):
+                            new_cash = cash_in_hand + amount
+                            new_union = union_bank_bal - amount
+                            new_capital = capital_bal - amount
+                            st.success(f"✅ Petty Cash Withdrawal of ₹{amount:,.2f} recorded!")
+                            st.info(f"📌 Cash in Hand: ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)\n"
+                                   f"📌 Union Bank: ₹{union_bank_bal:,.2f} → ₹{new_union:,.2f} (↓)\n"
+                                   f"📌 Capital Account: ₹{capital_bal:,.2f} → ₹{new_capital:,.2f} (↓)")
+                            st.rerun()
+                        else:
+                            st.error("Error posting Petty Cash entry!")
                 
-                # --- CASE 2: Petty Cash Income with CASH (Existing Cash) ---
-                elif acc_name == "Petty Cash Income" and entry_type == "INCOME" and pay_mode == "CASH":
-                    
-                    # Record in operational_finances
-                    run_query("""
-                        INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
-                    
-                    # Create Journal Voucher: Dr. Cash in Hand, Cr. Petty Cash Income
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                                   (str(date.today()), f"Petty Cash Income (Existing Cash): {narration}"))
-                    jv_id = cursor.lastrowid
-                    
-                    # DEBIT: Cash in Hand
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
-                                 (jv_id, cash_code, amount))
-                    # CREDIT: Petty Cash Income
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
-                                 (jv_id, account_code, amount))
-                    conn.commit()
-                    conn.close()
-                    
-                    new_cash = cash_in_hand + amount
-                    st.success(f"✅ **Petty Cash Income of ₹{amount:,.2f} recorded!**")
-                    st.info(f"📌 **Journal Entry:**\n"
-                           f"   Dr. Cash in Hand    ₹{amount:,.2f}\n"
-                           f"   Cr. Petty Cash Income ₹{amount:,.2f}\n\n"
-                           f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)\n"
-                           f"📌 **P&L:** Income increased by ₹{amount:,.2f}")
-                    st.rerun()
-                
-                # --- CASE 3: Expense from Cash in Hand ---
-                elif entry_type == "EXPENSE" and pay_mode == "CASH":
-                    if cash_in_hand < amount:
-                        st.error(f"❌ **Insufficient Cash in Hand!** Available: ₹{cash_in_hand:,.2f}, Required: ₹{amount:,.2f}")
-                    else:
-                        run_query("""
-                            INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
-                        
-                        conn = get_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                                       (str(date.today()), f"{entry_type}: {narration}"))
-                        jv_id = cursor.lastrowid
-                        
-                        # DEBIT: Expense account
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
-                                     (jv_id, account_code, amount))
-                        # CREDIT: Cash in Hand
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
-                                     (jv_id, cash_code, amount))
-                        conn.commit()
-                        conn.close()
-                        
-                        remaining_cash = cash_in_hand - amount
-                        st.success(f"✅ **Expense of ₹{amount:,.2f} recorded successfully!**")
-                        st.info(f"📌 **Journal Entry:**\n"
-                               f"   Dr. {acc_name}    ₹{amount:,.2f}\n"
-                               f"   Cr. Cash in Hand    ₹{amount:,.2f}\n\n"
-                               f"📌 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{remaining_cash:,.2f} (↓)")
-                        st.rerun()
-                
-                # --- CASE 4: Regular Entry ---
+                # --- Regular Entry ---
                 else:
                     run_query("""
                         INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                     
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                                   (str(date.today()), f"{entry_type}: {narration}"))
-                    jv_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, d_code, amount))
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, c_code, amount))
-                    conn.commit()
-                    conn.close()
-                    
+                    post_automated_jv(f"{entry_type}: {narration}", d_code, c_code, amount)
                     st.success("Entry recorded and Journal Voucher posted successfully!")
 
     # --- TAB 2: Edit/Delete Entry ---
@@ -1371,7 +1299,7 @@ elif menu == "Admin Record Editor":
         else:
             st.info(f"Table `{selected_table}` is currently empty.")
 
-# --- 14. FINANCIAL STATEMENTS (FIXED BALANCE SHEET) ---
+# --- FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -1393,7 +1321,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # --- GET ALL ACCOUNT BALANCES FROM TRIAL BALANCE ---
+        # Get all account balances
         account_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -1407,7 +1335,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             ORDER BY CO.account_type, CO.account_name
         """)
         
-        # --- CALCULATE CORRECT BALANCES ---
         assets = {}
         liabilities = {}
         equity = {}
@@ -1423,27 +1350,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 balance = total_credit - total_debit
                 equity[acc_name] = balance
         
-        # --- ALSO GET UNION BANK FROM sb_accounts IF EXISTS ---
-        sb_accounts = run_query("""
-            SELECT account_no, balance FROM sb_accounts
-        """)
-        
-        # Check if any SB account might be Union Bank
-        union_sb_balance = 0
-        for acc_no, bal in sb_accounts:
-            if "UNION" in acc_no.upper() or "UB" in acc_no.upper():
-                union_sb_balance += bal
-        
-        # If Union Bank balance in assets is 0 but has balance in sb_accounts, use that
-        if assets.get("Union Bank of India", 0) == 0 and union_sb_balance > 0:
-            assets["Union Bank of India"] = union_sb_balance
-        
-        # --- CHECK IF OPERATIONAL ENTRIES EXIST ---
+        # Check operational entries
         has_income = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'INCOME'")
         has_expense = run_query("SELECT COUNT(*) FROM operational_finances WHERE type = 'EXPENSE'")
         has_entries = (has_income[0][0] > 0) or (has_expense[0][0] > 0)
         
-        # --- CALCULATE P&L ---
+        # Calculate P&L
         if has_entries:
             total_income = run_query("""
                 SELECT COALESCE(SUM(o.amount), 0.0) 
@@ -1465,7 +1377,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             total_expense = 0
             net_profit_loss = 0
         
-        # --- GET CASH IN HAND ---
+        # Get Cash in Hand
         cash_balance = run_query("""
             SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
             FROM jv_entries JE 
@@ -1474,7 +1386,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         """)
         cash_in_hand = cash_balance[0][0] if cash_balance else 0
         
-        # --- GET RETAINED EARNINGS ---
+        # Get Retained Earnings
         retained_earnings_balance = run_query("""
             SELECT COALESCE(SUM(JE.credit - JE.debit), 0) 
             FROM jv_entries JE 
@@ -1483,19 +1395,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         """)
         retained_earnings = retained_earnings_balance[0][0] if retained_earnings_balance else 0
         
-        # --- UPDATE RETAINED EARNINGS WITH P&L ---
         if has_entries:
             updated_retained_earnings = retained_earnings + net_profit_loss
         else:
             updated_retained_earnings = retained_earnings
         
-        # --- DISPLAY ASSETS ---
+        # Display Assets
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("### Assets")
             
-            # Get all asset accounts
             all_asset_accounts = run_query("""
                 SELECT account_name, account_code FROM chart_of_accounts 
                 WHERE account_type = 'Asset'
@@ -1507,8 +1417,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             
             for row in all_asset_accounts:
                 acc_name = row[0]
-                acc_code = row[1]
-                
                 if "Deposits" not in acc_name and "Retrieval" not in acc_name:
                     balance = assets.get(acc_name, 0)
                     asset_data.append([acc_name, f"₹{balance:,.2f}"])
@@ -1525,7 +1433,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col2:
             st.markdown("### Liabilities & Equity")
             
-            # Get all liability accounts
             all_liability_accounts = run_query("""
                 SELECT account_name FROM chart_of_accounts 
                 WHERE account_type = 'Liability'
@@ -1539,7 +1446,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 if balance != 0:
                     liability_data.append([acc_name, f"₹{balance:,.2f}"])
             
-            # Get all equity accounts
             all_equity_accounts = run_query("""
                 SELECT account_name FROM chart_of_accounts 
                 WHERE account_type = 'Equity'
@@ -1571,7 +1477,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     if balance != 0:
                         equity_data.append([acc_name, f"₹{balance:,.2f}"])
             
-            # If Capital Account wasn't in equity dict but has balance, add it
             if not capital_added:
                 capital_balance = equity.get("Capital Account", 0)
                 if capital_balance != 0:
@@ -1597,21 +1502,14 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         st.markdown("---")
         
-        # --- BALANCE CHECK ---
         diff = total_assets - total_liabilities_equity
         if abs(diff) < 0.01:
             st.success("✅ Balance Sheet Perfectly Balanced!")
         else:
             st.warning(f"⚠️ Balance Sheet Discrepancy: ₹{diff:,.2f}")
-            with st.expander("🔍 Diagnostic Info"):
-                st.write(f"**Total Assets:** ₹{total_assets:,.2f}")
-                st.write(f"**Total Liabilities & Equity:** ₹{total_liabilities_equity:,.2f}")
-                st.write(f"**Difference:** ₹{diff:,.2f}")
         
-        # --- P&L SUMMARY ---
         if has_entries:
             st.subheader("📊 Profit & Loss Summary")
-            
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Income", f"₹{total_income:,.2f}")
@@ -1619,9 +1517,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.metric("Total Expenses", f"₹{total_expense:,.2f}")
             with col3:
                 if net_profit_loss >= 0:
-                    st.metric("Net Profit (Added to Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Profit")
+                    st.metric("Net Profit", f"₹{net_profit_loss:,.2f}", delta="Profit")
                 else:
-                    st.metric("Net Loss (Deducted from Retained Earnings)", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
+                    st.metric("Net Loss", f"₹{net_profit_loss:,.2f}", delta="Loss", delta_color="inverse")
             
             st.info(f"💡 **Cash in Hand:** ₹{cash_in_hand:,.2f} | **Retained Earnings:** ₹{updated_retained_earnings:,.2f}")
         
@@ -1749,8 +1647,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 df_pl = pd.DataFrame(pl_data[1:], columns=pl_data[0])
                 st.download_button("Download P&L PDF", create_pdf_report("Profit & Loss Statement", df_pl), "profit_loss.pdf", "application/pdf", key="download_pl_pdf")
 
-        
-       
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")

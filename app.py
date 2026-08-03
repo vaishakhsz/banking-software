@@ -924,7 +924,7 @@ elif menu == "Journal Vouchers":
                 total_dr = dr1 + dr2
                 total_cr = cr1 + cr2
                 if total_dr == total_cr and total_dr > 0:
-                    # Check if this involves Petty Cash Income
+                    # Get account names
                     acc1_code = coa_dict[acc1]
                     acc2_code = coa_dict[acc2]
                     
@@ -934,7 +934,7 @@ elif menu == "Journal Vouchers":
                     acc1_name = acc1_info[0][0] if acc1_info else ""
                     acc2_name = acc2_info[0][0] if acc2_info else ""
                     
-                    # If Petty Cash Income is involved, use special function
+                    # --- CASE 1: Petty Cash Income (Special Handling) ---
                     if acc1_name == "Petty Cash Income" or acc2_name == "Petty Cash Income":
                         jv_amount = dr1 if dr1 > 0 else cr1 if cr1 > 0 else dr2 if dr2 > 0 else cr2
                         if jv_amount > 0:
@@ -947,20 +947,100 @@ elif menu == "Journal Vouchers":
                                 VALUES (?, ?, ?, ?, ?, ?, ?)
                             """, ("INCOME", None, petty_cash_code, jv_amount, "BANK TRANSFER", datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                             
+                            # Get current balances for message
+                            cash_in_hand = get_cash_in_hand()
+                            union_balance = run_query("""
+                                SELECT COALESCE(SUM(JE.debit - JE.credit), 0) 
+                                FROM jv_entries JE 
+                                JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+                                WHERE CO.account_name = 'Union Bank of India'
+                            """)
+                            union_bank_bal = union_balance[0][0] if union_balance else 0
+                            
+                            capital_balance = run_query("""
+                                SELECT COALESCE(SUM(JE.credit - JE.debit), 0) 
+                                FROM jv_entries JE 
+                                JOIN chart_of_accounts CO ON JE.account_code = CO.account_code 
+                                WHERE CO.account_name = 'Capital Account'
+                            """)
+                            capital_bal = capital_balance[0][0] if capital_balance else 0
+                            
                             # Use the special petty cash function
                             if post_petty_cash_jv(narration, jv_amount):
+                                new_cash = cash_in_hand + jv_amount
+                                new_union = union_bank_bal - jv_amount
+                                new_capital = capital_bal - jv_amount
+                                
+                                # --- INCOME MESSAGE IN JV ---
                                 st.success(f"✅ Petty Cash Income of ₹{jv_amount:,.2f} posted with automatic Bank and Capital adjustments!")
-                                st.info("📌 This will:\n"
+                                st.info(f"📌 This will:\n"
                                        f"   • Increase Cash in Hand by ₹{jv_amount:,.2f}\n"
                                        f"   • Decrease Union Bank by ₹{jv_amount:,.2f}\n"
                                        f"   • Decrease Capital Account by ₹{jv_amount:,.2f}\n"
-                                       f"   • Increase Petty Cash Income in P&L by ₹{jv_amount:,.2f}")
+                                       f"   • Increase Petty Cash Income in P&L by ₹{jv_amount:,.2f}\n\n"
+                                       f"📊 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)\n"
+                                       f"📊 **Union Bank:** ₹{union_bank_bal:,.2f} → ₹{new_union:,.2f} (↓)\n"
+                                       f"📊 **Capital Account:** ₹{capital_bal:,.2f} → ₹{new_capital:,.2f} (↓)")
                             else:
                                 st.error("Error posting Petty Cash entry!")
                         else:
                             st.error("Invalid amount")
+                    
+                    # --- CASE 2: Expense from Cash in Hand ---
+                    elif (acc1_name in ["Salaries & Benefits", "Rent & Utilities", "Electricity Charges", 
+                                         "Printing & Stationary", "Bank Charges", "Office Expenses", "Petty Cash Expenses"] and acc2_name == "Cash in Hand") or \
+                         (acc2_name in ["Salaries & Benefits", "Rent & Utilities", "Electricity Charges", 
+                                         "Printing & Stationary", "Bank Charges", "Office Expenses", "Petty Cash Expenses"] and acc1_name == "Cash in Hand"):
+                        
+                        # Find the expense amount and accounts
+                        if acc1_name == "Cash in Hand":
+                            expense_code = acc2_code
+                            expense_name = acc2_name
+                            expense_amount = dr2 if dr2 > 0 else cr2 if cr2 > 0 else 0
+                            cash_code = acc1_code
+                        else:
+                            expense_code = acc1_code
+                            expense_name = acc1_name
+                            expense_amount = dr1 if dr1 > 0 else cr1 if cr1 > 0 else 0
+                            cash_code = acc2_code
+                        
+                        # Check if enough cash
+                        cash_in_hand = get_cash_in_hand()
+                        if cash_in_hand < expense_amount:
+                            st.error(f"❌ Insufficient Cash in Hand! Available: ₹{cash_in_hand:,.2f}, Required: ₹{expense_amount:,.2f}")
+                        else:
+                            # Record in operational_finances for P&L
+                            run_query("""
+                                INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, ("EXPENSE", None, expense_code, expense_amount, "CASH", datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
+                            
+                            # Create the Journal Voucher
+                            conn = get_connection()
+                            cursor = conn.cursor()
+                            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                                           (str(v_date), narration))
+                            jv_id = cursor.lastrowid
+                            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", 
+                                         (jv_id, expense_code, expense_amount, 0))
+                            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                                         (jv_id, cash_code, expense_amount))
+                            conn.commit()
+                            conn.close()
+                            
+                            remaining_cash = cash_in_hand - expense_amount
+                            
+                            # --- EXPENSE MESSAGE IN JV ---
+                            st.success(f"✅ Expense of ₹{expense_amount:,.2f} recorded successfully from Journal Voucher!")
+                            st.info(f"📌 This will:\n"
+                                   f"   • Decrease Cash in Hand by ₹{expense_amount:,.2f}\n"
+                                   f"   • No change to Union Bank\n"
+                                   f"   • No change to Capital Account\n"
+                                   f"   • Increase {expense_name} Expense in P&L by ₹{expense_amount:,.2f}\n\n"
+                                   f"📊 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{remaining_cash:,.2f} (↓)")
+                    
+                    # --- CASE 3: Regular JV (All other entries) ---
                     else:
-                        # Regular JV
                         conn = get_connection()
                         cursor = conn.cursor()
                         cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
@@ -969,23 +1049,77 @@ elif menu == "Journal Vouchers":
                         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
                         conn.commit()
                         conn.close()
-                        st.success("Balanced Journal Voucher posted successfully!")
+                        
+                        st.success("✅ Balanced Journal Voucher posted successfully!")
+                        
+                        # Show what was posted
+                        st.info(f"📌 Journal Entry posted:\n"
+                               f"   • {acc1}: Debit ₹{dr1:,.2f} | Credit ₹{cr1:,.2f}\n"
+                               f"   • {acc2}: Debit ₹{dr2:,.2f} | Credit ₹{cr2:,.2f}")
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+                    st.error("❌ Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
     with tab2:
-        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
+        # --- View & Delete Vouchers ---
+        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY jv_id DESC")
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
             
-            st.markdown("### Delete Journal Voucher")
+            st.markdown("---")
+            st.subheader("🔍 View Journal Voucher Details")
+            
+            jv_id_view = st.selectbox("Select JV ID to View Details", [jv[0] for jv in jvs], key="view_jv")
+            
+            if jv_id_view:
+                entries = run_query("""
+                    SELECT JE.account_code, CO.account_name, JE.debit, JE.credit
+                    FROM jv_entries JE
+                    JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+                    WHERE JE.jv_id = ?
+                """, (jv_id_view,))
+                
+                if entries:
+                    st.subheader(f"📝 Journal Voucher #{jv_id_view} Details")
+                    
+                    # Get voucher details
+                    jv_detail = run_query("SELECT voucher_date, narration, status FROM journal_vouchers WHERE jv_id = ?", (jv_id_view,))
+                    if jv_detail:
+                        st.write(f"**Date:** {jv_detail[0][0]}")
+                        st.write(f"**Narration:** {jv_detail[0][1]}")
+                        st.write(f"**Status:** {jv_detail[0][2]}")
+                    
+                    st.markdown("---")
+                    
+                    df_entries = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Debit (₹)", "Credit (₹)"])
+                    st.dataframe(df_entries, use_container_width=True)
+                    
+                    # Show totals
+                    total_debit = sum(row[2] for row in entries)
+                    total_credit = sum(row[3] for row in entries)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Total Debits", f"₹{total_debit:,.2f}")
+                    col2.metric("Total Credits", f"₹{total_credit:,.2f}")
+                    
+                    if total_debit == total_credit:
+                        col3.success("✅ Balanced")
+                    else:
+                        col3.error("❌ Unbalanced")
+            
+            st.markdown("---")
+            st.subheader("🗑️ Delete Journal Voucher")
             del_jv_id = st.number_input("Enter JV ID to Delete", min_value=1, step=1, key="del_jv")
-            if st.button("Delete JV and Entries"):
-                run_query("DELETE FROM jv_entries WHERE jv_id=?", (del_jv_id,), fetch=False)
-                run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (del_jv_id,), fetch=False)
-                st.warning(f"Journal Voucher ID {del_jv_id} deleted successfully.")
-                st.rerun()
+            if st.button("Delete JV and Entries", key="delete_jv_btn"):
+                # Check if JV exists
+                check = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_id = ?", (del_jv_id,))
+                if check:
+                    run_query("DELETE FROM jv_entries WHERE jv_id=?", (del_jv_id,), fetch=False)
+                    run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (del_jv_id,), fetch=False)
+                    st.warning(f"✅ Journal Voucher ID {del_jv_id} deleted successfully.")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Journal Voucher ID {del_jv_id} not found!")
         else:
             st.info("No journal vouchers found.")
 
@@ -1049,6 +1183,10 @@ elif menu == "Income & Expenses":
             
             if acc_name == "Petty Cash Income" and pay_mode == "BANK TRANSFER":
                 st.info("💡 **Bank Transfer Mode:** This will automatically deduct from Union Bank and Capital Account, and add to Cash in Hand.")
+            elif acc_name == "Petty Cash Income" and pay_mode == "CASH":
+                st.info("💡 **Cash Mode:** This will increase Cash in Hand and record Income in P&L.")
+            elif entry_type == "EXPENSE" and pay_mode == "CASH":
+                st.info("💡 **Expense with Cash Mode:** This will decrease Cash in Hand and record Expense in P&L.")
             
             st.markdown("### Journal Entry Routing (Debit & Credit)")
             d_col1, d_col2 = st.columns(2)
@@ -1062,7 +1200,14 @@ elif menu == "Income & Expenses":
                 d_code = coa_dict[debit_account]
                 c_code = coa_dict[credit_account]
                 
-                # --- Petty Cash Income with BANK TRANSFER ---
+                # Get Cash in Hand account code
+                cash_acc = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = 'Cash in Hand'")
+                if not cash_acc:
+                    st.error("❌ Cash in Hand account not found!")
+                    st.stop()
+                cash_code = cash_acc[0][0]
+                
+                # --- CASE 1: Petty Cash Income with BANK TRANSFER ---
                 if acc_name == "Petty Cash Income" and entry_type == "INCOME" and pay_mode == "BANK TRANSFER":
                     if union_bank_bal < amount:
                         st.error(f"❌ Insufficient Union Bank Balance! Available: ₹{union_bank_bal:,.2f}, Required: ₹{amount:,.2f}")
@@ -1078,15 +1223,22 @@ elif menu == "Income & Expenses":
                             new_cash = cash_in_hand + amount
                             new_union = union_bank_bal - amount
                             new_capital = capital_bal - amount
+                            
+                            # --- INCOME MESSAGE ---
                             st.success(f"✅ Petty Cash Withdrawal of ₹{amount:,.2f} recorded!")
-                            st.info(f"📌 Cash in Hand: ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)\n"
-                                   f"📌 Union Bank: ₹{union_bank_bal:,.2f} → ₹{new_union:,.2f} (↓)\n"
-                                   f"📌 Capital Account: ₹{capital_bal:,.2f} → ₹{new_capital:,.2f} (↓)")
+                            st.info(f"📌 This will:\n"
+                                   f"   • Increase Cash in Hand by ₹{amount:,.2f}\n"
+                                   f"   • Decrease Union Bank by ₹{amount:,.2f}\n"
+                                   f"   • Decrease Capital Account by ₹{amount:,.2f}\n"
+                                   f"   • Increase Petty Cash Income in P&L by ₹{amount:,.2f}\n\n"
+                                   f"📊 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)\n"
+                                   f"📊 **Union Bank:** ₹{union_bank_bal:,.2f} → ₹{new_union:,.2f} (↓)\n"
+                                   f"📊 **Capital Account:** ₹{capital_bal:,.2f} → ₹{new_capital:,.2f} (↓)")
                             st.rerun()
                         else:
                             st.error("Error posting Petty Cash entry!")
                 
-                # --- Petty Cash Income with CASH ---
+                # --- CASE 2: Petty Cash Income with CASH ---
                 elif acc_name == "Petty Cash Income" and entry_type == "INCOME" and pay_mode == "CASH":
                     run_query("""
                         INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
@@ -1098,11 +1250,60 @@ elif menu == "Income & Expenses":
                     if cash_acc:
                         cash_code = cash_acc[0][0]
                         post_automated_jv(f"{entry_type}: {narration}", cash_code, account_code, amount)
-                        st.success("✅ Petty Cash Income recorded with Cash in Hand!")
+                        
+                        new_cash = cash_in_hand + amount
+                        
+                        # --- INCOME WITH CASH MESSAGE ---
+                        st.success(f"✅ Petty Cash Income of ₹{amount:,.2f} recorded with Cash in Hand!")
+                        st.info(f"📌 This will:\n"
+                               f"   • Increase Cash in Hand by ₹{amount:,.2f}\n"
+                               f"   • No change to Union Bank\n"
+                               f"   • No change to Capital Account\n"
+                               f"   • Increase Petty Cash Income in P&L by ₹{amount:,.2f}\n\n"
+                               f"📊 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{new_cash:,.2f} (↑)")
                     else:
                         st.error("Cash in Hand account not found!")
                 
-                # --- Regular Entry ---
+                # --- CASE 3: EXPENSE with CASH (Spending from Petty Cash) ---
+                elif entry_type == "EXPENSE" and pay_mode == "CASH":
+                    if cash_in_hand < amount:
+                        st.error(f"❌ Insufficient Cash in Hand! Available: ₹{cash_in_hand:,.2f}, Required: ₹{amount:,.2f}")
+                    else:
+                        # Record in operational_finances
+                        run_query("""
+                            INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
+                        
+                        # Create Journal Voucher: Dr. Expense, Cr. Cash in Hand
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                                       (str(date.today()), f"{entry_type}: {narration}"))
+                        jv_id = cursor.lastrowid
+                        
+                        # DEBIT: Expense account (Expense increases in P&L)
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                                     (jv_id, account_code, amount))
+                        # CREDIT: Cash in Hand (Asset decreases)
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                                     (jv_id, cash_code, amount))
+                        conn.commit()
+                        conn.close()
+                        
+                        remaining_cash = cash_in_hand - amount
+                        
+                        # --- EXPENSE MESSAGE ---
+                        st.success(f"✅ Expense of ₹{amount:,.2f} recorded successfully!")
+                        st.info(f"📌 This will:\n"
+                               f"   • Decrease Cash in Hand by ₹{amount:,.2f}\n"
+                               f"   • No change to Union Bank\n"
+                               f"   • No change to Capital Account\n"
+                               f"   • Increase {acc_name} Expense in P&L by ₹{amount:,.2f}\n\n"
+                               f"📊 **Cash in Hand:** ₹{cash_in_hand:,.2f} → ₹{remaining_cash:,.2f} (↓)")
+                        st.rerun()
+                
+                # --- CASE 4: Regular Entry ---
                 else:
                     run_query("""
                         INSERT INTO operational_finances (type, customer_id, account_code, amount, mode, date, narration)
@@ -1110,7 +1311,7 @@ elif menu == "Income & Expenses":
                     """, (entry_type, customer_id, account_code, amount, pay_mode, datetime.now().strftime("%Y-%m-%d"), narration), fetch=False)
                     
                     post_automated_jv(f"{entry_type}: {narration}", d_code, c_code, amount)
-                    st.success("Entry recorded and Journal Voucher posted successfully!")
+                    st.success("✅ Entry recorded and Journal Voucher posted successfully!")
 
     # --- TAB 2: Edit/Delete Entry ---
     with tab2:

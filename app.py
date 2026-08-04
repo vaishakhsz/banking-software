@@ -1020,7 +1020,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
     
-    with tab1:
+    with tab2:
         st.subheader("Trial Balance Summary")
         entries = run_query("""
             SELECT 
@@ -1051,7 +1051,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("No entries recorded yet.")
     
-    with tab2:
+    with tab1:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
@@ -1090,7 +1090,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 
             # Including Union Bank allocation view on liability/equity side if treated as internal funding source / contra mapping
             if union_bank_bal > 0:
-                lia_data.append(["Union Bank Equity / Source Funding", f"₹{union_bank_bal:,.2f}"])
+                lia_data.append(["Share Capital", f"₹{union_bank_bal:,.2f}"])
                 total_lia += union_bank_bal
                 
             if lia_data:

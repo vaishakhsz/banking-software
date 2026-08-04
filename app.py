@@ -699,6 +699,7 @@ elif menu == "Chart of Accounts":
     df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
     st.dataframe(df_coa, use_container_width=True)
 
+
 # --- CASH BOOK ---
 elif menu == "Cash Book":
     st.title("💰 Cash Book Entries")
@@ -728,7 +729,11 @@ elif menu == "Cash Book":
                     if entry_type == "DEBIT (Receipt)":
                         new_balance = current_balance + amount
                         debit_amount, credit_amount = amount, 0
-                        post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
+                        # If receiving from a bank, post contra JV between Bank asset and Cash asset (No liability impact)
+                        if "Bank" in account_head or "Union Bank" in account_head or "State Bank" in account_head:
+                            post_automated_jv(f"Cash Transfer from Bank: {particulars}", "AST-101", account_code, amount)
+                        else:
+                            post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
                     else:
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_balance:,.2f}")
@@ -809,7 +814,7 @@ elif menu == "Bank Book":
         
         with st.form("bank_entry_form"):
             col1, col2 = st.columns(2)
-            entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
+            entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal / Transfer to Cash)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
             particulars = st.text_input("Particulars / Description")
             
@@ -837,7 +842,20 @@ elif menu == "Bank Book":
                             st.stop()
                         new_balance = current_balance - amount
                         debit_amount, credit_amount = 0, amount
-                        post_automated_jv(f"Bank Withdrawal: {particulars} - {selected_bank}", account_code, bank_code, amount)
+                        
+                        # If withdrawing/transferring to cash, post JV reducing bank asset and increasing cash asset
+                        if "Cash" in account_head or "AST-101" == account_code:
+                            post_automated_jv(f"Bank Withdrawal to Cash: {particulars} - {selected_bank}", "AST-101", bank_code, amount)
+                            # Automatically mirror this in the cash book so cash increases without touching liabilities
+                            cash_bal_current = get_cash_balance()
+                            new_cash_bal = cash_bal_current + amount
+                            c_vouch = generate_cash_voucher_no()
+                            run_query("""
+                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, c_vouch, f"Withdrawal from {selected_bank}: {particulars}", amount, 0, new_cash_bal, bank_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        else:
+                            post_automated_jv(f"Bank Withdrawal: {particulars} - {selected_bank}", account_code, bank_code, amount)
                     
                     run_query("""
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)

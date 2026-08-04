@@ -187,32 +187,34 @@ def init_db():
         )
     """)
 
-    # Cash Book Table - For cash transactions
+    # Cash Book Table - With Debit/Credit
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS cash_book (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT,
             voucher_no TEXT,
             particulars TEXT,
-            receipt_amount REAL DEFAULT 0,
-            payment_amount REAL DEFAULT 0,
+            debit_amount REAL DEFAULT 0,
+            credit_amount REAL DEFAULT 0,
             balance REAL DEFAULT 0,
+            account_code TEXT,
             narration TEXT,
             created_at TEXT
         )
     """)
 
-    # Bank Book Table - For bank transactions
+    # Bank Book Table - With Debit/Credit
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bank_book (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT,
             voucher_no TEXT,
             particulars TEXT,
-            deposit_amount REAL DEFAULT 0,
-            withdrawal_amount REAL DEFAULT 0,
+            debit_amount REAL DEFAULT 0,
+            credit_amount REAL DEFAULT 0,
             balance REAL DEFAULT 0,
             bank_name TEXT,
+            account_code TEXT,
             narration TEXT,
             created_at TEXT
         )
@@ -284,12 +286,39 @@ def get_bank_balance(bank_name=None):
         balance = run_query("SELECT balance FROM bank_book ORDER BY id DESC LIMIT 1")
     return balance[0][0] if balance else 0
 
-def generate_voucher_no(prefix):
-    """Generate voucher number"""
+def generate_cash_voucher_no():
+    """Generate Cash Book voucher number with prefix CB"""
     today = datetime.now().strftime("%Y%m%d")
-    count = run_query(f"SELECT COUNT(*) FROM {prefix}_book WHERE date = ?", (today,))
-    count = count[0][0] + 1 if count else 1
-    return f"{prefix}{today}{count:04d}"
+    last_voucher = run_query("""
+        SELECT voucher_no FROM cash_book 
+        WHERE voucher_no LIKE ? 
+        ORDER BY id DESC LIMIT 1
+    """, (f"CB{today}%",))
+    
+    if last_voucher:
+        last_seq = int(last_voucher[0][0][-4:])
+        new_seq = last_seq + 1
+    else:
+        new_seq = 1
+    
+    return f"CB{today}{new_seq:04d}"
+
+def generate_bank_voucher_no():
+    """Generate Bank Book voucher number with prefix BB"""
+    today = datetime.now().strftime("%Y%m%d")
+    last_voucher = run_query("""
+        SELECT voucher_no FROM bank_book 
+        WHERE voucher_no LIKE ? 
+        ORDER BY id DESC LIMIT 1
+    """, (f"BB{today}%",))
+    
+    if last_voucher:
+        last_seq = int(last_voucher[0][0][-4:])
+        new_seq = last_seq + 1
+    else:
+        new_seq = 1
+    
+    return f"BB{today}{new_seq:04d}"
 
 def post_automated_jv(narration, debit_acc, credit_acc, amount):
     """Post automated journal voucher"""
@@ -796,9 +825,21 @@ elif menu == "Cash Book":
         
         with st.form("cash_entry_form"):
             col1, col2 = st.columns(2)
-            entry_type = col1.selectbox("Transaction Type", ["RECEIPT", "PAYMENT"])
+            entry_type = col1.selectbox("Transaction Type", ["DEBIT (Receipt)", "CREDIT (Payment)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
             particulars = st.text_input("Particulars / Description")
+            
+            # Select Account Head for the entry
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+            
+            if entry_type == "DEBIT (Receipt)":
+                st.info("💡 **Debit Entry:** Cash is increasing. Select the Credit account head.")
+                account_head = st.selectbox("Credit Account Head", list(coa_dict.keys()))
+            else:
+                st.info("💡 **Credit Entry:** Cash is decreasing. Select the Debit account head.")
+                account_head = st.selectbox("Debit Account Head", list(coa_dict.keys()))
+            
             narration = st.text_area("Narration (Optional)", height=68)
             
             submitted = st.form_submit_button("Record Cash Entry")
@@ -806,32 +847,31 @@ elif menu == "Cash Book":
                 if amount > 0 and particulars:
                     voucher_no = generate_cash_voucher_no()
                     today = datetime.now().strftime("%Y-%m-%d")
+                    account_code = coa_dict[account_head]
                     
-                    if entry_type == "RECEIPT":
+                    if entry_type == "DEBIT (Receipt)":
                         new_balance = current_balance + amount
-                        receipt_amount = amount
-                        payment_amount = 0
+                        debit_amount = amount
+                        credit_amount = 0
+                        post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
                     else:
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_balance:,.2f}")
                             st.stop()
                         new_balance = current_balance - amount
-                        receipt_amount = 0
-                        payment_amount = amount
+                        debit_amount = 0
+                        credit_amount = amount
+                        post_automated_jv(f"Cash Payment: {particulars}", account_code, "AST-101", amount)
                     
                     run_query("""
-                        INSERT INTO cash_book (date, voucher_no, particulars, receipt_amount, payment_amount, balance, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (today, voucher_no, particulars, receipt_amount, payment_amount, new_balance, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    
-                    # Post to Journal Vouchers
-                    if entry_type == "RECEIPT":
-                        post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", "INC-301", amount)
-                    else:
-                        post_automated_jv(f"Cash Payment: {particulars}", "EXP-401", "AST-101", amount)
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Cash {entry_type} of ₹{amount:,.2f} recorded successfully!")
                     st.info(f"📌 Voucher No: {voucher_no}\n"
+                           f"📌 {entry_type}: ₹{amount:,.2f}\n"
+                           f"📌 Account Head: {account_head}\n"
                            f"📌 New Cash Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
                     st.rerun()
                 else:
@@ -841,27 +881,24 @@ elif menu == "Cash Book":
         st.subheader("📋 Cash Book Entries - View / Edit / Delete")
         
         entries = run_query("""
-            SELECT id, date, voucher_no, particulars, receipt_amount, payment_amount, balance, narration
+            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration
             FROM cash_book
             ORDER BY id DESC
         """)
         
         if entries:
-            # Display entries in a table
-            df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Receipt (₹)", "Payment (₹)", "Balance (₹)", "Narration"])
+            df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Account Code", "Narration"])
             st.dataframe(df_cash, use_container_width=True)
             
             st.markdown("---")
             st.subheader("✏️ Edit or 🗑️ Delete Cash Entry")
             
-            # Select entry to edit/delete
             entry_ids = [e[0] for e in entries]
             selected_id = st.selectbox("Select Entry ID to Edit/Delete", entry_ids, key="select_cash_entry")
             
             if selected_id:
-                # Get the selected entry details
                 entry_data = run_query("""
-                    SELECT id, date, voucher_no, particulars, receipt_amount, payment_amount, balance, narration
+                    SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration
                     FROM cash_book WHERE id = ?
                 """, (selected_id,))
                 
@@ -873,10 +910,11 @@ elif menu == "Cash Book":
                         st.write(f"**Voucher No:** {row[2]}")
                         st.write(f"**Date:** {row[1]}")
                         st.write(f"**Particulars:** {row[3]}")
-                        st.write(f"**Receipt Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Receipt Amount:** ₹0.00")
-                        st.write(f"**Payment Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Payment Amount:** ₹0.00")
+                        st.write(f"**Debit Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Debit Amount:** ₹0.00")
+                        st.write(f"**Credit Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Credit Amount:** ₹0.00")
                         st.write(f"**Balance:** ₹{row[6]:,.2f}")
-                        st.write(f"**Narration:** {row[7]}")
+                        st.write(f"**Account Code:** {row[7]}")
+                        st.write(f"**Narration:** {row[8]}")
                     
                     with col2:
                         action = st.radio("Choose Action", ["Edit Entry", "Delete Entry"])
@@ -884,7 +922,19 @@ elif menu == "Cash Book":
                         if action == "Edit Entry":
                             with st.form("edit_cash_form"):
                                 new_particulars = st.text_input("Particulars", value=row[3])
-                                new_narration = st.text_area("Narration", value=row[7] if row[7] else "")
+                                
+                                account_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (row[7],))
+                                account_name = account_info[0][0] if account_info else ""
+                                
+                                coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+                                coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+                                
+                                current_account = f"{row[7]} - {account_name}" if account_name else list(coa_dict.keys())[0]
+                                if current_account not in coa_dict:
+                                    current_account = list(coa_dict.keys())[0]
+                                
+                                new_account = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_account) if current_account in coa_dict else 0)
+                                new_narration = st.text_area("Narration", value=row[8] if row[8] else "")
                                 
                                 col1, col2 = st.columns(2)
                                 with col1:
@@ -893,37 +943,27 @@ elif menu == "Cash Book":
                                     cancel = st.form_submit_button("❌ Cancel")
                                 
                                 if edit_submit:
-                                    # Update the entry
+                                    new_account_code = coa_dict[new_account]
                                     run_query("""
                                         UPDATE cash_book 
-                                        SET particulars = ?, narration = ?
+                                        SET particulars = ?, account_code = ?, narration = ?
                                         WHERE id = ?
-                                    """, (new_particulars, new_narration, selected_id), fetch=False)
-                                    
+                                    """, (new_particulars, new_account_code, new_narration, selected_id), fetch=False)
                                     st.success(f"✅ Cash Entry #{selected_id} updated successfully!")
                                     st.rerun()
-                                
                                 if cancel:
                                     st.rerun()
                         
-                        else:  # Delete Entry
+                        else:
                             st.warning(f"⚠️ Are you sure you want to delete Cash Entry #{selected_id}?")
                             st.warning(f"**Voucher No:** {row[2]} | **Particulars:** {row[3]} | **Amount:** ₹{max(row[4], row[5]):,.2f}")
                             
                             col1, col2 = st.columns(2)
                             with col1:
                                 if st.button("🗑️ Confirm Delete", type="primary"):
-                                    # Get the entry details before deleting
-                                    del_entry = run_query("SELECT receipt_amount, payment_amount, date FROM cash_book WHERE id = ?", (selected_id,))
-                                    if del_entry:
-                                        # Delete the entry
-                                        run_query("DELETE FROM cash_book WHERE id = ?", (selected_id,), fetch=False)
-                                        st.success(f"✅ Cash Entry #{selected_id} deleted successfully!")
-                                        
-                                        # Recalculate balances for subsequent entries
-                                        # This is a simplified approach - you may want to recalculate all balances
-                                        st.info("🔄 Please refresh to see updated balances")
-                                        st.rerun()
+                                    run_query("DELETE FROM cash_book WHERE id = ?", (selected_id,), fetch=False)
+                                    st.success(f"✅ Cash Entry #{selected_id} deleted successfully!")
+                                    st.rerun()
                             with col2:
                                 if st.button("❌ Cancel"):
                                     st.rerun()
@@ -931,7 +971,6 @@ elif menu == "Cash Book":
     with tab3:
         st.subheader("🖨️ Print Cash Book")
         
-        # Date range filter for printing
         col1, col2 = st.columns(2)
         with col1:
             from_date = st.date_input("From Date", value=date.today().replace(day=1))
@@ -940,19 +979,18 @@ elif menu == "Cash Book":
         
         if st.button("Generate Cash Book Report"):
             entries = run_query("""
-                SELECT date, voucher_no, particulars, receipt_amount, payment_amount, balance, narration
+                SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration
                 FROM cash_book
                 WHERE date BETWEEN ? AND ?
                 ORDER BY id ASC
             """, (str(from_date), str(to_date)))
             
             if entries:
-                df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Receipt (₹)", "Payment (₹)", "Balance (₹)", "Narration"])
+                df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
                 st.dataframe(df_print, use_container_width=True)
                 
-                # Summary
-                total_receipts = sum(row[3] for row in entries)
-                total_payments = sum(row[4] for row in entries)
+                total_debits = sum(row[3] for row in entries)
+                total_credits = sum(row[4] for row in entries)
                 opening_balance = run_query("""
                     SELECT balance FROM cash_book 
                     WHERE date < ? 
@@ -963,11 +1001,10 @@ elif menu == "Cash Book":
                 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Opening Balance", f"₹{opening_bal:,.2f}")
-                col2.metric("Total Receipts", f"₹{total_receipts:,.2f}")
-                col3.metric("Total Payments", f"₹{total_payments:,.2f}")
+                col2.metric("Total Debits", f"₹{total_debits:,.2f}")
+                col3.metric("Total Credits", f"₹{total_credits:,.2f}")
                 col4.metric("Closing Balance", f"₹{closing_balance:,.2f}")
                 
-                # Download PDF
                 st.download_button(
                     "📥 Download Cash Book PDF",
                     create_pdf_report(f"Cash Book Report ({from_date} to {to_date})", df_print),
@@ -975,7 +1012,6 @@ elif menu == "Cash Book":
                     "application/pdf"
                 )
                 
-                # Print button using JavaScript
                 if st.button("🖨️ Print Cash Book"):
                     st.markdown("""
                         <script>
@@ -984,7 +1020,6 @@ elif menu == "Cash Book":
                     """, unsafe_allow_html=True)
             else:
                 st.info("No cash entries found for the selected date range.")
-
 
 # --- BANK BOOK ---
 elif menu == "Bank Book":
@@ -995,7 +1030,6 @@ elif menu == "Bank Book":
     with tab1:
         st.subheader("Record Bank Transaction")
         
-        # Get bank accounts from Chart of Accounts
         bank_accounts = run_query("""
             SELECT account_name FROM chart_of_accounts 
             WHERE account_type = 'Asset' AND account_name LIKE '%Bank%'
@@ -1009,9 +1043,20 @@ elif menu == "Bank Book":
         
         with st.form("bank_entry_form"):
             col1, col2 = st.columns(2)
-            entry_type = col1.selectbox("Transaction Type", ["DEPOSIT", "WITHDRAWAL"])
+            entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
             particulars = st.text_input("Particulars / Description")
+            
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+            
+            if entry_type == "DEBIT (Deposit)":
+                st.info("💡 **Debit Entry:** Bank balance is increasing. Select the Credit account head.")
+                account_head = st.selectbox("Credit Account Head", list(coa_dict.keys()))
+            else:
+                st.info("💡 **Credit Entry:** Bank balance is decreasing. Select the Debit account head.")
+                account_head = st.selectbox("Debit Account Head", list(coa_dict.keys()))
+            
             narration = st.text_area("Narration (Optional)", height=68)
             
             submitted = st.form_submit_button("Record Bank Entry")
@@ -1019,33 +1064,37 @@ elif menu == "Bank Book":
                 if amount > 0 and particulars:
                     voucher_no = generate_bank_voucher_no()
                     today = datetime.now().strftime("%Y-%m-%d")
+                    account_code = coa_dict[account_head]
                     
-                    if entry_type == "DEPOSIT":
+                    bank_code = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ?", (selected_bank,))
+                    if not bank_code:
+                        st.error(f"❌ Bank account '{selected_bank}' not found in Chart of Accounts!")
+                        st.stop()
+                    bank_code = bank_code[0][0]
+                    
+                    if entry_type == "DEBIT (Deposit)":
                         new_balance = current_balance + amount
-                        deposit_amount = amount
-                        withdrawal_amount = 0
-                        # Get account code for this bank
-                        bank_code = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ?", (selected_bank,))
-                        if bank_code:
-                            post_automated_jv(f"Bank Deposit: {particulars}", bank_code[0][0], "INC-301", amount)
+                        debit_amount = amount
+                        credit_amount = 0
+                        post_automated_jv(f"Bank Deposit: {particulars}", bank_code, account_code, amount)
                     else:
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Bank Balance! Available: ₹{current_balance:,.2f}")
                             st.stop()
                         new_balance = current_balance - amount
-                        deposit_amount = 0
-                        withdrawal_amount = amount
-                        bank_code = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ?", (selected_bank,))
-                        if bank_code:
-                            post_automated_jv(f"Bank Withdrawal: {particulars}", "EXP-401", bank_code[0][0], amount)
+                        debit_amount = 0
+                        credit_amount = amount
+                        post_automated_jv(f"Bank Withdrawal: {particulars}", account_code, bank_code, amount)
                     
                     run_query("""
-                        INSERT INTO bank_book (date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (today, voucher_no, particulars, deposit_amount, withdrawal_amount, new_balance, selected_bank, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, selected_bank, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Bank {entry_type} of ₹{amount:,.2f} recorded successfully!")
                     st.info(f"📌 Voucher No: {voucher_no}\n"
+                           f"📌 {entry_type}: ₹{amount:,.2f}\n"
+                           f"📌 Account Head: {account_head}\n"
                            f"📌 New {selected_bank} Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
                     st.rerun()
                 else:
@@ -1055,27 +1104,24 @@ elif menu == "Bank Book":
         st.subheader("📋 Bank Book Entries - View / Edit / Delete")
         
         entries = run_query("""
-            SELECT id, date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
+            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
             FROM bank_book
             ORDER BY id DESC
         """)
         
         if entries:
-            # Display entries in a table
-            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
             st.dataframe(df_bank, use_container_width=True)
             
             st.markdown("---")
             st.subheader("✏️ Edit or 🗑️ Delete Bank Entry")
             
-            # Select entry to edit/delete
             entry_ids = [e[0] for e in entries]
             selected_id = st.selectbox("Select Entry ID to Edit/Delete", entry_ids, key="select_bank_entry")
             
             if selected_id:
-                # Get the selected entry details
                 entry_data = run_query("""
-                    SELECT id, date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
+                    SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
                     FROM bank_book WHERE id = ?
                 """, (selected_id,))
                 
@@ -1088,10 +1134,11 @@ elif menu == "Bank Book":
                         st.write(f"**Date:** {row[1]}")
                         st.write(f"**Bank:** {row[7]}")
                         st.write(f"**Particulars:** {row[3]}")
-                        st.write(f"**Deposit Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Deposit Amount:** ₹0.00")
-                        st.write(f"**Withdrawal Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Withdrawal Amount:** ₹0.00")
+                        st.write(f"**Debit Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Debit Amount:** ₹0.00")
+                        st.write(f"**Credit Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Credit Amount:** ₹0.00")
                         st.write(f"**Balance:** ₹{row[6]:,.2f}")
-                        st.write(f"**Narration:** {row[8]}")
+                        st.write(f"**Account Code:** {row[8]}")
+                        st.write(f"**Narration:** {row[9]}")
                     
                     with col2:
                         action = st.radio("Choose Action", ["Edit Entry", "Delete Entry"])
@@ -1099,7 +1146,19 @@ elif menu == "Bank Book":
                         if action == "Edit Entry":
                             with st.form("edit_bank_form"):
                                 new_particulars = st.text_input("Particulars", value=row[3])
-                                new_narration = st.text_area("Narration", value=row[8] if row[8] else "")
+                                
+                                account_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (row[8],))
+                                account_name = account_info[0][0] if account_info else ""
+                                
+                                coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+                                coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+                                
+                                current_account = f"{row[8]} - {account_name}" if account_name else list(coa_dict.keys())[0]
+                                if current_account not in coa_dict:
+                                    current_account = list(coa_dict.keys())[0]
+                                
+                                new_account = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_account) if current_account in coa_dict else 0)
+                                new_narration = st.text_area("Narration", value=row[9] if row[9] else "")
                                 
                                 col1, col2 = st.columns(2)
                                 with col1:
@@ -1108,27 +1167,24 @@ elif menu == "Bank Book":
                                     cancel = st.form_submit_button("❌ Cancel")
                                 
                                 if edit_submit:
-                                    # Update the entry
+                                    new_account_code = coa_dict[new_account]
                                     run_query("""
                                         UPDATE bank_book 
-                                        SET particulars = ?, narration = ?
+                                        SET particulars = ?, account_code = ?, narration = ?
                                         WHERE id = ?
-                                    """, (new_particulars, new_narration, selected_id), fetch=False)
-                                    
+                                    """, (new_particulars, new_account_code, new_narration, selected_id), fetch=False)
                                     st.success(f"✅ Bank Entry #{selected_id} updated successfully!")
                                     st.rerun()
-                                
                                 if cancel:
                                     st.rerun()
                         
-                        else:  # Delete Entry
+                        else:
                             st.warning(f"⚠️ Are you sure you want to delete Bank Entry #{selected_id}?")
                             st.warning(f"**Voucher No:** {row[2]} | **Bank:** {row[7]} | **Particulars:** {row[3]} | **Amount:** ₹{max(row[4], row[5]):,.2f}")
                             
                             col1, col2 = st.columns(2)
                             with col1:
                                 if st.button("🗑️ Confirm Delete", type="primary"):
-                                    # Delete the entry
                                     run_query("DELETE FROM bank_book WHERE id = ?", (selected_id,), fetch=False)
                                     st.success(f"✅ Bank Entry #{selected_id} deleted successfully!")
                                     st.rerun()
@@ -1139,10 +1195,8 @@ elif menu == "Bank Book":
     with tab3:
         st.subheader("🖨️ Print Bank Book")
         
-        # Bank filter for printing
         bank_filter = st.selectbox("Select Bank", ["All Banks"] + bank_list)
         
-        # Date range filter for printing
         col1, col2 = st.columns(2)
         with col1:
             from_date = st.date_input("From Date", value=date.today().replace(day=1))
@@ -1152,28 +1206,26 @@ elif menu == "Bank Book":
         if st.button("Generate Bank Book Report"):
             if bank_filter == "All Banks":
                 entries = run_query("""
-                    SELECT date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
+                    SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration
                     FROM bank_book
                     WHERE date BETWEEN ? AND ?
                     ORDER BY bank_name, id ASC
                 """, (str(from_date), str(to_date)))
             else:
                 entries = run_query("""
-                    SELECT date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
+                    SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration
                     FROM bank_book
                     WHERE date BETWEEN ? AND ? AND bank_name = ?
                     ORDER BY id ASC
                 """, (str(from_date), str(to_date), bank_filter))
             
             if entries:
-                df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+                df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
                 st.dataframe(df_print, use_container_width=True)
                 
-                # Summary
-                total_deposits = sum(row[3] for row in entries)
-                total_withdrawals = sum(row[4] for row in entries)
+                total_debits = sum(row[3] for row in entries)
+                total_credits = sum(row[4] for row in entries)
                 
-                # Get opening balance
                 if bank_filter == "All Banks":
                     opening_balance = run_query("""
                         SELECT balance FROM bank_book 
@@ -1192,11 +1244,10 @@ elif menu == "Bank Book":
                 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Opening Balance", f"₹{opening_bal:,.2f}")
-                col2.metric("Total Deposits", f"₹{total_deposits:,.2f}")
-                col3.metric("Total Withdrawals", f"₹{total_withdrawals:,.2f}")
+                col2.metric("Total Debits", f"₹{total_debits:,.2f}")
+                col3.metric("Total Credits", f"₹{total_credits:,.2f}")
                 col4.metric("Closing Balance", f"₹{closing_balance:,.2f}")
                 
-                # Download PDF
                 st.download_button(
                     "📥 Download Bank Book PDF",
                     create_pdf_report(f"Bank Book Report ({bank_filter}) - {from_date} to {to_date}", df_print),
@@ -1204,7 +1255,6 @@ elif menu == "Bank Book":
                     "application/pdf"
                 )
                 
-                # Print button using JavaScript
                 if st.button("🖨️ Print Bank Book"):
                     st.markdown("""
                         <script>
@@ -1213,6 +1263,7 @@ elif menu == "Bank Book":
                     """, unsafe_allow_html=True)
             else:
                 st.info("No bank entries found for the selected date range.")
+
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management & Deletion")
@@ -1338,7 +1389,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # Get all account balances from trial balance
         account_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -1350,7 +1400,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             GROUP BY CO.account_code
         """)
         
-        # Separate assets, liabilities, and equity
         assets = {}
         liabilities = {}
         equity = {}
@@ -1363,21 +1412,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             elif acc_type == "Equity":
                 equity[acc_name] = net_bal if net_bal != 0 else 0
         
-        # Get Cash in Hand from cash_book
         cash_balance = get_cash_balance()
         assets["Cash in Hand"] = cash_balance
         
-        # Get Bank balances from bank_book
         bank_balances = run_query("SELECT bank_name, balance FROM bank_book GROUP BY bank_name ORDER BY id DESC")
         for bank_name, balance in bank_balances:
             assets[bank_name] = balance
         
-        # Get SB, FD, RD totals from their respective tables
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         
-        # Display assets with calculated values
         col1, col2 = st.columns(2)
         
         with col1:
@@ -1387,7 +1432,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 if "Deposits" not in name and "Retrieval" not in name:
                     asset_data.append([name, f"₹{balance:,.2f}"])
             
-            # Add deposit accounts
             if tot_sb_balance > 0:
                 asset_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
             if tot_fd_principal > 0:
@@ -1430,7 +1474,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         
         st.markdown("---")
         
-        # Balance check
         diff = total_assets - total_liabilities_equity
         if abs(diff) < 0.01:
             st.success("✅ Balance Sheet Perfectly Balanced!")
@@ -1463,7 +1506,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab3:
         st.subheader("Profit & Loss Statement")
         
-        # Get Income from journal vouchers where credit account is Income type
         income_entries = run_query("""
             SELECT CO.account_name, SUM(JE.credit) as total
             FROM jv_entries JE
@@ -1472,7 +1514,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             GROUP BY CO.account_name
         """)
         
-        # Get Expenses from journal vouchers where debit account is Expense type
         expense_entries = run_query("""
             SELECT CO.account_name, SUM(JE.debit) as total
             FROM jv_entries JE

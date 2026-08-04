@@ -22,15 +22,6 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # --- DATABASE SETUP ---
 DB_NAME = "aasha_nidhi.db"
 
-# --- FORCE DELETE AND RECREATE DATABASE ---
-# Uncomment the lines below to delete and recreate the database
-# This will fix the column missing error
-if os.path.exists(DB_NAME):
-    # Backup the old database
-    # os.rename(DB_NAME, DB_NAME + ".backup")
-    os.remove(DB_NAME)
-    print(f"✅ Deleted existing database: {DB_NAME}")
-
 def get_connection():
     db_dir = os.path.dirname(DB_NAME)
     if db_dir and not os.path.exists(db_dir):
@@ -48,12 +39,10 @@ def run_query(query, params=(), fetch=True):
         return res
     except sqlite3.OperationalError as e:
         st.error(f"Database error: {str(e)}")
-        try:
-            init_db()
-        except:
-            if os.path.exists(DB_NAME):
-                os.remove(DB_NAME)
-            init_db()
+        # Try to recreate database
+        if os.path.exists(DB_NAME):
+            os.remove(DB_NAME)
+        init_db()
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(query, params)
@@ -63,8 +52,12 @@ def run_query(query, params=(), fetch=True):
         return res
 
 def init_db():
+    """Initialize database with all required tables"""
     conn = get_connection()
     cursor = conn.cursor()
+    
+    # Enable foreign keys
+    cursor.execute("PRAGMA foreign_keys = ON")
     
     # Customers Table
     cursor.execute("""
@@ -264,16 +257,18 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Initialize database
-try:
-    init_db()
-except Exception as e:
-    st.error(f"Database initialization error: {str(e)}")
-    if os.path.exists(DB_NAME):
+# --- FORCE RECREATE DATABASE ---
+# This ensures we have a clean database with all columns
+if os.path.exists(DB_NAME):
+    try:
         os.remove(DB_NAME)
-    init_db()
+        print(f"✅ Deleted existing database: {DB_NAME}")
+    except:
+        pass
 
-# ... rest of your code continues ...
+# Initialize database
+init_db()
+print("✅ Database initialized successfully!")
 
 # --- HELPER FUNCTIONS ---
 def save_uploaded_file(uploaded_file):
@@ -840,7 +835,6 @@ elif menu == "Cash Book":
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
             particulars = st.text_input("Particulars / Description")
             
-            # Select Account Head for the entry
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
@@ -855,7 +849,7 @@ elif menu == "Cash Book":
             
             submitted = st.form_submit_button("Record Cash Entry")
             if submitted:
-                if amount > 0 and particulars:
+                if amount > 0 and particulars and account_head:
                     voucher_no = generate_cash_voucher_no()
                     today = datetime.now().strftime("%Y-%m-%d")
                     account_code = coa_dict[account_head]
@@ -1072,7 +1066,7 @@ elif menu == "Bank Book":
             
             submitted = st.form_submit_button("Record Bank Entry")
             if submitted:
-                if amount > 0 and particulars:
+                if amount > 0 and particulars and account_head:
                     voucher_no = generate_bank_voucher_no()
                     today = datetime.now().strftime("%Y-%m-%d")
                     account_code = coa_dict[account_head]

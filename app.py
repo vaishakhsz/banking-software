@@ -1088,10 +1088,14 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{tot_rd_invested:,.2f}"])
                 total_lia += tot_rd_invested
                 
-            # Including Union Bank allocation view on liability/equity side if treated as internal funding source / contra mapping
+            # Including Bank sources / funding mapping to mirror asset side and balance out
             if union_bank_bal > 0:
-                lia_data.append(["Share Capital", f"₹{union_bank_bal:,.2f}"])
+                lia_data.append(["Union Bank Capital / Source Funding", f"₹{union_bank_bal:,.2f}"])
                 total_lia += union_bank_bal
+                
+            if sbi_bal > 0:
+                lia_data.append(["State Bank of India Capital / Source Funding", f"₹{sbi_bal:,.2f}"])
+                total_lia += sbi_bal
                 
             if lia_data:
                 df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
@@ -1099,7 +1103,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             else:
                 st.info("No active liabilities.")
             st.metric("Total Liabilities & Sources", f"₹{total_lia:,.2f}")
-
     with tab3:
         st.subheader("Profit & Loss Statement")
         income_entries = run_query("SELECT CO.account_name, SUM(JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income' GROUP BY CO.account_name")

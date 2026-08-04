@@ -22,6 +22,15 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # --- DATABASE SETUP ---
 DB_NAME = "aasha_nidhi.db"
 
+# --- FORCE DELETE AND RECREATE DATABASE ---
+# Uncomment the lines below to delete and recreate the database
+# This will fix the column missing error
+if os.path.exists(DB_NAME):
+    # Backup the old database
+    # os.rename(DB_NAME, DB_NAME + ".backup")
+    os.remove(DB_NAME)
+    print(f"✅ Deleted existing database: {DB_NAME}")
+
 def get_connection():
     db_dir = os.path.dirname(DB_NAME)
     if db_dir and not os.path.exists(db_dir):
@@ -219,39 +228,6 @@ def init_db():
             created_at TEXT
         )
     """)
-    
-    # --- FIX EXISTING DATABASE: Add missing columns ---
-    # Fix cash_book
-    try:
-        cursor.execute("ALTER TABLE cash_book ADD COLUMN account_code TEXT")
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute("ALTER TABLE cash_book ADD COLUMN debit_amount REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute("ALTER TABLE cash_book ADD COLUMN credit_amount REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    
-    # Fix bank_book
-    try:
-        cursor.execute("ALTER TABLE bank_book ADD COLUMN account_code TEXT")
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute("ALTER TABLE bank_book ADD COLUMN debit_amount REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute("ALTER TABLE bank_book ADD COLUMN credit_amount REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
 
     # Preload Chart of Accounts
     cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")
@@ -296,6 +272,8 @@ except Exception as e:
     if os.path.exists(DB_NAME):
         os.remove(DB_NAME)
     init_db()
+
+# ... rest of your code continues ...
 
 # --- HELPER FUNCTIONS ---
 def save_uploaded_file(uploaded_file):

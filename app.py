@@ -193,7 +193,7 @@ def init_db():
             )
         """)
 
-        # Preload Chart of Accounts
+        # Preload Chart of Accounts with strict separation
         cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")
         if cursor.fetchone()[0] == 0:
             default_accounts = [
@@ -259,7 +259,6 @@ def save_uploaded_file(uploaded_file):
     return None
 
 def get_cash_balance():
-    """Get current Cash balance from cash_book"""
     try:
         result = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
         return result[0][0] if result else 0
@@ -267,7 +266,6 @@ def get_cash_balance():
         return 0
 
 def get_bank_balance(bank_name=None):
-    """Get current Bank balance from bank_book"""
     try:
         if bank_name:
             result = run_query("SELECT balance FROM bank_book WHERE bank_name = ? ORDER BY id DESC LIMIT 1", (bank_name,))
@@ -278,15 +276,9 @@ def get_bank_balance(bank_name=None):
         return 0
 
 def generate_cash_voucher_no():
-    """Generate Cash Book voucher number with prefix CB"""
     today = datetime.now().strftime("%Y%m%d")
     try:
-        result = run_query("""
-            SELECT voucher_no FROM cash_book 
-            WHERE voucher_no LIKE ? 
-            ORDER BY id DESC LIMIT 1
-        """, (f"CB{today}%",))
-        
+        result = run_query("SELECT voucher_no FROM cash_book WHERE voucher_no LIKE ? ORDER BY id DESC LIMIT 1", (f"CB{today}%",))
         if result:
             last_seq = int(result[0][0][-4:])
             new_seq = last_seq + 1
@@ -294,19 +286,12 @@ def generate_cash_voucher_no():
             new_seq = 1
     except:
         new_seq = 1
-    
     return f"CB{today}{new_seq:04d}"
 
 def generate_bank_voucher_no():
-    """Generate Bank Book voucher number with prefix BB"""
     today = datetime.now().strftime("%Y%m%d")
     try:
-        result = run_query("""
-            SELECT voucher_no FROM bank_book 
-            WHERE voucher_no LIKE ? 
-            ORDER BY id DESC LIMIT 1
-        """, (f"BB{today}%",))
-        
+        result = run_query("SELECT voucher_no FROM bank_book WHERE voucher_no LIKE ? ORDER BY id DESC LIMIT 1", (f"BB{today}%",))
         if result:
             last_seq = int(result[0][0][-4:])
             new_seq = last_seq + 1
@@ -314,11 +299,9 @@ def generate_bank_voucher_no():
             new_seq = 1
     except:
         new_seq = 1
-    
     return f"BB{today}{new_seq:04d}"
 
 def post_automated_jv(narration, debit_acc, credit_acc, amount):
-    """Post automated journal voucher with proper account codes"""
     if amount <= 0:
         return
     try:
@@ -330,15 +313,10 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
         
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                       (str(date.today()), narration))
+        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(date.today()), narration))
         jv_id = cursor.lastrowid
-        
-        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
-                      (jv_id, debit_acc, amount))
-        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
-                      (jv_id, credit_acc, amount))
-        
+        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, debit_acc, amount))
+        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -376,7 +354,6 @@ def create_pdf_report(title, df):
         table_data = [columns] + cleaned_data
         col_width = 550 / max(1, len(columns))
         t = Table(table_data, colWidths=[col_width] * len(columns))
-        
         t.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -960,15 +937,82 @@ elif menu == "Admin Record Editor":
     st.title("🛠️ Universal Database Record Editor")
     tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
     table_list = [t[0] for t in tables_res]
-    selected_table = st.selectbox("Select Database Table to Edit", table_list)
+    selected_table = st.selectbox("Select Database Table to Manage", table_list)
     
     if selected_table:
+        # Determine primary key column name dynamically
+        pk_info = run_query(f"PRAGMA table_info({selected_table})")
+        pk_col = None
+        for col in pk_info:
+            if col[5] == 1:  # Primary key indicator in SQLite PRAGMA
+                pk_col = col[1]
+                break
+        if not pk_col and pk_info:
+            pk_col = pk_info[0][1] # fallback to first column if no explicit PK flag
+
         rows = run_query(f"SELECT * FROM {selected_table}")
-        columns_info = run_query(f"PRAGMA table_info({selected_table})")
-        col_names = [col[1] for col in columns_info]
+        col_names = [col[1] for col in pk_info]
+        
         if rows:
             df_table = pd.DataFrame(rows, columns=col_names)
             st.dataframe(df_table, use_container_width=True)
+            
+            st.markdown("---")
+            st.subheader(f"Manage Records in `{selected_table}`")
+            
+            action = st.radio("Select Action", ["Delete Record", "Edit Record"], horizontal=True)
+            
+            if action == "Delete Record":
+                record_id_to_del = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to delete")
+                if st.button("Delete Record", type="primary"):
+                    if record_id_to_del:
+                        # Try parsing as number if column is numeric, else text
+                        try:
+                            val = int(record_id_to_del)
+                        except ValueError:
+                            val = record_id_to_del
+                            
+                        run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
+                        st.success(f"Record with {pk_col} = {val} deleted successfully from {selected_table}!")
+                        st.rerun()
+                    else:
+                        st.error("Please enter a valid identifier value.")
+            
+            elif action == "Edit Record":
+                record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
+                if record_id_to_edit:
+                    try:
+                        edit_val = int(record_id_to_edit)
+                    except ValueError:
+                        edit_val = record_id_to_edit
+                        
+                    target_row = run_query(f"SELECT * FROM {selected_table} WHERE {pk_col} = ?", (edit_val,))
+                    if target_row:
+                        row_data = target_row[0]
+                        with st.form("admin_edit_form"):
+                            st.info(f"Editing record where {pk_col} = {edit_val}")
+                            updated_values = []
+                            for idx, col_name in enumerate(col_names):
+                                current_val = row_data[idx]
+                                # Don't allow editing the primary key identifier itself to prevent orphan constraints
+                                if col_name == pk_col:
+                                    st.text(f"{col_name} (Primary Key - Read Only): {current_val}")
+                                    updated_values.append(current_val)
+                                else:
+                                    new_input = st.text_input(f"Field: {col_name}", value="" if current_val is None else str(current_val))
+                                    updated_values.append(new_input)
+                            
+                            if st.form_submit_button("Save Changes"):
+                                set_clauses = [f"{col_names[i]} = ?" for i in range(len(col_names)) if col_names[i] != pk_col]
+                                update_vals = [updated_values[i] for i in range(len(col_names)) if col_names[i] != pk_col] + [edit_val]
+                                update_sql = f"UPDATE {selected_table} SET {', '.join(set_clauses)} WHERE {pk_col} = ?"
+                                run_query(update_sql, tuple(update_vals), fetch=False)
+                                st.success(f"Record {edit_val} updated successfully!")
+                                st.rerun()
+                    else:
+                        st.warning(f"No record found with {pk_col} = {edit_val}")
+        else:
+            st.info(f"Table `{selected_table}` is currently empty.")
 
 # --- FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":

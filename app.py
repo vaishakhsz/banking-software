@@ -1020,7 +1020,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
     
-    with tab2:
+    with tab1:
         st.subheader("Trial Balance Summary")
         entries = run_query("""
             SELECT 
@@ -1051,7 +1051,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("No entries recorded yet.")
     
-    with tab1:
+    with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
@@ -1061,7 +1061,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
 
         col1, col2 = st.columns(2)
-        with col1:
+        with col2:
             st.markdown("### Assets")
             asset_data = [
                 ["Cash in Hand", f"₹{cash_bal:,.2f}"],
@@ -1073,7 +1073,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.dataframe(df_assets, use_container_width=True)
             st.metric("Total Assets", f"₹{total_assets:,.2f}")
 
-        with col2:
+        with col1:
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0

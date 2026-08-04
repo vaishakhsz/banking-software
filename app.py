@@ -22,34 +22,20 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # --- DATABASE SETUP ---
 DB_NAME = "aasha_nidhi.db"
 
+# --- FORCE DELETE AND RECREATE DATABASE ---
+# This ensures we have a clean database with all columns
+if os.path.exists(DB_NAME):
+    try:
+        os.remove(DB_NAME)
+        print(f"✅ Deleted existing database: {DB_NAME}")
+    except Exception as e:
+        print(f"Could not delete database: {e}")
+
 def get_connection():
     db_dir = os.path.dirname(DB_NAME)
     if db_dir and not os.path.exists(db_dir):
         os.makedirs(db_dir, exist_ok=True)
     return sqlite3.connect(DB_NAME, check_same_thread=False)
-
-def run_query(query, params=(), fetch=True):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        res = cursor.fetchall() if fetch else None
-        conn.commit()
-        conn.close()
-        return res
-    except sqlite3.OperationalError as e:
-        st.error(f"Database error: {str(e)}")
-        # Try to recreate database
-        if os.path.exists(DB_NAME):
-            os.remove(DB_NAME)
-        init_db()
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        res = cursor.fetchall() if fetch else None
-        conn.commit()
-        conn.close()
-        return res
 
 def init_db():
     """Initialize database with all required tables"""
@@ -81,13 +67,6 @@ def init_db():
             created_at TEXT
         )
     """)
-    
-    # Migration safety check
-    for col, col_type in [("adhar_file", "TEXT"), ("pan_file", "TEXT"), ("signature_file", "TEXT")]:
-        try:
-            cursor.execute(f"ALTER TABLE customers ADD COLUMN {col} {col_type}")
-        except sqlite3.OperationalError:
-            pass
     
     # SB Accounts Table
     cursor.execute("""
@@ -189,7 +168,7 @@ def init_db():
         )
     """)
 
-    # Cash Book Table - With Debit/Credit
+    # Cash Book Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS cash_book (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -205,7 +184,7 @@ def init_db():
         )
     """)
 
-    # Bank Book Table - With Debit/Credit
+    # Bank Book Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bank_book (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,18 +236,32 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- FORCE RECREATE DATABASE ---
-# This ensures we have a clean database with all columns
-if os.path.exists(DB_NAME):
-    try:
-        os.remove(DB_NAME)
-        print(f"✅ Deleted existing database: {DB_NAME}")
-    except:
-        pass
-
 # Initialize database
 init_db()
 print("✅ Database initialized successfully!")
+
+def run_query(query, params=(), fetch=True):
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        res = cursor.fetchall() if fetch else None
+        conn.commit()
+        conn.close()
+        return res
+    except sqlite3.OperationalError as e:
+        st.error(f"Database error: {str(e)}")
+        # Try to recreate database
+        if os.path.exists(DB_NAME):
+            os.remove(DB_NAME)
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        res = cursor.fetchall() if fetch else None
+        conn.commit()
+        conn.close()
+        return res
 
 # --- HELPER FUNCTIONS ---
 def save_uploaded_file(uploaded_file):
@@ -281,28 +274,28 @@ def save_uploaded_file(uploaded_file):
 
 def get_cash_balance():
     """Get current Cash balance from cash_book"""
-    balance = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
-    return balance[0][0] if balance else 0
+    result = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+    return result[0][0] if result else 0
 
 def get_bank_balance(bank_name=None):
     """Get current Bank balance from bank_book"""
     if bank_name:
-        balance = run_query("SELECT balance FROM bank_book WHERE bank_name = ? ORDER BY id DESC LIMIT 1", (bank_name,))
+        result = run_query("SELECT balance FROM bank_book WHERE bank_name = ? ORDER BY id DESC LIMIT 1", (bank_name,))
     else:
-        balance = run_query("SELECT balance FROM bank_book ORDER BY id DESC LIMIT 1")
-    return balance[0][0] if balance else 0
+        result = run_query("SELECT balance FROM bank_book ORDER BY id DESC LIMIT 1")
+    return result[0][0] if result else 0
 
 def generate_cash_voucher_no():
     """Generate Cash Book voucher number with prefix CB"""
     today = datetime.now().strftime("%Y%m%d")
-    last_voucher = run_query("""
+    result = run_query("""
         SELECT voucher_no FROM cash_book 
         WHERE voucher_no LIKE ? 
         ORDER BY id DESC LIMIT 1
     """, (f"CB{today}%",))
     
-    if last_voucher:
-        last_seq = int(last_voucher[0][0][-4:])
+    if result:
+        last_seq = int(result[0][0][-4:])
         new_seq = last_seq + 1
     else:
         new_seq = 1
@@ -312,14 +305,14 @@ def generate_cash_voucher_no():
 def generate_bank_voucher_no():
     """Generate Bank Book voucher number with prefix BB"""
     today = datetime.now().strftime("%Y%m%d")
-    last_voucher = run_query("""
+    result = run_query("""
         SELECT voucher_no FROM bank_book 
         WHERE voucher_no LIKE ? 
         ORDER BY id DESC LIMIT 1
     """, (f"BB{today}%",))
     
-    if last_voucher:
-        last_seq = int(last_voucher[0][0][-4:])
+    if result:
+        last_seq = int(result[0][0][-4:])
         new_seq = last_seq + 1
     else:
         new_seq = 1
@@ -413,9 +406,9 @@ else:
 if menu == "Dashboard":
     st.title("📊 Bank Dashboard & Overview")
     
-    total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0]
-    kyc_pending = run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'")[0][0]
-    sb_count = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0]
+    total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0] if run_query("SELECT COUNT(*) FROM customers") else 0
+    kyc_pending = run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'")[0][0] if run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'") else 0
+    sb_count = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0] if run_query("SELECT COUNT(*) FROM sb_accounts") else 0
     total_sb_dep = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
     total_fd = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
     total_rd = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
@@ -430,6 +423,9 @@ if menu == "Dashboard":
     col5.metric("Cash Balance", f"₹{cash_balance:,.2f}")
     col6.metric("Bank Balance", f"₹{bank_balance:,.2f}")
     col7.metric("Total SB Deposits", f"₹{total_sb_dep:,.2f}")
+
+# --- Continue with the rest of your code (Customer Management, KYC, SB Accounts, etc.) ---
+# ... (The rest of the code remains the same as before) ...
 
 # --- CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":

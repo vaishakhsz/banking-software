@@ -1089,6 +1089,7 @@ elif menu == "Cash Book":
                 st.info("No cash entries found for the selected date range.")
 
 # --- BANK BOOK ---
+# --- BANK BOOK ---
 elif menu == "Bank Book":
     st.title("🏦 Bank Book")
     
@@ -1113,6 +1114,7 @@ elif menu == "Bank Book":
         
         st.info(f"🏦 **{selected_bank} Current Balance:** ₹{current_balance:,.2f}")
         
+        # Use a form for the entry
         with st.form("bank_entry_form"):
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
@@ -1132,60 +1134,76 @@ elif menu == "Bank Book":
             narration = st.text_area("Narration (Optional)", height=68)
             
             submitted = st.form_submit_button("Record Bank Entry")
-            if submitted:
-                if amount > 0 and particulars and account_head:
-                    voucher_no = generate_bank_voucher_no()
-                    today = datetime.now().strftime("%Y-%m-%d")
-                    account_code = coa_dict[account_head]
-                    
-                    bank_code = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ?", (selected_bank,))
-                    if not bank_code:
-                        st.error(f"❌ Bank account '{selected_bank}' not found in Chart of Accounts!")
-                        st.stop()
-                    bank_code = bank_code[0][0]
-                    
-                    if entry_type == "DEBIT (Deposit)":
-                        new_balance = current_balance + amount
-                        debit_amount = amount
-                        credit_amount = 0
-                        post_automated_jv(f"Bank Deposit: {particulars}", bank_code, account_code, amount)
-                    else:
-                        if current_balance < amount:
-                            st.error(f"❌ Insufficient Bank Balance! Available: ₹{current_balance:,.2f}")
-                            st.stop()
-                        new_balance = current_balance - amount
-                        debit_amount = 0
-                        credit_amount = amount
-                        post_automated_jv(f"Bank Withdrawal: {particulars}", account_code, bank_code, amount)
-                    
-                    # Insert the entry
-                    run_query("""
-                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, selected_bank, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    
-                    # Show success message
-                    st.success(f"✅ Bank {entry_type} of ₹{amount:,.2f} recorded successfully!")
-                    st.info(f"📌 Voucher No: {voucher_no}\n"
-                           f"📌 {entry_type}: ₹{amount:,.2f}\n"
-                           f"📌 Account Head: {account_head}\n"
-                           f"📌 New {selected_bank} Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
-                    
-                    # Add button to view entries
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        if st.button("📋 View All Bank Entries", key="view_after_record"):
-                            st.session_state.bank_book_tab = "View / Edit / Delete"
-                            st.rerun()
-                    with col2:
-                        if st.button("➕ Record Another Entry", key="record_another"):
-                            st.rerun()
-                    with col3:
-                        if st.button("🖨️ Print Bank Book", key="print_after_record"):
-                            st.session_state.bank_book_tab = "Print Bank Book"
-                            st.rerun()
+        
+        # Handle form submission outside the form
+        if submitted:
+            if amount > 0 and particulars and account_head:
+                voucher_no = generate_bank_voucher_no()
+                today = datetime.now().strftime("%Y-%m-%d")
+                account_code = coa_dict[account_head]
+                
+                bank_code = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ?", (selected_bank,))
+                if not bank_code:
+                    st.error(f"❌ Bank account '{selected_bank}' not found in Chart of Accounts!")
+                    st.stop()
+                bank_code = bank_code[0][0]
+                
+                if entry_type == "DEBIT (Deposit)":
+                    new_balance = current_balance + amount
+                    debit_amount = amount
+                    credit_amount = 0
+                    post_automated_jv(f"Bank Deposit: {particulars}", bank_code, account_code, amount)
                 else:
-                    st.error("Please fill in all required fields!")
+                    if current_balance < amount:
+                        st.error(f"❌ Insufficient Bank Balance! Available: ₹{current_balance:,.2f}")
+                        st.stop()
+                    new_balance = current_balance - amount
+                    debit_amount = 0
+                    credit_amount = amount
+                    post_automated_jv(f"Bank Withdrawal: {particulars}", account_code, bank_code, amount)
+                
+                # Insert the entry
+                run_query("""
+                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, selected_bank, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                
+                # Store success info in session state
+                st.session_state.bank_success = True
+                st.session_state.bank_voucher = voucher_no
+                st.session_state.bank_amount = amount
+                st.session_state.bank_type = entry_type
+                st.session_state.bank_balance = new_balance
+                st.session_state.bank_account_head = account_head
+                
+                st.rerun()
+            else:
+                st.error("Please fill in all required fields!")
+        
+        # Display success message if it exists
+        if st.session_state.get('bank_success', False):
+            st.success(f"✅ Bank {st.session_state.bank_type} of ₹{st.session_state.bank_amount:,.2f} recorded successfully!")
+            st.info(f"📌 Voucher No: {st.session_state.bank_voucher}\n"
+                   f"📌 {st.session_state.bank_type}: ₹{st.session_state.bank_amount:,.2f}\n"
+                   f"📌 Account Head: {st.session_state.bank_account_head}\n"
+                   f"📌 New {selected_bank} Balance: ₹{st.session_state.bank_balance:,.2f}")
+            
+            # Clear the success flag after displaying
+            st.session_state.bank_success = False
+            
+            # Add navigation buttons in the main flow (not inside form)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("📋 View All Bank Entries", key="view_after_record"):
+                    st.session_state.bank_book_tab = "View / Edit / Delete"
+                    st.rerun()
+            with col2:
+                if st.button("➕ Record Another Entry", key="record_another"):
+                    st.rerun()
+            with col3:
+                if st.button("🖨️ Print Bank Book", key="print_after_record"):
+                    st.session_state.bank_book_tab = "Print Bank Book"
+                    st.rerun()
     
     with tab2:
         st.subheader("📋 Bank Book Entries - View / Edit / Delete")

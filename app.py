@@ -701,6 +701,7 @@ elif menu == "Chart of Accounts":
 
 
 # --- CASH BOOK ---
+# --- CASH BOOK ---
 elif menu == "Cash Book":
     st.title("💰 Cash Book Entries")
     tab1, tab2, tab3, tab4 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book"])
@@ -729,9 +730,28 @@ elif menu == "Cash Book":
                     if entry_type == "DEBIT (Receipt)":
                         new_balance = current_balance + amount
                         debit_amount, credit_amount = amount, 0
-                        # If receiving from a bank, post contra JV between Bank asset and Cash asset (No liability impact)
-                        if "Bank" in account_head or "Union Bank" in account_head or "State Bank" in account_head:
-                            post_automated_jv(f"Cash Transfer from Bank: {particulars}", "AST-101", account_code, amount)
+                        
+                        # If money is coming into cash from a bank (e.g., Union Bank withdrawal), 
+                        # automatically deduct it from that bank's book and post the contra JV
+                        if "Union Bank" in account_head:
+                            post_automated_jv(f"Cash Withdrawal from Union Bank: {particulars}", "AST-101", account_code, amount)
+                            # Mirror deduction in Union Bank book
+                            union_curr = get_bank_balance("Union Bank of India")
+                            new_union_bal = union_curr - amount
+                            b_vouch = generate_bank_voucher_no()
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, b_vouch, f"Transfer to Cash: {particulars}", 0, amount, new_union_bal, "Union Bank of India", account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        elif "State Bank" in account_head:
+                            post_automated_jv(f"Cash Withdrawal from SBI: {particulars}", "AST-101", account_code, amount)
+                            sbi_curr = get_bank_balance("State Bank of India")
+                            new_sbi_bal = sbi_curr - amount
+                            b_vouch = generate_bank_voucher_no()
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, b_vouch, f"Transfer to Cash: {particulars}", 0, amount, new_sbi_bal, "State Bank of India", account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                         else:
                             post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
                     else:
@@ -740,7 +760,28 @@ elif menu == "Cash Book":
                             st.stop()
                         new_balance = current_balance - amount
                         debit_amount, credit_amount = 0, amount
-                        post_automated_jv(f"Cash Payment: {particulars}", account_code, "AST-101", amount)
+                        
+                        # If paying cash into a bank (Cash Deposit)
+                        if "Union Bank" in account_head:
+                            post_automated_jv(f"Cash Deposit to Union Bank: {particulars}", account_code, "AST-101", amount)
+                            union_curr = get_bank_balance("Union Bank of India")
+                            new_union_bal = union_curr + amount
+                            b_vouch = generate_bank_voucher_no()
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, b_vouch, f"Cash Deposit: {particulars}", amount, 0, new_union_bal, "Union Bank of India", account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        elif "State Bank" in account_head:
+                            post_automated_jv(f"Cash Deposit to SBI: {particulars}", account_code, "AST-101", amount)
+                            sbi_curr = get_bank_balance("State Bank of India")
+                            new_sbi_bal = sbi_curr + amount
+                            b_vouch = generate_bank_voucher_no()
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, b_vouch, f"Cash Deposit: {particulars}", amount, 0, new_sbi_bal, "State Bank of India", account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        else:
+                            post_automated_jv(f"Cash Payment: {particulars}", account_code, "AST-101", amount)
                     
                     run_query("""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)

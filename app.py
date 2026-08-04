@@ -1014,6 +1014,7 @@ elif menu == "Admin Record Editor":
         else:
             st.info(f"Table `{selected_table}` is currently empty.")
 
+
 # --- FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
@@ -1076,6 +1077,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0
+            
             if tot_sb_balance > 0:
                 lia_data.append(["SB Deposits Control", f"₹{tot_sb_balance:,.2f}"])
                 total_lia += tot_sb_balance
@@ -1086,12 +1088,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{tot_rd_invested:,.2f}"])
                 total_lia += tot_rd_invested
                 
+            # Including Union Bank allocation view on liability/equity side if treated as internal funding source / contra mapping
+            if union_bank_bal > 0:
+                lia_data.append(["Union Bank Equity / Source Funding", f"₹{union_bank_bal:,.2f}"])
+                total_lia += union_bank_bal
+                
             if lia_data:
                 df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
                 st.dataframe(df_lia, use_container_width=True)
             else:
-                st.info("No active deposit liabilities.")
-            st.metric("Total Liabilities", f"₹{total_lia:,.2f}")
+                st.info("No active liabilities.")
+            st.metric("Total Liabilities & Sources", f"₹{total_lia:,.2f}")
 
     with tab3:
         st.subheader("Profit & Loss Statement")

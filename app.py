@@ -38,22 +38,8 @@ def get_connection():
             time.sleep(1)
 
 def init_db():
-    """Initialize database with all required tables"""
+    """Initialize database with all required tables only if they don't exist"""
     try:
-        # Close any existing connections
-        if os.path.exists(DB_NAME):
-            try:
-                os.remove(DB_NAME)
-                print(f"✅ Deleted existing database: {DB_NAME}")
-            except PermissionError:
-                print("Database file is locked, waiting...")
-                time.sleep(2)
-                try:
-                    os.remove(DB_NAME)
-                    print(f"✅ Deleted existing database: {DB_NAME}")
-                except:
-                    pass
-        
         conn = get_connection()
         cursor = conn.cursor()
         
@@ -241,29 +227,13 @@ def init_db():
 
         conn.commit()
         conn.close()
-        print("✅ Database initialized successfully!")
         return True
     except Exception as e:
         print(f"❌ Database initialization error: {str(e)}")
         return False
 
-# --- INITIALIZE DATABASE ---
-# Force delete and recreate
-if os.path.exists(DB_NAME):
-    try:
-        os.remove(DB_NAME)
-        print(f"✅ Deleted existing database: {DB_NAME}")
-    except Exception as e:
-        print(f"Could not delete database: {e}")
-
-# Initialize database with retry
-max_init_retries = 3
-for attempt in range(max_init_retries):
-    if init_db():
-        break
-    if attempt < max_init_retries - 1:
-        print(f"Retrying database initialization... (Attempt {attempt + 2})")
-        time.sleep(2)
+# --- INITIALIZE DATABASE PERSISTENTLY ---
+init_db()
 
 def run_query(query, params=(), fetch=True):
     """Execute a database query with error handling"""
@@ -277,20 +247,7 @@ def run_query(query, params=(), fetch=True):
         return res
     except sqlite3.OperationalError as e:
         st.error(f"Database error: {str(e)}")
-        # Try to recreate database
-        if os.path.exists(DB_NAME):
-            try:
-                os.remove(DB_NAME)
-            except:
-                pass
-        init_db()
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        res = cursor.fetchall() if fetch else None
-        conn.commit()
-        conn.close()
-        return res
+        return None
 
 # --- HELPER FUNCTIONS ---
 def save_uploaded_file(uploaded_file):
@@ -365,27 +322,15 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
     if amount <= 0:
         return
     try:
-        # Verify both accounts exist in chart of accounts
         debit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (debit_acc,))
         credit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (credit_acc,))
         
         if not debit_check:
-            print(f"❌ Debit account '{debit_acc}' not found in Chart of Accounts!")
-            # Try to find a similar account
-            similar = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name LIKE ?", (f"%{debit_acc}%",))
-            if similar:
-                debit_acc = similar[0][0]
-                print(f"Using similar account: {debit_acc}")
-            else:
-                return
+            st.error(f"❌ Debit account '{debit_acc}' not found in Chart of Accounts!")
+            return
         if not credit_check:
-            print(f"❌ Credit account '{credit_acc}' not found in Chart of Accounts!")
-            similar = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name LIKE ?", (f"%{credit_acc}%",))
-            if similar:
-                credit_acc = similar[0][0]
-                print(f"Using similar account: {credit_acc}")
-            else:
-                return
+            st.error(f"❌ Credit account '{credit_acc}' not found in Chart of Accounts!")
+            return
         
         conn = get_connection()
         cursor = conn.cursor()
@@ -393,28 +338,21 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
                        (str(date.today()), narration))
         jv_id = cursor.lastrowid
         
-        # Insert debit entry
         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
                       (jv_id, debit_acc, amount))
-        
-        # Insert credit entry
         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
                       (jv_id, credit_acc, amount))
         
         conn.commit()
         conn.close()
-        print(f"✅ JV Posted: {narration} | Debit: {debit_acc} | Credit: {credit_acc} | Amount: ₹{amount:,.2f}")
-        return True
     except Exception as e:
-        print(f"❌ JV Error: {str(e)}")
-        return False
+        st.error(f"Error posting journal voucher: {str(e)}")
 
 def create_pdf_report(title, df):
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
-    import io
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -440,7 +378,6 @@ def create_pdf_report(title, df):
             cleaned_data.append(cleaned_row)
             
         table_data = [columns] + cleaned_data
-        
         col_width = 550 / max(1, len(columns))
         t = Table(table_data, colWidths=[col_width] * len(columns))
         
@@ -482,36 +419,12 @@ else:
 if menu == "Dashboard":
     st.title("📊 Bank Dashboard & Overview")
     
-    try:
-        total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0] if run_query("SELECT COUNT(*) FROM customers") else 0
-    except:
-        total_cust = 0
-    
-    try:
-        kyc_pending = run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'")[0][0] if run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'") else 0
-    except:
-        kyc_pending = 0
-    
-    try:
-        sb_count = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0] if run_query("SELECT COUNT(*) FROM sb_accounts") else 0
-    except:
-        sb_count = 0
-    
-    try:
-        total_sb_dep = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
-    except:
-        total_sb_dep = 0.0
-    
-    try:
-        total_fd = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-    except:
-        total_fd = 0.0
-    
-    try:
-        total_rd = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-    except:
-        total_rd = 0.0
-    
+    total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0] if run_query("SELECT COUNT(*) FROM customers") else 0
+    kyc_pending = run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'")[0][0] if run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'") else 0
+    sb_count = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0] if run_query("SELECT COUNT(*) FROM sb_accounts") else 0
+    total_sb_dep = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
+    total_fd = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+    total_rd = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
     cash_balance = get_cash_balance()
     bank_balance = get_bank_balance()
 
@@ -601,10 +514,6 @@ elif menu == "Customer Management":
                 new_state = st.text_input("State", value=c[5])
                 new_pincode = st.text_input("Pincode", value=c[6])
                 
-                st.write(f"Current Aadhaar File: `{c[7]}`")
-                st.write(f"Current PAN File: `{c[8]}`")
-                st.write(f"Current Signature File: `{c[9]}`")
-                
                 if st.form_submit_button("Update Details"):
                     run_query("""
                         UPDATE customers SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? WHERE id=?
@@ -618,7 +527,6 @@ elif menu == "KYC Verification":
     if pending:
         for p in pending:
             with st.expander(f"Customer: {p[1]} (ID: {p[0]}) - Phone: {p[2]}"):
-                st.write(f"**PAN:** {p[3]} | **Aadhar Document:** `{p[4]}` | **PAN Document:** `{p[5]}` | **Signature:** `{p[6]}`")
                 col1, col2 = st.columns(2)
                 if col1.button(f"Approve KYC #{p[0]}", key=f"app_{p[0]}"):
                     run_query("UPDATE customers SET kyc_status='APPROVED' WHERE id=?", (p[0],), fetch=False)
@@ -702,12 +610,11 @@ elif menu == "SB Accounts":
             st.dataframe(df_sb, use_container_width=True)
             st.download_button("Download SB Accounts PDF", create_pdf_report("Savings Bank Accounts Report", df_sb), "sb_accounts.pdf", "application/pdf")
             
-            st.markdown("### Delete SB Account")
             del_sb_no = st.selectbox("Select Account No to Delete", [a[0] for a in accounts])
             if st.button("Delete SB Account Record"):
                 run_query("DELETE FROM sb_accounts WHERE account_no=?", (del_sb_no,), fetch=False)
                 run_query("DELETE FROM transactions WHERE account_no=?", (del_sb_no,), fetch=False)
-                st.warning(f"SB Account {del_sb_no} and its transaction logs were successfully deleted.")
+                st.warning(f"SB Account {del_sb_no} deleted.")
                 st.rerun()
         else:
             st.info("No active SB accounts found.")
@@ -750,51 +657,13 @@ elif menu == "Fixed Deposits (FD)":
             cleaned_fds = [row[:-1] if len(row) > 7 else row for row in fds]
             df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
             st.dataframe(df_fds, use_container_width=True)
-            
             st.download_button("Download FDs PDF Report", create_pdf_report("Fixed Deposits Report", df_fds), "fixed_deposits.pdf", "application/pdf")
-            
-            st.markdown("---")
-            st.subheader("Close / Settle or Delete FD Account")
-            active_fds = [f for f in fds if f[6] == 'ACTIVE']
-            if active_fds:
-                fd_choice = st.selectbox("Select Active FD ID to Close/Settle", [f[0] for f in active_fds])
-                selected_fd_record = next(f for f in fds if f[0] == fd_choice)
-                
-                cust_id = selected_fd_record[7]
-                maturity_amt = selected_fd_record[5]
-                
-                settlement_mode = st.selectbox("Settlement Mode", ["CASH", "TRANSFER TO RETRIEVAL POOL", "BANK TRANSFER"])
-                
-                if st.button("Close & Settle FD Account"):
-                    run_query("UPDATE fixed_deposits SET status='CLOSED' WHERE fd_id=?", (fd_choice,), fetch=False)
-                    
-                    if settlement_mode == "TRANSFER TO RETRIEVAL POOL":
-                        ret_exists = run_query("SELECT balance FROM retrieval_accounts WHERE customer_id=?", (cust_id,))
-                        if ret_exists:
-                            new_ret_bal = ret_exists[0][0] + maturity_amt
-                            run_query("UPDATE retrieval_accounts SET balance=? WHERE customer_id=?", (new_ret_bal, cust_id))
-                        else:
-                            ret_acc_no = f"RET{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                            run_query("INSERT INTO retrieval_accounts VALUES (?, ?, ?)", (ret_acc_no, cust_id, maturity_amt))
-                    
-                    post_automated_jv(f"FD Closure Settlement (FD #{fd_choice})", "LIA-102", "AST-101", maturity_amt)
-                    st.success(f"FD #{fd_choice} successfully closed and settled for amount ₹{maturity_amt:,.2f}!")
-                    st.rerun()
-            else:
-                st.info("No active FDs available for settlement.")
-
-            st.markdown("### Delete FD Record")
-            del_fd_id = st.number_input("Enter FD ID to Delete Record", min_value=1, step=1, key="del_fd_rec")
-            if st.button("Delete FD Record"):
-                run_query("DELETE FROM fixed_deposits WHERE fd_id=?", (del_fd_id,), fetch=False)
-                st.warning(f"FD Record ID {del_fd_id} deleted successfully.")
-                st.rerun()
         else:
             st.info("No fixed deposits found.")
 
 # --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":
-    st.title("🔄 Recurring Deposits Management & Installment Payment")
+    st.title("🔄 Recurring Deposits Management")
     tab1, tab2, tab3 = st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion"])
     
     with tab1:
@@ -817,7 +686,6 @@ elif menu == "Recurring Deposits (RD)":
             st.warning("Register customers first.")
 
     with tab2:
-        st.subheader("Pay Monthly Installment for RD")
         active_rds = run_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.installments_paid 
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id 
@@ -827,27 +695,16 @@ elif menu == "Recurring Deposits (RD)":
             rd_dict = {f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[2]:,.2f}, Paid: {r[4]}/{r[3]})": r for r in active_rds}
             chosen_rd_str = st.selectbox("Select Active RD Account", list(rd_dict.keys()))
             selected_rd = rd_dict[chosen_rd_str]
-            
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst = selected_rd
             
-            st.info(f"Installment Amount Due: **₹{monthly_amt:,.2f}** | Current Installments Paid: **{paid_inst} / {tenure_m}**")
             pay_mode = st.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "ONLINE", "CHEQUE"], key="rd_pay_mode")
-            
             if st.button("Confirm & Pay Installment"):
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
                     run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
-                    
-                    run_query("""
-                        INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
-                        VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)
-                    """, (f"TX{datetime.now().strftime('%M%S%f')}", f"RD-{rd_id}", monthly_amt, pay_mode, f"RD Installment Payment #{new_paid}", datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    
                     post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid})", "AST-101", "LIA-103", monthly_amt)
-                    st.success(f"Installment #{new_paid} of ₹{monthly_amt:,.2f} successfully paid for RD #{rd_id}!")
+                    st.success(f"Installment #{new_paid} successfully paid!")
                     st.rerun()
-                else:
-                    st.warning("This Recurring Deposit account has already completed all installments!")
         else:
             st.info("No active recurring deposits found.")
 
@@ -859,17 +716,6 @@ elif menu == "Recurring Deposits (RD)":
         if rds:
             df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status"])
             st.dataframe(df_rds, use_container_width=True)
-            
-            st.download_button("Download RDs PDF Report", create_pdf_report("Recurring Deposits Report", df_rds), "recurring_deposits.pdf", "application/pdf")
-            
-            st.markdown("### Delete RD Record")
-            del_rd_id = st.number_input("Enter RD ID to Delete", min_value=1, step=1, key="del_rd")
-            if st.button("Delete RD Record"):
-                run_query("DELETE FROM recurring_deposits WHERE rd_id=?", (del_rd_id,), fetch=False)
-                st.warning(f"RD Record ID {del_rd_id} deleted successfully.")
-                st.rerun()
-        else:
-            st.info("No recurring deposits found.")
 
 # --- RETRIEVAL ACCOUNT ---
 elif menu == "Retrieval Account":
@@ -890,35 +736,13 @@ elif menu == "Chart of Accounts":
     accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
     df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
     st.dataframe(df_coa, use_container_width=True)
-    
-    st.subheader("Add or Delete Account Head")
-    with st.form("coa_form"):
-        col1, col2 = st.columns(2)
-        code = col1.text_input("Account Code (e.g., INC-401)")
-        name = col2.text_input("Account Name")
-        acc_type = col1.selectbox("Account Type", ["Income", "Expense", "Asset", "Liability", "Equity"])
-        category = col2.text_input("Category Subgroup")
-        if st.form_submit_button("Add Account Head"):
-            if code and name:
-                run_query("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", (code, name, acc_type, category), fetch=False)
-                st.success(f"Account Head {name} added successfully!")
-                st.rerun()
-
-    del_code = st.text_input("Enter Account Code to Delete (Custom heads only)")
-    if st.button("Delete Account Head"):
-        run_query("DELETE FROM chart_of_accounts WHERE account_code=?", (del_code,), fetch=False)
-        st.warning(f"Account code {del_code} deleted.")
-        st.rerun()
 
 # --- CASH BOOK ---
 elif menu == "Cash Book":
-    st.title("💰 Cash Book")
-    
+    st.title("💰 Cash Book Entries")
     tab1, tab2, tab3 = st.tabs(["Record Cash Entry", "View / Edit / Delete", "Print Cash Book"])
     
     with tab1:
-        st.subheader("Record Cash Transaction")
-        
         current_balance = get_cash_balance()
         st.info(f"💰 **Current Cash Balance:** ₹{current_balance:,.2f}")
         
@@ -930,18 +754,10 @@ elif menu == "Cash Book":
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+            account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
+            narration = st.text_area("Narration", height=68)
             
-            if entry_type == "DEBIT (Receipt)":
-                st.info("💡 **Debit Entry:** Cash is increasing. Select the Credit account head.")
-                account_head = st.selectbox("Credit Account Head", list(coa_dict.keys()))
-            else:
-                st.info("💡 **Credit Entry:** Cash is decreasing. Select the Debit account head.")
-                account_head = st.selectbox("Debit Account Head", list(coa_dict.keys()))
-            
-            narration = st.text_area("Narration (Optional)", height=68)
-            
-            submitted = st.form_submit_button("Record Cash Entry")
-            if submitted:
+            if st.form_submit_button("Record Cash Entry"):
                 if amount > 0 and particulars and account_head:
                     voucher_no = generate_cash_voucher_no()
                     today = datetime.now().strftime("%Y-%m-%d")
@@ -949,16 +765,14 @@ elif menu == "Cash Book":
                     
                     if entry_type == "DEBIT (Receipt)":
                         new_balance = current_balance + amount
-                        debit_amount = amount
-                        credit_amount = 0
+                        debit_amount, credit_amount = amount, 0
                         post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
                     else:
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_balance:,.2f}")
                             st.stop()
                         new_balance = current_balance - amount
-                        debit_amount = 0
-                        credit_amount = amount
+                        debit_amount, credit_amount = 0, amount
                         post_automated_jv(f"Cash Payment: {particulars}", account_code, "AST-101", amount)
                     
                     run_query("""
@@ -966,436 +780,103 @@ elif menu == "Cash Book":
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
-                    st.success(f"✅ Cash {entry_type} of ₹{amount:,.2f} recorded successfully!")
-                    st.info(f"📌 Voucher No: {voucher_no}\n"
-                           f"📌 {entry_type}: ₹{amount:,.2f}\n"
-                           f"📌 Account Head: {account_head}\n"
-                           f"📌 New Cash Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
-                    
-                    # Navigation buttons after successful entry
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("📋 View All Cash Entries", key="view_cash_after"):
-                            st.rerun()
-                    with col2:
-                        if st.button("🔄 Record Another", key="record_cash_another"):
-                            st.rerun()
-                else:
-                    st.error("Please fill in all required fields!")
-    
+                    st.success(f"✅ Cash entry recorded successfully! Voucher: {voucher_no}")
+                    st.rerun()
+
     with tab2:
-        st.subheader("📋 Cash Book Entries - View / Edit / Delete")
-        
-        entries = run_query("""
-            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration
-            FROM cash_book
-            ORDER BY id DESC
-        """)
-        
+        entries = run_query("SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration FROM cash_book ORDER BY id DESC")
         if entries:
             df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Account Code", "Narration"])
             st.dataframe(df_cash, use_container_width=True)
             
-            st.markdown("---")
-            st.subheader("✏️ Edit or 🗑️ Delete Cash Entry")
-            
-            entry_ids = [e[0] for e in entries]
-            selected_id = st.selectbox("Select Entry ID to Edit/Delete", entry_ids, key="select_cash_entry")
-            
-            if selected_id:
-                entry_data = run_query("""
-                    SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration
-                    FROM cash_book WHERE id = ?
-                """, (selected_id,))
-                
-                if entry_data:
-                    row = entry_data[0]
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write(f"**Voucher No:** {row[2]}")
-                        st.write(f"**Date:** {row[1]}")
-                        st.write(f"**Particulars:** {row[3]}")
-                        st.write(f"**Debit Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Debit Amount:** ₹0.00")
-                        st.write(f"**Credit Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Credit Amount:** ₹0.00")
-                        st.write(f"**Balance:** ₹{row[6]:,.2f}")
-                        st.write(f"**Account Code:** {row[7]}")
-                        st.write(f"**Narration:** {row[8]}")
-                    
-                    with col2:
-                        action = st.radio("Choose Action", ["Edit Entry", "Delete Entry"])
-                        
-                        if action == "Edit Entry":
-                            with st.form("edit_cash_form"):
-                                new_particulars = st.text_input("Particulars", value=row[3])
-                                
-                                account_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (row[7],))
-                                account_name = account_info[0][0] if account_info else ""
-                                
-                                coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
-                                coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-                                
-                                current_account = f"{row[7]} - {account_name}" if account_name else list(coa_dict.keys())[0]
-                                if current_account not in coa_dict:
-                                    current_account = list(coa_dict.keys())[0]
-                                
-                                new_account = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_account) if current_account in coa_dict else 0)
-                                new_narration = st.text_area("Narration", value=row[8] if row[8] else "")
-                                
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    edit_submit = st.form_submit_button("💾 Save Changes")
-                                with col2:
-                                    cancel = st.form_submit_button("❌ Cancel")
-                                
-                                if edit_submit:
-                                    new_account_code = coa_dict[new_account]
-                                    run_query("""
-                                        UPDATE cash_book 
-                                        SET particulars = ?, account_code = ?, narration = ?
-                                        WHERE id = ?
-                                    """, (new_particulars, new_account_code, new_narration, selected_id), fetch=False)
-                                    st.success(f"✅ Cash Entry #{selected_id} updated successfully!")
-                                    st.rerun()
-                                if cancel:
-                                    st.rerun()
-                        
-                        else:
-                            st.warning(f"⚠️ Are you sure you want to delete Cash Entry #{selected_id}?")
-                            st.warning(f"**Voucher No:** {row[2]} | **Particulars:** {row[3]} | **Amount:** ₹{max(row[4], row[5]):,.2f}")
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                if st.button("🗑️ Confirm Delete", type="primary"):
-                                    run_query("DELETE FROM cash_book WHERE id = ?", (selected_id,), fetch=False)
-                                    st.success(f"✅ Cash Entry #{selected_id} deleted successfully!")
-                                    st.rerun()
-                            with col2:
-                                if st.button("❌ Cancel"):
-                                    st.rerun()
+            del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
+            if st.button("Delete Cash Entry"):
+                run_query("DELETE FROM cash_book WHERE id=?", (del_id,), fetch=False)
+                st.warning(f"Cash Entry ID {del_id} deleted successfully.")
+                st.rerun()
         else:
-            st.info("No cash entries found. Record your first cash entry in the 'Record Cash Entry' tab.")
-    
+            st.info("No cash book entries found.")
+
     with tab3:
-        st.subheader("🖨️ Print Cash Book")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            from_date = st.date_input("From Date", value=date.today().replace(day=1))
-        with col2:
-            to_date = st.date_input("To Date", value=date.today())
-        
-        if st.button("Generate Cash Book Report"):
-            entries = run_query("""
-                SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration
-                FROM cash_book
-                WHERE date BETWEEN ? AND ?
-                ORDER BY id ASC
-            """, (str(from_date), str(to_date)))
-            
-            if entries:
-                df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
-                st.dataframe(df_print, use_container_width=True)
-                
-                total_debits = sum(row[3] for row in entries)
-                total_credits = sum(row[4] for row in entries)
-                opening_balance = run_query("""
-                    SELECT balance FROM cash_book 
-                    WHERE date < ? 
-                    ORDER BY id DESC LIMIT 1
-                """, (str(from_date),))
-                opening_bal = opening_balance[0][0] if opening_balance else 0
-                closing_balance = entries[-1][5] if entries else 0
-                
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Opening Balance", f"₹{opening_bal:,.2f}")
-                col2.metric("Total Debits", f"₹{total_debits:,.2f}")
-                col3.metric("Total Credits", f"₹{total_credits:,.2f}")
-                col4.metric("Closing Balance", f"₹{closing_balance:,.2f}")
-                
-                st.download_button(
-                    "📥 Download Cash Book PDF",
-                    create_pdf_report(f"Cash Book Report ({from_date} to {to_date})", df_print),
-                    f"cash_book_{from_date}_to_{to_date}.pdf",
-                    "application/pdf"
-                )
-            else:
-                st.info("No cash entries found for the selected date range.")
+        entries = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration FROM cash_book ORDER BY id ASC")
+        if entries:
+            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
+            st.dataframe(df_print, use_container_width=True)
+            st.download_button("Download Cash Book PDF", create_pdf_report("Cash Book Report", df_print), "cash_book.pdf", "application/pdf")
 
 # --- BANK BOOK ---
 elif menu == "Bank Book":
-    st.title("🏦 Bank Book")
-    
-    # Create tabs
+    st.title("🏦 Bank Book Entries")
     tab1, tab2, tab3 = st.tabs(["Record Bank Entry", "View / Edit / Delete", "Print Bank Book"])
     
     with tab1:
-        st.subheader("Record Bank Transaction")
-        
-        # Get list of banks
-        bank_accounts = run_query("""
-            SELECT account_name FROM chart_of_accounts 
-            WHERE account_type = 'Asset' AND account_name LIKE '%Bank%'
-        """)
+        bank_accounts = run_query("SELECT account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_name LIKE '%Bank%'")
         bank_list = [b[0] for b in bank_accounts] if bank_accounts else ["Union Bank of India", "State Bank of India"]
-        
         selected_bank = st.selectbox("Select Bank", bank_list, key="bank_select")
         
-        # Get current balance
         current_balance = get_bank_balance(selected_bank)
         st.info(f"🏦 **{selected_bank} Current Balance:** ₹{current_balance:,.2f}")
         
-        # Form for entry
         with st.form("bank_entry_form"):
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description", placeholder="e.g., Cash Deposit, Transfer, etc.")
+            particulars = st.text_input("Particulars / Description")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+            account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
+            narration = st.text_area("Narration", height=68)
             
-            if entry_type == "DEBIT (Deposit)":
-                st.info("💡 **Debit Entry:** Bank balance is increasing. Select the Credit account head.")
-                account_head = st.selectbox("Credit Account Head", list(coa_dict.keys()))
-            else:
-                st.info("💡 **Credit Entry:** Bank balance is decreasing. Select the Debit account head.")
-                account_head = st.selectbox("Debit Account Head", list(coa_dict.keys()))
-            
-            narration = st.text_area("Narration (Optional)", height=68)
-            
-            submitted = st.form_submit_button("💾 Record Bank Entry")
-            
-            if submitted:
+            if st.form_submit_button("Record Bank Entry"):
                 if amount > 0 and particulars and account_head:
                     voucher_no = generate_bank_voucher_no()
                     today = datetime.now().strftime("%Y-%m-%d")
                     account_code = coa_dict[account_head]
                     
-                    # Get or create bank account code
                     bank_code_result = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ?", (selected_bank,))
-                    if not bank_code_result:
-                        # Create bank account in chart of accounts if not exists
-                        new_code = f"AST-{len(run_query('SELECT account_code FROM chart_of_accounts')) + 100}"
-                        run_query("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, 'Asset', 'Current Assets')", 
-                                  (new_code, selected_bank), fetch=False)
-                        bank_code = new_code
-                        st.info(f"✅ Created bank account '{selected_bank}' with code {bank_code}")
-                    else:
-                        bank_code = bank_code_result[0][0]
+                    bank_code = bank_code_result[0][0] if bank_code_result else "AST-102"
                     
                     if entry_type == "DEBIT (Deposit)":
                         new_balance = current_balance + amount
-                        debit_amount = amount
-                        credit_amount = 0
-                        # For deposit: Bank account (Asset) is debited, other account is credited
-                        jv_posted = post_automated_jv(f"Bank Deposit: {particulars} - {selected_bank}", bank_code, account_code, amount)
+                        debit_amount, credit_amount = amount, 0
+                        post_automated_jv(f"Bank Deposit: {particulars} - {selected_bank}", bank_code, account_code, amount)
                     else:
                         if current_balance < amount:
-                            st.error(f"❌ Insufficient Bank Balance! Available: ₹{current_balance:,.2f}")
+                            st.error(f"❌ Insufficient Bank Balance!")
                             st.stop()
                         new_balance = current_balance - amount
-                        debit_amount = 0
-                        credit_amount = amount
-                        # For withdrawal: Other account is debited, Bank account (Asset) is credited
-                        jv_posted = post_automated_jv(f"Bank Withdrawal: {particulars} - {selected_bank}", account_code, bank_code, amount)
+                        debit_amount, credit_amount = 0, amount
+                        post_automated_jv(f"Bank Withdrawal: {particulars} - {selected_bank}", account_code, bank_code, amount)
                     
-                    # Insert into bank_book
                     run_query("""
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, selected_bank, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
-                    st.success(f"✅ Bank {entry_type} of ₹{amount:,.2f} recorded successfully!")
-                    st.info(f"📌 Voucher No: {voucher_no}\n"
-                           f"📌 {entry_type}: ₹{amount:,.2f}\n"
-                           f"📌 Account Head: {account_head}\n"
-                           f"📌 New {selected_bank} Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
-                    
-                    if jv_posted:
-                        st.success("✅ Journal Voucher posted successfully!")
-                    else:
-                        st.warning("⚠️ Journal Voucher could not be posted. Please check Chart of Accounts.")
-                else:
-                    st.error("Please fill in all required fields (Amount, Particulars, and Account Head)!")
-    
+                    st.success(f"✅ Bank entry successfully recorded! Voucher: {voucher_no}")
+                    st.rerun()
+
     with tab2:
-        st.subheader("📋 Bank Book Entries - View / Edit / Delete")
-        
-        # Get all entries
-        entries = run_query("""
-            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
-            FROM bank_book
-            ORDER BY id DESC
-        """)
-        
+        entries = run_query("SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration FROM bank_book ORDER BY id DESC")
         if entries:
             df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
             st.dataframe(df_bank, use_container_width=True)
             
-            # Show summary statistics
-            total_debits = sum(row[4] for row in entries)
-            total_credits = sum(row[5] for row in entries)
-            latest_balance = entries[0][6] if entries else 0
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Debits", f"₹{total_debits:,.2f}")
-            col2.metric("Total Credits", f"₹{total_credits:,.2f}")
-            col3.metric("Latest Balance", f"₹{latest_balance:,.2f}")
-            
-            # Export button
-            st.download_button(
-                "📥 Download Bank Book CSV",
-                df_bank.to_csv(index=False).encode('utf-8'),
-                "bank_book.csv",
-                "text/csv"
-            )
-            
-            st.markdown("---")
-            st.subheader("✏️ Edit or 🗑️ Delete Bank Entry")
-            
-            entry_ids = [e[0] for e in entries]
-            selected_id = st.selectbox("Select Entry ID to Edit/Delete", entry_ids, key="select_bank_entry")
-            
-            if selected_id:
-                entry_data = run_query("""
-                    SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
-                    FROM bank_book WHERE id = ?
-                """, (selected_id,))
-                
-                if entry_data:
-                    row = entry_data[0]
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write(f"**Voucher No:** {row[2]}")
-                        st.write(f"**Date:** {row[1]}")
-                        st.write(f"**Bank:** {row[7]}")
-                        st.write(f"**Particulars:** {row[3]}")
-                        st.write(f"**Debit Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Debit Amount:** ₹0.00")
-                        st.write(f"**Credit Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Credit Amount:** ₹0.00")
-                        st.write(f"**Balance:** ₹{row[6]:,.2f}")
-                        st.write(f"**Account Code:** {row[8]}")
-                        st.write(f"**Narration:** {row[9]}")
-                    
-                    with col2:
-                        action = st.radio("Choose Action", ["Edit Entry", "Delete Entry"])
-                        
-                        if action == "Edit Entry":
-                            with st.form("edit_bank_form"):
-                                new_particulars = st.text_input("Particulars", value=row[3])
-                                
-                                account_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (row[8],))
-                                account_name = account_info[0][0] if account_info else ""
-                                
-                                coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
-                                coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-                                
-                                current_account = f"{row[8]} - {account_name}" if account_name else list(coa_dict.keys())[0]
-                                if current_account not in coa_dict:
-                                    current_account = list(coa_dict.keys())[0]
-                                
-                                new_account = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_account) if current_account in coa_dict else 0)
-                                new_narration = st.text_area("Narration", value=row[9] if row[9] else "")
-                                
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    edit_submit = st.form_submit_button("💾 Save Changes")
-                                with col2:
-                                    cancel = st.form_submit_button("❌ Cancel")
-                                
-                                if edit_submit:
-                                    new_account_code = coa_dict[new_account]
-                                    run_query("""
-                                        UPDATE bank_book 
-                                        SET particulars = ?, account_code = ?, narration = ?
-                                        WHERE id = ?
-                                    """, (new_particulars, new_account_code, new_narration, selected_id), fetch=False)
-                                    st.success(f"✅ Bank Entry #{selected_id} updated successfully!")
-                                    st.rerun()
-                                if cancel:
-                                    st.rerun()
-                        
-                        else:
-                            st.warning(f"⚠️ Are you sure you want to delete Bank Entry #{selected_id}?")
-                            st.warning(f"**Voucher No:** {row[2]} | **Bank:** {row[7]} | **Particulars:** {row[3]} | **Amount:** ₹{max(row[4], row[5]):,.2f}")
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                if st.button("🗑️ Confirm Delete", type="primary"):
-                                    run_query("DELETE FROM bank_book WHERE id = ?", (selected_id,), fetch=False)
-                                    st.success(f"✅ Bank Entry #{selected_id} deleted successfully!")
-                                    st.rerun()
-                            with col2:
-                                if st.button("❌ Cancel"):
-                                    st.rerun()
+            del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
+            if st.button("Delete Bank Entry"):
+                run_query("DELETE FROM bank_book WHERE id=?", (del_id,), fetch=False)
+                st.warning(f"Bank Entry ID {del_id} deleted successfully.")
+                st.rerun()
         else:
-            st.info("No bank entries found. Record your first bank entry in the 'Record Bank Entry' tab.")
-    
+            st.info("No bank entries found.")
+
     with tab3:
-        st.subheader("🖨️ Print Bank Book")
-        
-        bank_filter = st.selectbox("Select Bank", ["All Banks"] + bank_list)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            from_date = st.date_input("From Date", value=date.today().replace(day=1))
-        with col2:
-            to_date = st.date_input("To Date", value=date.today())
-        
-        if st.button("Generate Bank Book Report"):
-            if bank_filter == "All Banks":
-                entries = run_query("""
-                    SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration
-                    FROM bank_book
-                    WHERE date BETWEEN ? AND ?
-                    ORDER BY bank_name, id ASC
-                """, (str(from_date), str(to_date)))
-            else:
-                entries = run_query("""
-                    SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration
-                    FROM bank_book
-                    WHERE date BETWEEN ? AND ? AND bank_name = ?
-                    ORDER BY id ASC
-                """, (str(from_date), str(to_date), bank_filter))
-            
-            if entries:
-                df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
-                st.dataframe(df_print, use_container_width=True)
-                
-                total_debits = sum(row[3] for row in entries)
-                total_credits = sum(row[4] for row in entries)
-                
-                if bank_filter == "All Banks":
-                    opening_balance = run_query("""
-                        SELECT balance FROM bank_book 
-                        WHERE date < ? 
-                        ORDER BY id DESC LIMIT 1
-                    """, (str(from_date),))
-                else:
-                    opening_balance = run_query("""
-                        SELECT balance FROM bank_book 
-                        WHERE date < ? AND bank_name = ?
-                        ORDER BY id DESC LIMIT 1
-                    """, (str(from_date), bank_filter))
-                
-                opening_bal = opening_balance[0][0] if opening_balance else 0
-                closing_balance = entries[-1][5] if entries else 0
-                
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Opening Balance", f"₹{opening_bal:,.2f}")
-                col2.metric("Total Debits", f"₹{total_debits:,.2f}")
-                col3.metric("Total Credits", f"₹{total_credits:,.2f}")
-                col4.metric("Closing Balance", f"₹{closing_balance:,.2f}")
-                
-                st.download_button(
-                    "📥 Download Bank Book PDF",
-                    create_pdf_report(f"Bank Book Report ({bank_filter}) - {from_date} to {to_date}", df_print),
-                    f"bank_book_{from_date}_to_{to_date}.pdf",
-                    "application/pdf"
-                )
-            else:
-                st.info("No bank entries found for the selected date range.")
+        entries = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration FROM bank_book ORDER BY id ASC")
+        if entries:
+            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
+            st.dataframe(df_print, use_container_width=True)
+            st.download_button("Download Bank Book PDF", create_pdf_report("Bank Book Report", df_print), "bank_book.pdf", "application/pdf")
 
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
@@ -1440,65 +921,21 @@ elif menu == "Journal Vouchers":
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
-            
-            st.markdown("### Delete Journal Voucher")
-            del_jv_id = st.number_input("Enter JV ID to Delete", min_value=1, step=1, key="del_jv")
-            if st.button("Delete JV and Entries"):
-                run_query("DELETE FROM jv_entries WHERE jv_id=?", (del_jv_id,), fetch=False)
-                run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (del_jv_id,), fetch=False)
-                st.warning(f"Journal Voucher ID {del_jv_id} deleted successfully.")
-                st.rerun()
-        else:
-            st.info("No journal vouchers found.")
 
 # --- ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":
     st.title("🛠️ Universal Database Record Editor")
-    st.write("Admin tool to manually inspect and edit **any column** across any table, including financial ledgers.")
-    
     tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
     table_list = [t[0] for t in tables_res]
-    
     selected_table = st.selectbox("Select Database Table to Edit", table_list)
     
     if selected_table:
         rows = run_query(f"SELECT * FROM {selected_table}")
         columns_info = run_query(f"PRAGMA table_info({selected_table})")
         col_names = [col[1] for col in columns_info]
-        pk_col = next((col[1] for col in columns_info if col[5] == 1), col_names[0])
-        
         if rows:
             df_table = pd.DataFrame(rows, columns=col_names)
             st.dataframe(df_table, use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader(f"Edit Record in `{selected_table}`")
-            
-            record_ids = [r[col_names.index(pk_col)] for r in rows]
-            selected_id = st.selectbox(f"Select Record `{pk_col}` to Edit", record_ids)
-            
-            if selected_id is not None:
-                current_data = run_query(f"SELECT * FROM {selected_table} WHERE {pk_col}=?", (selected_id,))
-                if current_data:
-                    row_vals = current_data[0]
-                    with st.form("universal_edit_form"):
-                        updated_values = {}
-                        for idx, col in enumerate(col_names):
-                            val = row_vals[idx]
-                            if col == pk_col:
-                                st.text_input(f"{col} (Primary Key - Read Only)", value=str(val), disabled=True)
-                                updated_values[col] = val
-                            else:
-                                updated_values[col] = st.text_input(f"Column: `{col}`", value="" if val is None else str(val))
-                        
-                        if st.form_submit_button("Save Changes to Database"):
-                            set_clauses = ", ".join([f"{c}=?" for c in col_names if c != pk_col])
-                            params = [updated_values[c] for c in col_names if c != pk_col] + [selected_id]
-                            run_query(f"UPDATE {selected_table} SET {set_clauses} WHERE {pk_col}=?", tuple(params), fetch=False)
-                            st.success(f"Record `{selected_id}` in table `{selected_table}` updated successfully!")
-                            st.rerun()
-        else:
-            st.info(f"Table `{selected_table}` is currently empty.")
 
 # --- FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
@@ -1507,7 +944,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     
     with tab1:
         st.subheader("Trial Balance Summary")
-        
         entries = run_query("""
             SELECT 
                 CO.account_code, 
@@ -1526,7 +962,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Account Type", "Total Debit (₹)", "Total Credit (₹)"])
             st.dataframe(df_tb, use_container_width=True)
             
-            # Show totals
             total_debits = sum(row[3] for row in entries)
             total_credits = sum(row[4] for row in entries)
             
@@ -1534,266 +969,76 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             col1.metric("Total Debits", f"₹{total_debits:,.2f}")
             col2.metric("Total Credits", f"₹{total_credits:,.2f}")
             
-            if abs(total_debits - total_credits) < 0.01:
-                st.success("✅ Trial Balance is Balanced!")
-            else:
-                st.warning(f"⚠️ Trial Balance Difference: ₹{abs(total_debits - total_credits):,.2f}")
-            
-            st.download_button(
-                "📥 Download Trial Balance PDF",
-                create_pdf_report("Trial Balance Statement", df_tb),
-                "trial_balance.pdf",
-                "application/pdf"
-            )
+            st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
             st.info("No entries recorded yet.")
     
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # Get all account balances from journal entries
-        account_balances = run_query("""
-            SELECT 
-                CO.account_code,
-                CO.account_name,
-                CO.account_type,
-                COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
-            FROM chart_of_accounts CO
-            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-            GROUP BY CO.account_code
-        """)
-        
-        assets = {}
-        liabilities = {}
-        equity = {}
-        
-        for acc_code, acc_name, acc_type, net_bal in account_balances:
-            if acc_type == "Asset":
-                assets[acc_name] = net_bal if net_bal != 0 else 0
-            elif acc_type == "Liability":
-                liabilities[acc_name] = net_bal if net_bal != 0 else 0
-            elif acc_type == "Equity":
-                equity[acc_name] = net_bal if net_bal != 0 else 0
-        
-        # Get cash balance
-        cash_balance = get_cash_balance()
-        assets["Cash in Hand"] = cash_balance
-        
-        # Get all bank balances from bank_book
-        bank_balances = run_query("""
-            SELECT bank_name, balance 
-            FROM bank_book 
-            WHERE id IN (SELECT MAX(id) FROM bank_book GROUP BY bank_name)
-            ORDER BY bank_name
-        """)
-        
-        for bank_name, balance in bank_balances:
-            assets[bank_name] = balance
-        
-        # Also check for bank accounts in chart of accounts that might not have transactions yet
-        bank_accounts = run_query("""
-            SELECT account_name FROM chart_of_accounts 
-            WHERE account_type = 'Asset' AND account_name LIKE '%Bank%'
-        """)
-        for bank in bank_accounts:
-            if bank[0] not in assets:
-                assets[bank[0]] = 0
-        
-        # Get SB, FD, RD balances
+        # Pull live balances
+        cash_bal = get_cash_balance()
+        union_bank_bal = get_bank_balance("Union Bank of India")
+        sbi_bal = get_bank_balance("State Bank of India")
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-        
-        # Also get liabilities for deposits
-        if tot_sb_balance > 0:
-            liabilities["SB Deposits Control"] = tot_sb_balance
-        if tot_fd_principal > 0:
-            liabilities["FD Deposits Control"] = tot_fd_principal
-        if tot_rd_invested > 0:
-            liabilities["RD Deposits Control"] = tot_rd_invested
-        
+
         col1, col2 = st.columns(2)
-        
         with col1:
             st.markdown("### Assets")
-            asset_data = []
-            total_assets = 0
-            
-            # Add all assets
-            for name, balance in sorted(assets.items()):
-                if name not in ["SB Deposits Control", "FD Deposits Control", "RD Deposits Control"]:
-                    asset_data.append([name, f"₹{balance:,.2f}"])
-                    total_assets += balance
-            
-            # Add SB, FD, RD as assets (these are the bank's assets)
-            if tot_sb_balance > 0:
-                asset_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
-                total_assets += tot_sb_balance
-            if tot_fd_principal > 0:
-                asset_data.append(["Fixed Deposits (FD) Control", f"₹{tot_fd_principal:,.2f}"])
-                total_assets += tot_fd_principal
-            if tot_rd_invested > 0:
-                asset_data.append(["Recurring Deposits (RD) Control", f"₹{tot_rd_invested:,.2f}"])
-                total_assets += tot_rd_invested
-            
-            if asset_data:
-                asset_data.append(["**Total Assets**", f"**₹{total_assets:,.2f}**"])
-                df_assets = pd.DataFrame(asset_data, columns=["Account", "Amount"])
-                st.dataframe(df_assets, use_container_width=True)
-            else:
-                st.info("No asset data available")
-        
+            asset_data = [
+                ["Cash in Hand", f"₹{cash_bal:,.2f}"],
+                ["Union Bank of India", f"₹{union_bank_bal:,.2f}"],
+                ["State Bank of India", f"₹{sbi_bal:,.2f}"]
+            ]
+            total_assets = cash_bal + union_bank_bal + sbi_bal
+            df_assets = pd.DataFrame(asset_data, columns=["Account", "Amount"])
+            st.dataframe(df_assets, use_container_width=True)
+            st.metric("Total Assets", f"₹{total_assets:,.2f}")
+
         with col2:
             st.markdown("### Liabilities & Equity")
-            
-            liability_data = []
-            total_liabilities = 0
-            
-            for name, balance in sorted(liabilities.items()):
-                if balance != 0:
-                    liability_data.append([name, f"₹{balance:,.2f}"])
-                    total_liabilities += balance
-            
-            equity_data = []
-            total_equity = 0
-            
-            for name, balance in sorted(equity.items()):
-                if balance != 0:
-                    equity_data.append([name, f"₹{balance:,.2f}"])
-                    total_equity += balance
-            
-            combined_data = liability_data + equity_data
-            total_liabilities_equity = total_liabilities + total_equity
-            
-            if combined_data:
-                combined_data.append(["**Total Liabilities & Equity**", f"**₹{total_liabilities_equity:,.2f}**"])
-                df_combined = pd.DataFrame(combined_data, columns=["Account", "Amount"])
-                st.dataframe(df_combined, use_container_width=True)
+            lia_data = []
+            total_lia = 0
+            if tot_sb_balance > 0:
+                lia_data.append(["SB Deposits Control", f"₹{tot_sb_balance:,.2f}"])
+                total_lia += tot_sb_balance
+            if tot_fd_principal > 0:
+                lia_data.append(["FD Deposits Control", f"₹{tot_fd_principal:,.2f}"])
+                total_lia += tot_fd_principal
+            if tot_rd_invested > 0:
+                lia_data.append(["RD Deposits Control", f"₹{tot_rd_invested:,.2f}"])
+                total_lia += tot_rd_invested
+                
+            if lia_data:
+                df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
+                st.dataframe(df_lia, use_container_width=True)
             else:
-                st.info("No liability or equity data available")
-        
-        st.markdown("---")
-        
-        # Check if balance sheet balances
-        diff = total_assets - total_liabilities_equity
-        if abs(diff) < 0.01:
-            st.success("✅ Balance Sheet Perfectly Balanced!")
-        else:
-            st.warning(f"⚠️ Balance Sheet Discrepancy: ₹{diff:,.2f}")
-            st.info("💡 Tip: Make sure all transactions have proper journal entries posted.")
-        
-        if st.button("Export Balance Sheet Report"):
-            bs_data = [
-                ["Assets Section", "Amount (₹)"],
-                ["---", "---"]
-            ]
-            for name, balance in assets.items():
-                if "Deposits" not in name and "Retrieval" not in name:
-                    bs_data.append([name, f"₹{balance:,.2f}"])
-            bs_data.append(["Total Assets", f"₹{total_assets:,.2f}"])
-            bs_data.append(["", ""])
-            bs_data.append(["Liabilities & Equity", "Amount (₹)"])
-            bs_data.append(["---", "---"])
-            for name, balance in liabilities.items():
-                if balance != 0:
-                    bs_data.append([name, f"₹{balance:,.2f}"])
-            for name, balance in equity.items():
-                if balance != 0:
-                    bs_data.append([name, f"₹{balance:,.2f}"])
-            bs_data.append(["Total Liabilities & Equity", f"₹{total_liabilities_equity:,.2f}"])
-            
-            df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
-            st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
+                st.info("No active deposit liabilities.")
+            st.metric("Total Liabilities", f"₹{total_lia:,.2f}")
 
     with tab3:
         st.subheader("Profit & Loss Statement")
+        income_entries = run_query("SELECT CO.account_name, SUM(JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income' GROUP BY CO.account_name")
+        expense_entries = run_query("SELECT CO.account_name, SUM(JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense' GROUP BY CO.account_name")
         
-        income_entries = run_query("""
-            SELECT CO.account_name, SUM(JE.credit) as total
-            FROM jv_entries JE
-            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-            WHERE CO.account_type = 'Income'
-            GROUP BY CO.account_name
-        """)
-        
-        expense_entries = run_query("""
-            SELECT CO.account_name, SUM(JE.debit) as total
-            FROM jv_entries JE
-            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-            WHERE CO.account_type = 'Expense'
-            GROUP BY CO.account_name
-        """)
-        
-        st.markdown("### 📈 INCOME")
-        if income_entries:
-            income_data = []
-            total_income = 0
-            for name, amount in income_entries:
-                income_data.append([name, f"₹{amount:,.2f}"])
-                total_income += amount
-            income_data.append(["**Total Income**", f"**₹{total_income:,.2f}**"])
-            df_income = pd.DataFrame(income_data, columns=["Account", "Amount"])
-            st.dataframe(df_income, use_container_width=True)
-        else:
-            st.info("No income recorded")
-            total_income = 0
-        
-        st.markdown("---")
-        
-        st.markdown("### 📉 EXPENSES")
-        if expense_entries:
-            expense_data = []
-            total_expense = 0
-            for name, amount in expense_entries:
-                expense_data.append([name, f"₹{amount:,.2f}"])
-                total_expense += amount
-            expense_data.append(["**Total Expenses**", f"**₹{total_expense:,.2f}**"])
-            df_expense = pd.DataFrame(expense_data, columns=["Account", "Amount"])
-            st.dataframe(df_expense, use_container_width=True)
-        else:
-            st.info("No expenses recorded")
-            total_expense = 0
-        
-        st.markdown("---")
-        
-        net_pl = total_income - total_expense
+        tot_inc = sum([row[1] for row in income_entries]) if income_entries else 0.0
+        tot_exp = sum([row[1] for row in expense_entries]) if expense_entries else 0.0
         
         col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"₹{total_income:,.2f}")
-        col2.metric("Total Expenses", f"₹{total_expense:,.2f}")
-        if net_pl >= 0:
-            col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black")
-        else:
-            col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="-In the Red", delta_color="inverse")
+        col1.metric("Total Income", f"₹{tot_inc:,.2f}")
+        col2.metric("Total Expenses", f"₹{tot_exp:,.2f}")
+        col3.metric("Net Profit/Loss", f"₹{tot_inc - tot_exp:,.2f}")
 
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
-    report_type = st.selectbox("Select Report to Generate", [
-        "Customer List Report", "Daily Transactions Report", "FD Summary Report", "RD Summary Report"
-    ])
-    
-    if st.button("Generate & Display Report"):
-        if "Customer" in report_type:
-            data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
-            df = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status", "Joined"])
-            st.dataframe(df, use_container_width=True)
-            st.download_button("Download PDF", create_pdf_report("Customer Directory", df), "customer_list.pdf", "application/pdf")
-        elif "Transaction" in report_type:
-            data = run_query("SELECT tx_id, account_no, type, amount, mode, date FROM transactions")
-            df = pd.DataFrame(data, columns=["Tx ID", "Account No", "Type", "Amount", "Mode", "Date"])
-            st.dataframe(df, use_container_width=True)
-            st.download_button("Download PDF", create_pdf_report("Daily Transactions Report", df), "transactions_report.pdf", "application/pdf")
-        elif "FD" in report_type:
-            data = run_query("SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.status FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id")
-            df = pd.DataFrame(data, columns=["FD ID", "Customer Name", "Principal", "Maturity", "Status"])
-            st.dataframe(df, use_container_width=True)
-            st.download_button("Download PDF", create_pdf_report("Fixed Deposits Summary", df), "fd_summary.pdf", "application/pdf")
-        elif "RD" in report_type:
-            data = run_query("SELECT r.rd_id, c.name, r.monthly_amount, r.installments_paid, r.status FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id")
-            df = pd.DataFrame(data, columns=["RD ID", "Customer Name", "Monthly", "Paid", "Status"])
-            st.dataframe(df, use_container_width=True)
-            st.download_button("Download PDF", create_pdf_report("Recurring Deposits Summary", df), "rd_summary.pdf", "application/pdf")
+    report_type = st.selectbox("Select Report to Generate", ["Customer List Report", "Daily Transactions Report"])
+    if st.button("Generate Report"):
+        data = run_query("SELECT id, name, phone, email, kyc_status FROM customers")
+        df = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status"])
+        st.dataframe(df, use_container_width=True)
 
 # --- CUSTOMER PORTAL ---
 elif menu == "Customer Portal":
@@ -1804,14 +1049,5 @@ elif menu == "Customer Portal":
         if cust_info:
             name, phone, kyc = cust_info[0]
             st.success(f"Welcome back, **{name}**! KYC Status: `{kyc}`")
-            
-            st.subheader("Your Savings Accounts")
-            sb = run_query("SELECT account_no, balance, interest_rate FROM sb_accounts WHERE customer_id=?", (cust_id_login,))
-            if sb:
-                df_cust_sb = pd.DataFrame(sb, columns=["Account No", "Balance (₹)", "Interest Rate (%)"])
-                st.dataframe(df_cust_sb, use_container_width=True)
-                st.download_button("Download My Account Summary PDF", create_pdf_report(f"Account Statement - {name}", df_cust_sb), "my_accounts.pdf", "application/pdf")
-            else:
-                st.info("No savings account mapped to this ID.")
         else:
-            st.error("Customer ID not found in system records.")
+            st.error("Customer ID not found.")

@@ -325,11 +325,7 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
         debit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (debit_acc,))
         credit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (credit_acc,))
         
-        if not debit_check:
-            st.error(f"❌ Debit account '{debit_acc}' not found in Chart of Accounts!")
-            return
-        if not credit_check:
-            st.error(f"❌ Credit account '{credit_acc}' not found in Chart of Accounts!")
+        if not debit_check or not credit_check:
             return
         
         conn = get_connection()
@@ -346,7 +342,7 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
         conn.commit()
         conn.close()
     except Exception as e:
-        st.error(f"Error posting journal voucher: {str(e)}")
+        print(f"Error posting journal voucher: {str(e)}")
 
 def create_pdf_report(title, df):
     from reportlab.lib.pagesizes import letter
@@ -443,7 +439,7 @@ elif menu == "Customer Management":
     tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer"])
     
     with tab1:
-        st.subheader("New Customer Registration (with Document & Signature Upload)")
+        st.subheader("New Customer Registration")
         with st.form("reg_form"):
             col1, col2 = st.columns(2)
             name = col1.text_input("Full Name *")
@@ -456,10 +452,8 @@ elif menu == "Customer Management":
             state = col2.text_input("State")
             pincode = col1.text_input("Pincode")
             pan = col1.text_input("PAN Number")
-            adhar_num = col1.text_input("Aadhaar Number [Redacted Policy Active]")
             
             st.markdown("---")
-            st.subheader("Document & Signature Uploads")
             adhar_upload = st.file_uploader("Upload Aadhaar Document", type=["pdf", "png", "jpg", "jpeg"])
             pan_upload = st.file_uploader("Upload PAN Card Document", type=["pdf", "png", "jpg", "jpeg"])
             sig_upload = st.file_uploader("Upload Signature", type=["png", "jpg", "jpeg"])
@@ -475,12 +469,12 @@ elif menu == "Customer Management":
                         INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, pan_file, signature_file, kyc_status, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
                     """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adhar_path, pan_path, sig_path, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    st.success(f"Customer {name} registered successfully with status PENDING and documents uploaded!")
+                    st.success(f"Customer {name} registered successfully!")
                 else:
                     st.error("Please fill in mandatory fields: Name and Phone.")
 
     with tab2:
-        st.subheader("Customer Directory & Deletion")
+        st.subheader("Customer Directory")
         customers = run_query("SELECT id, name, phone, email, kyc_status, pan, created_at FROM customers")
         if customers:
             df_cust = pd.DataFrame(customers, columns=["ID", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
@@ -489,20 +483,13 @@ elif menu == "Customer Management":
             col_csv, col_pdf = st.columns(2)
             col_csv.download_button("Download CSV Report", df_cust.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv")
             col_pdf.download_button("Download PDF Report", create_pdf_report("Customer Directory Report", df_cust), "customers_report.pdf", "application/pdf")
-            
-            st.markdown("### Delete Customer")
-            del_id = st.number_input("Enter Customer ID to Delete", min_value=1, step=1, key="del_cust")
-            if st.button("Delete Customer Record"):
-                run_query("DELETE FROM customers WHERE id=?", (del_id,), fetch=False)
-                st.warning(f"Customer ID {del_id} and associated mapping records deleted.")
-                st.rerun()
         else:
             st.info("No customers found.")
 
     with tab3:
         st.subheader("Edit Customer Information")
         cust_id_edit = st.number_input("Enter Customer ID to Edit", min_value=1, step=1, key="edit_cust_id")
-        cust_data = run_query("SELECT name, email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
+        cust_data = run_query("SELECT name, email, phone, street, city, state, pincode FROM customers WHERE id=?", (cust_id_edit,))
         if cust_data:
             c = cust_data[0]
             with st.form("edit_form"):
@@ -518,7 +505,7 @@ elif menu == "Customer Management":
                     run_query("""
                         UPDATE customers SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? WHERE id=?
                     """, (new_name, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
-                    st.success("Customer details updated successfully across records!")
+                    st.success("Customer details updated successfully!")
 
 # --- KYC VERIFICATION ---
 elif menu == "KYC Verification":
@@ -542,7 +529,7 @@ elif menu == "KYC Verification":
 # --- SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
-    tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact (Deposit/Withdraw)", "View & Delete Accounts"])
+    tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact", "View Accounts"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -600,7 +587,6 @@ elif menu == "SB Accounts":
             st.info("No active SB accounts found.")
 
     with tab3:
-        st.subheader("Active SB Accounts & Deletion")
         accounts = run_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at 
             FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
@@ -609,20 +595,13 @@ elif menu == "SB Accounts":
             df_sb = pd.DataFrame(accounts, columns=["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created"])
             st.dataframe(df_sb, use_container_width=True)
             st.download_button("Download SB Accounts PDF", create_pdf_report("Savings Bank Accounts Report", df_sb), "sb_accounts.pdf", "application/pdf")
-            
-            del_sb_no = st.selectbox("Select Account No to Delete", [a[0] for a in accounts])
-            if st.button("Delete SB Account Record"):
-                run_query("DELETE FROM sb_accounts WHERE account_no=?", (del_sb_no,), fetch=False)
-                run_query("DELETE FROM transactions WHERE account_no=?", (del_sb_no,), fetch=False)
-                st.warning(f"SB Account {del_sb_no} deleted.")
-                st.rerun()
         else:
             st.info("No active SB accounts found.")
 
 # --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
-    st.title("📈 Fixed Deposits Management & Closure")
-    tab1, tab2 = st.tabs(["Open FD", "Active FDs, Close & Delete"])
+    st.title("📈 Fixed Deposits Management")
+    tab1, tab2 = st.tabs(["Open FD", "Active FDs"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -644,18 +623,17 @@ elif menu == "Fixed Deposits (FD)":
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d")), fetch=False)
                 
                 post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal}", "AST-101", "LIA-102", principal)
-                st.success("Fixed Deposit opened & recorded in Trial Balance successfully!")
+                st.success("Fixed Deposit opened & recorded successfully!")
         else:
             st.warning("Register a customer first.")
 
     with tab2:
         fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.customer_id
+            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
         if fds:
-            cleaned_fds = [row[:-1] if len(row) > 7 else row for row in fds]
-            df_fds = pd.DataFrame(cleaned_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
+            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
             st.dataframe(df_fds, use_container_width=True)
             st.download_button("Download FDs PDF Report", create_pdf_report("Fixed Deposits Report", df_fds), "fixed_deposits.pdf", "application/pdf")
         else:
@@ -664,7 +642,7 @@ elif menu == "Fixed Deposits (FD)":
 # --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":
     st.title("🔄 Recurring Deposits Management")
-    tab1, tab2, tab3 = st.tabs(["Open RD", "Pay Installment", "Active RDs & Deletion"])
+    tab1, tab2, tab3 = st.tabs(["Open RD", "Pay Installment", "Active RDs"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -697,7 +675,6 @@ elif menu == "Recurring Deposits (RD)":
             selected_rd = rd_dict[chosen_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst = selected_rd
             
-            pay_mode = st.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "ONLINE", "CHEQUE"], key="rd_pay_mode")
             if st.button("Confirm & Pay Installment"):
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
@@ -740,7 +717,7 @@ elif menu == "Chart of Accounts":
 # --- CASH BOOK ---
 elif menu == "Cash Book":
     st.title("💰 Cash Book Entries")
-    tab1, tab2, tab3 = st.tabs(["Record Cash Entry", "View / Edit / Delete", "Print Cash Book"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book"])
     
     with tab1:
         current_balance = get_cash_balance()
@@ -798,6 +775,34 @@ elif menu == "Cash Book":
             st.info("No cash book entries found.")
 
     with tab3:
+        st.subheader("Edit Existing Cash Entry")
+        edit_id = st.number_input("Enter Cash Entry ID to Edit", min_value=1, step=1, key="edit_cash_id_input")
+        entry_to_edit = run_query("SELECT id, particulars, debit_amount, credit_amount, narration FROM cash_book WHERE id=?", (edit_id,))
+        
+        if entry_to_edit:
+            row = entry_to_edit[0]
+            with st.form("edit_cash_form"):
+                new_part = st.text_input("Particulars", value=row[1])
+                curr_dr = row[2] if row[2] > 0 else row[3]
+                is_debit = row[2] > 0
+                new_type = st.selectbox("Type", ["DEBIT (Receipt)", "CREDIT (Payment)"], index=0 if is_debit else 1)
+                new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
+                new_narration = st.text_area("Narration", value=row[4] if row[4] else "")
+                
+                if st.form_submit_button("Update Cash Entry"):
+                    d_amt = new_amt if "DEBIT" in new_type else 0.0
+                    c_amt = new_amt if "CREDIT" in new_type else 0.0
+                    run_query("""
+                        UPDATE cash_book 
+                        SET particulars = ?, debit_amount = ?, credit_amount = ?, narration = ? 
+                        WHERE id = ?
+                    """, (new_part, d_amt, c_amt, new_narration, edit_id), fetch=False)
+                    st.success(f"Cash Entry ID {edit_id} updated successfully!")
+                    st.rerun()
+        else:
+            st.info("Enter a valid Cash Entry ID above to load and edit.")
+
+    with tab4:
         entries = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration FROM cash_book ORDER BY id ASC")
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
@@ -807,7 +812,7 @@ elif menu == "Cash Book":
 # --- BANK BOOK ---
 elif menu == "Bank Book":
     st.title("🏦 Bank Book Entries")
-    tab1, tab2, tab3 = st.tabs(["Record Bank Entry", "View / Edit / Delete", "Print Bank Book"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book"])
     
     with tab1:
         bank_accounts = run_query("SELECT account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_name LIKE '%Bank%'")
@@ -872,6 +877,34 @@ elif menu == "Bank Book":
             st.info("No bank entries found.")
 
     with tab3:
+        st.subheader("Edit Existing Bank Entry")
+        edit_bank_id = st.number_input("Enter Bank Entry ID to Edit", min_value=1, step=1, key="edit_bank_id_input")
+        bank_row = run_query("SELECT id, particulars, debit_amount, credit_amount, bank_name, narration FROM bank_book WHERE id=?", (edit_bank_id,))
+        
+        if bank_row:
+            row = bank_row[0]
+            with st.form("edit_bank_form"):
+                new_part = st.text_input("Particulars", value=row[1])
+                curr_dr = row[2] if row[2] > 0 else row[3]
+                is_debit = row[2] > 0
+                new_type = st.selectbox("Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"], index=0 if is_debit else 1)
+                new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
+                new_narration = st.text_area("Narration", value=row[5] if row[5] else "")
+                
+                if st.form_submit_button("Update Bank Entry"):
+                    d_amt = new_amt if "DEBIT" in new_type else 0.0
+                    c_amt = new_amt if "CREDIT" in new_type else 0.0
+                    run_query("""
+                        UPDATE bank_book 
+                        SET particulars = ?, debit_amount = ?, credit_amount = ?, narration = ? 
+                        WHERE id = ?
+                    """, (new_part, d_amt, c_amt, new_narration, edit_bank_id), fetch=False)
+                    st.success(f"Bank Entry ID {edit_bank_id} updated successfully!")
+                    st.rerun()
+        else:
+            st.info("Enter a valid Bank Entry ID above to load and edit.")
+
+    with tab4:
         entries = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration FROM bank_book ORDER BY id ASC")
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
@@ -880,8 +913,8 @@ elif menu == "Bank Book":
 
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
-    st.title("📝 Journal Vouchers Management & Deletion")
-    tab1, tab2 = st.tabs(["Create Journal Voucher", "View & Delete Vouchers"])
+    st.title("📝 Journal Vouchers Management")
+    tab1, tab2 = st.tabs(["Create Journal Voucher", "View Vouchers"])
     
     with tab1:
         with st.form("jv_form"):
@@ -975,8 +1008,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
-        
-        # Pull live balances
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
         sbi_bal = get_bank_balance("State Bank of India")

@@ -1140,7 +1140,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.dataframe(df_assets, use_container_width=True)
             st.metric("Total Assets", f"₹{total_assets:,.2f}")
 
-       with col1:
+        with col1:
+            
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0

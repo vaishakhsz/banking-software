@@ -492,18 +492,6 @@ if menu == "Dashboard":
     col6.metric("Bank Balance", f"₹{bank_balance:,.2f}")
     col7.metric("Total SB Deposits", f"₹{total_sb_dep:,.2f}")
 
-# --- REST OF YOUR CODE CONTINUES HERE ---
-# (Customer Management, KYC Verification, SB Accounts, Fixed Deposits, 
-# Recurring Deposits, Retrieval Account, Chart of Accounts, Cash Book, 
-# Bank Book, Journal Vouchers, Admin Record Editor, Financial Statements, 
-# Reports, Customer Portal - same as before)
-
-# Since the code is very long, I'll continue with the remaining modules.
-# You can copy the rest from the previous version I provided.
-
-# --- Continue with the rest of your code (Customer Management, KYC, SB Accounts, etc.) ---
-# ... (The rest of the code remains the same as before) ...
-
 # --- CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":
     st.title("👥 Customer Management Module")
@@ -941,9 +929,10 @@ elif menu == "Cash Book":
                         credit_amount = amount
                         post_automated_jv(f"Cash Payment: {particulars}", account_code, "AST-101", amount)
                     
+                    # FIXED: 9 columns, 9 placeholders
                     run_query("""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Cash {entry_type} of ₹{amount:,.2f} recorded successfully!")
@@ -1164,9 +1153,10 @@ elif menu == "Bank Book":
                         credit_amount = amount
                         post_automated_jv(f"Bank Withdrawal: {particulars}", account_code, bank_code, amount)
                     
+                    # FIXED: 10 columns, 10 placeholders
                     run_query("""
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, selected_bank, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Bank {entry_type} of ₹{amount:,.2f} recorded successfully!")

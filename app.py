@@ -375,6 +375,7 @@ def create_pdf_report(title, df):
     return buffer.getvalue()
 
 # --- SIDEBAR NAVIGATION ---
+# --- SIDEBAR NAVIGATION & BACKUP ---
 st.sidebar.title("🏦 Aasha Nidhi Bank")
 role = st.sidebar.selectbox("User Role", ["Admin/Staff", "Customer Portal"])
 
@@ -388,27 +389,34 @@ if role == "Admin/Staff":
 else:
     menu = "Customer Portal"
 
-# --- DASHBOARD ---
-if menu == "Dashboard":
-    st.title("📊 Bank Dashboard & Overview")
-    
-    total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0] if run_query("SELECT COUNT(*) FROM customers") else 0
-    kyc_pending = run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'")[0][0] if run_query("SELECT COUNT(*) FROM customers WHERE kyc_status='PENDING'") else 0
-    sb_count = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0] if run_query("SELECT COUNT(*) FROM sb_accounts") else 0
-    total_sb_dep = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
-    total_fd = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-    total_rd = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-    cash_balance = get_cash_balance()
-    bank_balance = get_bank_balance()
+# --- DATABASE BACKUP & RESTORE MODULE (ADD HERE) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("💾 System Backup & Recovery")
 
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
-    col1.metric("Total Customers", total_cust, f"Pending KYC: {kyc_pending}")
-    col2.metric("SB Accounts Active", sb_count, f"Balance: ₹{total_sb_dep:,.2f}")
-    col3.metric("Active FD Portfolio", f"₹{total_fd:,.2f}")
-    col4.metric("Active RD Portfolio", f"₹{total_rd:,.2f}")
-    col5.metric("Cash Balance", f"₹{cash_balance:,.2f}")
-    col6.metric("Bank Balance", f"₹{bank_balance:,.2f}")
-    col7.metric("Total SB Deposits", f"₹{total_sb_dep:,.2f}")
+# 1. Export / Download Database
+if os.path.exists(DB_NAME):
+    with open(DB_NAME, "rb") as f:
+        db_bytes = f.read()
+    st.sidebar.download_button(
+        label="Download Database Backup",
+        data=db_bytes,
+        file_name=f"aasha_nidhi_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db",
+        mime="application/octet-stream",
+        help="Download a complete copy of the SQLite database file for safety."
+    )
+
+# 2. Import / Restore Database
+uploaded_db = st.sidebar.file_uploader("Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
+if uploaded_db is not None:
+    if st.sidebar.button("⚠️ Confirm Database Restore", type="primary"):
+        try:
+            with open(DB_NAME, "wb") as f:
+                f.write(uploaded_db.getbuffer())
+            st.sidebar.success("Database restored successfully! Please refresh the page.")
+            time.sleep(1)
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Error restoring database: {str(e)}")
 
 # --- CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":

@@ -219,6 +219,43 @@ def init_db():
             created_at TEXT
         )
     """)
+    
+    # --- MIGRATION FIX: Add missing columns to existing tables ---
+    # Add account_code to cash_book if missing
+    try:
+        cursor.execute("ALTER TABLE cash_book ADD COLUMN account_code TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    # Add account_code to bank_book if missing
+    try:
+        cursor.execute("ALTER TABLE bank_book ADD COLUMN account_code TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    # Add debit_amount to cash_book if using old schema
+    try:
+        cursor.execute("ALTER TABLE cash_book ADD COLUMN debit_amount REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    
+    # Add credit_amount to cash_book if using old schema
+    try:
+        cursor.execute("ALTER TABLE cash_book ADD COLUMN credit_amount REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    
+    # Add debit_amount to bank_book if using old schema
+    try:
+        cursor.execute("ALTER TABLE bank_book ADD COLUMN debit_amount REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    
+    # Add credit_amount to bank_book if using old schema
+    try:
+        cursor.execute("ALTER TABLE bank_book ADD COLUMN credit_amount REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     # Preload Chart of Accounts
     cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")

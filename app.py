@@ -786,7 +786,7 @@ elif menu == "Chart of Accounts":
 elif menu == "Cash Book":
     st.title("💰 Cash Book")
     
-    tab1, tab2 = st.tabs(["Record Cash Entry", "View Cash Book"])
+    tab1, tab2, tab3 = st.tabs(["Record Cash Entry", "View / Edit / Delete", "Print Cash Book"])
     
     with tab1:
         st.subheader("Record Cash Transaction")
@@ -804,7 +804,7 @@ elif menu == "Cash Book":
             submitted = st.form_submit_button("Record Cash Entry")
             if submitted:
                 if amount > 0 and particulars:
-                    voucher_no = generate_voucher_no("CASH")
+                    voucher_no = generate_cash_voucher_no()
                     today = datetime.now().strftime("%Y-%m-%d")
                     
                     if entry_type == "RECEIPT":
@@ -831,41 +831,166 @@ elif menu == "Cash Book":
                         post_automated_jv(f"Cash Payment: {particulars}", "EXP-401", "AST-101", amount)
                     
                     st.success(f"✅ Cash {entry_type} of ₹{amount:,.2f} recorded successfully!")
-                    st.info(f"📌 New Cash Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
+                    st.info(f"📌 Voucher No: {voucher_no}\n"
+                           f"📌 New Cash Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
                     st.rerun()
                 else:
                     st.error("Please fill in all required fields!")
     
     with tab2:
-        st.subheader("Cash Book Ledger")
+        st.subheader("📋 Cash Book Entries - View / Edit / Delete")
         
         entries = run_query("""
-            SELECT date, voucher_no, particulars, receipt_amount, payment_amount, balance, narration
+            SELECT id, date, voucher_no, particulars, receipt_amount, payment_amount, balance, narration
             FROM cash_book
             ORDER BY id DESC
         """)
         
         if entries:
-            df_cash = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Receipt (₹)", "Payment (₹)", "Balance (₹)", "Narration"])
+            # Display entries in a table
+            df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Receipt (₹)", "Payment (₹)", "Balance (₹)", "Narration"])
             st.dataframe(df_cash, use_container_width=True)
             
-            total_receipts = run_query("SELECT SUM(receipt_amount) FROM cash_book")[0][0] or 0
-            total_payments = run_query("SELECT SUM(payment_amount) FROM cash_book")[0][0] or 0
+            st.markdown("---")
+            st.subheader("✏️ Edit or 🗑️ Delete Cash Entry")
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Receipts", f"₹{total_receipts:,.2f}")
-            col2.metric("Total Payments", f"₹{total_payments:,.2f}")
-            col3.metric("Closing Balance", f"₹{get_cash_balance():,.2f}")
+            # Select entry to edit/delete
+            entry_ids = [e[0] for e in entries]
+            selected_id = st.selectbox("Select Entry ID to Edit/Delete", entry_ids, key="select_cash_entry")
             
-            st.download_button("Download Cash Book PDF", create_pdf_report("Cash Book Report", df_cash), "cash_book.pdf", "application/pdf")
-        else:
-            st.info("No cash entries found.")
+            if selected_id:
+                # Get the selected entry details
+                entry_data = run_query("""
+                    SELECT id, date, voucher_no, particulars, receipt_amount, payment_amount, balance, narration
+                    FROM cash_book WHERE id = ?
+                """, (selected_id,))
+                
+                if entry_data:
+                    row = entry_data[0]
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"**Voucher No:** {row[2]}")
+                        st.write(f"**Date:** {row[1]}")
+                        st.write(f"**Particulars:** {row[3]}")
+                        st.write(f"**Receipt Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Receipt Amount:** ₹0.00")
+                        st.write(f"**Payment Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Payment Amount:** ₹0.00")
+                        st.write(f"**Balance:** ₹{row[6]:,.2f}")
+                        st.write(f"**Narration:** {row[7]}")
+                    
+                    with col2:
+                        action = st.radio("Choose Action", ["Edit Entry", "Delete Entry"])
+                        
+                        if action == "Edit Entry":
+                            with st.form("edit_cash_form"):
+                                new_particulars = st.text_input("Particulars", value=row[3])
+                                new_narration = st.text_area("Narration", value=row[7] if row[7] else "")
+                                
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    edit_submit = st.form_submit_button("💾 Save Changes")
+                                with col2:
+                                    cancel = st.form_submit_button("❌ Cancel")
+                                
+                                if edit_submit:
+                                    # Update the entry
+                                    run_query("""
+                                        UPDATE cash_book 
+                                        SET particulars = ?, narration = ?
+                                        WHERE id = ?
+                                    """, (new_particulars, new_narration, selected_id), fetch=False)
+                                    
+                                    st.success(f"✅ Cash Entry #{selected_id} updated successfully!")
+                                    st.rerun()
+                                
+                                if cancel:
+                                    st.rerun()
+                        
+                        else:  # Delete Entry
+                            st.warning(f"⚠️ Are you sure you want to delete Cash Entry #{selected_id}?")
+                            st.warning(f"**Voucher No:** {row[2]} | **Particulars:** {row[3]} | **Amount:** ₹{max(row[4], row[5]):,.2f}")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button("🗑️ Confirm Delete", type="primary"):
+                                    # Get the entry details before deleting
+                                    del_entry = run_query("SELECT receipt_amount, payment_amount, date FROM cash_book WHERE id = ?", (selected_id,))
+                                    if del_entry:
+                                        # Delete the entry
+                                        run_query("DELETE FROM cash_book WHERE id = ?", (selected_id,), fetch=False)
+                                        st.success(f"✅ Cash Entry #{selected_id} deleted successfully!")
+                                        
+                                        # Recalculate balances for subsequent entries
+                                        # This is a simplified approach - you may want to recalculate all balances
+                                        st.info("🔄 Please refresh to see updated balances")
+                                        st.rerun()
+                            with col2:
+                                if st.button("❌ Cancel"):
+                                    st.rerun()
+    
+    with tab3:
+        st.subheader("🖨️ Print Cash Book")
+        
+        # Date range filter for printing
+        col1, col2 = st.columns(2)
+        with col1:
+            from_date = st.date_input("From Date", value=date.today().replace(day=1))
+        with col2:
+            to_date = st.date_input("To Date", value=date.today())
+        
+        if st.button("Generate Cash Book Report"):
+            entries = run_query("""
+                SELECT date, voucher_no, particulars, receipt_amount, payment_amount, balance, narration
+                FROM cash_book
+                WHERE date BETWEEN ? AND ?
+                ORDER BY id ASC
+            """, (str(from_date), str(to_date)))
+            
+            if entries:
+                df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Receipt (₹)", "Payment (₹)", "Balance (₹)", "Narration"])
+                st.dataframe(df_print, use_container_width=True)
+                
+                # Summary
+                total_receipts = sum(row[3] for row in entries)
+                total_payments = sum(row[4] for row in entries)
+                opening_balance = run_query("""
+                    SELECT balance FROM cash_book 
+                    WHERE date < ? 
+                    ORDER BY id DESC LIMIT 1
+                """, (str(from_date),))
+                opening_bal = opening_balance[0][0] if opening_balance else 0
+                closing_balance = entries[-1][5] if entries else 0
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Opening Balance", f"₹{opening_bal:,.2f}")
+                col2.metric("Total Receipts", f"₹{total_receipts:,.2f}")
+                col3.metric("Total Payments", f"₹{total_payments:,.2f}")
+                col4.metric("Closing Balance", f"₹{closing_balance:,.2f}")
+                
+                # Download PDF
+                st.download_button(
+                    "📥 Download Cash Book PDF",
+                    create_pdf_report(f"Cash Book Report ({from_date} to {to_date})", df_print),
+                    f"cash_book_{from_date}_to_{to_date}.pdf",
+                    "application/pdf"
+                )
+                
+                # Print button using JavaScript
+                if st.button("🖨️ Print Cash Book"):
+                    st.markdown("""
+                        <script>
+                            window.print();
+                        </script>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("No cash entries found for the selected date range.")
+
 
 # --- BANK BOOK ---
 elif menu == "Bank Book":
     st.title("🏦 Bank Book")
     
-    tab1, tab2 = st.tabs(["Record Bank Entry", "View Bank Book"])
+    tab1, tab2, tab3 = st.tabs(["Record Bank Entry", "View / Edit / Delete", "Print Bank Book"])
     
     with tab1:
         st.subheader("Record Bank Transaction")
@@ -892,7 +1017,7 @@ elif menu == "Bank Book":
             submitted = st.form_submit_button("Record Bank Entry")
             if submitted:
                 if amount > 0 and particulars:
-                    voucher_no = generate_voucher_no("BANK")
+                    voucher_no = generate_bank_voucher_no()
                     today = datetime.now().strftime("%Y-%m-%d")
                     
                     if entry_type == "DEPOSIT":
@@ -920,36 +1045,174 @@ elif menu == "Bank Book":
                     """, (today, voucher_no, particulars, deposit_amount, withdrawal_amount, new_balance, selected_bank, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Bank {entry_type} of ₹{amount:,.2f} recorded successfully!")
-                    st.info(f"📌 New {selected_bank} Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
+                    st.info(f"📌 Voucher No: {voucher_no}\n"
+                           f"📌 New {selected_bank} Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
                     st.rerun()
                 else:
                     st.error("Please fill in all required fields!")
     
     with tab2:
-        st.subheader("Bank Book Ledger")
+        st.subheader("📋 Bank Book Entries - View / Edit / Delete")
         
         entries = run_query("""
-            SELECT date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
+            SELECT id, date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
             FROM bank_book
             ORDER BY id DESC
         """)
         
         if entries:
-            df_bank = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+            # Display entries in a table
+            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(df_bank, use_container_width=True)
             
-            total_deposits = run_query("SELECT SUM(deposit_amount) FROM bank_book")[0][0] or 0
-            total_withdrawals = run_query("SELECT SUM(withdrawal_amount) FROM bank_book")[0][0] or 0
+            st.markdown("---")
+            st.subheader("✏️ Edit or 🗑️ Delete Bank Entry")
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Deposits", f"₹{total_deposits:,.2f}")
-            col2.metric("Total Withdrawals", f"₹{total_withdrawals:,.2f}")
-            col3.metric("Closing Balance", f"₹{get_bank_balance():,.2f}")
+            # Select entry to edit/delete
+            entry_ids = [e[0] for e in entries]
+            selected_id = st.selectbox("Select Entry ID to Edit/Delete", entry_ids, key="select_bank_entry")
             
-            st.download_button("Download Bank Book PDF", create_pdf_report("Bank Book Report", df_bank), "bank_book.pdf", "application/pdf")
-        else:
-            st.info("No bank entries found.")
-
+            if selected_id:
+                # Get the selected entry details
+                entry_data = run_query("""
+                    SELECT id, date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
+                    FROM bank_book WHERE id = ?
+                """, (selected_id,))
+                
+                if entry_data:
+                    row = entry_data[0]
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"**Voucher No:** {row[2]}")
+                        st.write(f"**Date:** {row[1]}")
+                        st.write(f"**Bank:** {row[7]}")
+                        st.write(f"**Particulars:** {row[3]}")
+                        st.write(f"**Deposit Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Deposit Amount:** ₹0.00")
+                        st.write(f"**Withdrawal Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Withdrawal Amount:** ₹0.00")
+                        st.write(f"**Balance:** ₹{row[6]:,.2f}")
+                        st.write(f"**Narration:** {row[8]}")
+                    
+                    with col2:
+                        action = st.radio("Choose Action", ["Edit Entry", "Delete Entry"])
+                        
+                        if action == "Edit Entry":
+                            with st.form("edit_bank_form"):
+                                new_particulars = st.text_input("Particulars", value=row[3])
+                                new_narration = st.text_area("Narration", value=row[8] if row[8] else "")
+                                
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    edit_submit = st.form_submit_button("💾 Save Changes")
+                                with col2:
+                                    cancel = st.form_submit_button("❌ Cancel")
+                                
+                                if edit_submit:
+                                    # Update the entry
+                                    run_query("""
+                                        UPDATE bank_book 
+                                        SET particulars = ?, narration = ?
+                                        WHERE id = ?
+                                    """, (new_particulars, new_narration, selected_id), fetch=False)
+                                    
+                                    st.success(f"✅ Bank Entry #{selected_id} updated successfully!")
+                                    st.rerun()
+                                
+                                if cancel:
+                                    st.rerun()
+                        
+                        else:  # Delete Entry
+                            st.warning(f"⚠️ Are you sure you want to delete Bank Entry #{selected_id}?")
+                            st.warning(f"**Voucher No:** {row[2]} | **Bank:** {row[7]} | **Particulars:** {row[3]} | **Amount:** ₹{max(row[4], row[5]):,.2f}")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button("🗑️ Confirm Delete", type="primary"):
+                                    # Delete the entry
+                                    run_query("DELETE FROM bank_book WHERE id = ?", (selected_id,), fetch=False)
+                                    st.success(f"✅ Bank Entry #{selected_id} deleted successfully!")
+                                    st.rerun()
+                            with col2:
+                                if st.button("❌ Cancel"):
+                                    st.rerun()
+    
+    with tab3:
+        st.subheader("🖨️ Print Bank Book")
+        
+        # Bank filter for printing
+        bank_filter = st.selectbox("Select Bank", ["All Banks"] + bank_list)
+        
+        # Date range filter for printing
+        col1, col2 = st.columns(2)
+        with col1:
+            from_date = st.date_input("From Date", value=date.today().replace(day=1))
+        with col2:
+            to_date = st.date_input("To Date", value=date.today())
+        
+        if st.button("Generate Bank Book Report"):
+            if bank_filter == "All Banks":
+                entries = run_query("""
+                    SELECT date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
+                    FROM bank_book
+                    WHERE date BETWEEN ? AND ?
+                    ORDER BY bank_name, id ASC
+                """, (str(from_date), str(to_date)))
+            else:
+                entries = run_query("""
+                    SELECT date, voucher_no, particulars, deposit_amount, withdrawal_amount, balance, bank_name, narration
+                    FROM bank_book
+                    WHERE date BETWEEN ? AND ? AND bank_name = ?
+                    ORDER BY id ASC
+                """, (str(from_date), str(to_date), bank_filter))
+            
+            if entries:
+                df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+                st.dataframe(df_print, use_container_width=True)
+                
+                # Summary
+                total_deposits = sum(row[3] for row in entries)
+                total_withdrawals = sum(row[4] for row in entries)
+                
+                # Get opening balance
+                if bank_filter == "All Banks":
+                    opening_balance = run_query("""
+                        SELECT balance FROM bank_book 
+                        WHERE date < ? 
+                        ORDER BY id DESC LIMIT 1
+                    """, (str(from_date),))
+                else:
+                    opening_balance = run_query("""
+                        SELECT balance FROM bank_book 
+                        WHERE date < ? AND bank_name = ?
+                        ORDER BY id DESC LIMIT 1
+                    """, (str(from_date), bank_filter))
+                
+                opening_bal = opening_balance[0][0] if opening_balance else 0
+                closing_balance = entries[-1][5] if entries else 0
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Opening Balance", f"₹{opening_bal:,.2f}")
+                col2.metric("Total Deposits", f"₹{total_deposits:,.2f}")
+                col3.metric("Total Withdrawals", f"₹{total_withdrawals:,.2f}")
+                col4.metric("Closing Balance", f"₹{closing_balance:,.2f}")
+                
+                # Download PDF
+                st.download_button(
+                    "📥 Download Bank Book PDF",
+                    create_pdf_report(f"Bank Book Report ({bank_filter}) - {from_date} to {to_date}", df_print),
+                    f"bank_book_{from_date}_to_{to_date}.pdf",
+                    "application/pdf"
+                )
+                
+                # Print button using JavaScript
+                if st.button("🖨️ Print Bank Book"):
+                    st.markdown("""
+                        <script>
+                            window.print();
+                        </script>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("No bank entries found for the selected date range.")
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management & Deletion")

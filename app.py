@@ -1092,6 +1092,11 @@ elif menu == "Cash Book":
 elif menu == "Bank Book":
     st.title("🏦 Bank Book")
     
+    # Initialize session state for tab management
+    if 'bank_book_tab' not in st.session_state:
+        st.session_state.bank_book_tab = "Record Bank Entry"
+    
+    # Create tabs with session state control
     tab1, tab2, tab3 = st.tabs(["Record Bank Entry", "View / Edit / Delete", "Print Bank Book"])
     
     with tab1:
@@ -1153,24 +1158,39 @@ elif menu == "Bank Book":
                         credit_amount = amount
                         post_automated_jv(f"Bank Withdrawal: {particulars}", account_code, bank_code, amount)
                     
-                    # FIXED: 10 columns, 10 placeholders
+                    # Insert the entry
                     run_query("""
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, selected_bank, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
+                    # Show success message
                     st.success(f"✅ Bank {entry_type} of ₹{amount:,.2f} recorded successfully!")
                     st.info(f"📌 Voucher No: {voucher_no}\n"
                            f"📌 {entry_type}: ₹{amount:,.2f}\n"
                            f"📌 Account Head: {account_head}\n"
                            f"📌 New {selected_bank} Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
-                    st.rerun()
+                    
+                    # Add button to view entries
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if st.button("📋 View All Bank Entries", key="view_after_record"):
+                            st.session_state.bank_book_tab = "View / Edit / Delete"
+                            st.rerun()
+                    with col2:
+                        if st.button("➕ Record Another Entry", key="record_another"):
+                            st.rerun()
+                    with col3:
+                        if st.button("🖨️ Print Bank Book", key="print_after_record"):
+                            st.session_state.bank_book_tab = "Print Bank Book"
+                            st.rerun()
                 else:
                     st.error("Please fill in all required fields!")
     
     with tab2:
         st.subheader("📋 Bank Book Entries - View / Edit / Delete")
         
+        # Get all entries
         entries = run_query("""
             SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
             FROM bank_book
@@ -1180,6 +1200,16 @@ elif menu == "Bank Book":
         if entries:
             df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
             st.dataframe(df_bank, use_container_width=True)
+            
+            # Show summary statistics
+            total_debits = sum(row[4] for row in entries)
+            total_credits = sum(row[5] for row in entries)
+            total_balance = entries[0][6] if entries else 0
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Debits", f"₹{total_debits:,.2f}")
+            col2.metric("Total Credits", f"₹{total_credits:,.2f}")
+            col3.metric("Current Balance", f"₹{total_balance:,.2f}")
             
             st.markdown("---")
             st.subheader("✏️ Edit or 🗑️ Delete Bank Entry")
@@ -1259,6 +1289,11 @@ elif menu == "Bank Book":
                             with col2:
                                 if st.button("❌ Cancel"):
                                     st.rerun()
+        else:
+            st.info("No bank entries found. Record your first bank entry in the 'Record Bank Entry' tab.")
+            if st.button("➕ Go to Record Bank Entry"):
+                st.session_state.bank_book_tab = "Record Bank Entry"
+                st.rerun()
     
     with tab3:
         st.subheader("🖨️ Print Bank Book")
@@ -1331,7 +1366,11 @@ elif menu == "Bank Book":
                     """, unsafe_allow_html=True)
             else:
                 st.info("No bank entries found for the selected date range.")
-
+        
+        # Add button to go back to record entry
+        if st.button("➕ Record New Bank Entry", key="print_to_record"):
+            st.session_state.bank_book_tab = "Record Bank Entry"
+            st.rerun()
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management & Deletion")

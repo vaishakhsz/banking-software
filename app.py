@@ -1090,6 +1090,7 @@ elif menu == "Cash Book":
 
 # --- BANK BOOK ---
 # --- BANK BOOK ---
+# --- BANK BOOK ---
 elif menu == "Bank Book":
     st.title("🏦 Bank Book")
     
@@ -1097,29 +1098,36 @@ elif menu == "Bank Book":
     if 'bank_book_tab' not in st.session_state:
         st.session_state.bank_book_tab = "Record Bank Entry"
     
-    # Create tabs with session state control
+    # Create tabs
     tab1, tab2, tab3 = st.tabs(["Record Bank Entry", "View / Edit / Delete", "Print Bank Book"])
     
     with tab1:
         st.subheader("Record Bank Transaction")
         
+        # Get list of banks
         bank_accounts = run_query("""
             SELECT account_name FROM chart_of_accounts 
             WHERE account_type = 'Asset' AND account_name LIKE '%Bank%'
         """)
         bank_list = [b[0] for b in bank_accounts] if bank_accounts else ["Union Bank of India", "State Bank of India"]
         
-        selected_bank = st.selectbox("Select Bank", bank_list)
-        current_balance = get_bank_balance(selected_bank)
+        # If no bank is selected in session, set default
+        if 'selected_bank' not in st.session_state:
+            st.session_state.selected_bank = bank_list[0] if bank_list else "Union Bank of India"
         
+        selected_bank = st.selectbox("Select Bank", bank_list, key="bank_select")
+        st.session_state.selected_bank = selected_bank
+        
+        # Get current balance
+        current_balance = get_bank_balance(selected_bank)
         st.info(f"🏦 **{selected_bank} Current Balance:** ₹{current_balance:,.2f}")
         
-        # Use a form for the entry
+        # Form for entry
         with st.form("bank_entry_form"):
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description")
+            particulars = st.text_input("Particulars / Description", placeholder="e.g., Cash Deposit, Transfer, etc.")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
@@ -1133,19 +1141,25 @@ elif menu == "Bank Book":
             
             narration = st.text_area("Narration (Optional)", height=68)
             
-            submitted = st.form_submit_button("Record Bank Entry")
+            submitted = st.form_submit_button("💾 Record Bank Entry")
         
-        # Handle form submission outside the form
+        # Handle form submission
         if submitted:
             if amount > 0 and particulars and account_head:
                 voucher_no = generate_bank_voucher_no()
                 today = datetime.now().strftime("%Y-%m-%d")
                 account_code = coa_dict[account_head]
                 
+                # Get bank account code
                 bank_code = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ?", (selected_bank,))
                 if not bank_code:
-                    st.error(f"❌ Bank account '{selected_bank}' not found in Chart of Accounts!")
-                    st.stop()
+                    # If bank not found in chart of accounts, create it
+                    st.warning(f"⚠️ Bank account '{selected_bank}' not found in Chart of Accounts. Creating it now...")
+                    new_code = f"AST-{len(run_query('SELECT account_code FROM chart_of_accounts')) + 100}"
+                    run_query("INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, 'Asset', 'Current Assets')", 
+                              (new_code, selected_bank), fetch=False)
+                    bank_code = [(new_code,)]
+                
                 bank_code = bank_code[0][0]
                 
                 if entry_type == "DEBIT (Deposit)":
@@ -1163,155 +1177,175 @@ elif menu == "Bank Book":
                     post_automated_jv(f"Bank Withdrawal: {particulars}", account_code, bank_code, amount)
                 
                 # Insert the entry
-                run_query("""
-                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, selected_bank, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
-                
-                # Store success info in session state
-                st.session_state.bank_success = True
-                st.session_state.bank_voucher = voucher_no
-                st.session_state.bank_amount = amount
-                st.session_state.bank_type = entry_type
-                st.session_state.bank_balance = new_balance
-                st.session_state.bank_account_head = account_head
-                
-                st.rerun()
+                try:
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (today, voucher_no, particulars, debit_amount, credit_amount, new_balance, selected_bank, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    # Store success info in session state
+                    st.session_state.bank_success = True
+                    st.session_state.bank_voucher = voucher_no
+                    st.session_state.bank_amount = amount
+                    st.session_state.bank_type = entry_type
+                    st.session_state.bank_balance = new_balance
+                    st.session_state.bank_account_head = account_head
+                    st.session_state.selected_bank = selected_bank
+                    
+                    st.success(f"✅ Bank {entry_type} of ₹{amount:,.2f} recorded successfully!")
+                    st.info(f"📌 Voucher No: {voucher_no}\n"
+                           f"📌 {entry_type}: ₹{amount:,.2f}\n"
+                           f"📌 Account Head: {account_head}\n"
+                           f"📌 New {selected_bank} Balance: ₹{current_balance:,.2f} → ₹{new_balance:,.2f}")
+                    
+                    # Add navigation buttons (outside form)
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("📋 View All Bank Entries", key="view_after_record"):
+                            st.session_state.bank_book_tab = "View / Edit / Delete"
+                            st.rerun()
+                    with col2:
+                        if st.button("🔄 Record Another Entry", key="record_another"):
+                            st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error saving entry: {str(e)}")
             else:
-                st.error("Please fill in all required fields!")
-        
-        # Display success message if it exists
-        if st.session_state.get('bank_success', False):
-            st.success(f"✅ Bank {st.session_state.bank_type} of ₹{st.session_state.bank_amount:,.2f} recorded successfully!")
-            st.info(f"📌 Voucher No: {st.session_state.bank_voucher}\n"
-                   f"📌 {st.session_state.bank_type}: ₹{st.session_state.bank_amount:,.2f}\n"
-                   f"📌 Account Head: {st.session_state.bank_account_head}\n"
-                   f"📌 New {selected_bank} Balance: ₹{st.session_state.bank_balance:,.2f}")
-            
-            # Clear the success flag after displaying
-            st.session_state.bank_success = False
-            
-            # Add navigation buttons in the main flow (not inside form)
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button("📋 View All Bank Entries", key="view_after_record"):
-                    st.session_state.bank_book_tab = "View / Edit / Delete"
-                    st.rerun()
-            with col2:
-                if st.button("➕ Record Another Entry", key="record_another"):
-                    st.rerun()
-            with col3:
-                if st.button("🖨️ Print Bank Book", key="print_after_record"):
-                    st.session_state.bank_book_tab = "Print Bank Book"
-                    st.rerun()
+                st.error("Please fill in all required fields (Amount, Particulars, and Account Head)!")
     
     with tab2:
         st.subheader("📋 Bank Book Entries - View / Edit / Delete")
         
-        # Get all entries
-        entries = run_query("""
-            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
-            FROM bank_book
-            ORDER BY id DESC
-        """)
+        # Debug: Show total count
+        try:
+            count_result = run_query("SELECT COUNT(*) FROM bank_book")
+            total_count = count_result[0][0] if count_result else 0
+            st.info(f"📊 Total entries in database: {total_count}")
+        except Exception as e:
+            st.error(f"Error counting entries: {str(e)}")
+            total_count = 0
         
-        if entries:
-            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
-            st.dataframe(df_bank, use_container_width=True)
+        # Get all entries
+        try:
+            entries = run_query("""
+                SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
+                FROM bank_book
+                ORDER BY id DESC
+            """)
             
-            # Show summary statistics
-            total_debits = sum(row[4] for row in entries)
-            total_credits = sum(row[5] for row in entries)
-            total_balance = entries[0][6] if entries else 0
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Debits", f"₹{total_debits:,.2f}")
-            col2.metric("Total Credits", f"₹{total_credits:,.2f}")
-            col3.metric("Current Balance", f"₹{total_balance:,.2f}")
-            
-            st.markdown("---")
-            st.subheader("✏️ Edit or 🗑️ Delete Bank Entry")
-            
-            entry_ids = [e[0] for e in entries]
-            selected_id = st.selectbox("Select Entry ID to Edit/Delete", entry_ids, key="select_bank_entry")
-            
-            if selected_id:
-                entry_data = run_query("""
-                    SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
-                    FROM bank_book WHERE id = ?
-                """, (selected_id,))
+            if entries:
+                df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
+                st.dataframe(df_bank, use_container_width=True)
                 
-                if entry_data:
-                    row = entry_data[0]
-                    col1, col2 = st.columns(2)
+                # Show summary statistics
+                total_debits = sum(row[4] for row in entries)
+                total_credits = sum(row[5] for row in entries)
+                latest_balance = entries[0][6] if entries else 0
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total Debits", f"₹{total_debits:,.2f}")
+                col2.metric("Total Credits", f"₹{total_credits:,.2f}")
+                col3.metric("Latest Balance", f"₹{latest_balance:,.2f}")
+                
+                # Export button
+                st.download_button(
+                    "📥 Download Bank Book CSV",
+                    df_bank.to_csv(index=False).encode('utf-8'),
+                    "bank_book.csv",
+                    "text/csv"
+                )
+                
+                st.markdown("---")
+                st.subheader("✏️ Edit or 🗑️ Delete Bank Entry")
+                
+                entry_ids = [e[0] for e in entries]
+                selected_id = st.selectbox("Select Entry ID to Edit/Delete", entry_ids, key="select_bank_entry")
+                
+                if selected_id:
+                    entry_data = run_query("""
+                        SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration
+                        FROM bank_book WHERE id = ?
+                    """, (selected_id,))
                     
-                    with col1:
-                        st.write(f"**Voucher No:** {row[2]}")
-                        st.write(f"**Date:** {row[1]}")
-                        st.write(f"**Bank:** {row[7]}")
-                        st.write(f"**Particulars:** {row[3]}")
-                        st.write(f"**Debit Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Debit Amount:** ₹0.00")
-                        st.write(f"**Credit Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Credit Amount:** ₹0.00")
-                        st.write(f"**Balance:** ₹{row[6]:,.2f}")
-                        st.write(f"**Account Code:** {row[8]}")
-                        st.write(f"**Narration:** {row[9]}")
-                    
-                    with col2:
-                        action = st.radio("Choose Action", ["Edit Entry", "Delete Entry"])
+                    if entry_data:
+                        row = entry_data[0]
+                        col1, col2 = st.columns(2)
                         
-                        if action == "Edit Entry":
-                            with st.form("edit_bank_form"):
-                                new_particulars = st.text_input("Particulars", value=row[3])
-                                
-                                account_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (row[8],))
-                                account_name = account_info[0][0] if account_info else ""
-                                
-                                coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
-                                coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-                                
-                                current_account = f"{row[8]} - {account_name}" if account_name else list(coa_dict.keys())[0]
-                                if current_account not in coa_dict:
-                                    current_account = list(coa_dict.keys())[0]
-                                
-                                new_account = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_account) if current_account in coa_dict else 0)
-                                new_narration = st.text_area("Narration", value=row[9] if row[9] else "")
+                        with col1:
+                            st.write(f"**Voucher No:** {row[2]}")
+                            st.write(f"**Date:** {row[1]}")
+                            st.write(f"**Bank:** {row[7]}")
+                            st.write(f"**Particulars:** {row[3]}")
+                            st.write(f"**Debit Amount:** ₹{row[4]:,.2f}" if row[4] > 0 else "**Debit Amount:** ₹0.00")
+                            st.write(f"**Credit Amount:** ₹{row[5]:,.2f}" if row[5] > 0 else "**Credit Amount:** ₹0.00")
+                            st.write(f"**Balance:** ₹{row[6]:,.2f}")
+                            st.write(f"**Account Code:** {row[8]}")
+                            st.write(f"**Narration:** {row[9]}")
+                        
+                        with col2:
+                            action = st.radio("Choose Action", ["Edit Entry", "Delete Entry"])
+                            
+                            if action == "Edit Entry":
+                                with st.form("edit_bank_form"):
+                                    new_particulars = st.text_input("Particulars", value=row[3])
+                                    
+                                    account_info = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (row[8],))
+                                    account_name = account_info[0][0] if account_info else ""
+                                    
+                                    coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+                                    coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+                                    
+                                    current_account = f"{row[8]} - {account_name}" if account_name else list(coa_dict.keys())[0]
+                                    if current_account not in coa_dict:
+                                        current_account = list(coa_dict.keys())[0]
+                                    
+                                    new_account = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_account) if current_account in coa_dict else 0)
+                                    new_narration = st.text_area("Narration", value=row[9] if row[9] else "")
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        edit_submit = st.form_submit_button("💾 Save Changes")
+                                    with col2:
+                                        cancel = st.form_submit_button("❌ Cancel")
+                                    
+                                    if edit_submit:
+                                        new_account_code = coa_dict[new_account]
+                                        run_query("""
+                                            UPDATE bank_book 
+                                            SET particulars = ?, account_code = ?, narration = ?
+                                            WHERE id = ?
+                                        """, (new_particulars, new_account_code, new_narration, selected_id), fetch=False)
+                                        st.success(f"✅ Bank Entry #{selected_id} updated successfully!")
+                                        st.rerun()
+                                    if cancel:
+                                        st.rerun()
+                            
+                            else:
+                                st.warning(f"⚠️ Are you sure you want to delete Bank Entry #{selected_id}?")
+                                st.warning(f"**Voucher No:** {row[2]} | **Bank:** {row[7]} | **Particulars:** {row[3]} | **Amount:** ₹{max(row[4], row[5]):,.2f}")
                                 
                                 col1, col2 = st.columns(2)
                                 with col1:
-                                    edit_submit = st.form_submit_button("💾 Save Changes")
+                                    if st.button("🗑️ Confirm Delete", type="primary"):
+                                        run_query("DELETE FROM bank_book WHERE id = ?", (selected_id,), fetch=False)
+                                        st.success(f"✅ Bank Entry #{selected_id} deleted successfully!")
+                                        st.rerun()
                                 with col2:
-                                    cancel = st.form_submit_button("❌ Cancel")
-                                
-                                if edit_submit:
-                                    new_account_code = coa_dict[new_account]
-                                    run_query("""
-                                        UPDATE bank_book 
-                                        SET particulars = ?, account_code = ?, narration = ?
-                                        WHERE id = ?
-                                    """, (new_particulars, new_account_code, new_narration, selected_id), fetch=False)
-                                    st.success(f"✅ Bank Entry #{selected_id} updated successfully!")
-                                    st.rerun()
-                                if cancel:
-                                    st.rerun()
-                        
-                        else:
-                            st.warning(f"⚠️ Are you sure you want to delete Bank Entry #{selected_id}?")
-                            st.warning(f"**Voucher No:** {row[2]} | **Bank:** {row[7]} | **Particulars:** {row[3]} | **Amount:** ₹{max(row[4], row[5]):,.2f}")
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                if st.button("🗑️ Confirm Delete", type="primary"):
-                                    run_query("DELETE FROM bank_book WHERE id = ?", (selected_id,), fetch=False)
-                                    st.success(f"✅ Bank Entry #{selected_id} deleted successfully!")
-                                    st.rerun()
-                            with col2:
-                                if st.button("❌ Cancel"):
-                                    st.rerun()
-        else:
-            st.info("No bank entries found. Record your first bank entry in the 'Record Bank Entry' tab.")
-            if st.button("➕ Go to Record Bank Entry"):
-                st.session_state.bank_book_tab = "Record Bank Entry"
-                st.rerun()
+                                    if st.button("❌ Cancel"):
+                                        st.rerun()
+            else:
+                st.warning("⚠️ No bank entries found in the database!")
+                st.info("💡 Tips:\n"
+                       "1. Make sure you've recorded entries in the 'Record Bank Entry' tab\n"
+                       "2. Check if entries were saved by looking at the total count above\n"
+                       "3. Try recording a new entry with different parameters")
+                
+                if st.button("🔄 Refresh View"):
+                    st.rerun()
+                
+        except Exception as e:
+            st.error(f"❌ Error retrieving entries: {str(e)}")
+            st.info("Try refreshing the page or recording a new entry.")
     
     with tab3:
         st.subheader("🖨️ Print Bank Book")
@@ -1375,20 +1409,8 @@ elif menu == "Bank Book":
                     f"bank_book_{from_date}_to_{to_date}.pdf",
                     "application/pdf"
                 )
-                
-                if st.button("🖨️ Print Bank Book"):
-                    st.markdown("""
-                        <script>
-                            window.print();
-                        </script>
-                    """, unsafe_allow_html=True)
             else:
                 st.info("No bank entries found for the selected date range.")
-        
-        # Add button to go back to record entry
-        if st.button("➕ Record New Bank Entry", key="print_to_record"):
-            st.session_state.bank_book_tab = "Record Bank Entry"
-            st.rerun()
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management & Deletion")

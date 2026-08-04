@@ -1140,7 +1140,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.dataframe(df_assets, use_container_width=True)
             st.metric("Total Assets", f"₹{total_assets:,.2f}")
 
-        with col1:
+       with col1:
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0
@@ -1155,11 +1155,19 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{tot_rd_invested:,.2f}"])
                 total_lia += tot_rd_invested
                 
-            # Consolidated Single Share Capital / Funding Source combining all bank assets
-            total_bank_capital = union_bank_bal + sbi_bal
-            if total_bank_capital > 0:
-                lia_data.append(["Share Capital", f"₹{total_bank_capital:,.2f}"])
-                total_lia += total_bank_capital
+            # FIXED SHARE CAPITAL (Independent of daily Cash/Bank book fluctuations)
+            # You can either pull this from a dedicated Equity account in your Chart of Accounts 
+            # or treat it as a fixed capital pool. Here we query a fixed equity head if it exists, 
+            # or default to a stable amount so bank/cash transfers don't alter it.
+            fixed_capital_result = run_query("SELECT SUM(credit - debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Equity'")
+            fixed_capital = fixed_capital_result[0][0] if fixed_capital_result and fixed_capital_result[0][0] is not None else 0.0
+            
+            if fixed_capital > 0:
+                lia_data.append(["Share Capital & Funding Sources", f"₹{fixed_capital:,.2f}"])
+                total_lia += fixed_capital
+            else:
+                # Fallback if no equity account entries are posted yet
+                lia_data.append(["Share Capital & Funding Sources", "₹0.00"])
                 
             if lia_data:
                 df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])

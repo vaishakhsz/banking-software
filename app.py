@@ -385,7 +385,7 @@ if role == "Admin/Staff":
         "Dashboard", "Customer Management", "KYC Verification", "SB Accounts",
         "Fixed Deposits (FD)", "Recurring Deposits (RD)", "Retrieval Account",
         "Chart of Accounts", "Cash Book", "Bank Book", "Journal Vouchers",
-        "Admin Record Editor", "Financial Statements (Trial/BS/PL)", "Reports"
+        "Admin Record Editor", "Financial Statements (Trial/BS/PL)", "Reports", "SB Interest Calculation"
     ])
 else:
     menu = "Customer Portal"
@@ -419,27 +419,34 @@ if uploaded_db is not None:
 
 # --- DASHBOARD MODULE ---
 if menu == "Dashboard":
-    st.title("📊 Executive Dashboard")
+    st.title("📊 Executive Dashboard & Active Recurring Deposits")
     
     total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0]
     total_sb = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0]
     total_fds = run_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")[0][0]
+    rd_active = run_query("SELECT COUNT(*) FROM recurring_deposits WHERE status = 'ACTIVE'")[0][0]
     cash_bal = get_cash_balance()
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Customers", total_cust)
     col2.metric("Active SB Accounts", total_sb)
     col3.metric("Active FDs", total_fds)
-    col4.metric("Cash in Hand", f"₹{cash_bal:,.2f}")
+    col4.metric("Active RDs", rd_active)
     
     st.markdown("---")
-    st.subheader("Quick Activity Overview")
-    txs = run_query("SELECT tx_id, account_no, type, amount, mode, date FROM transactions ORDER BY id DESC LIMIT 5")
-    if txs:
-        df_txs = pd.DataFrame(txs, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Date"])
-        st.dataframe(df_txs, use_container_width=True)
+    st.subheader("📋 Active Recurring Deposits (RD) Directory")
+    rd_query = """
+        SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.created_at
+        FROM recurring_deposits r
+        JOIN customers c ON r.customer_id = c.id
+        WHERE r.status = 'ACTIVE'
+    """
+    rd_data = run_query(rd_query)
+    if rd_data:
+        df_rd = pd.DataFrame(rd_data, columns=["RD ID", "Customer Name", "Monthly Amount", "Tenure (Months)", "Interest Rate (%)", "Installments Paid", "Status", "Created Date"])
+        st.dataframe(df_rd, use_container_width=True)
     else:
-        st.info("No recent transactions recorded.")
+        st.info("No active Recurring Deposit accounts found.")
 
 # --- CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":
@@ -715,12 +722,59 @@ elif menu == "Retrieval Account":
     else:
         st.write("No funds currently resting in the Retrieval Accounts pool.")
 
-# --- CHART OF ACCOUNTS ---
+# --- CHART OF ACCOUNTS (WITH IN-PLACE ADD/EDIT/DELETE) ---
 elif menu == "Chart of Accounts":
-    st.title("📊 Financial Chart of Accounts")
-    accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
-    df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
-    st.dataframe(df_coa, use_container_width=True)
+    st.title("🗂️ Chart of Accounts Management")
+    st.write("View, add, edit, or delete accounting heads directly below.")
+
+    tab_coa1, tab_coa2 = st.tabs(["📋 View & Delete Accounts", "➕ Add / Edit Account Head"])
+
+    with tab_coa1:
+        st.subheader("Existing Accounts Directory")
+        accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
+        if accounts:
+            df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
+            st.dataframe(df_coa, use_container_width=True)
+
+            st.divider()
+            st.subheader("🗑️ Delete Account Head")
+            del_code = st.selectbox("Select Account Code to Delete", df_coa["Account Code"].tolist())
+            if st.button("Delete Account Head", type="primary"):
+                try:
+                    run_query("DELETE FROM chart_of_accounts WHERE account_code = ?", (del_code,), fetch=False)
+                    st.success(f"Successfully deleted account code: {del_code}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Could not delete account. It may be linked to active entries. Error: {e}")
+        else:
+            st.info("No records found in the Chart of Accounts.")
+
+    with tab_coa2:
+        st.subheader("Create or Update Account Head")
+        with st.form("coa_upsert_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                input_code = st.text_input("Account Code (e.g., INC-302, EXP-402)").upper().strip()
+                input_type = st.selectbox("Account Type", ["Income", "Expense", "Asset", "Liability", "Equity"])
+            with col2:
+                input_name = st.text_input("Account Name (e.g., Special Service Income)")
+                input_category = st.text_input("Category (e.g., Operating Expenses, Current Assets)")
+            
+            submitted = st.form_submit_button("Save / Update Account Head")
+            if submitted:
+                if not input_code or not input_name or not input_category:
+                    st.warning("Please fill out all fields.")
+                else:
+                    try:
+                        run_query(
+                            "INSERT OR REPLACE INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)",
+                            (input_code, input_name, input_type, input_category),
+                            fetch=False
+                        )
+                        st.success(f"Account head '{input_code} - {input_name}' saved successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error saving account entry: {e}")
 
 # --- CASH BOOK ---
 elif menu == "Cash Book":
@@ -1227,6 +1281,90 @@ elif menu == "Reports":
                 st.download_button("Download Transactions PDF", create_pdf_report("Daily Transactions Report", df_rep), "transactions_report.pdf", "application/pdf")
             else:
                 st.info("No transaction records found.")
+
+# --- SB INTEREST CALCULATION & CREDIT ---
+elif menu == "SB Interest Calculation":
+    st.title("💰 Savings Bank (SB) Interest Calculation & Crediting")
+    st.write("Calculate periodic interest for SB accounts, review details, print/export sheet, and credit directly.")
+
+    sb_accounts = run_query("SELECT s.account_no, c.name, s.balance, s.interest_rate FROM sb_accounts s JOIN customers c ON s.customer_id = c.id")
+    
+    if sb_accounts:
+        df_sb = pd.DataFrame(sb_accounts, columns=["Account No", "Customer Name", "Current Balance", "Interest Rate (%)"])
+        
+        # Configuration for calculation period
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            calc_period = st.selectbox("Calculation Period Frequency", ["Monthly", "Quarterly", "Half-Yearly", "Annually"])
+        with col_c2:
+            interest_multiplier = {"Monthly": 1/12, "Quarterly": 3/12, "Half-Yearly": 6/12, "Annually": 1}[calc_period]
+        
+        if st.button("Calculate Interest Preview", type="primary"):
+            calculated_rows = []
+            for idx, row in df_sb.iterrows():
+                acct = row["Account No"]
+                name = row["Customer Name"]
+                bal = row["Current Balance"]
+                rate = row["Interest Rate (%)"]
+                
+                # Simple Interest formulation based on period ratio
+                calculated_interest = round((bal * (rate / 100) * interest_multiplier), 2)
+                calculated_rows.append({
+                    "Account No": acct,
+                    "Customer Name": name,
+                    "Balance": bal,
+                    "Interest Rate (%)": rate,
+                    "Calculated Interest": calculated_interest
+                })
+            
+            st.session_state["interest_preview_df"] = pd.DataFrame(calculated_rows)
+            st.success("Interest calculated successfully! Review details below.")
+
+        if "interest_preview_df" in st.session_state and not st.session_state["interest_preview_df"].empty:
+            preview_df = st.session_state["interest_preview_df"]
+            st.subheader("📋 Interest Calculation Sheet Preview")
+            st.dataframe(preview_df, use_container_width=True)
+
+            total_interest_payout = preview_df["Calculated Interest"].sum()
+            st.metric("Total Interest Payout Amount", f"₹ {total_interest_payout:,.2f}")
+
+            # Print / Download option
+            csv_data = preview_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="🖨️ Print / Download Interest Sheet (CSV)",
+                data=csv_data,
+                file_name=f"sb_interest_sheet_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+            )
+
+            st.divider()
+            if st.button("✅ Confirm & Credit Interest to SB Accounts", type="primary"):
+                success_count = 0
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                
+                for idx, row in preview_df.iterrows():
+                    acct_no = row["Account No"]
+                    interest_amt = row["Calculated Interest"]
+                    
+                    if interest_amt > 0:
+                        try:
+                            # Update SB Balance
+                            run_query("UPDATE sb_accounts SET balance = balance + ? WHERE account_no = ?", (interest_amt, acct_no), fetch=False)
+                            # Log transaction entry
+                            tx_id = f"INT-{int(time.time())}-{acct_no}"
+                            run_query(
+                                "INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (tx_id, acct_no, "CREDIT", interest_amt, "SYSTEM", f"SB Interest Credited ({calc_period})", today_str),
+                                fetch=False
+                            )
+                            success_count += 1
+                        except Exception as ex:
+                            st.error(f"Failed to credit account {acct_no}: {ex}")
+                
+                st.success(f"Successfully credited interest to {success_count} SB accounts and recorded transactions!")
+                del st.session_state["interest_preview_df"]
+    else:
+        st.info("No Savings Bank (SB) accounts found in the database to calculate interest.")
 
 # --- CUSTOMER PORTAL ---
 elif menu == "Customer Portal":

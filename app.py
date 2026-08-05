@@ -210,18 +210,23 @@ def init_db():
                 ("EXP-201", "Salaries & Benefits", "Expense", "Operating Expenses"),
                 ("EXP-202", "Rent & Utilities", "Expense", "Operating Expenses"),
                 ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
+                ("EXP-204","Depreciation","Expense","Operating Expenses"),
                 ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
                 ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
                 ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
                 ("AST-102", "Union Bank of India", "Asset", "Current Assets"),
                 ("AST-103", "State Bank of India", "Asset", "Current Assets"),
                 ("AST-104", "Retrieval Pool Account", "Asset", "Current Assets"),
+                ("AST-105","Fixed Asset Computer","Asset","Non Current Assets"),
+                ("AST-106","Fixed Asset Furniture & Fixtures","Asset","Non Current Assets"),
+                ("AST-107","Office Equipments","Asset","Non Current Assets"),  
                 ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
                 ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
                 ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
                 ("EQT-101", "Capital Account", "Equity", "Capital"),
                 ("EQT-102", "Retained Earnings", "Equity", "Reserves"),
                 ("EQT-103", "Income Summary", "Equity", "Temporary")
+                
             ]
             cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
 

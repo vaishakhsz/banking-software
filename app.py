@@ -226,7 +226,6 @@ def init_db():
                 ("EQT-101", "Capital Account", "Equity", "Capital"),
                 ("EQT-102", "Retained Earnings", "Equity", "Reserves"),
                 ("EQT-103", "Income Summary", "Equity", "Temporary")
-                
             ]
             cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
 
@@ -379,7 +378,6 @@ def create_pdf_report(title, df):
     buffer.seek(0)
     return buffer.getvalue()
 
-# --- SIDEBAR NAVIGATION ---
 # --- SIDEBAR NAVIGATION & BACKUP ---
 st.sidebar.title("🏦 Aasha Nidhi Bank")
 role = st.sidebar.selectbox("User Role", ["Admin/Staff", "Customer Portal"])
@@ -394,11 +392,10 @@ if role == "Admin/Staff":
 else:
     menu = "Customer Portal"
 
-# --- DATABASE BACKUP & RESTORE MODULE (ADD HERE) ---
+# --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 System Backup & Recovery")
 
-# 1. Export / Download Database
 if os.path.exists(DB_NAME):
     with open(DB_NAME, "rb") as f:
         db_bytes = f.read()
@@ -410,7 +407,6 @@ if os.path.exists(DB_NAME):
         help="Download a complete copy of the SQLite database file for safety."
     )
 
-# 2. Import / Restore Database
 uploaded_db = st.sidebar.file_uploader("Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
     if st.sidebar.button("⚠️ Confirm Database Restore", type="primary"):
@@ -422,6 +418,30 @@ if uploaded_db is not None:
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"Error restoring database: {str(e)}")
+
+# --- DASHBOARD MODULE ---
+if menu == "Dashboard":
+    st.title("📊 Executive Dashboard")
+    
+    total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0]
+    total_sb = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0]
+    total_fds = run_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")[0][0]
+    cash_bal = get_cash_balance()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Customers", total_cust)
+    col2.metric("Active SB Accounts", total_sb)
+    col3.metric("Active FDs", total_fds)
+    col4.metric("Cash in Hand", f"₹{cash_bal:,.2f}")
+    
+    st.markdown("---")
+    st.subheader("Quick Activity Overview")
+    txs = run_query("SELECT tx_id, account_no, type, amount, mode, date FROM transactions ORDER BY id DESC LIMIT 5")
+    if txs:
+        df_txs = pd.DataFrame(txs, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Date"])
+        st.dataframe(df_txs, use_container_width=True)
+    else:
+        st.info("No recent transactions recorded.")
 
 # --- CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":
@@ -440,7 +460,7 @@ elif menu == "Customer Management":
             street = col2.text_input("Street Address")
             city = col1.text_input("City")
             state = col2.text_input("State")
-            pincode = col1.text_input("Pincode")
+            pincode = col2.text_input("Pincode")
             pan = col1.text_input("PAN Number")
             
             st.markdown("---")
@@ -704,8 +724,6 @@ elif menu == "Chart of Accounts":
     df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
     st.dataframe(df_coa, use_container_width=True)
 
-
-# --- CASH BOOK ---
 # --- CASH BOOK ---
 elif menu == "Cash Book":
     st.title("💰 Cash Book Entries")
@@ -736,11 +754,8 @@ elif menu == "Cash Book":
                         new_balance = current_balance + amount
                         debit_amount, credit_amount = amount, 0
                         
-                        # If money is coming into cash from a bank (e.g., Union Bank withdrawal), 
-                        # automatically deduct it from that bank's book and post the contra JV
                         if "Union Bank" in account_head:
                             post_automated_jv(f"Cash Withdrawal from Union Bank: {particulars}", "AST-101", account_code, amount)
-                            # Mirror deduction in Union Bank book
                             union_curr = get_bank_balance("Union Bank of India")
                             new_union_bal = union_curr - amount
                             b_vouch = generate_bank_voucher_no()
@@ -766,7 +781,6 @@ elif menu == "Cash Book":
                         new_balance = current_balance - amount
                         debit_amount, credit_amount = 0, amount
                         
-                        # If paying cash into a bank (Cash Deposit)
                         if "Union Bank" in account_head:
                             post_automated_jv(f"Cash Deposit to Union Bank: {particulars}", account_code, "AST-101", amount)
                             union_curr = get_bank_balance("Union Bank of India")
@@ -889,10 +903,8 @@ elif menu == "Bank Book":
                         new_balance = current_balance - amount
                         debit_amount, credit_amount = 0, amount
                         
-                        # If withdrawing/transferring to cash, post JV reducing bank asset and increasing cash asset
                         if "Cash" in account_head or "AST-101" == account_code:
                             post_automated_jv(f"Bank Withdrawal to Cash: {particulars} - {selected_bank}", "AST-101", bank_code, amount)
-                            # Automatically mirror this in the cash book so cash increases without touching liabilities
                             cash_bal_current = get_cash_balance()
                             new_cash_bal = cash_bal_current + amount
                             c_vouch = generate_cash_voucher_no()
@@ -1012,15 +1024,14 @@ elif menu == "Admin Record Editor":
     selected_table = st.selectbox("Select Database Table to Manage", table_list)
     
     if selected_table:
-        # Determine primary key column name dynamically
         pk_info = run_query(f"PRAGMA table_info({selected_table})")
         pk_col = None
         for col in pk_info:
-            if col[5] == 1:  # Primary key indicator in SQLite PRAGMA
+            if col[5] == 1:
                 pk_col = col[1]
                 break
         if not pk_col and pk_info:
-            pk_col = pk_info[0][1] # fallback to first column if no explicit PK flag
+            pk_col = pk_info[0][1]
 
         rows = run_query(f"SELECT * FROM {selected_table}")
         col_names = [col[1] for col in pk_info]
@@ -1038,7 +1049,6 @@ elif menu == "Admin Record Editor":
                 record_id_to_del = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to delete")
                 if st.button("Delete Record", type="primary"):
                     if record_id_to_del:
-                        # Try parsing as number if column is numeric, else text
                         try:
                             val = int(record_id_to_del)
                         except ValueError:
@@ -1066,7 +1076,6 @@ elif menu == "Admin Record Editor":
                             updated_values = []
                             for idx, col_name in enumerate(col_names):
                                 current_val = row_data[idx]
-                                # Don't allow editing the primary key identifier itself to prevent orphan constraints
                                 if col_name == pk_col:
                                     st.text(f"{col_name} (Primary Key - Read Only): {current_val}")
                                     updated_values.append(current_val)
@@ -1085,8 +1094,6 @@ elif menu == "Admin Record Editor":
                         st.warning(f"No record found with {pk_col} = {edit_val}")
         else:
             st.info(f"Table `{selected_table}` is currently empty.")
-
-
 
 # --- FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
@@ -1133,7 +1140,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
 
-        # Calculate Net Profit / Loss to flow into Balance Sheet
         income_entries_res = run_query("SELECT SUM(JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         expense_entries_res = run_query("SELECT SUM(JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
@@ -1169,7 +1175,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{tot_rd_invested:,.2f}"])
                 total_lia += tot_rd_invested
                 
-            # Fixed Share Capital (Unaffected by cash/bank books)
             fixed_capital_result = run_query("SELECT SUM(credit - debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Equity'")
             fixed_capital = fixed_capital_result[0][0] if fixed_capital_result and fixed_capital_result[0][0] is not None else 0.0
             
@@ -1177,7 +1182,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["Share Capital & Funding Sources", f"₹{fixed_capital:,.2f}"])
                 total_lia += fixed_capital
                 
-            # Net Profit / Loss Carry Forward / Retained Earnings
             if net_profit_loss != 0:
                 label_pnl = "Retained Earnings (Net Profit)" if net_profit_loss > 0 else "Retained Earnings (Net Loss)"
                 lia_data.append([label_pnl, f"₹{net_profit_loss:,.2f}"])
@@ -1202,14 +1206,29 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col1.metric("Total Income", f"₹{tot_inc:,.2f}")
         col2.metric("Total Expenses", f"₹{tot_exp:,.2f}")
         col3.metric("Net Profit/Loss", f"₹{tot_inc - tot_exp:,.2f}")
+
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
     report_type = st.selectbox("Select Report to Generate", ["Customer List Report", "Daily Transactions Report"])
+    
     if st.button("Generate Report"):
-        data = run_query("SELECT id, name, phone, email, kyc_status FROM customers")
-        df = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status"])
-        st.dataframe(df, use_container_width=True)
+        if report_type == "Customer List Report":
+            data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
+            if data:
+                df_rep = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status", "Registered Date"])
+                st.dataframe(df_rep, use_container_width=True)
+                st.download_button("Download Customer List PDF", create_pdf_report("Customer List Report", df_rep), "customer_list.pdf", "application/pdf")
+            else:
+                st.info("No customer records found.")
+        elif report_type == "Daily Transactions Report":
+            data = run_query("SELECT tx_id, account_no, type, amount, mode, narration, date FROM transactions")
+            if data:
+                df_rep = pd.DataFrame(data, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
+                st.dataframe(df_rep, use_container_width=True)
+                st.download_button("Download Transactions PDF", create_pdf_report("Daily Transactions Report", df_rep), "transactions_report.pdf", "application/pdf")
+            else:
+                st.info("No transaction records found.")
 
 # --- CUSTOMER PORTAL ---
 elif menu == "Customer Portal":
@@ -1220,5 +1239,12 @@ elif menu == "Customer Portal":
         if cust_info:
             name, phone, kyc = cust_info[0]
             st.success(f"Welcome back, **{name}**! KYC Status: `{kyc}`")
+            
+            # Show SB accounts owned by customer
+            sb_results = run_query("SELECT account_no, balance, interest_rate FROM sb_accounts WHERE customer_id=?", (cust_id_login,))
+            if sb_results:
+                st.subheader("Your Savings Bank Accounts")
+                df_portal_sb = pd.DataFrame(sb_results, columns=["Account No", "Balance (₹)", "Interest Rate (%)"])
+                st.dataframe(df_portal_sb, use_container_width=True)
         else:
             st.error("Customer ID not found.")

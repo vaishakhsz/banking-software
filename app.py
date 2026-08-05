@@ -3,9 +3,7 @@ import pandas as pd
 import sqlite3
 from datetime import datetime, date
 import io
-from fpdf import FPDF
 import os
-import plotly.express as px
 import time
 
 # --- PAGE CONFIGURATION ---
@@ -38,7 +36,7 @@ def get_connection():
             time.sleep(1)
 
 def init_db():
-    """Initialize database with all required tables only if they don't exist"""
+    """Initialize database and ensure missing Chart of Accounts are added dynamically"""
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -46,7 +44,7 @@ def init_db():
         # Enable foreign keys
         cursor.execute("PRAGMA foreign_keys = ON")
         
-        # Create all tables
+        # Create all base tables if they don't exist
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS customers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,41 +191,41 @@ def init_db():
             )
         """)
 
-        # Preload Chart of Accounts with strict separation
-        cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")
-        if cursor.fetchone()[0] == 0:
-            default_accounts = [
-                ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
-                ("INC-102", "Investment Income", "Income", "Primary Revenue"),
-                ("INC-201", "Processing Fees", "Income", "Service Income"),
-                ("INC-202", "Service Charges", "Income", "Service Income"),
-                ("INC-203", "Commission Income", "Income", "Service Income"),
-                ("INC-204", "Transaction Fees", "Income", "Service Income"),
-                ("INC-301", "Miscellaneous Income", "Income", "Other Income"),
-                ("EXP-101", "SB Interest Paid", "Expense", "Cost of Funds"),
-                ("EXP-102", "FD Interest Paid", "Expense", "Cost of Funds"),
-                ("EXP-103", "RD Interest Paid", "Expense", "Cost of Funds"),
-                ("EXP-201", "Salaries & Benefits", "Expense", "Operating Expenses"),
-                ("EXP-202", "Rent & Utilities", "Expense", "Operating Expenses"),
-                ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
-                ("EXP-204","Depreciation","Expense","Operating Expenses"),
-                ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
-                ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
-                ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
-                ("AST-102", "Union Bank of India", "Asset", "Current Assets"),
-                ("AST-103", "State Bank of India", "Asset", "Current Assets"),
-                ("AST-104", "Retrieval Pool Account", "Asset", "Current Assets"),
-                ("AST-105","Fixed Asset Computer","Asset","Non Current Assets"),
-                ("AST-106","Fixed Asset Furniture & Fixtures","Asset","Non Current Assets"),
-                ("AST-107","Office Equipments","Asset","Non Current Assets"),  
-                ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
-                ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
-                ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
-                ("EQT-101", "Capital Account", "Equity", "Capital"),
-                ("EQT-102", "Retained Earnings", "Equity", "Reserves"),
-                ("EQT-103", "Income Summary", "Equity", "Temporary")
-            ]
-            cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
+        # Comprehensive default Chart of Accounts list
+        default_accounts = [
+            ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
+            ("INC-102", "Investment Income", "Income", "Primary Revenue"),
+            ("INC-201", "Processing Fees", "Income", "Service Income"),
+            ("INC-202", "Service Charges", "Income", "Service Income"),
+            ("INC-203", "Commission Income", "Income", "Service Income"),
+            ("INC-204", "Transaction Fees", "Income", "Service Income"),
+            ("INC-301", "Miscellaneous Income", "Income", "Other Income"),
+            ("EXP-101", "SB Interest Paid", "Expense", "Cost of Funds"),
+            ("EXP-102", "FD Interest Paid", "Expense", "Cost of Funds"),
+            ("EXP-103", "RD Interest Paid", "Expense", "Cost of Funds"),
+            ("EXP-201", "Salaries & Benefits", "Expense", "Operating Expenses"),
+            ("EXP-202", "Rent & Utilities", "Expense", "Operating Expenses"),
+            ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
+            ("EXP-204", "Depreciation", "Expense", "Operating Expenses"),
+            ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
+            ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
+            ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
+            ("AST-102", "Union Bank of India", "Asset", "Current Assets"),
+            ("AST-103", "State Bank of India", "Asset", "Current Assets"),
+            ("AST-104", "Retrieval Pool Account", "Asset", "Current Assets"),
+            ("AST-105", "Fixed Asset Computer", "Asset", "Non Current Assets"),
+            ("AST-106", "Fixed Asset Furniture & Fixtures", "Asset", "Non Current Assets"),
+            ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),  
+            ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
+            ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
+            ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
+            ("EQT-101", "Capital Account", "Equity", "Capital"),
+            ("EQT-102", "Retained Earnings", "Equity", "Reserves"),
+            ("EQT-103", "Income Summary", "Equity", "Temporary")
+        ]
+        
+        # INSERT OR IGNORE safely injects missing rows without wiping out older backup tables
+        cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
 
         conn.commit()
         conn.close()

@@ -1083,12 +1083,14 @@ elif menu == "Admin Record Editor":
 
 
 # --- FINANCIAL STATEMENTS ---
+# --- FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
     
     with tab1:
         st.subheader("Trial Balance Summary")
+        
         entries = run_query("""
             SELECT 
                 CO.account_code, 
@@ -1107,6 +1109,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Account Type", "Total Debit (₹)", "Total Credit (₹)"])
             st.dataframe(df_tb, use_container_width=True)
             
+            # Show totals
             total_debits = sum(row[3] for row in entries)
             total_credits = sum(row[4] for row in entries)
             
@@ -1114,80 +1117,314 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             col1.metric("Total Debits", f"₹{total_debits:,.2f}")
             col2.metric("Total Credits", f"₹{total_credits:,.2f}")
             
-            st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
+            if abs(total_debits - total_credits) < 0.01:
+                st.success("✅ Trial Balance is Balanced!")
+            else:
+                st.warning(f"⚠️ Trial Balance Difference: ₹{abs(total_debits - total_credits):,.2f}")
+            
+            st.download_button(
+                "📥 Download Trial Balance PDF",
+                create_pdf_report("Trial Balance Statement", df_tb),
+                "trial_balance.pdf",
+                "application/pdf"
+            )
         else:
             st.info("No entries recorded yet.")
     
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
-        cash_bal = get_cash_balance()
-        union_bank_bal = get_bank_balance("Union Bank of India")
-        sbi_bal = get_bank_balance("State Bank of India")
+        
+        # First, calculate Profit/Loss from P&L
+        income_entries = run_query("""
+            SELECT CO.account_name, SUM(JE.credit) - SUM(JE.debit) as balance
+            FROM jv_entries JE
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+            WHERE CO.account_type = 'Income'
+            GROUP BY CO.account_name
+        """)
+        
+        expense_entries = run_query("""
+            SELECT CO.account_name, SUM(JE.debit) - SUM(JE.credit) as balance
+            FROM jv_entries JE
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+            WHERE CO.account_type = 'Expense'
+            GROUP BY CO.account_name
+        """)
+        
+        total_income = sum(row[1] for row in income_entries) if income_entries else 0
+        total_expense = sum(row[1] for row in expense_entries) if expense_entries else 0
+        net_profit_loss = total_income - total_expense
+        
+        # Get all account balances from journal entries
+        account_balances = run_query("""
+            SELECT 
+                CO.account_code,
+                CO.account_name,
+                CO.account_type,
+                COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            GROUP BY CO.account_code
+        """)
+        
+        assets = {}
+        liabilities = {}
+        equity = {}
+        
+        for acc_code, acc_name, acc_type, net_bal in account_balances:
+            if acc_type == "Asset":
+                assets[acc_name] = net_bal if net_bal != 0 else 0
+            elif acc_type == "Liability":
+                liabilities[acc_name] = net_bal if net_bal != 0 else 0
+            elif acc_type == "Equity":
+                equity[acc_name] = net_bal if net_bal != 0 else 0
+        
+        # Get cash balance
+        cash_balance = get_cash_balance()
+        assets["Cash in Hand"] = cash_balance
+        
+        # Get all bank balances from bank_book
+        bank_balances = run_query("""
+            SELECT bank_name, balance 
+            FROM bank_book 
+            WHERE id IN (SELECT MAX(id) FROM bank_book GROUP BY bank_name)
+            ORDER BY bank_name
+        """)
+        
+        for bank_name, balance in bank_balances:
+            assets[bank_name] = balance
+        
+        # Also check for bank accounts in chart of accounts that might not have transactions yet
+        bank_accounts = run_query("""
+            SELECT account_name FROM chart_of_accounts 
+            WHERE account_type = 'Asset' AND account_name LIKE '%Bank%'
+        """)
+        for bank in bank_accounts:
+            if bank[0] not in assets:
+                assets[bank[0]] = 0
+        
+        # Get SB, FD, RD balances
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-
+        
+        # Also get liabilities for deposits
+        if tot_sb_balance > 0:
+            liabilities["SB Deposits Control"] = tot_sb_balance
+        if tot_fd_principal > 0:
+            liabilities["FD Deposits Control"] = tot_fd_principal
+        if tot_rd_invested > 0:
+            liabilities["RD Deposits Control"] = tot_rd_invested
+        
+        # Update Retained Earnings with Net Profit/Loss
+        if net_profit_loss != 0:
+            if "Retained Earnings" in equity:
+                equity["Retained Earnings"] += net_profit_loss
+            else:
+                equity["Retained Earnings"] = net_profit_loss
+        
         col1, col2 = st.columns(2)
-        with col2:
-            st.markdown("### Assets")
-            asset_data = [
-                ["Cash in Hand", f"₹{cash_bal:,.2f}"],
-                ["Union Bank of India", f"₹{union_bank_bal:,.2f}"],
-                ["State Bank of India", f"₹{sbi_bal:,.2f}"]
-            ]
-            total_assets = cash_bal + union_bank_bal + sbi_bal
-            df_assets = pd.DataFrame(asset_data, columns=["Account", "Amount"])
-            st.dataframe(df_assets, use_container_width=True)
-            st.metric("Total Assets", f"₹{total_assets:,.2f}")
-
+        
         with col1:
+            st.markdown("### Assets")
+            asset_data = []
+            total_assets = 0
             
-            st.markdown("### Liabilities & Equity")
-            lia_data = []
-            total_lia = 0
+            # Add all assets
+            for name, balance in sorted(assets.items()):
+                if name not in ["SB Deposits Control", "FD Deposits Control", "RD Deposits Control"]:
+                    asset_data.append([name, f"₹{balance:,.2f}"])
+                    total_assets += balance
             
+            # Add SB, FD, RD as assets (these are the bank's assets)
             if tot_sb_balance > 0:
-                lia_data.append(["SB Deposits Control", f"₹{tot_sb_balance:,.2f}"])
-                total_lia += tot_sb_balance
+                asset_data.append(["Savings Bank (SB) Deposits", f"₹{tot_sb_balance:,.2f}"])
+                total_assets += tot_sb_balance
             if tot_fd_principal > 0:
-                lia_data.append(["FD Deposits Control", f"₹{tot_fd_principal:,.2f}"])
-                total_lia += tot_fd_principal
+                asset_data.append(["Fixed Deposits (FD) Control", f"₹{tot_fd_principal:,.2f}"])
+                total_assets += tot_fd_principal
             if tot_rd_invested > 0:
-                lia_data.append(["RD Deposits Control", f"₹{tot_rd_invested:,.2f}"])
-                total_lia += tot_rd_invested
-                
-            # FIXED SHARE CAPITAL (Independent of daily Cash/Bank book fluctuations)
-            # You can either pull this from a dedicated Equity account in your Chart of Accounts 
-            # or treat it as a fixed capital pool. Here we query a fixed equity head if it exists, 
-            # or default to a stable amount so bank/cash transfers don't alter it.
-            fixed_capital_result = run_query("SELECT SUM(credit - debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Equity'")
-            fixed_capital = fixed_capital_result[0][0] if fixed_capital_result and fixed_capital_result[0][0] is not None else 0.0
+                asset_data.append(["Recurring Deposits (RD) Control", f"₹{tot_rd_invested:,.2f}"])
+                total_assets += tot_rd_invested
             
-            if fixed_capital > 0:
-                lia_data.append(["Share Capital & Funding Sources", f"₹{fixed_capital:,.2f}"])
-                total_lia += fixed_capital
+            if asset_data:
+                asset_data.append(["**Total Assets**", f"**₹{total_assets:,.2f}**"])
+                df_assets = pd.DataFrame(asset_data, columns=["Account", "Amount"])
+                st.dataframe(df_assets, use_container_width=True)
             else:
-                # Fallback if no equity account entries are posted yet
-                lia_data.append(["Share Capital & Funding Sources", "₹0.00"])
-                
-            if lia_data:
-                df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
-                st.dataframe(df_lia, use_container_width=True)
+                st.info("No asset data available")
+        
+        with col2:
+            st.markdown("### Liabilities & Equity")
+            
+            liability_data = []
+            total_liabilities = 0
+            
+            for name, balance in sorted(liabilities.items()):
+                if balance != 0:
+                    liability_data.append([name, f"₹{balance:,.2f}"])
+                    total_liabilities += balance
+            
+            equity_data = []
+            total_equity = 0
+            
+            for name, balance in sorted(equity.items()):
+                if balance != 0:
+                    # Add a note for Retained Earnings if it includes P&L
+                    if name == "Retained Earnings" and net_profit_loss != 0:
+                        display_name = f"{name} (incl. P&L)"
+                        equity_data.append([display_name, f"₹{balance:,.2f}"])
+                    else:
+                        equity_data.append([name, f"₹{balance:,.2f}"])
+                    total_equity += balance
+            
+            # Show P&L impact separately
+            if net_profit_loss != 0:
+                pl_label = "Net Profit (Current Period)" if net_profit_loss > 0 else "Net Loss (Current Period)"
+                equity_data.append([pl_label, f"₹{net_profit_loss:,.2f}"])
+                total_equity += net_profit_loss
+            
+            combined_data = liability_data + equity_data
+            total_liabilities_equity = total_liabilities + total_equity
+            
+            if combined_data:
+                combined_data.append(["**Total Liabilities & Equity**", f"**₹{total_liabilities_equity:,.2f}**"])
+                df_combined = pd.DataFrame(combined_data, columns=["Account", "Amount"])
+                st.dataframe(df_combined, use_container_width=True)
             else:
-                st.info("No active liabilities.")
-            st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
+                st.info("No liability or equity data available")
+        
+        st.markdown("---")
+        
+        # Check if balance sheet balances
+        diff = total_assets - total_liabilities_equity
+        if abs(diff) < 0.01:
+            st.success("✅ Balance Sheet Perfectly Balanced!")
+            st.balloons()
+        else:
+            st.warning(f"⚠️ Balance Sheet Discrepancy: ₹{diff:,.2f}")
+            st.info("💡 Tip: Make sure all transactions have proper journal entries posted.")
+        
+        if st.button("Export Balance Sheet Report"):
+            bs_data = [
+                ["Assets Section", "Amount (₹)"],
+                ["---", "---"]
+            ]
+            for name, balance in assets.items():
+                if "Deposits" not in name and "Retrieval" not in name:
+                    bs_data.append([name, f"₹{balance:,.2f}"])
+            bs_data.append(["Total Assets", f"₹{total_assets:,.2f}"])
+            bs_data.append(["", ""])
+            bs_data.append(["Liabilities & Equity", "Amount (₹)"])
+            bs_data.append(["---", "---"])
+            for name, balance in liabilities.items():
+                if balance != 0:
+                    bs_data.append([name, f"₹{balance:,.2f}"])
+            for name, balance in equity.items():
+                if balance != 0:
+                    bs_data.append([name, f"₹{balance:,.2f}"])
+            if net_profit_loss != 0:
+                pl_label = "Net Profit (Current Period)" if net_profit_loss > 0 else "Net Loss (Current Period)"
+                bs_data.append([pl_label, f"₹{net_profit_loss:,.2f}"])
+            bs_data.append(["Total Liabilities & Equity", f"₹{total_liabilities_equity:,.2f}"])
+            
+            df_bs = pd.DataFrame(bs_data[1:], columns=bs_data[0])
+            st.download_button("Download Balance Sheet PDF", create_pdf_report("Balance Sheet Statement", df_bs), "balance_sheet.pdf", "application/pdf")
+
     with tab3:
         st.subheader("Profit & Loss Statement")
-        income_entries = run_query("SELECT CO.account_name, SUM(JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income' GROUP BY CO.account_name")
-        expense_entries = run_query("SELECT CO.account_name, SUM(JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense' GROUP BY CO.account_name")
         
-        tot_inc = sum([row[1] for row in income_entries]) if income_entries else 0.0
-        tot_exp = sum([row[1] for row in expense_entries]) if expense_entries else 0.0
+        income_entries = run_query("""
+            SELECT CO.account_name, SUM(JE.credit) as total
+            FROM jv_entries JE
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+            WHERE CO.account_type = 'Income'
+            GROUP BY CO.account_name
+        """)
         
+        expense_entries = run_query("""
+            SELECT CO.account_name, SUM(JE.debit) as total
+            FROM jv_entries JE
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+            WHERE CO.account_type = 'Expense'
+            GROUP BY CO.account_name
+        """)
+        
+        st.markdown("### 📈 INCOME")
+        if income_entries:
+            income_data = []
+            total_income = 0
+            for name, amount in income_entries:
+                income_data.append([name, f"₹{amount:,.2f}"])
+                total_income += amount
+            income_data.append(["**Total Income**", f"**₹{total_income:,.2f}**"])
+            df_income = pd.DataFrame(income_data, columns=["Account", "Amount"])
+            st.dataframe(df_income, use_container_width=True)
+        else:
+            st.info("No income recorded")
+            total_income = 0
+        
+        st.markdown("---")
+        
+        st.markdown("### 📉 EXPENSES")
+        if expense_entries:
+            expense_data = []
+            total_expense = 0
+            for name, amount in expense_entries:
+                expense_data.append([name, f"₹{amount:,.2f}"])
+                total_expense += amount
+            expense_data.append(["**Total Expenses**", f"**₹{total_expense:,.2f}**"])
+            df_expense = pd.DataFrame(expense_data, columns=["Account", "Amount"])
+            st.dataframe(df_expense, use_container_width=True)
+        else:
+            st.info("No expenses recorded")
+            total_expense = 0
+        
+        st.markdown("---")
+        
+        net_pl = total_income - total_expense
+        
+        # Show P&L Summary with color coding
         col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"₹{tot_inc:,.2f}")
-        col2.metric("Total Expenses", f"₹{tot_exp:,.2f}")
-        col3.metric("Net Profit/Loss", f"₹{tot_inc - tot_exp:,.2f}")
+        col1.metric("Total Income", f"₹{total_income:,.2f}")
+        col2.metric("Total Expenses", f"₹{total_expense:,.2f}")
+        if net_pl >= 0:
+            col3.metric("Net Profit", f"₹{net_pl:,.2f}", delta="In the Black", delta_color="normal")
+        else:
+            col3.metric("Net Loss", f"₹{net_pl:,.2f}", delta="In the Red", delta_color="inverse")
+        
+        # Show the flow to Balance Sheet
+        st.markdown("---")
+        st.subheader("📊 Flow to Balance Sheet")
+        
+        st.info(f"""
+        **Net {'Profit' if net_pl >= 0 else 'Loss'} of ₹{abs(net_pl):,.2f} will be added to Retained Earnings in the Balance Sheet.
+        
+        This ensures the accounting equation: Assets = Liabilities + Equity
+        
+        Current Retained Earnings will be updated to include this period's {'profit' if net_pl >= 0 else 'loss'}.
+        """)
+        
+        if st.button("📥 Download P&L Statement PDF"):
+            # Prepare data for PDF
+            pl_data = [["Account", "Amount (₹)"]]
+            for name, amount in income_entries:
+                pl_data.append([name, f"₹{amount:,.2f}"])
+            pl_data.append(["Total Income", f"₹{total_income:,.2f}"])
+            pl_data.append(["", ""])
+            for name, amount in expense_entries:
+                pl_data.append([name, f"₹{amount:,.2f}"])
+            pl_data.append(["Total Expenses", f"₹{total_expense:,.2f}"])
+            pl_data.append(["", ""])
+            pl_data.append(["Net Profit/Loss", f"₹{net_pl:,.2f}"])
+            
+            df_pl = pd.DataFrame(pl_data[1:], columns=pl_data[0])
+            st.download_button(
+                "📥 Download P&L Statement PDF",
+                create_pdf_report("Profit & Loss Statement", df_pl),
+                "profit_loss_statement.pdf",
+                "application/pdf"
+            )
 
 # --- REPORTS ---
 elif menu == "Reports":

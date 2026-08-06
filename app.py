@@ -142,6 +142,7 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS journal_vouchers (
                 jv_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                voucher_no TEXT UNIQUE,
                 voucher_date TEXT,
                 narration TEXT,
                 status TEXT DEFAULT 'POSTED'
@@ -303,6 +304,19 @@ def generate_bank_voucher_no():
         new_seq = 1
     return f"BB{today}{new_seq:04d}"
 
+def generate_journal_voucher_no():
+    today = datetime.now().strftime("%Y%m%d")
+    try:
+        result = run_query("SELECT voucher_no FROM journal_vouchers WHERE voucher_no LIKE ? ORDER BY jv_id DESC LIMIT 1", (f"JV{today}%",))
+        if result:
+            last_seq = int(result[0][0][-4:])
+            new_seq = last_seq + 1
+        else:
+            new_seq = 1
+    except:
+        new_seq = 1
+    return f"JV{today}{new_seq:04d}"
+
 def post_automated_jv(narration, debit_acc, credit_acc, amount):
     if amount <= 0:
         return
@@ -313,9 +327,11 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
         if not debit_check or not credit_check:
             return
         
+        voucher_no = generate_journal_voucher_no()
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(date.today()), narration))
+        cursor.execute("INSERT INTO journal_vouchers (voucher_no, voucher_date, narration, status) VALUES (?, ?, ?, 'POSTED')", 
+                      (voucher_no, str(date.today()), narration))
         jv_id = cursor.lastrowid
         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, debit_acc, amount))
         cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
@@ -377,33 +393,64 @@ def create_pdf_report(title, df):
     return buffer.getvalue()
 
 def fetch_voucher_details(voucher_no):
-    """Fetch voucher details for printing"""
-    query = """
-        SELECT 
-            jv.voucher_date,
-            jv.narration,
-            je.account_code,
-            co.account_name,
-            je.debit,
-            je.credit
-        FROM journal_vouchers jv
-        JOIN jv_entries je ON jv.jv_id = je.jv_id
-        JOIN chart_of_accounts co ON je.account_code = co.account_code
-        WHERE jv.jv_id = (
-            SELECT jv_id FROM journal_vouchers WHERE jv_id = (
-                SELECT jv_id FROM jv_entries WHERE entry_id = (
-                    SELECT entry_id FROM jv_entries LIMIT 1
-                )
-            )
-        )
-    """
-    # Simplified fetch - assuming voucher_no is stored in the journal_vouchers table
-    # Since the original schema doesn't have voucher_no in journal_vouchers, we'll use jv_id
-    try:
-        jv_id = int(voucher_no.replace("JV-", ""))
+    """Fetch voucher details for printing - handles CB, BB, and JV voucher types"""
+    voucher_no = voucher_no.strip().upper()
+    
+    # Check if it's a Cash Book voucher (CB)
+    if voucher_no.startswith("CB"):
+        query = """
+            SELECT 
+                date as voucher_date,
+                voucher_no,
+                particulars as narration,
+                account_code,
+                '' as account_name,
+                debit_amount as debit,
+                credit_amount as credit
+            FROM cash_book 
+            WHERE voucher_no = ?
+        """
+        result = run_query(query, (voucher_no,))
+        if result:
+            # Fetch account name from chart of accounts
+            account_code = result[0][3]
+            acc_name_result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (account_code,))
+            account_name = acc_name_result[0][0] if acc_name_result else account_code
+            
+            # Format as list of tuples matching expected structure
+            return [(result[0][0], result[0][1], result[0][2], account_name, result[0][4], result[0][5])]
+        return None
+    
+    # Check if it's a Bank Book voucher (BB)
+    elif voucher_no.startswith("BB"):
+        query = """
+            SELECT 
+                date as voucher_date,
+                voucher_no,
+                particulars as narration,
+                account_code,
+                '' as account_name,
+                debit_amount as debit,
+                credit_amount as credit
+            FROM bank_book 
+            WHERE voucher_no = ?
+        """
+        result = run_query(query, (voucher_no,))
+        if result:
+            # Fetch account name from chart of accounts
+            account_code = result[0][3]
+            acc_name_result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (account_code,))
+            account_name = acc_name_result[0][0] if acc_name_result else account_code
+            
+            return [(result[0][0], result[0][1], result[0][2], account_name, result[0][4], result[0][5])]
+        return None
+    
+    # Check if it's a Journal Voucher (JV)
+    elif voucher_no.startswith("JV"):
         query = """
             SELECT 
                 jv.voucher_date,
+                jv.voucher_no,
                 jv.narration,
                 je.account_code,
                 co.account_name,
@@ -412,19 +459,20 @@ def fetch_voucher_details(voucher_no):
             FROM journal_vouchers jv
             JOIN jv_entries je ON jv.jv_id = je.jv_id
             JOIN chart_of_accounts co ON je.account_code = co.account_code
-            WHERE jv.jv_id = ?
+            WHERE jv.voucher_no = ?
         """
-        return run_query(query, (jv_id,))
-    except:
-        return None
+        return run_query(query, (voucher_no,))
+    
+    return None
 
 # --- VOUCHER PRINT FUNCTION ---
 def voucher_print_section():
     """Reusable voucher print section"""
     st.markdown("### 🖨️ Voucher Print & Lookup")
+    st.info("Enter voucher number in format: CB202601150001, BB202601150001, or JV202601150001")
     
     # Input field to search by voucher number
-    search_voucher_no = st.text_input("Enter Voucher Number to Print/View (e.g., JV-2026-001):", key="print_voucher_input")
+    search_voucher_no = st.text_input("Enter Voucher Number to Print/View:", key="print_voucher_input")
     
     if search_voucher_no:
         voucher_data = fetch_voucher_details(search_voucher_no.strip())
@@ -449,19 +497,50 @@ def voucher_print_section():
                 total_cr = 0.0
                 
                 for row in voucher_data:
-                    voucher_date, narration, acc_code, acc_name, dr, cr = row
-                    formatted_voucher_rows.append([
-                        f"{acc_code} - {acc_name}", 
-                        f"₹{dr:,.2f}" if dr > 0 else "-", 
-                        f"₹{cr:,.2f}" if cr > 0 else "-"
-                    ])
-                    total_dr += dr
-                    total_cr += cr
+                    # Row structure: (voucher_date, voucher_no, narration, account_name, debit, credit)
+                    voucher_date, voucher_no, narration, acc_name, debit, credit = row
+                    
+                    # Handle both single and multi-line vouchers
+                    if isinstance(acc_name, tuple) or isinstance(acc_name, list):
+                        # Multi-line JV
+                        for item in row:
+                            if len(item) >= 6:
+                                _, _, _, acc_name_item, debit_item, credit_item = item
+                                formatted_voucher_rows.append([
+                                    acc_name_item,
+                                    f"₹{debit_item:,.2f}" if debit_item > 0 else "-",
+                                    f"₹{credit_item:,.2f}" if credit_item > 0 else "-"
+                                ])
+                                total_dr += debit_item
+                                total_cr += credit_item
+                    else:
+                        # Single line voucher (CB or BB)
+                        formatted_voucher_rows.append([
+                            acc_name if acc_name else "N/A",
+                            f"₹{debit:,.2f}" if debit > 0 else "-",
+                            f"₹{credit:,.2f}" if credit > 0 else "-"
+                        ])
+                        total_dr += debit
+                        total_cr += credit
+                
+                # If it's a single line voucher and we haven't added it yet
+                if len(formatted_voucher_rows) == 0 and len(voucher_data) > 0:
+                    for row in voucher_data:
+                        _, _, narration, acc_name, debit, credit = row
+                        formatted_voucher_rows.append([
+                            acc_name if acc_name else "N/A",
+                            f"₹{debit:,.2f}" if debit > 0 else "-",
+                            f"₹{credit:,.2f}" if credit > 0 else "-"
+                        ])
+                        total_dr += debit
+                        total_cr += credit
                 
                 df_voucher = pd.DataFrame(formatted_voucher_rows, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
                 st.dataframe(df_voucher, use_container_width=True, hide_index=True)
                 
-                st.write(f"**Narration:** {voucher_data[0][1] if voucher_data[0][1] else 'N/A'}")
+                # Get narration from the first row
+                first_row_narration = voucher_data[0][2] if len(voucher_data[0]) > 2 else ""
+                st.write(f"**Narration:** {first_row_narration if first_row_narration else 'N/A'}")
                 
                 st.divider()
                 col_f1, col_f2 = st.columns(2)
@@ -1157,36 +1236,79 @@ elif menu == "Journal Vouchers":
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
+            # Allow up to 4 account lines for more flexibility
+            st.write("Enter up to 4 account lines (Debit and Credit must balance)")
+            
             col_acc, col_dr, col_cr = st.columns(3)
             acc1 = col_acc.selectbox("Account Head 1", list(coa_dict.keys()), key="jv_acc1")
-            dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
-            cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
+            dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1", step=100.0)
+            cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1", step=100.0)
             
             acc2 = col_acc.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
-            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
-            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
+            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2", step=100.0)
+            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2", step=100.0)
+            
+            acc3 = col_acc.selectbox("Account Head 3", list(coa_dict.keys()), key="jv_acc3")
+            dr3 = col_dr.number_input("Debit 3 (₹)", value=0.0, key="jv_dr3", step=100.0)
+            cr3 = col_cr.number_input("Credit 3 (₹)", value=0.0, key="jv_cr3", step=100.0)
+            
+            acc4 = col_acc.selectbox("Account Head 4", list(coa_dict.keys()), key="jv_acc4")
+            dr4 = col_dr.number_input("Debit 4 (₹)", value=0.0, key="jv_dr4", step=100.0)
+            cr4 = col_cr.number_input("Credit 4 (₹)", value=0.0, key="jv_cr4", step=100.0)
             
             if st.form_submit_button("Save and Post JV"):
-                total_dr = dr1 + dr2
-                total_cr = cr1 + cr2
+                total_dr = dr1 + dr2 + dr3 + dr4
+                total_cr = cr1 + cr2 + cr3 + cr4
+                
                 if total_dr == total_cr and total_dr > 0:
+                    # Generate voucher number
+                    voucher_no = generate_journal_voucher_no()
+                    
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_no, voucher_date, narration, status) VALUES (?, ?, ?, 'POSTED')", 
+                                  (voucher_no, str(v_date), narration))
                     jv_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
+                    
+                    # Insert all non-zero entries
+                    entries = [
+                        (coa_dict[acc1], dr1, cr1),
+                        (coa_dict[acc2], dr2, cr2),
+                        (coa_dict[acc3], dr3, cr3),
+                        (coa_dict[acc4], dr4, cr4)
+                    ]
+                    
+                    for acc_code, debit, credit in entries:
+                        if debit > 0 or credit > 0:
+                            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", 
+                                         (jv_id, acc_code, debit, credit))
+                    
                     conn.commit()
                     conn.close()
-                    st.success("Balanced Journal Voucher posted successfully!")
+                    st.success(f"✅ Balanced Journal Voucher posted successfully! Voucher No: {voucher_no}")
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+                    st.error(f"❌ Journal Voucher unbalanced! Total Debits: ₹{total_dr:,.2f}, Total Credits: ₹{total_cr:,.2f}")
 
     with tab2:
-        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
+        jvs = run_query("SELECT jv_id, voucher_no, voucher_date, narration, status FROM journal_vouchers ORDER BY jv_id DESC")
         if jvs:
-            df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
+            df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Voucher No", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
+            
+            # Show detailed view for selected voucher
+            selected_jv = st.selectbox("Select Voucher to View Details", [jv[1] for jv in jvs if jv[1]])
+            if selected_jv:
+                details = run_query("""
+                    SELECT je.account_code, co.account_name, je.debit, je.credit
+                    FROM jv_entries je
+                    JOIN chart_of_accounts co ON je.account_code = co.account_code
+                    WHERE je.jv_id = (SELECT jv_id FROM journal_vouchers WHERE voucher_no = ?)
+                """, (selected_jv,))
+                if details:
+                    df_details = pd.DataFrame(details, columns=["Account Code", "Account Name", "Debit (₹)", "Credit (₹)"])
+                    st.dataframe(df_details, use_container_width=True)
+        else:
+            st.info("No journal vouchers found.")
     
     voucher_print_section()
 

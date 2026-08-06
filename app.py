@@ -36,7 +36,7 @@ def get_connection():
             time.sleep(1)
 
 def init_db():
-    """Initialize database and ensure missing Chart of Accounts are added dynamically"""
+    """Initialize database and ensure missing Chart of Accounts and columns are added dynamically"""
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -102,6 +102,7 @@ def init_db():
                 nominee TEXT,
                 status TEXT DEFAULT 'ACTIVE',
                 created_at TEXT,
+                payment_mode TEXT,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             )
         """)
@@ -117,9 +118,21 @@ def init_db():
                 nominee TEXT,
                 status TEXT DEFAULT 'ACTIVE',
                 created_at TEXT,
+                payment_mode TEXT,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             )
         """)
+
+        # Safe migration for existing databases missing payment_mode
+        try:
+            cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN payment_mode TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN payment_mode TEXT")
+        except sqlite3.OperationalError:
+            pass
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS retrieval_accounts (
@@ -384,9 +397,6 @@ def get_account_name(account_code):
         return ""
 
 def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
-    """
-    Generate a PDF for a specific voucher (CB, BB, or JV)
-    """
     from reportlab.lib.pagesizes import A5
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -394,12 +404,10 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     from reportlab.lib.units import mm
     
     buffer = io.BytesIO()
-    # Proper margins for A5 page
     doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=12*mm, leftMargin=12*mm, topMargin=12*mm, bottomMargin=12*mm)
     elements = []
     
-    # Calculate available width
-    available_width = A5[0] - (24*mm)  # A5 width minus left and right margins
+    available_width = A5[0] - (24*mm)
     
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('VoucherTitle', parent=styles['Heading1'], fontSize=13, textColor=colors.HexColor('#1f4e78'), alignment=1, spaceAfter=6)
@@ -408,8 +416,6 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     
     if voucher_type == 'CB':
         date_val, v_num, part, dr, cr, acc_code, narr = voucher_data[0]
-        
-        # Get account name for the account code
         acc_name = get_account_name(acc_code)
         account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
         
@@ -417,8 +423,6 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         elements.append(Paragraph("CASH VOUCHER (CB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=11, alignment=1, spaceAfter=8)))
         elements.append(Spacer(1, 6))
         
-        # Create voucher content with proper width
-        # Simple key-value layout that fits within page
         voucher_content = [
             ["Voucher No:", v_num, "Date:", date_val],
             ["Particulars:", part, "", ""],
@@ -427,18 +431,16 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             ["Narration:", narr if narr else 'N/A', "", ""],
         ]
         
-        # Convert to paragraphs
         table_data = []
         for row in voucher_content:
             para_row = []
             for i, cell in enumerate(row):
-                if i == 0:  # Label column
+                if i == 0:
                     para_row.append(Paragraph(f"<b>{cell}</b>", bold_style))
-                else:  # Value columns
+                else:
                     para_row.append(Paragraph(cell, normal_style))
             table_data.append(para_row)
         
-        # Set column widths - Label (25%) | Value (75%)
         col_widths = [available_width * 0.25, available_width * 0.35, available_width * 0.15, available_width * 0.25]
         
         t = Table(table_data, colWidths=col_widths)
@@ -447,17 +449,15 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('PADDING', (0, 0), (-1, -1), 5),
-            ('SPAN', (1, 1), (-1, 1)),  # Span particulars across columns 1-3
-            ('SPAN', (1, 2), (-1, 2)),  # Span account head across columns 1-3
-            ('SPAN', (1, 3), (-1, 3)),  # Span amount across columns 1-3
-            ('SPAN', (1, 4), (-1, 4)),  # Span narration across columns 1-3
+            ('SPAN', (1, 1), (-1, 1)),
+            ('SPAN', (1, 2), (-1, 2)),
+            ('SPAN', (1, 3), (-1, 3)),
+            ('SPAN', (1, 4), (-1, 4)),
         ]))
         elements.append(t)
         
     elif voucher_type == 'BB':
         date_val, v_num, bank_n, part, dr, cr, acc_code, narr = voucher_data[0]
-        
-        # Get account name for the account code
         acc_name = get_account_name(acc_code)
         account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
         
@@ -465,7 +465,6 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         elements.append(Paragraph("BANK VOUCHER (BB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=11, alignment=1, spaceAfter=8)))
         elements.append(Spacer(1, 6))
         
-        # Create voucher content with proper width
         voucher_content = [
             ["Voucher No:", v_num, "Date:", date_val],
             ["Bank:", bank_n, "", ""],
@@ -475,18 +474,16 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             ["Narration:", narr if narr else 'N/A', "", ""],
         ]
         
-        # Convert to paragraphs
         table_data = []
         for row in voucher_content:
             para_row = []
             for i, cell in enumerate(row):
-                if i == 0:  # Label column
+                if i == 0:
                     para_row.append(Paragraph(f"<b>{cell}</b>", bold_style))
-                else:  # Value columns
+                else:
                     para_row.append(Paragraph(cell, normal_style))
             table_data.append(para_row)
         
-        # Set column widths - Label (22%) | Value (78%)
         col_widths = [available_width * 0.22, available_width * 0.38, available_width * 0.15, available_width * 0.25]
         
         t = Table(table_data, colWidths=col_widths)
@@ -495,11 +492,11 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('PADDING', (0, 0), (-1, -1), 5),
-            ('SPAN', (1, 1), (-1, 1)),  # Span bank across columns 1-3
-            ('SPAN', (1, 2), (-1, 2)),  # Span particulars across columns 1-3
-            ('SPAN', (1, 3), (-1, 3)),  # Span account head across columns 1-3
-            ('SPAN', (1, 4), (-1, 4)),  # Span amount across columns 1-3
-            ('SPAN', (1, 5), (-1, 5)),  # Span narration across columns 1-3
+            ('SPAN', (1, 1), (-1, 1)),
+            ('SPAN', (1, 2), (-1, 2)),
+            ('SPAN', (1, 3), (-1, 3)),
+            ('SPAN', (1, 4), (-1, 4)),
+            ('SPAN', (1, 5), (-1, 5)),
         ]))
         elements.append(t)
         
@@ -511,7 +508,6 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         jv_date = voucher_data[0][0]
         narration_text = voucher_data[0][1]
         
-        # Header info - horizontal layout
         header_data = [
             [Paragraph(f"<b>JV ID:</b> JV-{jv_id if jv_id else 'N/A'}", bold_style),
              Paragraph(f"<b>Date:</b> {jv_date}", normal_style)]
@@ -524,10 +520,9 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         elements.append(header_t)
         elements.append(Spacer(1, 8))
         
-        # Create table for entries with proper column widths
-        col1_width = available_width * 0.55  # 55% for account head
-        col2_width = available_width * 0.225  # 22.5% for debit
-        col3_width = available_width * 0.225  # 22.5% for credit
+        col1_width = available_width * 0.55
+        col2_width = available_width * 0.225
+        col3_width = available_width * 0.225
         
         table_data = [[Paragraph("<b>Account Head</b>", bold_style), 
                       Paragraph("<b>Debit (₹)</b>", bold_style), 
@@ -546,7 +541,6 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             total_dr += dr
             total_cr += cr
         
-        # Add totals row
         table_data.append([
             Paragraph("<b>Total</b>", bold_style),
             Paragraph(f"<b>{total_dr:,.2f}</b>", bold_style),
@@ -559,7 +553,7 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f0f0f0')),
-            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),  # Right align amounts
+            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('PADDING', (0, 0), (-1, -1), 5),
         ]))
@@ -567,7 +561,6 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         elements.append(Spacer(1, 8))
         elements.append(Paragraph(f"<b>Narration:</b> {narration_text if narration_text else 'N/A'}", normal_style))
     
-    # Add signature section
     elements.append(Spacer(1, 25))
     sign_line = "_" * 60
     elements.append(Paragraph(sign_line, ParagraphStyle('Line', alignment=1, fontSize=8)))
@@ -577,7 +570,6 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     buffer.seek(0)
     return buffer.getvalue()
 
-# Specific voucher fetch helpers for CB, BB, and JV
 def fetch_cb_voucher(voucher_no):
     return run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, account_code, narration FROM cash_book WHERE voucher_no = ?", (voucher_no,))
 
@@ -779,7 +771,6 @@ elif menu == "SB Accounts":
             
             init_bal = st.number_input("Opening Balance (₹)", min_value=0.0, value=500.0)
             
-            # --- CHART OF ACCOUNTS DRILL-DOWN FOR FUNDING MODE ---
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -818,7 +809,6 @@ elif menu == "SB Accounts":
             tx_type = st.selectbox("Transaction Type", ["DEPOSIT", "WITHDRAWAL"])
             amount = st.number_input("Amount (₹)", min_value=1.0, value=100.0)
             
-            # --- CHART OF ACCOUNTS DRILL-DOWN FOR PAYMENT MODE ---
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -883,7 +873,6 @@ elif menu == "Fixed Deposits (FD)":
             interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5)
             nominee = st.text_input("Nominee Name")
             
-            # --- FETCH ASSET ACCOUNTS FOR CHART OF ACCOUNTS DRILL-DOWN ---
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -896,7 +885,7 @@ elif menu == "Fixed Deposits (FD)":
                 chosen_asset_code = asset_dict[selected_asset_code]
                 payment_mode = selected_asset_code.split(" - ")[1]
             else:
-                chosen_asset_code = "AST-101"  # Fallback code
+                chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
             maturity_amount = principal + (principal * interest_rate * (tenure / 12) / 100)
@@ -908,7 +897,6 @@ elif menu == "Fixed Deposits (FD)":
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
-                # Automatically post Journal Entry linking the selected Chart of Accounts code to the FD liability
                 post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
                 st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
         else:
@@ -941,7 +929,6 @@ elif menu == "Recurring Deposits (RD)":
             interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.0, key="rd_rate")
             nominee = st.text_input("Nominee Name", key="rd_nom")
             
-            # --- FETCH ASSET ACCOUNTS FOR CHART OF ACCOUNTS DRILL-DOWN ---
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -978,7 +965,6 @@ elif menu == "Recurring Deposits (RD)":
             selected_rd = rd_dict[chosen_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst = selected_rd
             
-            # --- FETCH ASSET ACCOUNTS FOR INSTALLMENT PAYMENT DRILL-DOWN ---
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -1026,7 +1012,7 @@ elif menu == "Retrieval Account":
     else:
         st.write("No funds currently resting in the Retrieval Accounts pool.")
 
-# --- CHART OF ACCOUNTS (WITH IN-PLACE ADD/EDIT/DELETE) ---
+# --- CHART OF ACCOUNTS ---
 elif menu == "Chart of Accounts":
     st.title("🗂️ Chart of Accounts Management")
     st.write("View, add, edit, or delete accounting heads directly below.")
@@ -1226,7 +1212,6 @@ elif menu == "Cash Book":
                 v_data = fetch_cb_voucher(v_no)
                 if v_data:
                     date_val, v_num, part, dr, cr, acc_code, narr = v_data[0]
-                    # Get account name for display
                     acc_name = get_account_name(acc_code)
                     account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
                     
@@ -1246,7 +1231,6 @@ elif menu == "Cash Book":
                         st.markdown("---")
                         st.caption("Authorized Signature / Cashier Stamp")
                     
-                    # Generate PDF download button
                     pdf_data = generate_voucher_pdf('CB', v_data)
                     st.download_button(
                         label=f"📥 Download Cash Voucher {v_num} (PDF)",
@@ -1382,7 +1366,6 @@ elif menu == "Bank Book":
                 v_data = fetch_bb_voucher(v_no)
                 if v_data:
                     date_val, v_num, bank_n, part, dr, cr, acc_code, narr = v_data[0]
-                    # Get account name for display
                     acc_name = get_account_name(acc_code)
                     account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
                     
@@ -1403,7 +1386,6 @@ elif menu == "Bank Book":
                         st.markdown("---")
                         st.caption("Authorized Signature / Accountant Stamp")
                     
-                    # Generate PDF download button
                     pdf_data = generate_voucher_pdf('BB', v_data)
                     st.download_button(
                         label=f"📥 Download Bank Voucher {v_num} (PDF)",
@@ -1496,7 +1478,6 @@ elif menu == "Journal Vouchers":
                         st.markdown("---")
                         st.caption("Authorized Signature / Auditor Stamp")
                     
-                    # Generate PDF download button
                     pdf_data = generate_voucher_pdf('JV', v_data, jv_id)
                     st.download_button(
                         label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
@@ -1623,20 +1604,16 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("No entries recorded yet.")
             
-    
-   # --- BALANCE SHEET TAB (`tab2`) ---
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
         sbi_bal = get_bank_balance("State Bank of India")
         
-        # Fetch SB balances (representing the deposits)
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
 
-        # Fetch other asset accounts and their live ledger balances from JV entries
         other_assets = run_query("""
             SELECT CO.account_code, CO.account_name, 
                    COALESCE(SUM(JE.debit), 0) as total_debit,
@@ -1649,7 +1626,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING total_debit > 0 OR total_credit > 0
         """)
 
-        # Fetch net profit/loss strictly from actual Income and Expense accounts (excluding SB deposits)
         income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
@@ -1660,8 +1636,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### Assets")
-            
-            # Incorporating SB deposits into liquid asset/cash pool to reflect the received funds
             effective_cash_bal = cash_bal + tot_sb_balance
             
             asset_rows = [
@@ -1741,7 +1715,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.info("No active liabilities or equity.")
             st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
 
-    # --- PROFIT & LOSS TAB (`tab3`) ---
     with tab3:
         st.subheader("Profit and Loss Account")
         

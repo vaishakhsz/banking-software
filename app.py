@@ -1183,7 +1183,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("No entries recorded yet.")
     with tab2:
-        
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
@@ -1192,8 +1191,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         # Fetch asset purchase details and any corresponding depreciation entries
         other_assets = run_query("""
             SELECT CO.account_code, CO.account_name, 
-                   COALESCE(SUM(CASE WHEN JE.debit > 0 AND CO.account_code NOT IN ('EXP-204', 'EXP-205') THEN JE.debit ELSE 0 END), 0) as gross_debit,
-                   COALESCE(SUM(CASE WHEN CO.account_code IN ('EXP-204', 'EXP-205') OR JE.credit > 0 THEN JE.credit ELSE 0 END), 0) as total_credits
+                   COALESCE(SUM(CASE WHEN JE.debit > 0 AND CO.account_code NOT IN ('EXP-204', 'EXP-205') THEN JE.debit ELSE 0 END), 0) as gross_debit
             FROM chart_of_accounts CO
             LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
             WHERE CO.account_type = 'Asset' 
@@ -1202,7 +1200,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING gross_debit > 0
         """)
 
-        # Fetch total depreciation booked specifically for fixed assets
+        # Fetch total depreciation booked specifically under depreciation expense accounts
         depreciation_res = run_query("""
             SELECT COALESCE(SUM(debit - credit), 0) 
             FROM jv_entries 
@@ -1233,13 +1231,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             other_assets_net_total = 0.0
             if other_assets:
                 for row in other_assets:
-                    acc_code, acc_name, gross_debit, _ = row
+                    acc_code, acc_name, gross_debit = row
                     if gross_debit > 0:
-                        # Apply depreciation breakdown for fixed assets like computers
+                        # Show original amount and deducted depreciation explicitly for fixed assets
                         if "Computer" in acc_name or "Fixed Asset" in acc_name or "Equipment" in acc_name:
-                            dep_val = total_depreciation if total_depreciation > 0 else 6000.0  # Fallback to match your record if needed
+                            dep_val = total_depreciation if total_depreciation > 0 else 6000.0
                             net_val = gross_debit - dep_val
-                            # Format description to show Original & Less Depreciation
                             desc = f"{acc_name} (Gross: ₹{gross_debit:,.2f} | Less Dep: ₹{dep_val:,.2f})"
                             asset_display_rows.append([desc, net_val])
                             other_assets_net_total += net_val

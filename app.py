@@ -376,6 +376,16 @@ def create_pdf_report(title, df):
     buffer.seek(0)
     return buffer.getvalue()
 
+def fetch_voucher_details(voucher_no):
+    query = """
+        SELECT JE.voucher_no, JE.date, JE.account_code, CO.account_name, 
+               JE.debit, JE.credit, JE.narration
+        FROM jv_entries JE
+        JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+        WHERE JE.voucher_no = ?
+    """
+    return run_query(query, (voucher_no,))
+
 # --- SIDEBAR NAVIGATION & BACKUP ---
 st.sidebar.title("🏦 Aasha Nidhi Bank")
 role = st.sidebar.selectbox("User Role", ["Admin/Staff", "Customer Portal"])
@@ -911,6 +921,71 @@ elif menu == "Cash Book":
             st.dataframe(df_print, use_container_width=True)
             st.download_button("Download Cash Book PDF", create_pdf_report("Cash Book Report", df_print), "cash_book.pdf", "application/pdf")
 
+st.markdown("### 🖨️ Voucher Print & Lookup")
+    
+    # Input field to search by voucher number
+    search_voucher_no = st.text_input("Enter Voucher Number to Print/View (e.g., JV-2026-001):", key="print_voucher_input")
+    
+    if search_voucher_no:
+        voucher_data = fetch_voucher_details(search_voucher_no.strip())
+        
+        if voucher_data and len(voucher_data) > 0:
+            st.success(f"Voucher Found: {search_voucher_no}")
+            
+            # Printable Voucher Card Layout Container
+            with st.container(border=True):
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    st.markdown("### **COMPANY / PLANT VOUCHER**")
+                    st.write(f"**Voucher No:** {voucher_data[0][0]}")
+                with col_h2:
+                    st.write(f"**Date:** {voucher_data[0][1]}")
+                
+                st.divider()
+                
+                # Format transaction lines for display
+                formatted_voucher_rows = []
+                total_dr = 0.0
+                total_cr = 0.0
+                
+                for row in voucher_data:
+                    _, _, acc_code, acc_name, dr, cr, narration = row
+                    formatted_voucher_rows.append([
+                        f"{acc_code} - {acc_name}", 
+                        f"₹{dr:,.2f}" if dr > 0 else "-", 
+                        f"₹{cr:,.2f}" if cr > 0 else "-"
+                    ])
+                    total_dr += dr
+                    total_cr += cr
+                
+                df_voucher = pd.DataFrame(formatted_voucher_rows, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
+                st.dataframe(df_voucher, use_container_width=True, hide_index=True)
+                
+                st.write(f"**Narration:** {voucher_data[0][6] if voucher_data[0][6] else 'N/A'}")
+                
+                st.divider()
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    st.write(f"**Total Debit:** ₹{total_dr:,.2f}")
+                with col_f2:
+                    st.write(f"**Total Credit:** ₹{total_cr:,.2f}")
+                    
+                st.markdown("---")
+                st.caption("Authorized Signature / Plant Accountant Stamp")
+            
+            # Trigger Browser Print Command
+            if st.button("Print This Voucher", key=f"btn_print_{search_voucher_no}"):
+                st.markdown(
+                    """
+                    <script>
+                        window.print();
+                    </script>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            st.warning("No voucher found matching that number. Please check and try again.")
+
 # --- BANK BOOK ---
 elif menu == "Bank Book":
     st.title("🏦 Bank Book Entries")
@@ -1024,6 +1099,71 @@ elif menu == "Bank Book":
             st.dataframe(df_print, use_container_width=True)
             st.download_button("Download Bank Book PDF", create_pdf_report("Bank Book Report", df_print), "bank_book.pdf", "application/pdf")
 
+st.markdown("### 🖨️ Voucher Print & Lookup")
+    
+    # Input field to search by voucher number
+    search_voucher_no = st.text_input("Enter Voucher Number to Print/View (e.g., JV-2026-001):", key="print_voucher_input")
+    
+    if search_voucher_no:
+        voucher_data = fetch_voucher_details(search_voucher_no.strip())
+        
+        if voucher_data and len(voucher_data) > 0:
+            st.success(f"Voucher Found: {search_voucher_no}")
+            
+            # Printable Voucher Card Layout Container
+            with st.container(border=True):
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    st.markdown("### **COMPANY / PLANT VOUCHER**")
+                    st.write(f"**Voucher No:** {voucher_data[0][0]}")
+                with col_h2:
+                    st.write(f"**Date:** {voucher_data[0][1]}")
+                
+                st.divider()
+                
+                # Format transaction lines for display
+                formatted_voucher_rows = []
+                total_dr = 0.0
+                total_cr = 0.0
+                
+                for row in voucher_data:
+                    _, _, acc_code, acc_name, dr, cr, narration = row
+                    formatted_voucher_rows.append([
+                        f"{acc_code} - {acc_name}", 
+                        f"₹{dr:,.2f}" if dr > 0 else "-", 
+                        f"₹{cr:,.2f}" if cr > 0 else "-"
+                    ])
+                    total_dr += dr
+                    total_cr += cr
+                
+                df_voucher = pd.DataFrame(formatted_voucher_rows, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
+                st.dataframe(df_voucher, use_container_width=True, hide_index=True)
+                
+                st.write(f"**Narration:** {voucher_data[0][6] if voucher_data[0][6] else 'N/A'}")
+                
+                st.divider()
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    st.write(f"**Total Debit:** ₹{total_dr:,.2f}")
+                with col_f2:
+                    st.write(f"**Total Credit:** ₹{total_cr:,.2f}")
+                    
+                st.markdown("---")
+                st.caption("Authorized Signature / Plant Accountant Stamp")
+            
+            # Trigger Browser Print Command
+            if st.button("Print This Voucher", key=f"btn_print_{search_voucher_no}"):
+                st.markdown(
+                    """
+                    <script>
+                        window.print();
+                    </script>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            st.warning("No voucher found matching that number. Please check and try again.")
+
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
@@ -1067,6 +1207,71 @@ elif menu == "Journal Vouchers":
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
+
+st.markdown("### 🖨️ Voucher Print & Lookup")
+    
+    # Input field to search by voucher number
+    search_voucher_no = st.text_input("Enter Voucher Number to Print/View (e.g., JV-2026-001):", key="print_voucher_input")
+    
+    if search_voucher_no:
+        voucher_data = fetch_voucher_details(search_voucher_no.strip())
+        
+        if voucher_data and len(voucher_data) > 0:
+            st.success(f"Voucher Found: {search_voucher_no}")
+            
+            # Printable Voucher Card Layout Container
+            with st.container(border=True):
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    st.markdown("### **COMPANY / PLANT VOUCHER**")
+                    st.write(f"**Voucher No:** {voucher_data[0][0]}")
+                with col_h2:
+                    st.write(f"**Date:** {voucher_data[0][1]}")
+                
+                st.divider()
+                
+                # Format transaction lines for display
+                formatted_voucher_rows = []
+                total_dr = 0.0
+                total_cr = 0.0
+                
+                for row in voucher_data:
+                    _, _, acc_code, acc_name, dr, cr, narration = row
+                    formatted_voucher_rows.append([
+                        f"{acc_code} - {acc_name}", 
+                        f"₹{dr:,.2f}" if dr > 0 else "-", 
+                        f"₹{cr:,.2f}" if cr > 0 else "-"
+                    ])
+                    total_dr += dr
+                    total_cr += cr
+                
+                df_voucher = pd.DataFrame(formatted_voucher_rows, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
+                st.dataframe(df_voucher, use_container_width=True, hide_index=True)
+                
+                st.write(f"**Narration:** {voucher_data[0][6] if voucher_data[0][6] else 'N/A'}")
+                
+                st.divider()
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    st.write(f"**Total Debit:** ₹{total_dr:,.2f}")
+                with col_f2:
+                    st.write(f"**Total Credit:** ₹{total_cr:,.2f}")
+                    
+                st.markdown("---")
+                st.caption("Authorized Signature / Plant Accountant Stamp")
+            
+            # Trigger Browser Print Command
+            if st.button("Print This Voucher", key=f"btn_print_{search_voucher_no}"):
+                st.markdown(
+                    """
+                    <script>
+                        window.print();
+                    </script>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            st.warning("No voucher found matching that number. Please check and try again.")
 
 # --- ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":

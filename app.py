@@ -391,16 +391,20 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
-    from reportlab.lib.units import inch
+    from reportlab.lib.units import inch, mm
     
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    # Adjusted margins for better fit
+    doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
     elements = []
     
+    # Get available width
+    available_width = A5[0] - 30*mm  # A5 width minus margins
+    
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('VoucherTitle', parent=styles['Heading1'], fontSize=14, textColor=colors.HexColor('#1f4e78'), alignment=1, spaceAfter=12)
-    normal_style = ParagraphStyle('VoucherNormal', parent=styles['Normal'], fontSize=10, leading=14)
-    bold_style = ParagraphStyle('VoucherBold', parent=styles['Normal'], fontSize=10, leading=14, fontName='Helvetica-Bold')
+    title_style = ParagraphStyle('VoucherTitle', parent=styles['Heading1'], fontSize=12, textColor=colors.HexColor('#1f4e78'), alignment=1, spaceAfter=8)
+    normal_style = ParagraphStyle('VoucherNormal', parent=styles['Normal'], fontSize=8, leading=10)
+    bold_style = ParagraphStyle('VoucherBold', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
     
     if voucher_type == 'CB':
         date_val, v_num, part, dr, cr, acc_code, narr = voucher_data[0]
@@ -410,8 +414,14 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
         
         elements.append(Paragraph("AASHA NIDHI BANK", title_style))
-        elements.append(Paragraph("CASH VOUCHER (CB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=12, alignment=1)))
-        elements.append(Spacer(1, 20))
+        elements.append(Paragraph("CASH VOUCHER (CB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=10, alignment=1)))
+        elements.append(Spacer(1, 10))
+        
+        # Calculate column widths to fit A5
+        col1_width = available_width * 0.25  # 25% for labels
+        col2_width = available_width * 0.35  # 35% for values
+        col3_width = available_width * 0.15  # 15% for second label
+        col4_width = available_width * 0.25  # 25% for second value
         
         data = [
             [Paragraph("<b>Voucher No:</b>", bold_style), Paragraph(v_num, normal_style), 
@@ -423,12 +433,16 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             [Paragraph("<b>Narration:</b>", bold_style), Paragraph(narr if narr else 'N/A', normal_style), "", ""],
         ]
         
-        t = Table(data, colWidths=[1.5*inch, 3.5*inch, 0.8*inch, 1.2*inch])
+        t = Table(data, colWidths=[col1_width, col2_width, col3_width, col4_width])
         t.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('PADDING', (0, 0), (-1, -1), 8),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('PADDING', (0, 0), (-1, -1), 4),
+            ('SPAN', (1, 1), (-1, 1)),  # Span particulars across remaining columns
+            ('SPAN', (1, 2), (-1, 2)),  # Span account head across remaining columns
+            ('SPAN', (1, 3), (-1, 3)),  # Span amount across remaining columns
+            ('SPAN', (1, 4), (-1, 4)),  # Span narration across remaining columns
         ]))
         elements.append(t)
         
@@ -440,8 +454,14 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
         
         elements.append(Paragraph("AASHA NIDHI BANK", title_style))
-        elements.append(Paragraph("BANK VOUCHER (BB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=12, alignment=1)))
-        elements.append(Spacer(1, 20))
+        elements.append(Paragraph("BANK VOUCHER (BB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=10, alignment=1)))
+        elements.append(Spacer(1, 10))
+        
+        # Calculate column widths to fit A5
+        col1_width = available_width * 0.20  # 20% for labels
+        col2_width = available_width * 0.40  # 40% for values
+        col3_width = available_width * 0.15  # 15% for second label
+        col4_width = available_width * 0.25  # 25% for second value
         
         data = [
             [Paragraph("<b>Voucher No:</b>", bold_style), Paragraph(v_num, normal_style),
@@ -454,14 +474,92 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             [Paragraph("<b>Narration:</b>", bold_style), Paragraph(narr if narr else 'N/A', normal_style), "", ""],
         ]
         
-        t = Table(data, colWidths=[1.5*inch, 3.5*inch, 0.8*inch, 1.2*inch])
+        t = Table(data, colWidths=[col1_width, col2_width, col3_width, col4_width])
         t.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('PADDING', (0, 0), (-1, -1), 8),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('PADDING', (0, 0), (-1, -1), 4),
+            ('SPAN', (1, 1), (-1, 1)),  # Span bank across remaining columns
+            ('SPAN', (1, 2), (-1, 2)),  # Span particulars across remaining columns
+            ('SPAN', (1, 3), (-1, 3)),  # Span account head across remaining columns
+            ('SPAN', (1, 4), (-1, 4)),  # Span amount across remaining columns
+            ('SPAN', (1, 5), (-1, 5)),  # Span narration across remaining columns
         ]))
         elements.append(t)
+        
+    elif voucher_type == 'JV':
+        elements.append(Paragraph("AASHA NIDHI BANK", title_style))
+        elements.append(Paragraph("JOURNAL VOUCHER (JV)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=10, alignment=1)))
+        elements.append(Spacer(1, 10))
+        
+        jv_date = voucher_data[0][0]
+        narration_text = voucher_data[0][1]
+        
+        # Header info
+        header_data = [
+            [Paragraph("<b>JV ID:</b> JV-" + str(jv_id if jv_id else 'N/A'), bold_style),
+             Paragraph("<b>Date:</b> " + jv_date, normal_style)]
+        ]
+        header_t = Table(header_data, colWidths=[available_width*0.5, available_width*0.5])
+        header_t.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(header_t)
+        elements.append(Spacer(1, 8))
+        
+        # Create table for entries
+        col1_width = available_width * 0.55  # 55% for account head
+        col2_width = available_width * 0.225  # 22.5% for debit
+        col3_width = available_width * 0.225  # 22.5% for credit
+        
+        table_data = [[Paragraph("<b>Account Head</b>", bold_style), 
+                      Paragraph("<b>Debit (₹)</b>", bold_style), 
+                      Paragraph("<b>Credit (₹)</b>", bold_style)]]
+        
+        total_dr = 0
+        total_cr = 0
+        for row in voucher_data:
+            _, _, acc_code, acc_name, dr, cr = row
+            account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
+            table_data.append([
+                Paragraph(account_display, normal_style),
+                Paragraph(f"{dr:,.2f}" if dr > 0 else "-", normal_style),
+                Paragraph(f"{cr:,.2f}" if cr > 0 else "-", normal_style)
+            ])
+            total_dr += dr
+            total_cr += cr
+        
+        # Add totals row
+        table_data.append([
+            Paragraph("<b>Total</b>", bold_style),
+            Paragraph(f"<b>{total_dr:,.2f}</b>", bold_style),
+            Paragraph(f"<b>{total_cr:,.2f}</b>", bold_style)
+        ])
+        
+        t = Table(table_data, colWidths=[col1_width, col2_width, col3_width])
+        t.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f0f0f0')),
+            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph(f"<b>Narration:</b> {narration_text if narration_text else 'N/A'}", normal_style))
+    
+    # Add signature section
+    elements.append(Spacer(1, 20))
+    elements.append(Paragraph("_" * 50, ParagraphStyle('Line', alignment=1)))
+    elements.append(Paragraph("Authorized Signature / Stamp", ParagraphStyle('Sign', alignment=1, fontSize=8)))
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
         
     elif voucher_type == 'JV':
         elements.append(Paragraph("AASHA NIDHI BANK", title_style))

@@ -1544,6 +1544,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.info("No entries recorded yet.")
             
     # --- BALANCE SHEET TAB (`tab2`) ---
+    # --- BALANCE SHEET TAB (`tab2`) ---
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
@@ -1563,12 +1564,14 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING total_debit > 0 OR total_credit > 0
         """)
 
+        # Fetch SB balances (ensuring deposits like the 10000 are captured under liabilities)
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
 
-        income_entries_res = run_query("SELECT SUM(JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
-        expense_entries_res = run_query("SELECT SUM(JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
+        # Fetch total income including any SB/deposit-related income heads
+        income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
+        expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
         tot_inc = income_entries_res[0][0] if income_entries_res and income_entries_res[0][0] is not None else 0.0
         tot_exp = expense_entries_res[0][0] if expense_entries_res and expense_entries_res[0][0] is not None else 0.0
@@ -1590,7 +1593,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     acc_code, acc_name, debit_sum, credit_sum = row
                     net_val = debit_sum - credit_sum
                     if net_val != 0 or debit_sum != 0:
-                        # If a credit entry (like manual depreciation) reduced the asset value
                         if credit_sum > 0:
                             asset_rows.append([f"{acc_name} (Gross)", f"₹{debit_sum:,.2f}", ""])
                             asset_rows.append([f"   Less: Accumulated Depreciation", f"₹{credit_sum:,.2f}", ""])
@@ -1602,7 +1604,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             total_assets = cash_bal + union_bank_bal + sbi_bal + other_assets_total
             
             df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Inner (₹)", "Outer (₹)"])
-            
             st.dataframe(
                 df_assets, 
                 use_container_width=True,
@@ -1668,7 +1669,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
             WHERE CO.account_type = 'Income'
             GROUP BY CO.account_code, CO.account_name
-            HAVING balance > 0
+            HAVING balance != 0
         """)
 
         expense_details = run_query("""
@@ -1678,13 +1679,13 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
             WHERE CO.account_type = 'Expense'
             GROUP BY CO.account_code, CO.account_name
-            HAVING balance > 0
+            HAVING balance != 0
         """)
 
         col_pl1, col_pl2 = st.columns(2)
         
         with col_pl1:
-            st.markdown("### Expenditure (Includes Depreciation)")
+            st.markdown("### Expenditure")
             exp_rows = []
             total_exp = 0.0
             

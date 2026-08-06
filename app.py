@@ -778,7 +778,22 @@ elif menu == "SB Accounts":
             cust_id = cust_dict[selected_cust]
             
             init_bal = st.number_input("Opening Balance (₹)", min_value=0.0, value=500.0)
-            mode = st.selectbox("Funding Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
+            
+            # --- CHART OF ACCOUNTS DRILL-DOWN FOR FUNDING MODE ---
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            if asset_dict:
+                selected_asset_code = st.selectbox(
+                    "Funding Mode (Drill-down: Chart of Accounts)", 
+                    list(asset_dict.keys()), 
+                    key="sb_open_asset_account"
+                )
+                chosen_asset_code = asset_dict[selected_asset_code]
+                mode = selected_asset_code.split(" - ")[1]
+            else:
+                chosen_asset_code = "AST-101"
+                mode = "CASH"
             
             if st.button("Create SB Account"):
                 acc_no = f"SB{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -788,7 +803,7 @@ elif menu == "SB Accounts":
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    post_automated_jv(f"SB Opening Balance - Account {acc_no}", "AST-101", "LIA-101", init_bal)
+                    post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
 
                 st.success(f"SB Account created successfully! Account No: {acc_no}")
         else:
@@ -802,7 +817,23 @@ elif menu == "SB Accounts":
             acc_choice = st.selectbox("Select SB Account No", accounts)
             tx_type = st.selectbox("Transaction Type", ["DEPOSIT", "WITHDRAWAL"])
             amount = st.number_input("Amount (₹)", min_value=1.0, value=100.0)
-            pay_mode = st.selectbox("Payment Mode", ["CASH", "BANK TRANSFER", "CHEQUE", "ONLINE"])
+            
+            # --- CHART OF ACCOUNTS DRILL-DOWN FOR PAYMENT MODE ---
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            if asset_dict:
+                selected_asset_code = st.selectbox(
+                    "Payment Mode (Drill-down: Chart of Accounts)", 
+                    list(asset_dict.keys()), 
+                    key="sb_tx_asset_account"
+                )
+                chosen_asset_code = asset_dict[selected_asset_code]
+                pay_mode = selected_asset_code.split(" - ")[1]
+            else:
+                chosen_asset_code = "AST-101"
+                pay_mode = "CASH"
+                
             narration = st.text_input("Narration / Remarks", value="Counter transaction")
             
             if st.button("Execute Transaction"):
@@ -817,9 +848,9 @@ elif menu == "SB Accounts":
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, db_type, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
                     
                     if tx_type == "DEPOSIT":
-                        post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", "AST-101", "LIA-101", amount)
+                        post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", chosen_asset_code, "LIA-101", amount)
                     else:
-                        post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", "AST-101", amount)
+                        post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
 
                     st.success(f"Transaction successful! New Balance: ₹{new_bal:,.2f}")
         else:
@@ -852,12 +883,21 @@ elif menu == "Fixed Deposits (FD)":
             interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5)
             nominee = st.text_input("Nominee Name")
             
-            # Mode of Transfer selection
-            payment_mode = st.selectbox(
-                "Mode of Transfer", 
-                ["Cash", "Bank", "Cheque", "Online"], 
-                key="fd_mode_of_transfer"
-            )
+            # --- FETCH ASSET ACCOUNTS FOR CHART OF ACCOUNTS DRILL-DOWN ---
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            if asset_dict:
+                selected_asset_code = st.selectbox(
+                    "Mode of Transfer (Drill-down: Chart of Accounts)", 
+                    list(asset_dict.keys()), 
+                    key="fd_asset_account"
+                )
+                chosen_asset_code = asset_dict[selected_asset_code]
+                payment_mode = selected_asset_code.split(" - ")[1]
+            else:
+                chosen_asset_code = "AST-101"  # Fallback code
+                payment_mode = "Cash"
             
             maturity_amount = principal + (principal * interest_rate * (tenure / 12) / 100)
             st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
@@ -868,7 +908,8 @@ elif menu == "Fixed Deposits (FD)":
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
-                post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", "AST-101", "LIA-102", principal)
+                # Automatically post Journal Entry linking the selected Chart of Accounts code to the FD liability
+                post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
                 st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
         else:
             st.warning("Register a customer first.")
@@ -900,12 +941,21 @@ elif menu == "Recurring Deposits (RD)":
             interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.0, key="rd_rate")
             nominee = st.text_input("Nominee Name", key="rd_nom")
             
-            # Mode of Transfer selection
-            payment_mode = st.selectbox(
-                "Mode of Transfer", 
-                ["Cash", "Bank", "Cheque", "Online"], 
-                key="rd_open_mode_of_transfer"
-            )
+            # --- FETCH ASSET ACCOUNTS FOR CHART OF ACCOUNTS DRILL-DOWN ---
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            if asset_dict:
+                selected_asset_code = st.selectbox(
+                    "Mode of Transfer (Drill-down: Chart of Accounts)", 
+                    list(asset_dict.keys()), 
+                    key="rd_open_asset_account"
+                )
+                chosen_asset_code = asset_dict[selected_asset_code]
+                payment_mode = selected_asset_code.split(" - ")[1]
+            else:
+                chosen_asset_code = "AST-101"
+                payment_mode = "Cash"
             
             if st.button("Open RD Account"):
                 run_query("""
@@ -928,18 +978,27 @@ elif menu == "Recurring Deposits (RD)":
             selected_rd = rd_dict[chosen_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst = selected_rd
             
-            # Mode of Transfer selection for installment payment
-            payment_mode_pay = st.selectbox(
-                "Mode of Transfer", 
-                ["Cash", "Bank", "Cheque", "Online"], 
-                key="rd_pay_mode_of_transfer"
-            )
+            # --- FETCH ASSET ACCOUNTS FOR INSTALLMENT PAYMENT DRILL-DOWN ---
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            if asset_dict:
+                selected_asset_code = st.selectbox(
+                    "Mode of Transfer (Drill-down: Chart of Accounts)", 
+                    list(asset_dict.keys()), 
+                    key="rd_pay_asset_account"
+                )
+                chosen_asset_code = asset_dict[selected_asset_code]
+                payment_mode_pay = selected_asset_code.split(" - ")[1]
+            else:
+                chosen_asset_code = "AST-101"
+                payment_mode_pay = "Cash"
             
             if st.button("Confirm & Pay Installment"):
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
                     run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
-                    post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", "AST-101", "LIA-103", monthly_amt)
+                    post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
                     st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
                     st.rerun()
         else:

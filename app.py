@@ -1663,18 +1663,99 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.info("No active liabilities or equity.")
             st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
 
-    with tab3:
-        st.subheader("Profit & Loss Statement")
-        income_entries = run_query("SELECT CO.account_name, SUM(JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income' GROUP BY CO.account_name")
-        expense_entries = run_query("SELECT CO.account_name, SUM(JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense' GROUP BY CO.account_name")
+   with tab3:
+        st.subheader("Profit and Loss Account")
         
-        tot_inc = sum([row[1] for row in income_entries]) if income_entries else 0.0
-        tot_exp = sum([row[1] for row in expense_entries]) if expense_entries else 0.0
+        # 1. Fetch detailed Income heads from Chart of Accounts & JV Entries
+        income_details = run_query("""
+            SELECT CO.account_code, CO.account_name, 
+                   COALESCE(SUM(JE.credit - JE.debit), 0) as balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            WHERE CO.account_type = 'Income'
+            GROUP BY CO.account_code, CO.account_name
+            HAVING balance > 0
+        """)
+
+        # 2. Fetch detailed Expense heads from Chart of Accounts & JV Entries
+        expense_details = run_query("""
+            SELECT CO.account_code, CO.account_name, 
+                   COALESCE(SUM(JE.debit - JE.credit), 0) as balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            WHERE CO.account_type = 'Expense'
+            GROUP BY CO.account_code, CO.account_name
+            HAVING balance > 0
+        """)
+
+        col_pl1, col_pl2 = st.columns(2)
         
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"₹{tot_inc:,.2f}")
-        col2.metric("Total Expenses", f"₹{tot_exp:,.2f}")
-        col3.metric("Net Profit/Loss", f"₹{tot_inc - tot_exp:,.2f}")
+        # --- EXPENSES (DEBIT SIDE) ---
+        with col_pl1:
+            st.markdown("### Expenditure")
+            exp_rows = []
+            total_exp = 0.0
+            
+            if expense_details:
+                for row in expense_details:
+                    acc_code, acc_name, balance = row
+                    exp_rows.append([f"{acc_code} - {acc_name}", f"₹{balance:,.2f}"])
+                    total_exp += balance
+            
+            if exp_rows:
+                df_exp = pd.DataFrame(exp_rows, columns=["Expense Account", "Amount (₹)"])
+                st.dataframe(
+                    df_exp, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "Expense Account": st.column_config.TextColumn("Expense Account", width="medium"),
+                        "Amount (₹)": st.column_config.TextColumn("Amount (₹)", width="small")
+                    }
+                )
+            else:
+                st.info("No recorded expenses.")
+                
+            st.metric("Total Expenses", f"₹{total_exp:,.2f}")
+
+        # --- INCOMES (CREDIT SIDE) ---
+        with col_pl2:
+            st.markdown("### Income")
+            inc_rows = []
+            total_inc = 0.0
+            
+            if income_details:
+                for row in income_details:
+                    acc_code, acc_name, balance = row
+                    inc_rows.append([f"{acc_code} - {acc_name}", f"₹{balance:,.2f}"])
+                    total_inc += balance
+            
+            if inc_rows:
+                df_inc = pd.DataFrame(inc_rows, columns=["Income Account", "Amount (₹)"])
+                st.dataframe(
+                    df_inc, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "Income Account": st.column_config.TextColumn("Income Account", width="medium"),
+                        "Amount (₹)": st.column_config.TextColumn("Amount (₹)", width="small")
+                    }
+                )
+            else:
+                st.info("No recorded incomes.")
+                
+            st.metric("Total Income", f"₹{total_inc:,.2f}")
+
+        st.divider()
+        
+        # --- NET PROFIT / LOSS SUMMARY ---
+        net_result = total_inc - total_exp
+        if net_result > 0:
+            st.success(f"**Net Profit for the Period:** ₹{net_result:,.2f}")
+        elif net_result < 0:
+            st.error(f"**Net Loss for the Period:** ₹{abs(net_result):,.2f}")
+        else:
+            st.info("**Net Result:** Balanced (₹0.00)")
 
 # --- REPORTS ---
 elif menu == "Reports":

@@ -1188,7 +1188,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         union_bank_bal = get_bank_balance("Union Bank of India")
         sbi_bal = get_bank_balance("State Bank of India")
         
-        # Fetch other assets and their net balances directly from JV entries without double-subtracting
+        # Fetch other assets and their net balances directly from JV entries
         other_assets = run_query("""
             SELECT CO.account_code, CO.account_name, 
                    COALESCE(SUM(JE.debit), 0) as total_debit, 
@@ -1225,7 +1225,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             if other_assets:
                 for row in other_assets:
                     acc_code, acc_name, debit_sum, credit_sum = row
-                    # Net balance from the ledger (e.g., 40000 debit - 6000 credit = 34000)
                     net_val = debit_sum - credit_sum
                     if net_val != 0:
                         asset_rows.append([acc_name, net_val])

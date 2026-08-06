@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -372,6 +371,136 @@ def create_pdf_report(title, df):
     else:
         elements.append(Paragraph("No records found for this report.", styles['Normal']))
         
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
+    """
+    Generate a PDF for a specific voucher (CB, BB, or JV)
+    """
+    from reportlab.lib.pagesizes import A5
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('VoucherTitle', parent=styles['Heading1'], fontSize=14, textColor=colors.HexColor('#1f4e78'), alignment=1, spaceAfter=12)
+    normal_style = ParagraphStyle('VoucherNormal', parent=styles['Normal'], fontSize=10, leading=14)
+    bold_style = ParagraphStyle('VoucherBold', parent=styles['Normal'], fontSize=10, leading=14, fontName='Helvetica-Bold')
+    
+    if voucher_type == 'CB':
+        date_val, v_num, part, dr, cr, acc_code, narr = voucher_data[0]
+        
+        elements.append(Paragraph("AASHA NIDHI BANK", title_style))
+        elements.append(Paragraph("CASH VOUCHER (CB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=12, alignment=1)))
+        elements.append(Spacer(1, 20))
+        
+        data = [
+            [Paragraph("<b>Voucher No:</b>", bold_style), Paragraph(v_num, normal_style), 
+             Paragraph("<b>Date:</b>", bold_style), Paragraph(date_val, normal_style)],
+            [Paragraph("<b>Particulars:</b>", bold_style), Paragraph(part, normal_style), "", ""],
+            [Paragraph("<b>Account Code:</b>", bold_style), Paragraph(acc_code, normal_style), "", ""],
+            [Paragraph("<b>Amount:</b>", bold_style), 
+             Paragraph(f"Debit (Receipt): ₹{dr:,.2f}" if dr > 0 else f"Credit (Payment): ₹{cr:,.2f}", normal_style), "", ""],
+            [Paragraph("<b>Narration:</b>", bold_style), Paragraph(narr if narr else 'N/A', normal_style), "", ""],
+        ]
+        
+        t = Table(data, colWidths=[1.5*inch, 2.5*inch, 0.8*inch, 1.2*inch])
+        t.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(t)
+        
+    elif voucher_type == 'BB':
+        date_val, v_num, bank_n, part, dr, cr, acc_code, narr = voucher_data[0]
+        
+        elements.append(Paragraph("AASHA NIDHI BANK", title_style))
+        elements.append(Paragraph("BANK VOUCHER (BB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=12, alignment=1)))
+        elements.append(Spacer(1, 20))
+        
+        data = [
+            [Paragraph("<b>Voucher No:</b>", bold_style), Paragraph(v_num, normal_style),
+             Paragraph("<b>Date:</b>", bold_style), Paragraph(date_val, normal_style)],
+            [Paragraph("<b>Bank:</b>", bold_style), Paragraph(bank_n, normal_style), "", ""],
+            [Paragraph("<b>Particulars:</b>", bold_style), Paragraph(part, normal_style), "", ""],
+            [Paragraph("<b>Account Code:</b>", bold_style), Paragraph(acc_code, normal_style), "", ""],
+            [Paragraph("<b>Amount:</b>", bold_style),
+             Paragraph(f"Debit (Deposit): ₹{dr:,.2f}" if dr > 0 else f"Credit (Withdrawal): ₹{cr:,.2f}", normal_style), "", ""],
+            [Paragraph("<b>Narration:</b>", bold_style), Paragraph(narr if narr else 'N/A', normal_style), "", ""],
+        ]
+        
+        t = Table(data, colWidths=[1.5*inch, 2.5*inch, 0.8*inch, 1.2*inch])
+        t.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(t)
+        
+    elif voucher_type == 'JV':
+        elements.append(Paragraph("AASHA NIDHI BANK", title_style))
+        elements.append(Paragraph("JOURNAL VOUCHER (JV)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=12, alignment=1)))
+        elements.append(Spacer(1, 20))
+        
+        jv_date = voucher_data[0][0]
+        narration_text = voucher_data[0][1]
+        
+        elements.append(Paragraph(f"<b>JV ID:</b> JV-{jv_id if jv_id else 'N/A'}", normal_style))
+        elements.append(Paragraph(f"<b>Date:</b> {jv_date}", normal_style))
+        elements.append(Spacer(1, 10))
+        
+        # Create table for entries
+        table_data = [[Paragraph("<b>Account Head</b>", bold_style), 
+                      Paragraph("<b>Debit (₹)</b>", bold_style), 
+                      Paragraph("<b>Credit (₹)</b>", bold_style)]]
+        
+        total_dr = 0
+        total_cr = 0
+        for row in voucher_data:
+            _, _, acc_code, acc_name, dr, cr = row
+            table_data.append([
+                Paragraph(f"{acc_code} - {acc_name}", normal_style),
+                Paragraph(f"{dr:,.2f}" if dr > 0 else "-", normal_style),
+                Paragraph(f"{cr:,.2f}" if cr > 0 else "-", normal_style)
+            ])
+            total_dr += dr
+            total_cr += cr
+        
+        # Add totals row
+        table_data.append([
+            Paragraph("<b>Total</b>", bold_style),
+            Paragraph(f"<b>{total_dr:,.2f}</b>", bold_style),
+            Paragraph(f"<b>{total_cr:,.2f}</b>", bold_style)
+        ])
+        
+        t = Table(table_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
+        t.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f0f0f0')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph(f"<b>Narration:</b> {narration_text if narration_text else 'N/A'}", normal_style))
+    
+    # Add signature section
+    elements.append(Spacer(1, 30))
+    elements.append(Paragraph("_" * 40, ParagraphStyle('Line', alignment=1)))
+    elements.append(Paragraph("Authorized Signature / Stamp", ParagraphStyle('Sign', alignment=1, fontSize=9)))
+    
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
@@ -961,8 +1090,15 @@ elif menu == "Cash Book":
                         st.markdown("---")
                         st.caption("Authorized Signature / Cashier Stamp")
                     
-                    if st.button("Print Cash Voucher", key=f"print_cb_{v_num}"):
-                        st.markdown('<script>window.print();</script>', unsafe_allow_html=True)
+                    # Generate PDF download button
+                    pdf_data = generate_voucher_pdf('CB', v_data)
+                    st.download_button(
+                        label=f"📥 Download Cash Voucher {v_num} (PDF)",
+                        data=pdf_data,
+                        file_name=f"Cash_Voucher_{v_num}.pdf",
+                        mime="application/pdf",
+                        key=f"download_cb_{v_num}"
+                    )
         else:
             st.info("No Cash Book vouchers available.")
 
@@ -1107,8 +1243,15 @@ elif menu == "Bank Book":
                         st.markdown("---")
                         st.caption("Authorized Signature / Accountant Stamp")
                     
-                    if st.button("Print Bank Voucher", key=f"print_bb_{v_num}"):
-                        st.markdown('<script>window.print();</script>', unsafe_allow_html=True)
+                    # Generate PDF download button
+                    pdf_data = generate_voucher_pdf('BB', v_data)
+                    st.download_button(
+                        label=f"📥 Download Bank Voucher {v_num} (PDF)",
+                        data=pdf_data,
+                        file_name=f"Bank_Voucher_{v_num}.pdf",
+                        mime="application/pdf",
+                        key=f"download_bb_{v_num}"
+                    )
         else:
             st.info("No Bank Book vouchers available.")
 
@@ -1192,8 +1335,15 @@ elif menu == "Journal Vouchers":
                         st.markdown("---")
                         st.caption("Authorized Signature / Auditor Stamp")
                     
-                    if st.button("Print Journal Voucher", key=f"print_jv_{jv_id}"):
-                        st.markdown('<script>window.print();</script>', unsafe_allow_html=True)
+                    # Generate PDF download button
+                    pdf_data = generate_voucher_pdf('JV', v_data, jv_id)
+                    st.download_button(
+                        label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
+                        data=pdf_data,
+                        file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
+                        mime="application/pdf",
+                        key=f"download_jv_{jv_id}"
+                    )
         else:
             st.info("No Journal Vouchers available.")
 
@@ -1311,6 +1461,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
             st.info("No entries recorded yet.")
+            
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()

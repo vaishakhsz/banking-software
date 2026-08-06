@@ -1604,7 +1604,11 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("No entries recorded yet.")
             
-    with tab2:
+            
+with tab2:
+    
+    
+        
     st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
     
     # Get balances from journal entries for all asset accounts

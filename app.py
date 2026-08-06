@@ -1182,12 +1182,23 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
             st.info("No entries recorded yet.")
-    
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
         sbi_bal = get_bank_balance("State Bank of India")
+        
+        # Fetch other fixed/current assets dynamically from Chart of Accounts
+        other_assets = run_query("""
+            SELECT CO.account_name, COALESCE(SUM(JE.debit) - SUM(JE.credit), 0) as balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            WHERE CO.account_type = 'Asset' 
+              AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103')
+            GROUP BY CO.account_code
+            HAVING balance > 0
+        """)
+
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
@@ -1203,12 +1214,21 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col1:
             st.markdown("### Assets")
             asset_data = [
-                ["Cash in Hand", f"₹{cash_bal:,.2f}"],
-                ["Union Bank of India", f"₹{union_bank_bal:,.2f}"],
-                ["State Bank of India", f"₹{sbi_bal:,.2f}"]
+                ["Cash in Hand", cash_bal],
+                ["Union Bank of India", union_bank_bal],
+                ["StateBank of India", sbi_bal]
             ]
-            total_assets = cash_bal + union_bank_bal + sbi_bal
-            df_assets = pd.DataFrame(asset_data, columns=["Account", "Amount"])
+            
+            other_assets_total = 0.0
+            if other_assets:
+                for row in other_assets:
+                    asset_data.append([row[0], row[1]])
+                    other_assets_total += row[1]
+            
+            total_assets = cash_bal + union_bank_bal + sbi_bal + other_assets_total
+            
+            display_asset_data = [[item[0], f"₹{item[1]:,.2f}"] for item in asset_data if item[1] != 0]
+            df_assets = pd.DataFrame(display_asset_data, columns=["Account", "Amount"])
             st.dataframe(df_assets, use_container_width=True)
             st.metric("Total Assets", f"₹{total_assets:,.2f}")
 

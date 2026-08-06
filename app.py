@@ -1182,22 +1182,32 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
         else:
             st.info("No entries recorded yet.")
-    with tab2:
+   with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
         sbi_bal = get_bank_balance("State Bank of India")
         
-        # Fetch other fixed/current assets dynamically from Chart of Accounts
+        # Fetch fixed/other assets and any associated depreciation from JV entries
         other_assets = run_query("""
-            SELECT CO.account_name, COALESCE(SUM(JE.debit) - SUM(JE.credit), 0) as balance
+            SELECT CO.account_code, CO.account_name, 
+                   COALESCE(SUM(JE.debit), 0) as total_debit, 
+                   COALESCE(SUM(JE.credit), 0) as total_credit
             FROM chart_of_accounts CO
             LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
             WHERE CO.account_type = 'Asset' 
               AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103')
-            GROUP BY CO.account_code
-            HAVING balance > 0
+            GROUP BY CO.account_code, CO.account_name
+            HAVING total_debit > 0 OR total_credit > 0
         """)
+
+        # Fetch total depreciation booked under EXP-204 / EXP-205 (Depreciation accounts)
+        depreciation_res = run_query("""
+            SELECT COALESCE(SUM(debit - credit), 0) 
+            FROM jv_entries 
+            WHERE account_code IN ('EXP-204', 'EXP-205')
+        """)
+        total_depreciation = depreciation_res[0][0] if depreciation_res else 0.0
 
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
@@ -1213,22 +1223,40 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### Assets")
-            asset_data = [
-                ["Cash in Hand", cash_bal],
-                ["Union Bank of India", union_bank_bal],
-                ["StateBank of India", sbi_bal]
+            asset_rows = [
+                ["Cash in Hand", cash_bal, 0.0, cash_bal],
+                ["Union Bank of India", union_bank_bal, 0.0, union_bank_bal],
+                ["State Bank of India", sbi_bal, 0.0, sbi_bal]
             ]
             
-            other_assets_total = 0.0
+            other_assets_net_total = 0.0
             if other_assets:
                 for row in other_assets:
-                    asset_data.append([row[0], row[1]])
-                    other_assets_total += row[1]
+                    acc_code, acc_name, debit_sum, credit_sum = row
+                    gross_val = debit_sum - credit_sum
+                    if gross_val > 0:
+                        # Apply depreciation reduction specifically to fixed assets if depreciation exists
+                        if "Computer" in acc_name or "Fixed Asset" in acc_name or "Equipment" in acc_name:
+                            net_val = gross_val - total_depreciation
+                            asset_rows.append([acc_name, gross_val, total_depreciation, net_val])
+                            other_assets_net_total += net_val
+                        else:
+                            asset_rows.append([acc_name, gross_val, 0.0, gross_val])
+                            other_assets_net_total += gross_val
             
-            total_assets = cash_bal + union_bank_bal + sbi_bal + other_assets_total
+            total_assets = cash_bal + union_bank_bal + sbi_bal + other_assets_net_total
             
-            display_asset_data = [[item[0], f"₹{item[1]:,.2f}"] for item in asset_data if item[1] != 0]
-            df_assets = pd.DataFrame(display_asset_data, columns=["Account", "Amount"])
+            # Format rows for display (Inner Gross, Less Depreciation, Outer Net Value)
+            formatted_asset_display = []
+            for item in asset_rows:
+                if item[3] != 0:
+                    if item[2] > 0:
+                        desc = f"{item[0]} (Gross: ₹{item[1]:,.2f} | Less Dep: ₹{item[2]:,.2f})"
+                    else:
+                        desc = item[0]
+                    formatted_asset_display.append([desc, f"₹{item[3]:,.2f}"])
+            
+            df_assets = pd.DataFrame(formatted_asset_display, columns=["Account Description", "Net Amount (Outer)"])
             st.dataframe(df_assets, use_container_width=True)
             st.metric("Total Assets", f"₹{total_assets:,.2f}")
 

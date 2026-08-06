@@ -400,49 +400,48 @@ def fetch_voucher_details(voucher_no):
     if voucher_no.startswith("CB"):
         query = """
             SELECT 
-                date as voucher_date,
+                date,
                 voucher_no,
-                particulars as narration,
+                particulars,
                 account_code,
-                '' as account_name,
-                debit_amount as debit,
-                credit_amount as credit
+                debit_amount,
+                credit_amount
             FROM cash_book 
             WHERE voucher_no = ?
         """
         result = run_query(query, (voucher_no,))
-        if result:
+        if result and len(result) > 0:
+            row = result[0]
             # Fetch account name from chart of accounts
-            account_code = result[0][3]
-            acc_name_result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (account_code,))
-            account_name = acc_name_result[0][0] if acc_name_result else account_code
+            acc_name_result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (row[3],))
+            account_name = acc_name_result[0][0] if acc_name_result and len(acc_name_result) > 0 else row[3]
             
-            # Format as list of tuples matching expected structure
-            return [(result[0][0], result[0][1], result[0][2], account_name, result[0][4], result[0][5])]
+            # Return as list of tuples with consistent structure: (date, voucher_no, narration, account_name, debit, credit)
+            return [(row[0], row[1], row[2], account_name, row[4], row[5])]
         return None
     
     # Check if it's a Bank Book voucher (BB)
     elif voucher_no.startswith("BB"):
         query = """
             SELECT 
-                date as voucher_date,
+                date,
                 voucher_no,
-                particulars as narration,
+                particulars,
                 account_code,
-                '' as account_name,
-                debit_amount as debit,
-                credit_amount as credit
+                debit_amount,
+                credit_amount
             FROM bank_book 
             WHERE voucher_no = ?
         """
         result = run_query(query, (voucher_no,))
-        if result:
+        if result and len(result) > 0:
+            row = result[0]
             # Fetch account name from chart of accounts
-            account_code = result[0][3]
-            acc_name_result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (account_code,))
-            account_name = acc_name_result[0][0] if acc_name_result else account_code
+            acc_name_result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (row[3],))
+            account_name = acc_name_result[0][0] if acc_name_result and len(acc_name_result) > 0 else row[3]
             
-            return [(result[0][0], result[0][1], result[0][2], account_name, result[0][4], result[0][5])]
+            # Return as list of tuples with consistent structure: (date, voucher_no, narration, account_name, debit, credit)
+            return [(row[0], row[1], row[2], account_name, row[4], row[5])]
         return None
     
     # Check if it's a Journal Voucher (JV)
@@ -461,7 +460,15 @@ def fetch_voucher_details(voucher_no):
             JOIN chart_of_accounts co ON je.account_code = co.account_code
             WHERE jv.voucher_no = ?
         """
-        return run_query(query, (voucher_no,))
+        result = run_query(query, (voucher_no,))
+        if result and len(result) > 0:
+            # For JV, return as list of tuples with consistent structure
+            formatted_result = []
+            for row in result:
+                # (voucher_date, voucher_no, narration, account_name, debit, credit)
+                formatted_result.append((row[0], row[1], row[2], row[4], row[5], row[6]))
+            return formatted_result
+        return None
     
     return None
 
@@ -487,6 +494,7 @@ def voucher_print_section():
                     st.markdown("### **COMPANY / PLANT VOUCHER**")
                     st.write(f"**Voucher No:** {search_voucher_no}")
                 with col_h2:
+                    # Get date from first row (all rows should have same date)
                     st.write(f"**Date:** {voucher_data[0][0]}")
                 
                 st.divider()
@@ -497,46 +505,39 @@ def voucher_print_section():
                 total_cr = 0.0
                 
                 for row in voucher_data:
-                    # Row structure: (voucher_date, voucher_no, narration, account_name, debit, credit)
-                    voucher_date, voucher_no, narration, acc_name, debit, credit = row
-                    
-                    # Handle both single and multi-line vouchers
-                    if isinstance(acc_name, tuple) or isinstance(acc_name, list):
-                        # Multi-line JV
-                        for item in row:
-                            if len(item) >= 6:
-                                _, _, _, acc_name_item, debit_item, credit_item = item
-                                formatted_voucher_rows.append([
-                                    acc_name_item,
-                                    f"₹{debit_item:,.2f}" if debit_item > 0 else "-",
-                                    f"₹{credit_item:,.2f}" if credit_item > 0 else "-"
-                                ])
-                                total_dr += debit_item
-                                total_cr += credit_item
+                    # Row structure: (date, voucher_no, narration, account_name, debit, credit)
+                    if len(row) == 6:
+                        date_val, voucher_no_val, narration_val, acc_name, debit, credit = row
+                        
+                        # Handle different data types
+                        try:
+                            debit_val = float(debit) if debit is not None else 0.0
+                            credit_val = float(credit) if credit is not None else 0.0
+                        except (ValueError, TypeError):
+                            debit_val = 0.0
+                            credit_val = 0.0
+                        
+                        formatted_voucher_rows.append([
+                            str(acc_name) if acc_name else "N/A",
+                            f"₹{debit_val:,.2f}" if debit_val > 0 else "-",
+                            f"₹{credit_val:,.2f}" if credit_val > 0 else "-"
+                        ])
+                        total_dr += debit_val
+                        total_cr += credit_val
                     else:
-                        # Single line voucher (CB or BB)
+                        # Fallback for unexpected row structure
                         formatted_voucher_rows.append([
-                            acc_name if acc_name else "N/A",
-                            f"₹{debit:,.2f}" if debit > 0 else "-",
-                            f"₹{credit:,.2f}" if credit > 0 else "-"
+                            "Unknown Account",
+                            "-",
+                            "-"
                         ])
-                        total_dr += debit
-                        total_cr += credit
                 
-                # If it's a single line voucher and we haven't added it yet
-                if len(formatted_voucher_rows) == 0 and len(voucher_data) > 0:
-                    for row in voucher_data:
-                        _, _, narration, acc_name, debit, credit = row
-                        formatted_voucher_rows.append([
-                            acc_name if acc_name else "N/A",
-                            f"₹{debit:,.2f}" if debit > 0 else "-",
-                            f"₹{credit:,.2f}" if credit > 0 else "-"
-                        ])
-                        total_dr += debit
-                        total_cr += credit
-                
-                df_voucher = pd.DataFrame(formatted_voucher_rows, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
-                st.dataframe(df_voucher, use_container_width=True, hide_index=True)
+                # If no rows were formatted properly, show a message
+                if len(formatted_voucher_rows) == 0:
+                    st.warning("No transaction details available for this voucher.")
+                else:
+                    df_voucher = pd.DataFrame(formatted_voucher_rows, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
+                    st.dataframe(df_voucher, use_container_width=True, hide_index=True)
                 
                 # Get narration from the first row
                 first_row_narration = voucher_data[0][2] if len(voucher_data[0]) > 2 else ""

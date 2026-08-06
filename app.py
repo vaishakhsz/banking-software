@@ -488,7 +488,10 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         ]))
         elements.append(t)
         
+        
     elif voucher_type == 'JV':
+        
+         
         elements.append(Paragraph("AASHA NIDHI BANK", title_style))
         elements.append(Paragraph("JOURNAL VOUCHER (JV)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=10, alignment=1)))
         elements.append(Spacer(1, 10))

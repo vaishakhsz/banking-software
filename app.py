@@ -375,6 +375,14 @@ def create_pdf_report(title, df):
     buffer.seek(0)
     return buffer.getvalue()
 
+def get_account_name(account_code):
+    """Get account name from chart_of_accounts"""
+    try:
+        result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (account_code,))
+        return result[0][0] if result else ""
+    except:
+        return ""
+
 def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     """
     Generate a PDF for a specific voucher (CB, BB, or JV)
@@ -397,6 +405,10 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     if voucher_type == 'CB':
         date_val, v_num, part, dr, cr, acc_code, narr = voucher_data[0]
         
+        # Get account name for the account code
+        acc_name = get_account_name(acc_code)
+        account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
+        
         elements.append(Paragraph("AASHA NIDHI BANK", title_style))
         elements.append(Paragraph("CASH VOUCHER (CB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=12, alignment=1)))
         elements.append(Spacer(1, 20))
@@ -405,13 +417,13 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             [Paragraph("<b>Voucher No:</b>", bold_style), Paragraph(v_num, normal_style), 
              Paragraph("<b>Date:</b>", bold_style), Paragraph(date_val, normal_style)],
             [Paragraph("<b>Particulars:</b>", bold_style), Paragraph(part, normal_style), "", ""],
-            [Paragraph("<b>Account Code:</b>", bold_style), Paragraph(acc_code, normal_style), "", ""],
+            [Paragraph("<b>Account Head:</b>", bold_style), Paragraph(account_display, normal_style), "", ""],
             [Paragraph("<b>Amount:</b>", bold_style), 
              Paragraph(f"Debit (Receipt): ₹{dr:,.2f}" if dr > 0 else f"Credit (Payment): ₹{cr:,.2f}", normal_style), "", ""],
             [Paragraph("<b>Narration:</b>", bold_style), Paragraph(narr if narr else 'N/A', normal_style), "", ""],
         ]
         
-        t = Table(data, colWidths=[1.5*inch, 2.5*inch, 0.8*inch, 1.2*inch])
+        t = Table(data, colWidths=[1.5*inch, 3.5*inch, 0.8*inch, 1.2*inch])
         t.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
@@ -423,6 +435,10 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     elif voucher_type == 'BB':
         date_val, v_num, bank_n, part, dr, cr, acc_code, narr = voucher_data[0]
         
+        # Get account name for the account code
+        acc_name = get_account_name(acc_code)
+        account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
+        
         elements.append(Paragraph("AASHA NIDHI BANK", title_style))
         elements.append(Paragraph("BANK VOUCHER (BB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=12, alignment=1)))
         elements.append(Spacer(1, 20))
@@ -432,13 +448,13 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
              Paragraph("<b>Date:</b>", bold_style), Paragraph(date_val, normal_style)],
             [Paragraph("<b>Bank:</b>", bold_style), Paragraph(bank_n, normal_style), "", ""],
             [Paragraph("<b>Particulars:</b>", bold_style), Paragraph(part, normal_style), "", ""],
-            [Paragraph("<b>Account Code:</b>", bold_style), Paragraph(acc_code, normal_style), "", ""],
+            [Paragraph("<b>Account Head:</b>", bold_style), Paragraph(account_display, normal_style), "", ""],
             [Paragraph("<b>Amount:</b>", bold_style),
              Paragraph(f"Debit (Deposit): ₹{dr:,.2f}" if dr > 0 else f"Credit (Withdrawal): ₹{cr:,.2f}", normal_style), "", ""],
             [Paragraph("<b>Narration:</b>", bold_style), Paragraph(narr if narr else 'N/A', normal_style), "", ""],
         ]
         
-        t = Table(data, colWidths=[1.5*inch, 2.5*inch, 0.8*inch, 1.2*inch])
+        t = Table(data, colWidths=[1.5*inch, 3.5*inch, 0.8*inch, 1.2*inch])
         t.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
@@ -468,8 +484,10 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         total_cr = 0
         for row in voucher_data:
             _, _, acc_code, acc_name, dr, cr = row
+            # For JV, acc_name already comes from the query
+            account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
             table_data.append([
-                Paragraph(f"{acc_code} - {acc_name}", normal_style),
+                Paragraph(account_display, normal_style),
                 Paragraph(f"{dr:,.2f}" if dr > 0 else "-", normal_style),
                 Paragraph(f"{cr:,.2f}" if cr > 0 else "-", normal_style)
             ])
@@ -1074,6 +1092,10 @@ elif menu == "Cash Book":
                 v_data = fetch_cb_voucher(v_no)
                 if v_data:
                     date_val, v_num, part, dr, cr, acc_code, narr = v_data[0]
+                    # Get account name for display
+                    acc_name = get_account_name(acc_code)
+                    account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
+                    
                     with st.container(border=True):
                         col1, col2 = st.columns(2)
                         col1.markdown("### **CASH VOUCHER (CB)**")
@@ -1081,7 +1103,7 @@ elif menu == "Cash Book":
                         col2.write(f"**Date:** {date_val}")
                         st.divider()
                         st.write(f"**Particulars:** {part}")
-                        st.write(f"**Account Code:** {acc_code}")
+                        st.write(f"**Account Head:** {account_display}")
                         if dr > 0:
                             st.write(f"**Debit Amount (Receipt):** ₹{dr:,.2f}")
                         else:
@@ -1226,6 +1248,10 @@ elif menu == "Bank Book":
                 v_data = fetch_bb_voucher(v_no)
                 if v_data:
                     date_val, v_num, bank_n, part, dr, cr, acc_code, narr = v_data[0]
+                    # Get account name for display
+                    acc_name = get_account_name(acc_code)
+                    account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
+                    
                     with st.container(border=True):
                         col1, col2 = st.columns(2)
                         col1.markdown("### **BANK VOUCHER (BB)**")
@@ -1234,7 +1260,7 @@ elif menu == "Bank Book":
                         col2.write(f"**Date:** {date_val}")
                         st.divider()
                         st.write(f"**Particulars:** {part}")
-                        st.write(f"**Account Code:** {acc_code}")
+                        st.write(f"**Account Head:** {account_display}")
                         if dr > 0:
                             st.write(f"**Debit Amount (Deposit):** ₹{dr:,.2f}")
                         else:
@@ -1321,7 +1347,8 @@ elif menu == "Journal Vouchers":
                         total_cr = 0.0
                         for row in v_data:
                             _, _, acc_code, acc_name, dr, cr = row
-                            rows_list.append([f"{acc_code} - {acc_name}", f"₹{dr:,.2f}" if dr > 0 else "-", f"₹{cr:,.2f}" if cr > 0 else "-"])
+                            account_display = f"{acc_code} - {acc_name}"
+                            rows_list.append([account_display, f"₹{dr:,.2f}" if dr > 0 else "-", f"₹{cr:,.2f}" if cr > 0 else "-"])
                             total_dr += dr
                             total_cr += cr
                         

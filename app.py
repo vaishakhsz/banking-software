@@ -1193,7 +1193,7 @@ elif menu == "Bank Book":
         
         with st.form("bank_entry_form"):
             col1, col2 = st.columns(2)
-            entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal / Transfer to Cash)"])
+            entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal / Transfer to Cash/Utilization)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
             particulars = st.text_input("Particulars / Description")
             

@@ -1543,29 +1543,25 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("No entries recorded yet.")
             
+    # --- BALANCE SHEET TAB (`tab2`) ---
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
         sbi_bal = get_bank_balance("State Bank of India")
         
+        # Fetch all asset accounts and their live ledger balances from JV entries
         other_assets = run_query("""
             SELECT CO.account_code, CO.account_name, 
-                   COALESCE(SUM(CASE WHEN JE.debit > 0 AND CO.account_code NOT IN ('EXP-204', 'EXP-205') THEN JE.debit ELSE 0 END), 0) as gross_debit
+                   COALESCE(SUM(JE.debit), 0) as total_debit,
+                   COALESCE(SUM(JE.credit), 0) as total_credit
             FROM chart_of_accounts CO
             LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
             WHERE CO.account_type = 'Asset' 
               AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103')
             GROUP BY CO.account_code, CO.account_name
-            HAVING gross_debit > 0
+            HAVING total_debit > 0 OR total_credit > 0
         """)
-
-        depreciation_res = run_query("""
-            SELECT COALESCE(SUM(debit - credit), 0) 
-            FROM jv_entries 
-            WHERE account_code IN ('EXP-204', 'EXP-205')
-        """)
-        total_depreciation = depreciation_res[0][0] if depreciation_res else 0.0
 
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
@@ -1591,19 +1587,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             other_assets_total = 0.0
             if other_assets:
                 for row in other_assets:
-                    acc_code, acc_name, gross_debit = row
-                    if gross_debit > 0:
-                        if "Computer" in acc_name or "Fixed Asset" in acc_name or "Equipment" in acc_name:
-                            dep_val = total_depreciation if total_depreciation > 0 else 6000.0
-                            net_val = gross_debit - dep_val
-                            
-                            asset_rows.append([acc_name, f"₹{gross_debit:,.2f}", ""])
-                            asset_rows.append(["   Less: Depreciation", f"₹{dep_val:,.2f}", ""])
-                            asset_rows.append(["   Net Book Value", "", f"₹{net_val:,.2f}"])
-                            other_assets_total += net_val
+                    acc_code, acc_name, debit_sum, credit_sum = row
+                    net_val = debit_sum - credit_sum
+                    if net_val != 0 or debit_sum != 0:
+                        # If a credit entry (like manual depreciation) reduced the asset value
+                        if credit_sum > 0:
+                            asset_rows.append([f"{acc_name} (Gross)", f"₹{debit_sum:,.2f}", ""])
+                            asset_rows.append([f"   Less: Accumulated Depreciation", f"₹{credit_sum:,.2f}", ""])
+                            asset_rows.append([f"   Net Book Value", "", f"₹{net_val:,.2f}"])
                         else:
-                            asset_rows.append([acc_name, "", f"₹{gross_debit:,.2f}"])
-                            other_assets_total += gross_debit
+                            asset_rows.append([acc_name, "", f"₹{net_val:,.2f}"])
+                        other_assets_total += net_val
             
             total_assets = cash_bal + union_bank_bal + sbi_bal + other_assets_total
             
@@ -1663,12 +1657,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.info("No active liabilities or equity.")
             st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
 
+    # --- PROFIT & LOSS TAB (`tab3`) ---
     with tab3:
-        
-       
         st.subheader("Profit and Loss Account")
         
-        # 1. Fetch detailed Income heads from Chart of Accounts & JV Entries
         income_details = run_query("""
             SELECT CO.account_code, CO.account_name, 
                    COALESCE(SUM(JE.credit - JE.debit), 0) as balance
@@ -1679,7 +1671,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING balance > 0
         """)
 
-        # 2. Fetch detailed Expense heads from Chart of Accounts & JV Entries
         expense_details = run_query("""
             SELECT CO.account_code, CO.account_name, 
                    COALESCE(SUM(JE.debit - JE.credit), 0) as balance
@@ -1692,9 +1683,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
 
         col_pl1, col_pl2 = st.columns(2)
         
-        # --- EXPENSES (DEBIT SIDE) ---
         with col_pl1:
-            st.markdown("### Expenditure")
+            st.markdown("### Expenditure (Includes Depreciation)")
             exp_rows = []
             total_exp = 0.0
             
@@ -1720,7 +1710,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 
             st.metric("Total Expenses", f"₹{total_exp:,.2f}")
 
-        # --- INCOMES (CREDIT SIDE) ---
         with col_pl2:
             st.markdown("### Income")
             inc_rows = []
@@ -1749,8 +1738,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.metric("Total Income", f"₹{total_inc:,.2f}")
 
         st.divider()
-        
-        # --- NET PROFIT / LOSS SUMMARY ---
         net_result = total_inc - total_exp
         if net_result > 0:
             st.success(f"**Net Profit for the Period:** ₹{net_result:,.2f}")

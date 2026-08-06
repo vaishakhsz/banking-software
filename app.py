@@ -1605,61 +1605,110 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.info("No entries recorded yet.")
             
     with tab2:
-        st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
-        cash_bal = get_cash_balance()
-        union_bank_bal = get_bank_balance("Union Bank of India")
-        sbi_bal = get_bank_balance("State Bank of India")
+    st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
+    
+    # Get balances from journal entries for all asset accounts
+    asset_balances = run_query("""
+        SELECT 
+            CO.account_code,
+            CO.account_name,
+            COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
+        FROM chart_of_accounts CO
+        LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+        WHERE CO.account_type = 'Asset'
+        GROUP BY CO.account_code, CO.account_name
+        HAVING net_balance != 0
+    """)
+    
+    # Create a dictionary of asset balances
+    asset_balance_dict = {}
+    for row in asset_balances:
+        asset_balance_dict[row[0]] = row[2]
+    
+    # Get specific bank balances
+    cash_bal = asset_balance_dict.get('AST-101', 0)  # Cash in Hand
+    union_bank_bal = asset_balance_dict.get('AST-102', 0)  # Union Bank
+    sbi_bal = asset_balance_dict.get('AST-103', 0)  # SBI
+    retrieval_pool_bal = asset_balance_dict.get('AST-104', 0)  # Retrieval Pool
+    
+    # Get SB, FD, RD liability balances from journal entries
+    sb_liability = run_query("""
+        SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
+        FROM jv_entries JE
+        JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+        WHERE CO.account_code = 'LIA-101'
+    """)[0][0] or 0.0
+    
+    fd_liability = run_query("""
+        SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
+        FROM jv_entries JE
+        JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+        WHERE CO.account_code = 'LIA-102'
+    """)[0][0] or 0.0
+    
+    rd_liability = run_query("""
+        SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
+        FROM jv_entries JE
+        JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+        WHERE CO.account_code = 'LIA-103'
+    """)[0][0] or 0.0
+    
+    # Get other assets (excluding the ones we already have)
+    other_asset_balances = run_query("""
+        SELECT 
+            CO.account_code,
+            CO.account_name,
+            COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
+        FROM chart_of_accounts CO
+        LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+        WHERE CO.account_type = 'Asset' 
+          AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103', 'AST-104')
+        GROUP BY CO.account_code, CO.account_name
+        HAVING net_balance != 0
+    """)
+
+    # Get income and expense for P&L
+    income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
+    expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
+    
+    tot_inc = income_entries_res[0][0] if income_entries_res and income_entries_res[0][0] is not None else 0.0
+    tot_exp = expense_entries_res[0][0] if expense_entries_res and expense_entries_res[0][0] is not None else 0.0
+    net_profit_loss = tot_inc - tot_exp
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### Assets")
         
-        tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
-        tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-        tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-
-        other_assets = run_query("""
-            SELECT CO.account_code, CO.account_name, 
-                   COALESCE(SUM(JE.debit), 0) as total_debit,
-                   COALESCE(SUM(JE.credit), 0) as total_credit
-            FROM chart_of_accounts CO
-            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-            WHERE CO.account_type = 'Asset' 
-              AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103')
-            GROUP BY CO.account_code, CO.account_name
-            HAVING total_debit > 0 OR total_credit > 0
-        """)
-
-        income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
-        expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
+        asset_rows = []
+        total_assets = 0
         
-        tot_inc = income_entries_res[0][0] if income_entries_res and income_entries_res[0][0] is not None else 0.0
-        tot_exp = expense_entries_res[0][0] if expense_entries_res and expense_entries_res[0][0] is not None else 0.0
-        net_profit_loss = tot_inc - tot_exp
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("### Assets")
-            effective_cash_bal = cash_bal + tot_sb_balance
-            
-            asset_rows = [
-                ["Cash in Hand (incl. SB Deposits)", "", f"₹{effective_cash_bal:,.2f}"],
-                ["Union Bank of India", "", f"₹{union_bank_bal:,.2f}"],
-                ["State Bank of India", "", f"₹{sbi_bal:,.2f}"]
-            ]
-            
-            other_assets_total = 0.0
-            if other_assets:
-                for row in other_assets:
-                    acc_code, acc_name, debit_sum, credit_sum = row
-                    net_val = debit_sum - credit_sum
-                    if net_val != 0 or debit_sum != 0:
-                        if credit_sum > 0:
-                            asset_rows.append([f"{acc_name} (Gross)", f"₹{debit_sum:,.2f}", ""])
-                            asset_rows.append([f"   Less: Accumulated Depreciation", f"₹{credit_sum:,.2f}", ""])
-                            asset_rows.append([f"   Net Book Value", "", f"₹{net_val:,.2f}"])
-                        else:
-                            asset_rows.append([acc_name, "", f"₹{net_val:,.2f}"])
-                        other_assets_total += net_val
-            
-            total_assets = effective_cash_bal + union_bank_bal + sbi_bal + other_assets_total
-            
+        # Cash in Hand
+        if cash_bal != 0:
+            asset_rows.append(["Cash in Hand", "", f"₹{cash_bal:,.2f}"])
+            total_assets += cash_bal
+        
+        # Bank Accounts
+        if union_bank_bal != 0:
+            asset_rows.append(["Union Bank of India", "", f"₹{union_bank_bal:,.2f}"])
+            total_assets += union_bank_bal
+        
+        if sbi_bal != 0:
+            asset_rows.append(["State Bank of India", "", f"₹{sbi_bal:,.2f}"])
+            total_assets += sbi_bal
+        
+        if retrieval_pool_bal != 0:
+            asset_rows.append(["Retrieval Pool Account", "", f"₹{retrieval_pool_bal:,.2f}"])
+            total_assets += retrieval_pool_bal
+        
+        # Other assets
+        if other_asset_balances:
+            for row in other_asset_balances:
+                acc_code, acc_name, net_val = row
+                if net_val != 0:
+                    asset_rows.append([acc_name, "", f"₹{net_val:,.2f}"])
+                    total_assets += net_val
+        
+        if asset_rows:
             df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Inner (₹)", "Outer (₹)"])
             st.dataframe(
                 df_assets, 
@@ -1672,48 +1721,60 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 }
             )
             st.metric("Total Assets", f"₹{total_assets:,.2f}")
+        else:
+            st.info("No assets recorded.")
 
-        with col2:
-            st.markdown("### Liabilities & Equity")
-            lia_data = []
-            total_lia = 0
-            
-            if tot_sb_balance > 0:
-                lia_data.append(["SB Deposits Control", f"₹{tot_sb_balance:,.2f}"])
-                total_lia += tot_sb_balance
-            if tot_fd_principal > 0:
-                lia_data.append(["FD Deposits Control", f"₹{tot_fd_principal:,.2f}"])
-                total_lia += tot_fd_principal
-            if tot_rd_invested > 0:
-                lia_data.append(["RD Deposits Control", f"₹{tot_rd_invested:,.2f}"])
-                total_lia += tot_rd_invested
-                
-            fixed_capital_result = run_query("SELECT SUM(credit - debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Equity'")
-            fixed_capital = fixed_capital_result[0][0] if fixed_capital_result and fixed_capital_result[0][0] is not None else 0.0
-            
-            if fixed_capital != 0:
-                lia_data.append(["Share Capital & Funding Sources", f"₹{fixed_capital:,.2f}"])
-                total_lia += fixed_capital
-                
-            if net_profit_loss != 0:
-                label_pnl = "Retained Earnings (Net Profit)" if net_profit_loss > 0 else "Retained Earnings (Net Loss)"
-                lia_data.append([label_pnl, f"₹{net_profit_loss:,.2f}"])
-                total_lia += net_profit_loss
-                
-            if lia_data:
-                df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
-                st.dataframe(
-                    df_lia, 
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Account": st.column_config.TextColumn("Account", width="medium"),
-                        "Amount": st.column_config.TextColumn("Amount", width="small")
-                    }
-                )
-            else:
-                st.info("No active liabilities or equity.")
+    with col2:
+        st.markdown("### Liabilities & Equity")
+        lia_data = []
+        total_lia = 0
+        
+        # Liabilities from journal entries
+        if sb_liability > 0:
+            lia_data.append(["SB Deposits Control", f"₹{sb_liability:,.2f}"])
+            total_lia += sb_liability
+        
+        if fd_liability > 0:
+            lia_data.append(["FD Deposits Control", f"₹{fd_liability:,.2f}"])
+            total_lia += fd_liability
+        
+        if rd_liability > 0:
+            lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
+            total_lia += rd_liability
+        
+        # Equity
+        equity_result = run_query("""
+            SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
+            FROM jv_entries JE
+            JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+            WHERE CO.account_type = 'Equity'
+        """)
+        equity_balance = equity_result[0][0] if equity_result and equity_result[0][0] is not None else 0.0
+        
+        if equity_balance != 0:
+            lia_data.append(["Equity", f"₹{equity_balance:,.2f}"])
+            total_lia += equity_balance
+        
+        # Add current year profit/loss
+        if net_profit_loss != 0:
+            label_pnl = "Current Year Profit" if net_profit_loss > 0 else "Current Year Loss"
+            lia_data.append([label_pnl, f"₹{net_profit_loss:,.2f}"])
+            total_lia += net_profit_loss
+        
+        if lia_data:
+            df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
+            st.dataframe(
+                df_lia, 
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Account": st.column_config.TextColumn("Account", width="medium"),
+                    "Amount": st.column_config.TextColumn("Amount", width="small")
+                }
+            )
             st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
+        else:
+            st.info("No liabilities or equity recorded.")
 
     with tab3:
         st.subheader("Profit and Loss Account")

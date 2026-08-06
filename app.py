@@ -1663,7 +1663,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.info("No active liabilities or equity.")
             st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
 
-   with tab3:
+    with tab3:
+        
+       
         st.subheader("Profit and Loss Account")
         
         # 1. Fetch detailed Income heads from Chart of Accounts & JV Entries

@@ -1544,15 +1544,14 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.info("No entries recorded yet.")
             
     
-   # --- BALANCE SHEET TAB (`tab2`) --
+   # --- BALANCE SHEET TAB (`tab2`) ---
     with tab2:
-        
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
         sbi_bal = get_bank_balance("State Bank of India")
         
-        # Fetch SB balances (representing the ₹10,000 deposit)
+        # Fetch SB balances (representing the deposits)
         tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
         tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
         tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
@@ -1570,13 +1569,11 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING total_debit > 0 OR total_credit > 0
         """)
 
-        # Fetch total income including standard income + SB deposits mapping
+        # Fetch net profit/loss strictly from actual Income and Expense accounts (excluding SB deposits)
         income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
-        base_tot_inc = income_entries_res[0][0] if income_entries_res and income_entries_res[0][0] is not None else 0.0
-        tot_inc = base_tot_inc + tot_sb_balance  # Including SB deposits in total income tracking as requested
-        
+        tot_inc = income_entries_res[0][0] if income_entries_res and income_entries_res[0][0] is not None else 0.0
         tot_exp = expense_entries_res[0][0] if expense_entries_res and expense_entries_res[0][0] is not None else 0.0
         net_profit_loss = tot_inc - tot_exp
 
@@ -1584,7 +1581,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col1:
             st.markdown("### Assets")
             
-            # Incorporating SB deposits into Cash/Bank asset pool so Cash in Hand / Liquid assets reflect it
+            # Incorporating SB deposits into liquid asset/cash pool to reflect the received funds
             effective_cash_bal = cash_bal + tot_sb_balance
             
             asset_rows = [
@@ -1720,17 +1717,13 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col_pl2:
             st.markdown("### Income")
             inc_rows = []
+            total_inc = 0.0
             
             if income_details:
                 for row in income_details:
                     acc_code, acc_name, balance = row
                     inc_rows.append([f"{acc_code} - {acc_name}", f"₹{balance:,.2f}"])
-            
-            # Explicitly append SB Deposits into the Income side as requested
-            if tot_sb_balance > 0:
-                inc_rows.append(["SB Account Deposits (Inflow)", f"₹{tot_sb_balance:,.2f}"])
-                
-            total_inc = base_tot_inc + tot_sb_balance
+                    total_inc += balance
             
             if inc_rows:
                 df_inc = pd.DataFrame(inc_rows, columns=["Income Account", "Amount (₹)"])

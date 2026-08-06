@@ -1543,15 +1543,21 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("No entries recorded yet.")
             
-    # --- BALANCE SHEET TAB (`tab2`) ---
-    # --- BALANCE SHEET TAB (`tab2`) ---
+    
+   # --- BALANCE SHEET TAB (`tab2`) --
     with tab2:
+        
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         cash_bal = get_cash_balance()
         union_bank_bal = get_bank_balance("Union Bank of India")
         sbi_bal = get_bank_balance("State Bank of India")
         
-        # Fetch all asset accounts and their live ledger balances from JV entries
+        # Fetch SB balances (representing the ₹10,000 deposit)
+        tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
+        tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+        tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
+
+        # Fetch other asset accounts and their live ledger balances from JV entries
         other_assets = run_query("""
             SELECT CO.account_code, CO.account_name, 
                    COALESCE(SUM(JE.debit), 0) as total_debit,
@@ -1564,16 +1570,13 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING total_debit > 0 OR total_credit > 0
         """)
 
-        # Fetch SB balances (ensuring deposits like the 10000 are captured under liabilities)
-        tot_sb_balance = run_query("SELECT SUM(balance) FROM sb_accounts")[0][0] or 0.0
-        tot_fd_principal = run_query("SELECT SUM(principal) FROM fixed_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-        tot_rd_invested = run_query("SELECT SUM(monthly_amount * installments_paid) FROM recurring_deposits WHERE status='ACTIVE'")[0][0] or 0.0
-
-        # Fetch total income including any SB/deposit-related income heads
+        # Fetch total income including standard income + SB deposits mapping
         income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
-        tot_inc = income_entries_res[0][0] if income_entries_res and income_entries_res[0][0] is not None else 0.0
+        base_tot_inc = income_entries_res[0][0] if income_entries_res and income_entries_res[0][0] is not None else 0.0
+        tot_inc = base_tot_inc + tot_sb_balance  # Including SB deposits in total income tracking as requested
+        
         tot_exp = expense_entries_res[0][0] if expense_entries_res and expense_entries_res[0][0] is not None else 0.0
         net_profit_loss = tot_inc - tot_exp
 
@@ -1581,8 +1584,11 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col1:
             st.markdown("### Assets")
             
+            # Incorporating SB deposits into Cash/Bank asset pool so Cash in Hand / Liquid assets reflect it
+            effective_cash_bal = cash_bal + tot_sb_balance
+            
             asset_rows = [
-                ["Cash in Hand", "", f"₹{cash_bal:,.2f}"],
+                ["Cash in Hand (incl. SB Deposits)", "", f"₹{effective_cash_bal:,.2f}"],
                 ["Union Bank of India", "", f"₹{union_bank_bal:,.2f}"],
                 ["State Bank of India", "", f"₹{sbi_bal:,.2f}"]
             ]
@@ -1601,7 +1607,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                             asset_rows.append([acc_name, "", f"₹{net_val:,.2f}"])
                         other_assets_total += net_val
             
-            total_assets = cash_bal + union_bank_bal + sbi_bal + other_assets_total
+            total_assets = effective_cash_bal + union_bank_bal + sbi_bal + other_assets_total
             
             df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Inner (₹)", "Outer (₹)"])
             st.dataframe(
@@ -1714,13 +1720,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         with col_pl2:
             st.markdown("### Income")
             inc_rows = []
-            total_inc = 0.0
             
             if income_details:
                 for row in income_details:
                     acc_code, acc_name, balance = row
                     inc_rows.append([f"{acc_code} - {acc_name}", f"₹{balance:,.2f}"])
-                    total_inc += balance
+            
+            # Explicitly append SB Deposits into the Income side as requested
+            if tot_sb_balance > 0:
+                inc_rows.append(["SB Account Deposits (Inflow)", f"₹{tot_sb_balance:,.2f}"])
+                
+            total_inc = base_tot_inc + tot_sb_balance
             
             if inc_rows:
                 df_inc = pd.DataFrame(inc_rows, columns=["Income Account", "Amount (₹)"])

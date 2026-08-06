@@ -852,27 +852,34 @@ elif menu == "Fixed Deposits (FD)":
             interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5)
             nominee = st.text_input("Nominee Name")
             
+            # Mode of Transfer selection
+            payment_mode = st.selectbox(
+                "Mode of Transfer", 
+                ["Cash", "Bank", "Cheque", "Online"], 
+                key="fd_mode_of_transfer"
+            )
+            
             maturity_amount = principal + (principal * interest_rate * (tenure / 12) / 100)
             st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
             
             if st.button("Open FD Account"):
                 run_query("""
-                    INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
-                """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
+                    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+                """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
-                post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal}", "AST-101", "LIA-102", principal)
-                st.success("Fixed Deposit opened & recorded successfully!")
+                post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", "AST-101", "LIA-102", principal)
+                st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
         else:
             st.warning("Register a customer first.")
 
     with tab2:
         fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status
+            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
         if fds:
-            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status"])
+            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Payment Mode"])
             st.dataframe(df_fds, use_container_width=True)
             st.download_button("Download FDs PDF Report", create_pdf_report("Fixed Deposits Report", df_fds), "fixed_deposits.pdf", "application/pdf")
         else:
@@ -893,12 +900,19 @@ elif menu == "Recurring Deposits (RD)":
             interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.0, key="rd_rate")
             nominee = st.text_input("Nominee Name", key="rd_nom")
             
+            # Mode of Transfer selection
+            payment_mode = st.selectbox(
+                "Mode of Transfer", 
+                ["Cash", "Bank", "Cheque", "Online"], 
+                key="rd_open_mode_of_transfer"
+            )
+            
             if st.button("Open RD Account"):
                 run_query("""
-                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at)
-                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?)
-                """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                st.success("Recurring Deposit opened successfully!")
+                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode)
+                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?)
+                """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
+                st.success(f"Recurring Deposit opened successfully via {payment_mode}!")
         else:
             st.warning("Register customers first.")
 
@@ -914,23 +928,30 @@ elif menu == "Recurring Deposits (RD)":
             selected_rd = rd_dict[chosen_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst = selected_rd
             
+            # Mode of Transfer selection for installment payment
+            payment_mode_pay = st.selectbox(
+                "Mode of Transfer", 
+                ["Cash", "Bank", "Cheque", "Online"], 
+                key="rd_pay_mode_of_transfer"
+            )
+            
             if st.button("Confirm & Pay Installment"):
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
                     run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
-                    post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid})", "AST-101", "LIA-103", monthly_amt)
-                    st.success(f"Installment #{new_paid} successfully paid!")
+                    post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", "AST-101", "LIA-103", monthly_amt)
+                    st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
                     st.rerun()
         else:
             st.info("No active recurring deposits found.")
 
     with tab3:
         rds = run_query("""
-            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status
+            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.payment_mode
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
         """)
         if rds:
-            df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status"])
+            df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status", "Payment Mode"])
             st.dataframe(df_rds, use_container_width=True)
 
 # --- RETRIEVAL ACCOUNT ---

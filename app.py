@@ -1605,14 +1605,18 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.info("No entries recorded yet.")
             
             
-with tab2:
+    with tab2:
+        
+        
     
     
         
-    st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
+        st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
+        
     
     # Get balances from journal entries for all asset accounts
-    asset_balances = run_query("""
+       asset_balances = run_query("""
+       
         SELECT 
             CO.account_code,
             CO.account_name,
@@ -1623,6 +1627,7 @@ with tab2:
         GROUP BY CO.account_code, CO.account_name
         HAVING net_balance != 0
     """)
+
     
     # Create a dictionary of asset balances
     asset_balance_dict = {}

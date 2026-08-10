@@ -1408,6 +1408,7 @@ elif menu == "Bank Book":
             st.info("No Bank Book vouchers available.")
 
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
@@ -1424,6 +1425,22 @@ elif menu == "Journal Vouchers":
             - The asset value on the Balance Sheet will be reduced by this amount
             """)
             
+            # FIRST: Ensure depreciation accounts exist
+            dep_check = run_query("SELECT COUNT(*) FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
+            if dep_check and dep_check[0][0] == 0:
+                st.warning("⚠️ Depreciation accounts not found. Creating them now...")
+                # Insert depreciation accounts if they don't exist
+                run_query("""
+                    INSERT OR IGNORE INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                    VALUES ('EXP-204', 'Depreciation 15%', 'Expense', 'Operating Expenses')
+                """, fetch=False)
+                run_query("""
+                    INSERT OR IGNORE INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                    VALUES ('EXP-205', 'Depreciation 18%', 'Expense', 'Operating Expenses')
+                """, fetch=False)
+                st.success("✅ Depreciation accounts created successfully! Please refresh the page.")
+                st.rerun()
+            
             # Get depreciation accounts
             dep_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
             
@@ -1433,6 +1450,18 @@ elif menu == "Journal Vouchers":
             # Check if we have accounts
             if not dep_coa_list:
                 st.error("❌ No Depreciation accounts found! Please add them in Chart of Accounts.")
+                # Show add button
+                if st.button("➕ Add Depreciation Accounts Now"):
+                    run_query("""
+                        INSERT OR IGNORE INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                        VALUES ('EXP-204', 'Depreciation 15%', 'Expense', 'Operating Expenses')
+                    """, fetch=False)
+                    run_query("""
+                        INSERT OR IGNORE INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                        VALUES ('EXP-205', 'Depreciation 18%', 'Expense', 'Operating Expenses')
+                    """, fetch=False)
+                    st.success("✅ Depreciation accounts created! Please refresh the page.")
+                    st.rerun()
                 st.stop()
             
             if not asset_coa_list:
@@ -1501,10 +1530,10 @@ elif menu == "Journal Vouchers":
             dep_date = st.date_input("Depreciation Date", value=date.today(), key="auto_dep_date")
             
             # Debug info
-            st.write("**Debug Info:**")
-            st.write(f"Selected Dep Account: {selected_dep_acc} -> Code: {dep_dict[selected_dep_acc]}")
-            st.write(f"Selected Asset Account: {selected_asset_acc} -> Code: {asset_dict[selected_asset_acc]}")
-            st.write(f"Amount to Post: ₹{calculated_dep_amt:,.2f}")
+            with st.expander("🔧 Debug Info (Click to expand)"):
+                st.write(f"Selected Dep Account: {selected_dep_acc} -> Code: {dep_dict[selected_dep_acc]}")
+                st.write(f"Selected Asset Account: {selected_asset_acc} -> Code: {asset_dict[selected_asset_acc]}")
+                st.write(f"Amount to Post: ₹{calculated_dep_amt:,.2f}")
             
             if st.button("Post Calculated Depreciation JV", type="primary"):
                 if calculated_dep_amt > 0:
@@ -1518,7 +1547,6 @@ elif menu == "Journal Vouchers":
                             (str(dep_date), dep_narration)
                         )
                         jv_id = cursor.lastrowid
-                        st.write(f"✅ Created JV ID: {jv_id}")
                         
                         # Get account codes
                         dep_code = dep_dict[selected_dep_acc]
@@ -1529,14 +1557,12 @@ elif menu == "Journal Vouchers":
                             "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
                             (jv_id, dep_code, calculated_dep_amt)
                         )
-                        st.write(f"✅ Debited {dep_code} with ₹{calculated_dep_amt:,.2f}")
                         
                         # Insert credit entry (Asset Account)
                         cursor.execute(
                             "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
                             (jv_id, asset_code, calculated_dep_amt)
                         )
-                        st.write(f"✅ Credited {asset_code} with ₹{calculated_dep_amt:,.2f}")
                         
                         conn.commit()
                         conn.close()
@@ -1573,23 +1599,53 @@ elif menu == "Journal Vouchers":
                 total_dr = dr1 + dr2
                 total_cr = cr1 + cr2
                 if total_dr == total_cr and total_dr > 0:
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
-                    jv_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
-                    conn.commit()
-                    conn.close()
-                    st.success("Balanced Journal Voucher posted successfully!")
+                    try:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
+                        jv_id = cursor.lastrowid
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
+                        conn.commit()
+                        conn.close()
+                        st.success("✅ Balanced Journal Voucher posted successfully!")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"❌ Error posting JV: {str(e)}")
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+                    st.error("❌ Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
     with tab2:
-        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
+        st.subheader("📋 View Journal Vouchers")
+        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY jv_id DESC")
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
+            
+            # Show detailed entries for selected JV
+            st.subheader("🔍 View JV Details")
+            jv_id_to_view = st.selectbox("Select JV ID to view details", [j[0] for j in jvs])
+            if jv_id_to_view:
+                entries = fetch_jv_voucher(jv_id_to_view)
+                if entries:
+                    st.write(f"**Narration:** {entries[0][1]}")
+                    st.write(f"**Date:** {entries[0][0]}")
+                    st.divider()
+                    detail_data = []
+                    total_dr = 0
+                    total_cr = 0
+                    for row in entries:
+                        _, _, acc_code, acc_name, dr, cr = row
+                        detail_data.append([f"{acc_code} - {acc_name}", f"₹{dr:,.2f}" if dr > 0 else "-", f"₹{cr:,.2f}" if cr > 0 else "-"])
+                        total_dr += dr
+                        total_cr += cr
+                    df_detail = pd.DataFrame(detail_data, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
+                    st.dataframe(df_detail, use_container_width=True, hide_index=True)
+                    col1, col2 = st.columns(2)
+                    col1.metric("Total Debit", f"₹{total_dr:,.2f}")
+                    col2.metric("Total Credit", f"₹{total_cr:,.2f}")
+        else:
+            st.info("No Journal Vouchers found.")
 
     with tab3:
         st.subheader("🖨️ Journal Voucher (JV) Drill-Down Print")
@@ -1628,16 +1684,20 @@ elif menu == "Journal Vouchers":
                         st.markdown("---")
                         st.caption("Authorized Signature / Auditor Stamp")
                     
-                    pdf_data = generate_voucher_pdf('JV', v_data, jv_id)
-                    st.download_button(
-                        label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
-                        data=pdf_data,
-                        file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
-                        mime="application/pdf",
-                        key=f"download_jv_{jv_id}"
-                    )
+                    # Generate PDF
+                    try:
+                        pdf_data = generate_voucher_pdf('JV', v_data, jv_id)
+                        st.download_button(
+                            label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
+                            data=pdf_data,
+                            file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
+                            mime="application/pdf",
+                            key=f"download_jv_{jv_id}"
+                        )
+                    except Exception as e:
+                        st.error(f"Error generating PDF: {str(e)}")
         else:
-            st.info("No Journal Vouchers available.")
+            st.info("No Journal Vouchers available to print.")
 
 # --- ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":

@@ -1412,6 +1412,7 @@ elif menu == "Bank Book":
 
 # --- JOURNAL VOUCHERS ---
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
@@ -1423,13 +1424,11 @@ elif menu == "Journal Vouchers":
         - **15% Depreciation**: Debit `EXP-204 - Depreciation 15%` | Credit the Asset account
         - **18% Depreciation**: Debit `EXP-205 - Depreciation 18%` | Credit the Asset account
         
-        **Example for Building Depreciation:**
+        **Example:**
         - Building Value: ₹50,000
         - 18% Depreciation = ₹50,000 × 18% = ₹9,000
         - Debit: EXP-205 (Depreciation 18%) = ₹9,000
         - Credit: AST-108 (Building) = ₹9,000
-        
-        These entries will automatically appear in your Balance Sheet and Profit & Loss Statement.
         """)
         
         # Initialize session state for JV result
@@ -1438,14 +1437,6 @@ elif menu == "Journal Vouchers":
             st.session_state.jv_id = None
             st.session_state.jv_data = None
             st.session_state.jv_narration = ""
-        
-        # Initialize session state for auto-fill values
-        if 'auto_dr1' not in st.session_state:
-            st.session_state.auto_dr1 = 0.0
-        if 'auto_cr2' not in st.session_state:
-            st.session_state.auto_cr2 = 0.0
-        if 'auto_acc2' not in st.session_state:
-            st.session_state.auto_acc2 = ""
         
         with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
@@ -1457,18 +1448,12 @@ elif menu == "Journal Vouchers":
             
             col_acc, col_dr, col_cr = st.columns(3)
             acc1 = col_acc.selectbox("Account Head 1", coa_keys, key="jv_acc1")
-            
-            # Check if auto-fill values exist and use them
-            dr1_value = st.session_state.auto_dr1 if st.session_state.auto_dr1 > 0 else 0.0
-            cr2_value = st.session_state.auto_cr2 if st.session_state.auto_cr2 > 0 else 0.0
-            acc2_value = st.session_state.auto_acc2 if st.session_state.auto_acc2 else coa_keys[0] if coa_keys else ""
-            
-            dr1 = col_dr.number_input("Debit 1 (₹)", value=dr1_value, key="jv_dr1")
+            dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
             cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
             
-            acc2 = col_acc.selectbox("Account Head 2", coa_keys, index=coa_keys.index(acc2_value) if acc2_value in coa_keys else 0, key="jv_acc2")
+            acc2 = col_acc.selectbox("Account Head 2", coa_keys, key="jv_acc2")
             dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
-            cr2 = col_cr.number_input("Credit 2 (₹)", value=cr2_value, key="jv_cr2")
+            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
             acc3 = col_acc.selectbox("Account Head 3 (Optional)", coa_keys, key="jv_acc3")
             dr3 = col_dr.number_input("Debit 3 (₹)", value=0.0, key="jv_dr3")
@@ -1496,11 +1481,6 @@ elif menu == "Journal Vouchers":
                     
                     conn.commit()
                     conn.close()
-                    
-                    # Clear auto-fill session state
-                    st.session_state.auto_dr1 = 0.0
-                    st.session_state.auto_cr2 = 0.0
-                    st.session_state.auto_acc2 = ""
                     
                     # Store in session state for display outside form
                     st.session_state.jv_posted = True
@@ -1538,117 +1518,6 @@ elif menu == "Journal Vouchers":
                     st.rerun()
                 else:
                     st.error("❌ Journal Voucher unbalanced! Total Debits must equal Total Credits.")
-        
-        # --- DEPRECIATION HELPER (OUTSIDE THE FORM) ---
-        st.divider()
-        st.markdown("### 💡 Depreciation Helper - Auto Calculate")
-        
-        # Get ALL assets (both current and non-current)
-        asset_list = run_query("""
-            SELECT account_code, account_name, category 
-            FROM chart_of_accounts 
-            WHERE account_type = 'Asset'
-            ORDER BY 
-                CASE 
-                    WHEN category = 'Current Assets' THEN 1
-                    WHEN category = 'Non Current Assets' THEN 2
-                    ELSE 3
-                END,
-                account_name
-        """)
-        
-        if asset_list:
-            # Get current asset balances
-            asset_balances_data = []
-            for a in asset_list:
-                acc_code = a[0]
-                acc_name = a[1]
-                category = a[2] if a[2] else "Other"
-                
-                # Get current balance from journal entries
-                balance_result = run_query("""
-                    SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0)
-                    FROM jv_entries
-                    WHERE account_code = ?
-                """, (acc_code,))
-                current_value = balance_result[0][0] if balance_result else 0
-                
-                if current_value != 0:  # Show all assets including zero balance
-                    asset_balances_data.append({
-                        "Account Code": acc_code,
-                        "Account Name": acc_name,
-                        "Category": category,
-                        "Current Value": current_value
-                    })
-            
-            if asset_balances_data:
-                # Display assets in a table
-                df_assets = pd.DataFrame(asset_balances_data)
-                
-                # Add depreciation columns
-                df_assets["15% Depreciation"] = df_assets["Current Value"] * 0.15
-                df_assets["18% Depreciation"] = df_assets["Current Value"] * 0.18
-                
-                st.dataframe(
-                    df_assets, 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "Account Code": st.column_config.TextColumn("Code", width="small"),
-                        "Account Name": st.column_config.TextColumn("Asset Name", width="medium"),
-                        "Category": st.column_config.TextColumn("Category", width="small"),
-                        "Current Value": st.column_config.NumberColumn("Current Value (₹)", format="₹%.2f"),
-                        "15% Depreciation": st.column_config.NumberColumn("15% Dep (₹)", format="₹%.2f"),
-                        "18% Depreciation": st.column_config.NumberColumn("18% Dep (₹)", format="₹%.2f"),
-                    }
-                )
-                
-                # Let user select asset and depreciation rate
-                col1, col2, col3 = st.columns([2, 1, 1])
-                with col1:
-                    selected_asset_display = st.selectbox(
-                        "Select Asset to Depreciate", 
-                        [f"{a['Account Code']} - {a['Account Name']}" for a in asset_balances_data],
-                        key="dep_asset_select_helper"
-                    )
-                
-                with col2:
-                    dep_rate = st.selectbox(
-                        "Depreciation Rate", 
-                        ["15%", "18%"],
-                        key="dep_rate_select"
-                    )
-                
-                # Get the selected asset details
-                selected_code = selected_asset_display.split(" - ")[0] if " - " in selected_asset_display else selected_asset_display
-                selected_asset_info = next((a for a in asset_balances_data if a["Account Code"] == selected_code), None)
-                
-                if selected_asset_info:
-                    asset_value = selected_asset_info["Current Value"]
-                    dep_percentage = 15 if dep_rate == "15%" else 18
-                    calc_depreciation = asset_value * (dep_percentage / 100)
-                    
-                    st.info(f"""
-                    **Selected Asset:** {selected_asset_display}
-                    **Current Value:** ₹{asset_value:,.2f}
-                    **{dep_rate} Depreciation:** ₹{calc_depreciation:,.2f}
-                    """)
-                    
-                    with col3:
-                        # Button to auto-fill the journal entry (outside the form)
-                        if st.button(f"✅ Auto-Fill {dep_rate} Depreciation", key="auto_fill_dep_helper"):
-                            # Set the form values in session state
-                            st.session_state.auto_dr1 = calc_depreciation
-                            st.session_state.auto_cr2 = calc_depreciation
-                            st.session_state.auto_acc2 = selected_asset_display
-                            
-                            st.success(f"✅ Auto-filled {dep_rate} depreciation of ₹{calc_depreciation:,.2f} for {selected_asset_display}")
-                            st.info("📝 Go to the form above and click 'Save and Post JV' to complete the entry.")
-                            st.rerun()
-            else:
-                st.warning("No assets found with balances. Please create some assets first.")
-        else:
-            st.warning("No asset accounts found in Chart of Accounts.")
         
         # Display posted JV outside the form
         if st.session_state.jv_posted and st.session_state.jv_data:

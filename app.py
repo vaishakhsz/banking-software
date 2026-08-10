@@ -1424,11 +1424,26 @@ elif menu == "Journal Vouchers":
             - The asset value on the Balance Sheet will be reduced by this amount
             """)
             
-            # FIX: Get ALL asset accounts, not just Non Current Assets
+            # First, let's check what's in the database
+            st.subheader("🔍 Database Check - Asset Accounts Found")
+            
+            # Get ALL asset accounts from the database
+            all_asset_accounts = run_query("SELECT account_code, account_name, category FROM chart_of_accounts WHERE account_type = 'Asset' ORDER BY account_code")
+            
+            if all_asset_accounts:
+                st.success(f"✅ Found {len(all_asset_accounts)} asset accounts in the database:")
+                asset_df = pd.DataFrame(all_asset_accounts, columns=["Account Code", "Account Name", "Category"])
+                st.dataframe(asset_df, use_container_width=True, hide_index=True)
+            else:
+                st.error("❌ No asset accounts found in the database! Please check the Chart of Accounts.")
+            
+            st.divider()
+            
+            # Get depreciation accounts
             dep_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
             dep_dict = {f"{c[0]} - {c[1]}": c[0] for c in dep_coa_list} if dep_coa_list else {}
             
-            # FIX: Get ALL asset accounts, not just filtered ones
+            # Get ALL asset accounts (not filtered)
             asset_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' ORDER BY account_code")
             asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_coa_list} if asset_coa_list else {}
             
@@ -1486,7 +1501,16 @@ elif menu == "Journal Vouchers":
                     else:
                         st.error("Calculated depreciation amount must be greater than zero.")
             else:
-                st.warning("Depreciation or Asset accounts not found in Chart of Accounts. Please check the Chart of Accounts.")
+                st.warning("""
+                ⚠️ Depreciation or Asset accounts not found in Chart of Accounts.
+                
+                Please make sure:
+                1. You have depreciation accounts (EXP-204, EXP-205) in the Chart of Accounts
+                2. You have asset accounts (AST-101 to AST-108) in the Chart of Accounts
+                3. The database has been properly initialized
+                
+                You can add missing accounts in the "Chart of Accounts" section.
+                """)
 
         st.markdown("---")
         st.subheader("Manual Journal Voucher Entry")

@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -6,6 +5,7 @@ from datetime import datetime, date
 import io
 import os
 import time
+import re
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -1413,10 +1413,62 @@ elif menu == "Journal Vouchers":
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
-        st.info("💡 **Tip for Depreciation:** To record 18% depreciation on building, select **EXP-205 - Depreciation 18%** as Account Head 1 (Debit) and **AST-108 - Building** as Account Head 2 (Credit).")
+        st.info("💡 **Depreciation Calculator & Poster:** Use the automated calculator below to automatically compute and post the correct depreciation percentage (e.g., 18% of asset value) instead of manual calculations.")
+        
+        with st.expander("🛠️ Automatic Depreciation Calculator & Poster", expanded=True):
+            dep_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
+            dep_dict = {f"{c[0]} - {c[1]}": c[0] for c in dep_coa_list} if dep_coa_list else {}
+            
+            asset_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND (category = 'Non Current Assets' OR account_name LIKE '%Building%' OR account_name LIKE '%Fixed Asset%')")
+            asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_coa_list} if asset_coa_list else {}
+            
+            if dep_dict and asset_dict:
+                selected_dep_acc = st.selectbox("Select Depreciation Expense Head", list(dep_dict.keys()), key="auto_dep_acc")
+                selected_asset_acc = st.selectbox("Select Asset Head (e.g., Building)", list(asset_dict.keys()), key="auto_dep_asset")
+                asset_val = st.number_input("Enter Asset Book Value / Amount (₹)", min_value=0.0, value=50000.0, step=1000.0)
+                
+                # Extract percentage from account name (e.g., "Depreciation 18%" -> 18.0)
+                dep_name = selected_dep_acc.split(" - ")[1]
+                rate = 18.0
+                if "15%" in dep_name:
+                    rate = 15.0
+                elif "18%" in dep_name:
+                    rate = 18.0
+                else:
+                    numbers = re.findall(r'\d+(?:\.\d+)?', dep_name)
+                    if numbers:
+                        rate = float(numbers[0])
+                
+                calculated_dep_amt = round(asset_val * (rate / 100), 2)
+                st.write(f"📊 **Calculated Depreciation ({rate}% of ₹{asset_val:,.2f}):** ₹{calculated_dep_amt:,.2f}")
+                
+                dep_narration = st.text_input("Depreciation Narration", value=f"Depreciation @ {rate}% on {selected_asset_acc.split(' - ')[1]}")
+                dep_date = st.date_input("Depreciation Date", value=date.today(), key="auto_dep_date")
+                
+                if st.button("Post Calculated Depreciation JV", type="primary"):
+                    if calculated_dep_amt > 0:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(dep_date), dep_narration))
+                        jv_id = cursor.lastrowid
+                        # Debit Depreciation Expense
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, dep_dict[selected_dep_acc], calculated_dep_amt))
+                        # Credit Asset Account (reducing asset value)
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, asset_dict[selected_asset_acc], calculated_dep_amt))
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Successfully posted depreciation of ₹{calculated_dep_amt:,.2f} ({rate}%)!")
+                        st.rerun()
+                    else:
+                        st.error("Calculated depreciation amount must be greater than zero.")
+            else:
+                st.warning("Depreciation or Asset accounts not found in Chart of Accounts.")
+
+        st.markdown("---")
+        st.subheader("Manual Journal Voucher Entry")
         with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
-            narration = st.text_input("Narration / Description")
+            narration = st.text_input("Narration / Description", key="manual_narration")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
@@ -1430,7 +1482,7 @@ elif menu == "Journal Vouchers":
             dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
             cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
-            if st.form_submit_button("Save and Post JV"):
+            if st.form_submit_button("Save and Post Manual JV"):
                 total_dr = dr1 + dr2
                 total_cr = cr1 + cr2
                 if total_dr == total_cr and total_dr > 0:
@@ -1618,7 +1670,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # Get balances from journal entries for all asset accounts
         asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -1631,18 +1682,15 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING net_balance != 0
         """)
         
-        # Create a dictionary of asset balances
         asset_balance_dict = {}
         for row in asset_balances:
             asset_balance_dict[row[0]] = row[2]
         
-        # Get specific bank balances
-        cash_bal = asset_balance_dict.get('AST-101', 0)  # Cash in Hand
-        union_bank_bal = asset_balance_dict.get('AST-102', 0)  # Union Bank
-        sbi_bal = asset_balance_dict.get('AST-103', 0)  # SBI
-        retrieval_pool_bal = asset_balance_dict.get('AST-104', 0)  # Retrieval Pool
+        cash_bal = asset_balance_dict.get('AST-101', 0)
+        union_bank_bal = asset_balance_dict.get('AST-102', 0)
+        sbi_bal = asset_balance_dict.get('AST-103', 0)
+        retrieval_pool_bal = asset_balance_dict.get('AST-104', 0)
         
-        # Get SB, FD, RD liability balances from journal entries
         sb_liability = run_query("""
             SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
             FROM jv_entries JE
@@ -1664,7 +1712,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_code = 'LIA-103'
         """)[0][0] or 0.0
         
-        # Get other assets (excluding the ones we already have)
         other_asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -1678,7 +1725,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING net_balance != 0
         """)
 
-        # Get income and expense for P&L
         income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
@@ -1693,12 +1739,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             asset_rows = []
             total_assets = 0
             
-            # Cash in Hand
             if cash_bal != 0:
                 asset_rows.append(["Cash in Hand", "", f"₹{cash_bal:,.2f}"])
                 total_assets += cash_bal
             
-            # Bank Accounts
             if union_bank_bal != 0:
                 asset_rows.append(["Union Bank of India", "", f"₹{union_bank_bal:,.2f}"])
                 total_assets += union_bank_bal
@@ -1711,7 +1755,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 asset_rows.append(["Retrieval Pool Account", "", f"₹{retrieval_pool_bal:,.2f}"])
                 total_assets += retrieval_pool_bal
             
-            # Other assets (including Building AST-108 and Fixed Assets)
             if other_asset_balances:
                 for row in other_asset_balances:
                     acc_code, acc_name, net_val = row

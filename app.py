@@ -219,8 +219,8 @@ def init_db():
             ("EXP-201", "Salaries & Benefits", "Expense", "Operating Expenses"),
             ("EXP-202", "Rent & Utilities", "Expense", "Operating Expenses"),
             ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
-            ("EXP-204", "Depreciation 15%", "Expense", "Operating Expenses"),
-            ("EXP-205", "Depreciation 18%", "Expense", "Operating Expenses"),
+            ("EXP-204", "Depreciation 15%", "Expense", "Depreciation"),
+            ("EXP-205", "Depreciation 18%", "Expense", "Depreciation"),
             ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
@@ -230,7 +230,7 @@ def init_db():
             ("AST-105", "Fixed Asset Computer", "Asset", "Non Current Assets"),
             ("AST-106", "Fixed Asset Furniture & Fixtures", "Asset", "Non Current Assets"),
             ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),
-            ("AST-108", "Building", "Asset", "Non Current Assets"),  # NEW: Building head added
+            ("AST-108", "Building", "Asset", "Non Current Assets"),
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
             ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
@@ -1416,7 +1416,13 @@ elif menu == "Journal Vouchers":
     
     with tab1:
         st.subheader("Create Journal Voucher")
-        st.info("Note: For depreciation entries, use EXP-204 (15%) or EXP-205 (18%) on debit side and credit the respective asset account.")
+        st.info("""
+        **For Depreciation Entries:**
+        - **15% Depreciation**: Debit `EXP-204 - Depreciation 15%` | Credit the Asset account (e.g., AST-108 - Building)
+        - **18% Depreciation**: Debit `EXP-205 - Depreciation 18%` | Credit the Asset account (e.g., AST-108 - Building)
+        
+        These entries will automatically appear in your Balance Sheet and Profit & Loss Statement.
+        """)
         
         with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
@@ -1458,7 +1464,22 @@ elif menu == "Journal Vouchers":
                     conn.commit()
                     conn.close()
                     
-                    st.success(f"Balanced Journal Voucher posted successfully! JV ID: {jv_id}")
+                    st.success(f"✅ Balanced Journal Voucher posted successfully! JV ID: {jv_id}")
+                    
+                    # Check if this was a depreciation entry
+                    is_depreciation = False
+                    for acc in [acc1, acc2, acc3]:
+                        if "EXP-204" in acc or "EXP-205" in acc:
+                            is_depreciation = True
+                            break
+                    
+                    if is_depreciation:
+                        st.info("📌 **Depreciation Entry Detected!** This will automatically reflect in:")
+                        st.markdown("""
+                        - **Balance Sheet**: Asset values will be reduced
+                        - **P&L Statement**: Depreciation will appear under Expenses
+                        - **Trial Balance**: Will show both debit and credit entries
+                        """)
                     
                     # Show the journal entry details
                     st.subheader("Posted Journal Entry")
@@ -1491,7 +1512,7 @@ elif menu == "Journal Vouchers":
                             key=f"download_jv_{jv_id}_new"
                         )
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+                    st.error("❌ Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY jv_id DESC")
@@ -1710,7 +1731,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         for row in asset_balances:
             asset_balance_dict[row[0]] = row[3]
         
-        # Get specific bank balances
+        # Get specific balances
         cash_bal = asset_balance_dict.get('AST-101', 0)
         union_bank_bal = asset_balance_dict.get('AST-102', 0)
         sbi_bal = asset_balance_dict.get('AST-103', 0)
@@ -1943,8 +1964,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     acc_code, acc_name, balance = row
                     exp_rows.append([f"{acc_code} - {acc_name}", f"₹{balance:,.2f}"])
                     total_exp += balance
-            else:
-                st.info("No recorded expenses.")
             
             if exp_rows:
                 df_exp = pd.DataFrame(exp_rows, columns=["Expense Account", "Amount (₹)"])
@@ -1957,6 +1976,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                         "Amount (₹)": st.column_config.TextColumn("Amount (₹)", width="small")
                     }
                 )
+            else:
+                st.info("No recorded expenses.")
                 
             # Show depreciation breakdown if present
             dep_15 = run_query("""
@@ -1993,8 +2014,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     acc_code, acc_name, balance = row
                     inc_rows.append([f"{acc_code} - {acc_name}", f"₹{balance:,.2f}"])
                     total_inc += balance
-            else:
-                st.info("No recorded income.")
             
             if inc_rows:
                 df_inc = pd.DataFrame(inc_rows, columns=["Income Account", "Amount (₹)"])
@@ -2007,6 +2026,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                         "Amount (₹)": st.column_config.TextColumn("Amount (₹)", width="small")
                     }
                 )
+            else:
+                st.info("No recorded income.")
                 
             st.metric("Total Income", f"₹{total_inc:,.2f}")
 

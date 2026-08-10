@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -204,7 +205,7 @@ def init_db():
             )
         """)
 
-        # Comprehensive default Chart of Accounts list
+        # Comprehensive default Chart of Accounts list (Including Building Asset)
         default_accounts = [
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
             ("INC-102", "Investment Income", "Income", "Primary Revenue"),
@@ -219,8 +220,8 @@ def init_db():
             ("EXP-201", "Salaries & Benefits", "Expense", "Operating Expenses"),
             ("EXP-202", "Rent & Utilities", "Expense", "Operating Expenses"),
             ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
-            ("EXP-204", "Depreciation 15%", "Expense", "Depreciation"),
-            ("EXP-205", "Depreciation 18%", "Expense", "Depreciation"),
+            ("EXP-204", "Depreciation 15%", "Expense", "Operating Expenses"),
+            ("EXP-205", "Depreciation 18%", "Expense", "Operating Expenses"),
             ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
@@ -229,7 +230,7 @@ def init_db():
             ("AST-104", "Retrieval Pool Account", "Asset", "Current Assets"),
             ("AST-105", "Fixed Asset Computer", "Asset", "Non Current Assets"),
             ("AST-106", "Fixed Asset Furniture & Fixtures", "Asset", "Non Current Assets"),
-            ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),
+            ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),  
             ("AST-108", "Building", "Asset", "Non Current Assets"),
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
@@ -1261,11 +1262,11 @@ elif menu == "Bank Book":
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal / Transfer to Cash/Utilization)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description (e.g. Customer Name for Capital Deposit)")
+            particulars = st.text_input("Particulars / Description (e.g. Purchase of Building)")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
+            account_head = st.selectbox("Corresponding Account Head (e.g., AST-108 Building)", list(coa_dict.keys()))
             narration = st.text_area("Narration", height=68)
             
             if st.form_submit_button("Record Bank Entry"):
@@ -1281,7 +1282,6 @@ elif menu == "Bank Book":
                         new_balance = current_balance + amount
                         debit_amount, credit_amount = amount, 0
                         
-                        # Capital / Equity deposit tracking via narration
                         if account_code == "EQT-101" or "Capital" in account_head:
                             jv_narr = f"Capital Deposit: {particulars}"
                         else:
@@ -1295,10 +1295,7 @@ elif menu == "Bank Book":
                         new_balance = current_balance - amount
                         debit_amount, credit_amount = 0, amount
                         
-                        # Check if withdrawal is for Building or other Non-Current Asset
-                        if "Building" in account_head or account_code == "AST-108":
-                            post_automated_jv(f"Bank Withdrawal for Building: {particulars} - {selected_bank}", "AST-108", bank_code, amount)
-                        elif "Cash" in account_head or "AST-101" == account_code:
+                        if "Cash" in account_head or "AST-101" == account_code:
                             post_automated_jv(f"Bank Withdrawal to Cash: {particulars} - {selected_bank}", "AST-101", bank_code, amount)
                             cash_bal_current = get_cash_balance()
                             new_cash_bal = cash_bal_current + amount
@@ -1308,6 +1305,7 @@ elif menu == "Bank Book":
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (today, c_vouch, f"Withdrawal from {selected_bank}: {particulars}", amount, 0, new_cash_bal, bank_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                         else:
+                            # Automatically debits selected account (e.g. Building AST-108) and credits bank
                             post_automated_jv(f"Bank Withdrawal: {particulars} - {selected_bank}", account_code, bank_code, amount)
                     
                     run_query("""
@@ -1409,178 +1407,50 @@ elif menu == "Bank Book":
         else:
             st.info("No Bank Book vouchers available.")
 
-
-# --- JOURNAL VOUCHERS ---
-# --- JOURNAL VOUCHERS ---
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
-        st.subheader("Create Journal Voucher")
-        st.info("""
-        **For Depreciation Entries:**
-        - **15% Depreciation**: Debit `EXP-204 - Depreciation 15%` | Credit the Asset account
-        - **18% Depreciation**: Debit `EXP-205 - Depreciation 18%` | Credit the Asset account
-        
-        **Example:**
-        - Building Value: ₹50,000
-        - 18% Depreciation = ₹50,000 × 18% = ₹9,000
-        - Debit: EXP-205 (Depreciation 18%) = ₹9,000
-        - Credit: AST-108 (Building) = ₹9,000
-        """)
-        
-        # Initialize session state for JV result
-        if 'jv_posted' not in st.session_state:
-            st.session_state.jv_posted = False
-            st.session_state.jv_id = None
-            st.session_state.jv_data = None
-            st.session_state.jv_narration = ""
-        
+        st.info("💡 **Tip for Depreciation:** To record 18% depreciation on building, select **EXP-205 - Depreciation 18%** as Account Head 1 (Debit) and **AST-108 - Building** as Account Head 2 (Credit).")
         with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
             narration = st.text_input("Narration / Description")
             
-            coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            coa_keys = list(coa_dict.keys())
             
             col_acc, col_dr, col_cr = st.columns(3)
-            acc1 = col_acc.selectbox("Account Head 1", coa_keys, key="jv_acc1")
+            acc1 = col_acc.selectbox("Account Head 1", list(coa_dict.keys()), key="jv_acc1")
             dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
             cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
             
-            acc2 = col_acc.selectbox("Account Head 2", coa_keys, key="jv_acc2")
+            acc2 = col_acc.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
             dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
             cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
-            acc3 = col_acc.selectbox("Account Head 3 (Optional)", coa_keys, key="jv_acc3")
-            dr3 = col_dr.number_input("Debit 3 (₹)", value=0.0, key="jv_dr3")
-            cr3 = col_cr.number_input("Credit 3 (₹)", value=0.0, key="jv_cr3")
-            
-            submit_button = st.form_submit_button("Save and Post JV")
-            
-            if submit_button:
-                total_dr = dr1 + dr2 + dr3
-                total_cr = cr1 + cr2 + cr3
-                
+            if st.form_submit_button("Save and Post JV"):
+                total_dr = dr1 + dr2
+                total_cr = cr1 + cr2
                 if total_dr == total_cr and total_dr > 0:
                     conn = get_connection()
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
                     jv_id = cursor.lastrowid
-                    
-                    # Insert entries (skip zero amount rows)
-                    if dr1 > 0 or cr1 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                    if dr2 > 0 or cr2 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
-                    if dr3 > 0 or cr3 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc3], dr3, cr3))
-                    
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
                     conn.commit()
                     conn.close()
-                    
-                    # Store in session state for display outside form
-                    st.session_state.jv_posted = True
-                    st.session_state.jv_id = jv_id
-                    st.session_state.jv_narration = narration
-                    st.session_state.jv_data = fetch_jv_voucher(jv_id)
-                    
-                    st.success(f"✅ Balanced Journal Voucher posted successfully! JV ID: {jv_id}")
-                    
-                    # Check if this was a depreciation entry
-                    is_depreciation_entry = False
-                    dep_account = None
-                    dep_amount_display = 0
-                    for acc in [acc1, acc2, acc3]:
-                        if "EXP-204" in acc:
-                            is_depreciation_entry = True
-                            dep_account = "15%"
-                            dep_amount_display = dr1 if dr1 > 0 else dr2 if dr2 > 0 else dr3
-                            break
-                        elif "EXP-205" in acc:
-                            is_depreciation_entry = True
-                            dep_account = "18%"
-                            dep_amount_display = dr1 if dr1 > 0 else dr2 if dr2 > 0 else dr3
-                            break
-                    
-                    if is_depreciation_entry:
-                        st.success(f"📌 **Depreciation Entry Detected ({dep_account})!**")
-                        st.info(f"💡 **Depreciation Amount: ₹{dep_amount_display:,.2f}**")
-                        st.markdown("""
-                        - **Balance Sheet**: Asset values will be reduced
-                        - **P&L Statement**: Depreciation will appear under Expenses
-                        - **Trial Balance**: Will show both debit and credit entries
-                        """)
-                    
-                    st.rerun()
+                    st.success("Balanced Journal Voucher posted successfully!")
                 else:
-                    st.error("❌ Journal Voucher unbalanced! Total Debits must equal Total Credits.")
-        
-        # Display posted JV outside the form
-        if st.session_state.jv_posted and st.session_state.jv_data:
-            st.divider()
-            st.subheader("📋 Posted Journal Entry")
-            jv_data = st.session_state.jv_data
-            rows_list = []
-            total_dr_display = 0.0
-            total_cr_display = 0.0
-            for row in jv_data:
-                _, _, acc_code, acc_name, dr, cr = row
-                account_display = f"{acc_code} - {acc_name}"
-                rows_list.append([account_display, f"₹{dr:,.2f}" if dr > 0 else "-", f"₹{cr:,.2f}" if cr > 0 else "-"])
-                total_dr_display += dr
-                total_cr_display += cr
-            
-            df_jv_display = pd.DataFrame(rows_list, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
-            st.dataframe(df_jv_display, use_container_width=True, hide_index=True)
-            col1, col2 = st.columns(2)
-            col1.write(f"**Total Debit:** ₹{total_dr_display:,.2f}")
-            col2.write(f"**Total Credit:** ₹{total_cr_display:,.2f}")
-            st.write(f"**Narration:** {st.session_state.jv_narration}")
-            
-            # Download button outside the form
-            pdf_data = generate_voucher_pdf('JV', jv_data, st.session_state.jv_id)
-            st.download_button(
-                label=f"📥 Download Journal Voucher JV-{st.session_state.jv_id} (PDF)",
-                data=pdf_data,
-                file_name=f"Journal_Voucher_JV-{st.session_state.jv_id}.pdf",
-                mime="application/pdf",
-                key=f"download_jv_{st.session_state.jv_id}_new"
-            )
+                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
     with tab2:
-        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY jv_id DESC")
+        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
-            
-            # View details of a specific JV
-            jv_id_view = st.number_input("Enter JV ID to view details", min_value=1, step=1)
-            if jv_id_view:
-                jv_data = fetch_jv_voucher(jv_id_view)
-                if jv_data:
-                    st.subheader(f"JV-{jv_id_view} Details")
-                    rows_list = []
-                    total_dr = 0.0
-                    total_cr = 0.0
-                    for row in jv_data:
-                        _, _, acc_code, acc_name, dr, cr = row
-                        account_display = f"{acc_code} - {acc_name}"
-                        rows_list.append([account_display, f"₹{dr:,.2f}" if dr > 0 else "-", f"₹{cr:,.2f}" if cr > 0 else "-"])
-                        total_dr += dr
-                        total_cr += cr
-                    
-                    df_jv_detail = pd.DataFrame(rows_list, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
-                    st.dataframe(df_jv_detail, use_container_width=True, hide_index=True)
-                    col1, col2 = st.columns(2)
-                    col1.write(f"**Total Debit:** ₹{total_dr:,.2f}")
-                    col2.write(f"**Total Credit:** ₹{total_cr:,.2f}")
-                    st.write(f"**Narration:** {jv_data[0][1]}")
-        else:
-            st.info("No Journal Vouchers found.")
 
     with tab3:
         st.subheader("🖨️ Journal Voucher (JV) Drill-Down Print")
@@ -1629,6 +1499,86 @@ elif menu == "Journal Vouchers":
                     )
         else:
             st.info("No Journal Vouchers available.")
+
+# --- ADMIN RECORD EDITOR ---
+elif menu == "Admin Record Editor":
+    st.title("🛠️ Universal Database Record Editor")
+    tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    table_list = [t[0] for t in tables_res]
+    selected_table = st.selectbox("Select Database Table to Manage", table_list)
+    
+    if selected_table:
+        pk_info = run_query(f"PRAGMA table_info({selected_table})")
+        pk_col = None
+        for col in pk_info:
+            if col[5] == 1:
+                pk_col = col[1]
+                break
+        if not pk_col and pk_info:
+            pk_col = pk_info[0][1]
+
+        rows = run_query(f"SELECT * FROM {selected_table}")
+        col_names = [col[1] for col in pk_info]
+        
+        if rows:
+            df_table = pd.DataFrame(rows, columns=col_names)
+            st.dataframe(df_table, use_container_width=True)
+            
+            st.markdown("---")
+            st.subheader(f"Manage Records in `{selected_table}`")
+            
+            action = st.radio("Select Action", ["Delete Record", "Edit Record"], horizontal=True)
+            
+            if action == "Delete Record":
+                record_id_to_del = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to delete")
+                if st.button("Delete Record", type="primary"):
+                    if record_id_to_del:
+                        try:
+                            val = int(record_id_to_del)
+                        except ValueError:
+                            val = record_id_to_del
+                            
+                        run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
+                        st.success(f"Record with {pk_col} = {val} deleted successfully from {selected_table}!")
+                        st.rerun()
+                    else:
+                        st.error("Please enter a valid identifier value.")
+            
+            elif action == "Edit Record":
+                record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
+                if record_id_to_edit:
+                    try:
+                        edit_val = int(record_id_to_edit)
+                    except ValueError:
+                        edit_val = record_id_to_edit
+                        
+                    target_row = run_query(f"SELECT * FROM {selected_table} WHERE {pk_col} = ?", (edit_val,))
+                    if target_row:
+                        row_data = target_row[0]
+                        with st.form("admin_edit_form"):
+                            st.info(f"Editing record where {pk_col} = {edit_val}")
+                            updated_values = []
+                            for idx, col_name in enumerate(col_names):
+                                current_val = row_data[idx]
+                                if col_name == pk_col:
+                                    st.text(f"{col_name} (Primary Key - Read Only): {current_val}")
+                                    updated_values.append(current_val)
+                                else:
+                                    new_input = st.text_input(f"Field: {col_name}", value="" if current_val is None else str(current_val))
+                                    updated_values.append(new_input)
+                            
+                            if st.form_submit_button("Save Changes"):
+                                set_clauses = [f"{col_names[i]} = ?" for i in range(len(col_names)) if col_names[i] != pk_col]
+                                update_vals = [updated_values[i] for i in range(len(col_names)) if col_names[i] != pk_col] + [edit_val]
+                                update_sql = f"UPDATE {selected_table} SET {', '.join(set_clauses)} WHERE {pk_col} = ?"
+                                run_query(update_sql, tuple(update_vals), fetch=False)
+                                st.success(f"Record {edit_val} updated successfully!")
+                                st.rerun()
+                    else:
+                        st.warning(f"No record found with {pk_col} = {edit_val}")
+        else:
+            st.info(f"Table `{selected_table}` is currently empty.")
+
 # --- FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
@@ -1668,52 +1618,29 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # --- ASSETS SECTION ---
         # Get balances from journal entries for all asset accounts
         asset_balances = run_query("""
             SELECT 
                 CO.account_code,
                 CO.account_name,
-                CO.category,
                 COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
             FROM chart_of_accounts CO
             LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
             WHERE CO.account_type = 'Asset'
-            GROUP BY CO.account_code, CO.account_name, CO.category
-            HAVING net_balance != 0 OR CO.account_code IN ('AST-108', 'AST-105', 'AST-106', 'AST-107')
+            GROUP BY CO.account_code, CO.account_name
+            HAVING net_balance != 0
         """)
         
         # Create a dictionary of asset balances
         asset_balance_dict = {}
         for row in asset_balances:
-            asset_balance_dict[row[0]] = row[3] if row[3] is not None else 0
+            asset_balance_dict[row[0]] = row[2]
         
-        # Get specific balances
-        cash_bal = asset_balance_dict.get('AST-101', 0)
-        union_bank_bal = asset_balance_dict.get('AST-102', 0)
-        sbi_bal = asset_balance_dict.get('AST-103', 0)
-        retrieval_pool_bal = asset_balance_dict.get('AST-104', 0)
-        
-        # Get Non-Current Assets (Building, Computer, Furniture, Office Equipments)
-        building_bal = asset_balance_dict.get('AST-108', 0)
-        computer_bal = asset_balance_dict.get('AST-105', 0)
-        furniture_bal = asset_balance_dict.get('AST-106', 0)
-        office_equip_bal = asset_balance_dict.get('AST-107', 0)
-        
-        # Get other assets (excluding the ones we already have)
-        other_asset_balances = run_query("""
-            SELECT 
-                CO.account_code,
-                CO.account_name,
-                CO.category,
-                COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
-            FROM chart_of_accounts CO
-            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-            WHERE CO.account_type = 'Asset' 
-              AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103', 'AST-104', 'AST-105', 'AST-106', 'AST-107', 'AST-108')
-            GROUP BY CO.account_code, CO.account_name, CO.category
-            HAVING net_balance != 0
-        """)
+        # Get specific bank balances
+        cash_bal = asset_balance_dict.get('AST-101', 0)  # Cash in Hand
+        union_bank_bal = asset_balance_dict.get('AST-102', 0)  # Union Bank
+        sbi_bal = asset_balance_dict.get('AST-103', 0)  # SBI
+        retrieval_pool_bal = asset_balance_dict.get('AST-104', 0)  # Retrieval Pool
         
         # Get SB, FD, RD liability balances from journal entries
         sb_liability = run_query("""
@@ -1737,6 +1664,20 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_code = 'LIA-103'
         """)[0][0] or 0.0
         
+        # Get other assets (excluding the ones we already have)
+        other_asset_balances = run_query("""
+            SELECT 
+                CO.account_code,
+                CO.account_name,
+                COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            WHERE CO.account_type = 'Asset' 
+              AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103', 'AST-104')
+            GROUP BY CO.account_code, CO.account_name
+            HAVING net_balance != 0
+        """)
+
         # Get income and expense for P&L
         income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
@@ -1745,7 +1686,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         tot_exp = expense_entries_res[0][0] if expense_entries_res and expense_entries_res[0][0] is not None else 0.0
         net_profit_loss = tot_inc - tot_exp
 
-        # --- DISPLAY BALANCE SHEET ---
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### Assets")
@@ -1753,55 +1693,42 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             asset_rows = []
             total_assets = 0
             
-            # Current Assets
-            st.markdown("**Current Assets:**")
+            # Cash in Hand
             if cash_bal != 0:
-                asset_rows.append(["Cash in Hand", "Current Assets", f"₹{cash_bal:,.2f}"])
+                asset_rows.append(["Cash in Hand", "", f"₹{cash_bal:,.2f}"])
                 total_assets += cash_bal
+            
+            # Bank Accounts
             if union_bank_bal != 0:
-                asset_rows.append(["Union Bank of India", "Current Assets", f"₹{union_bank_bal:,.2f}"])
+                asset_rows.append(["Union Bank of India", "", f"₹{union_bank_bal:,.2f}"])
                 total_assets += union_bank_bal
+            
             if sbi_bal != 0:
-                asset_rows.append(["State Bank of India", "Current Assets", f"₹{sbi_bal:,.2f}"])
+                asset_rows.append(["State Bank of India", "", f"₹{sbi_bal:,.2f}"])
                 total_assets += sbi_bal
+            
             if retrieval_pool_bal != 0:
-                asset_rows.append(["Retrieval Pool Account", "Current Assets", f"₹{retrieval_pool_bal:,.2f}"])
+                asset_rows.append(["Retrieval Pool Account", "", f"₹{retrieval_pool_bal:,.2f}"])
                 total_assets += retrieval_pool_bal
             
-            # Non-Current Assets
-            st.markdown("**Non-Current Assets:**")
-            if building_bal != 0:
-                asset_rows.append(["Building", "Non-Current Assets", f"₹{building_bal:,.2f}"])
-                total_assets += building_bal
-            if computer_bal != 0:
-                asset_rows.append(["Fixed Asset Computer", "Non-Current Assets", f"₹{computer_bal:,.2f}"])
-                total_assets += computer_bal
-            if furniture_bal != 0:
-                asset_rows.append(["Fixed Asset Furniture & Fixtures", "Non-Current Assets", f"₹{furniture_bal:,.2f}"])
-                total_assets += furniture_bal
-            if office_equip_bal != 0:
-                asset_rows.append(["Office Equipments", "Non-Current Assets", f"₹{office_equip_bal:,.2f}"])
-                total_assets += office_equip_bal
-            
-            # Other assets
+            # Other assets (including Building AST-108 and Fixed Assets)
             if other_asset_balances:
                 for row in other_asset_balances:
-                    acc_code, acc_name, category, net_val = row
+                    acc_code, acc_name, net_val = row
                     if net_val != 0:
-                        cat_display = category if category else "Other Assets"
-                        asset_rows.append([acc_name, cat_display, f"₹{net_val:,.2f}"])
+                        asset_rows.append([acc_name, "", f"₹{net_val:,.2f}"])
                         total_assets += net_val
             
             if asset_rows:
-                df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Category", "Amount"])
+                df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Inner (₹)", "Outer (₹)"])
                 st.dataframe(
                     df_assets, 
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Account Description": st.column_config.TextColumn("Account Description", width="medium"),
-                        "Category": st.column_config.TextColumn("Category", width="small"),
-                        "Amount": st.column_config.TextColumn("Amount", width="small"),
+                        "Inner (₹)": st.column_config.TextColumn("Inner (₹)", width="small"),
+                        "Outer (₹)": st.column_config.TextColumn("Outer (₹)", width="small"),
                     }
                 )
                 st.metric("Total Assets", f"₹{total_assets:,.2f}")
@@ -1813,20 +1740,18 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             lia_data = []
             total_lia = 0
             
-            # Liabilities from journal entries
-            st.markdown("**Liabilities:**")
             if sb_liability > 0:
-                lia_data.append(["SB Deposits Control", "Liability", f"₹{sb_liability:,.2f}"])
+                lia_data.append(["SB Deposits Control", f"₹{sb_liability:,.2f}"])
                 total_lia += sb_liability
+            
             if fd_liability > 0:
-                lia_data.append(["FD Deposits Control", "Liability", f"₹{fd_liability:,.2f}"])
+                lia_data.append(["FD Deposits Control", f"₹{fd_liability:,.2f}"])
                 total_lia += fd_liability
+            
             if rd_liability > 0:
-                lia_data.append(["RD Deposits Control", "Liability", f"₹{rd_liability:,.2f}"])
+                lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
             
-            # Equity / Capital Accounts detailed breakdown by Narration
-            st.markdown("**Equity:**")
             equity_details = run_query("""
                 SELECT 
                     COALESCE(JV.narration, 'Capital Account') as narration,
@@ -1842,7 +1767,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             if equity_details:
                 for row in equity_details:
                     narr, amt = row
-                    lia_data.append([narr, "Equity", f"₹{amt:,.2f}"])
+                    lia_data.append([narr, f"₹{amt:,.2f}"])
                     total_lia += amt
             else:
                 equity_result = run_query("""
@@ -1853,38 +1778,28 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 """)
                 equity_balance = equity_result[0][0] if equity_result and equity_result[0][0] is not None else 0.0
                 if equity_balance != 0:
-                    lia_data.append(["Equity", "Equity", f"₹{equity_balance:,.2f}"])
+                    lia_data.append(["Equity", f"₹{equity_balance:,.2f}"])
                     total_lia += equity_balance
             
-            # Add current year profit/loss
             if net_profit_loss != 0:
                 label_pnl = "Current Year Profit" if net_profit_loss > 0 else "Current Year Loss"
-                lia_data.append([label_pnl, "Equity", f"₹{net_profit_loss:,.2f}"])
+                lia_data.append([label_pnl, f"₹{net_profit_loss:,.2f}"])
                 total_lia += net_profit_loss
             
             if lia_data:
-                df_lia = pd.DataFrame(lia_data, columns=["Account", "Category", "Amount"])
+                df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
                 st.dataframe(
                     df_lia, 
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Account": st.column_config.TextColumn("Account", width="medium"),
-                        "Category": st.column_config.TextColumn("Category", width="small"),
                         "Amount": st.column_config.TextColumn("Amount", width="small")
                     }
                 )
                 st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
             else:
                 st.info("No liabilities or equity recorded.")
-            
-            # Show balance check
-            st.divider()
-            st.caption(f"**Balance Check:** Assets (₹{total_assets:,.2f}) = Liabilities + Equity (₹{total_lia:,.2f})")
-            if abs(total_assets - total_lia) < 0.01:
-                st.success("✅ Balance Sheet is BALANCED!")
-            else:
-                st.warning(f"⚠️ Balance Sheet is NOT balanced. Difference: ₹{abs(total_assets - total_lia):,.2f}")
 
     with tab3:
         st.subheader("Profit and Loss Account")
@@ -1912,7 +1827,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col_pl1, col_pl2 = st.columns(2)
         
         with col_pl1:
-            st.markdown("### Expenditure / Expenses")
+            st.markdown("### Expenditure")
             exp_rows = []
             total_exp = 0.0
             
@@ -1936,33 +1851,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             else:
                 st.info("No recorded expenses.")
                 
-            # Show depreciation breakdown if present
-            dep_15 = run_query("""
-                SELECT COALESCE(SUM(JE.debit - JE.credit), 0)
-                FROM jv_entries JE
-                JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-                WHERE CO.account_code = 'EXP-204'
-            """)[0][0] or 0.0
-            
-            dep_18 = run_query("""
-                SELECT COALESCE(SUM(JE.debit - JE.credit), 0)
-                FROM jv_entries JE
-                JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-                WHERE CO.account_code = 'EXP-205'
-            """)[0][0] or 0.0
-            
-            if dep_15 > 0 or dep_18 > 0:
-                st.divider()
-                st.markdown("**Depreciation Breakdown:**")
-                if dep_15 > 0:
-                    st.write(f"Depreciation 15%: ₹{dep_15:,.2f}")
-                if dep_18 > 0:
-                    st.write(f"Depreciation 18%: ₹{dep_18:,.2f}")
-                
             st.metric("Total Expenses", f"₹{total_exp:,.2f}")
 
         with col_pl2:
-            st.markdown("### Income / Revenue")
+            st.markdown("### Income")
             inc_rows = []
             total_inc = 0.0
             
@@ -1984,7 +1876,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     }
                 )
             else:
-                st.info("No recorded income.")
+                st.info("No recorded incomes.")
                 
             st.metric("Total Income", f"₹{total_inc:,.2f}")
 
@@ -2065,35 +1957,5 @@ elif menu == "SB Interest Calculation":
             st.metric("Total Interest Payout Amount", f"₹ {total_interest_payout:,.2f}")
 
             csv_data = preview_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="🖨️ Print / Download Interest Sheet (CSV)",
-                data=csv_data,
-                file_name=f"sb_interest_sheet_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-            )
+            st.download_button("Download CSV Interest Report", csv_data, "interest_report.csv", "text/csv")
 
-            st.divider()
-            if st.button("✅ Confirm & Credit Interest to SB Accounts", type="primary"):
-                success_count = 0
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                
-                for idx, row in preview_df.iterrows():
-                    acct_no = row["Account No"]
-                    interest_amt = row["Calculated Interest"]
-                    
-                    if interest_amt > 0:
-                        try:
-                            run_query("UPDATE sb_accounts SET balance = balance + ? WHERE account_no = ?", (interest_amt, acct_no), fetch=False)
-                            tx_id = f"INT-{int(time.time())}-{acct_no}"
-                            run_query(
-                                "INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                (tx_id, acct_no, "CREDIT", interest_amt, "SYSTEM", f"SB Interest Credited ({calc_period})", today_str),
-                                fetch=False
-                            )
-                            success_count += 1
-                        except Exception as ex:
-                            st.error(f"Failed to credit account {acct_no}: {ex}")
-                
-                st.success(f"Successfully credited interest to {success_count} SB accounts and recorded transactions!")
-    else:
-        st.info("No SB accounts found to calculate interest.")

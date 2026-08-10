@@ -1412,6 +1412,7 @@ elif menu == "Bank Book":
 # --- JOURNAL VOUCHERS ---
 # --- JOURNAL VOUCHERS --
 
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])

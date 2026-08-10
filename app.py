@@ -1424,10 +1424,12 @@ elif menu == "Journal Vouchers":
             - The asset value on the Balance Sheet will be reduced by this amount
             """)
             
+            # FIX: Get ALL asset accounts, not just Non Current Assets
             dep_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
             dep_dict = {f"{c[0]} - {c[1]}": c[0] for c in dep_coa_list} if dep_coa_list else {}
             
-            asset_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND (category = 'Non Current Assets' OR account_name LIKE '%Building%' OR account_name LIKE '%Fixed Asset%')")
+            # FIX: Get ALL asset accounts, not just filtered ones
+            asset_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' ORDER BY account_code")
             asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_coa_list} if asset_coa_list else {}
             
             if dep_dict and asset_dict:
@@ -1436,7 +1438,7 @@ elif menu == "Journal Vouchers":
                 with col_dep1:
                     selected_dep_acc = st.selectbox("Select Depreciation Expense Head", list(dep_dict.keys()), key="auto_dep_acc")
                 with col_dep2:
-                    selected_asset_acc = st.selectbox("Select Asset Head (e.g., Building)", list(asset_dict.keys()), key="auto_dep_asset")
+                    selected_asset_acc = st.selectbox("Select Asset Head", list(asset_dict.keys()), key="auto_dep_asset")
                 with col_dep3:
                     asset_val = st.number_input(
                         "Asset Book Value (₹)", 
@@ -1484,7 +1486,7 @@ elif menu == "Journal Vouchers":
                     else:
                         st.error("Calculated depreciation amount must be greater than zero.")
             else:
-                st.warning("Depreciation or Asset accounts not found in Chart of Accounts.")
+                st.warning("Depreciation or Asset accounts not found in Chart of Accounts. Please check the Chart of Accounts.")
 
         st.markdown("---")
         st.subheader("Manual Journal Voucher Entry")

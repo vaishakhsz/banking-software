@@ -1421,6 +1421,10 @@ elif menu == "Journal Vouchers":
         - **15% Depreciation**: Debit `EXP-204 - Depreciation 15%` | Credit the Asset account (e.g., AST-108 - Building)
         - **18% Depreciation**: Debit `EXP-205 - Depreciation 18%` | Credit the Asset account (e.g., AST-108 - Building)
         
+        **Example for Building Depreciation:**
+        - Debit: EXP-205 (Depreciation 18%) = ₹9,000
+        - Credit: AST-108 (Building) = ₹9,000
+        
         These entries will automatically appear in your Balance Sheet and Profit & Loss Statement.
         """)
         
@@ -1468,13 +1472,19 @@ elif menu == "Journal Vouchers":
                     
                     # Check if this was a depreciation entry
                     is_depreciation = False
+                    dep_account = None
                     for acc in [acc1, acc2, acc3]:
-                        if "EXP-204" in acc or "EXP-205" in acc:
+                        if "EXP-204" in acc:
                             is_depreciation = True
+                            dep_account = "15%"
+                            break
+                        elif "EXP-205" in acc:
+                            is_depreciation = True
+                            dep_account = "18%"
                             break
                     
                     if is_depreciation:
-                        st.info("📌 **Depreciation Entry Detected!** This will automatically reflect in:")
+                        st.success(f"📌 **Depreciation Entry Detected ({dep_account})!** This will automatically reflect in:")
                         st.markdown("""
                         - **Balance Sheet**: Asset values will be reduced
                         - **P&L Statement**: Depreciation will appear under Expenses
@@ -1723,13 +1733,13 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
             WHERE CO.account_type = 'Asset'
             GROUP BY CO.account_code, CO.account_name, CO.category
-            HAVING net_balance != 0
+            HAVING net_balance != 0 OR CO.account_code IN ('AST-108', 'AST-105', 'AST-106', 'AST-107')
         """)
         
         # Create a dictionary of asset balances
         asset_balance_dict = {}
         for row in asset_balances:
-            asset_balance_dict[row[0]] = row[3]
+            asset_balance_dict[row[0]] = row[3] if row[3] is not None else 0
         
         # Get specific balances
         cash_bal = asset_balance_dict.get('AST-101', 0)

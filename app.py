@@ -136,7 +136,7 @@ def init_db():
             pass
 
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS retrieval_accounts (
+            CREATE TABLE IF NOT EXISTS _accounts (
                 account_no TEXT PRIMARY KEY,
                 customer_id INTEGER,
                 balance REAL DEFAULT 0.0,
@@ -227,7 +227,7 @@ def init_db():
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
             ("AST-102", "Union Bank of India", "Asset", "Current Assets"),
             ("AST-103", "State Bank of India", "Asset", "Current Assets"),
-            ("AST-104", "Retrieval Pool Account", "Asset", "Current Assets"),
+            ("AST-104", " Pool Account", "Asset", "Current Assets"),
             ("AST-105", "Fixed Asset Computer", "Asset", "Non Current Assets"),
             ("AST-106", "Fixed Asset Furniture & Fixtures", "Asset", "Non Current Assets"),
             ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),
@@ -1479,17 +1479,321 @@ elif menu == "Recurring Deposits (RD)":
             st.info("ℹ️ No active RDs available to mature/close.")
 
 # --- RETRIEVAL ACCOUNT ---
+# --- RETRIEVAL ACCOUNT ---
 elif menu == "Retrieval Account":
-    st.title("💰 Matured Deposits Retrieval Account")
+    st.title("💰 Matured Deposits Retrieval Account Management")
+    
+    # Get all retrieval accounts
     ret_accs = run_query("""
-        SELECT r.account_no, c.name, r.balance 
-        FROM retrieval_accounts r JOIN customers c ON r.customer_id = c.id
+        SELECT r.account_no, c.name, r.balance, r.customer_id
+        FROM retrieval_accounts r 
+        JOIN customers c ON r.customer_id = c.id
     """)
+    
     if ret_accs:
-        df_ret = pd.DataFrame(ret_accs, columns=["Retrieval Account No", "Customer Name", "Balance (₹)"])
+        # Display current retrieval accounts
+        df_ret = pd.DataFrame(ret_accs, columns=["Retrieval Account No", "Customer Name", "Balance (₹)", "Customer ID"])
         st.dataframe(df_ret, use_container_width=True)
+        
+        # Show total pool balance
+        total_pool = sum(row[2] for row in ret_accs)
+        st.metric("💰 Total Retrieval Pool Balance", f"₹{total_pool:,.2f}")
+        
+        st.divider()
+        
+        # --- WITHDRAWAL / TRANSFER SECTION ---
+        st.subheader("🏦 Withdraw / Transfer from Retrieval Account")
+        st.warning("⚠️ This action will transfer funds from the Retrieval Account to the selected destination.")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Select retrieval account to withdraw from
+            ret_options = {f"{r[0]} - {r[1]} (Balance: ₹{r[2]:,.2f})": {
+                'account_no': r[0],
+                'customer_id': r[3],
+                'customer_name': r[1],
+                'balance': r[2]
+            } for r in ret_accs}
+            
+            selected_ret = st.selectbox(
+                "Select Retrieval Account to Withdraw From",
+                list(ret_options.keys()),
+                key="ret_withdraw_select"
+            )
+            ret_data = ret_options[selected_ret]
+            
+            # Show current balance
+            st.info(f"💰 Current Balance: ₹{ret_data['balance']:,.2f}")
+            
+            # Amount to withdraw
+            withdraw_amount = st.number_input(
+                "Amount to Withdraw (₹)",
+                min_value=1.0,
+                max_value=ret_data['balance'],
+                value=min(1000.0, ret_data['balance']),
+                step=100.0,
+                key="ret_withdraw_amount"
+            )
+        
+        with col2:
+            # Select destination account type
+            st.subheader("📤 Transfer To")
+            
+            transfer_to = st.radio(
+                "Select Destination:",
+                [
+                    "🏦 Bank Account",
+                    "💰 Cash in Hand",
+                    "🏦 Savings Account (SB)"
+                ],
+                key="ret_transfer_dest"
+            )
+            
+            # Get all accounts from Chart of Accounts
+            all_accounts = run_query("""
+                SELECT account_code, account_name, account_type 
+                FROM chart_of_accounts 
+                ORDER BY account_type, account_code
+            """)
+            account_names = {a[0]: a[1] for a in all_accounts}
+            account_types = {a[0]: a[2] for a in all_accounts}
+            
+            if transfer_to == "🏦 Bank Account":
+                # Get bank accounts
+                bank_accounts = run_query("""
+                    SELECT account_code, account_name 
+                    FROM chart_of_accounts 
+                    WHERE account_type = 'Asset' 
+                    AND account_name LIKE '%Bank%'
+                """)
+                
+                if bank_accounts:
+                    bank_dict = {f"{a[0]} - {a[1]}": a[0] for a in bank_accounts}
+                    selected_bank = st.selectbox(
+                        "Select Bank Account",
+                        list(bank_dict.keys()),
+                        key="ret_bank_select"
+                    )
+                    dest_account_code = bank_dict[selected_bank]
+                    dest_account_name = selected_bank.split(" - ")[1]
+                    
+                    # Show current bank balance
+                    current_bank_bal = get_bank_balance(dest_account_name)
+                    st.info(f"🏦 Current {dest_account_name} Balance: ₹{current_bank_bal:,.2f}")
+                else:
+                    st.error("❌ No bank accounts found! Please add a bank account in Chart of Accounts.")
+                    st.stop()
+                    
+            elif transfer_to == "💰 Cash in Hand":
+                dest_account_code = "AST-101"
+                dest_account_name = "Cash in Hand"
+                current_cash_bal = get_cash_balance()
+                st.info(f"💰 Current Cash Balance: ₹{current_cash_bal:,.2f}")
+                
+            else:  # Savings Account (SB)
+                # Get customer's SB accounts
+                customer_sb = run_query("""
+                    SELECT account_no, balance 
+                    FROM sb_accounts 
+                    WHERE customer_id = ?
+                """, (ret_data['customer_id'],))
+                
+                if customer_sb:
+                    sb_options = {f"{acc[0]} (Balance: ₹{acc[1]:,.2f})": acc[0] for acc in customer_sb}
+                    selected_sb = st.selectbox(
+                        "Select SB Account to transfer to",
+                        list(sb_options.keys()),
+                        key="ret_sb_select"
+                    )
+                    sb_account_no = sb_options[selected_sb]
+                    dest_account_code = sb_account_no
+                    dest_account_name = f"SB Account {sb_account_no}"
+                    
+                    # Show current SB balance
+                    current_sb_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no = ?", (sb_account_no,))[0][0]
+                    st.info(f"🏦 Current SB Balance: ₹{current_sb_bal:,.2f}")
+                else:
+                    st.error("❌ Customer does not have an SB account! Please open an SB account first.")
+                    st.stop()
+        
+        # Show transaction summary
+        st.divider()
+        st.subheader("📊 Transaction Summary")
+        
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.metric("From", f"Retrieval Account\n{ret_data['account_no']}")
+        with col_b:
+            st.metric("To", f"{dest_account_name}")
+        with col_c:
+            st.metric("Amount", f"₹{withdraw_amount:,.2f}")
+        
+        # Select liability account to credit (reducing retrieval liability)
+        st.subheader("📝 Journal Entry Configuration")
+        
+        # Get liability accounts for credit
+        liability_accounts = run_query("""
+            SELECT account_code, account_name 
+            FROM chart_of_accounts 
+            WHERE account_type = 'Liability'
+        """)
+        
+        if liability_accounts:
+            liability_dict = {f"{a[0]} - {a[1]}": a[0] for a in liability_accounts}
+            selected_liability = st.selectbox(
+                "Select Liability Account to reduce (Credit side)",
+                list(liability_dict.keys()),
+                key="ret_liability_select"
+            )
+            liability_code = liability_dict[selected_liability]
+            liability_name = selected_liability.split(" - ")[1]
+        else:
+            liability_code = "LIA-102"  # Default to FD Deposits Control
+            liability_name = "FD Deposits Control"
+        
+        # Confirm withdrawal
+        if st.button("✅ Confirm Withdrawal from Retrieval Account", type="primary", use_container_width=True):
+            if withdraw_amount <= 0:
+                st.error("❌ Please enter a valid amount to withdraw.")
+                st.stop()
+                
+            if withdraw_amount > ret_data['balance']:
+                st.error(f"❌ Insufficient balance! Available: ₹{ret_data['balance']:,.2f}")
+                st.stop()
+            
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                
+                # STEP 1: Update Retrieval Account balance
+                new_ret_balance = ret_data['balance'] - withdraw_amount
+                cursor.execute(
+                    "UPDATE retrieval_accounts SET balance = ? WHERE account_no = ?",
+                    (new_ret_balance, ret_data['account_no'])
+                )
+                
+                # STEP 2: Create Journal Voucher
+                jv_narration = f"Retrieval Withdrawal - {ret_data['account_no']} - {ret_data['customer_name']} - ₹{withdraw_amount:,.2f} to {dest_account_name}"
+                cursor.execute(
+                    "INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                    (today_str, jv_narration)
+                )
+                jv_id = cursor.lastrowid
+                
+                # STEP 3: Journal Entries
+                # DEBIT: Liability Account (reducing liability)
+                cursor.execute(
+                    "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                    (jv_id, liability_code, withdraw_amount)
+                )
+                
+                # CREDIT: Asset Account (destination)
+                if transfer_to == "🏦 Savings Account (SB)":
+                    # CREDIT: SB Account (Asset increases)
+                    cursor.execute(
+                        "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                        (jv_id, dest_account_code, withdraw_amount)
+                    )
+                else:
+                    # CREDIT: Cash or Bank Account (Asset increases)
+                    cursor.execute(
+                        "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                        (jv_id, dest_account_code, withdraw_amount)
+                    )
+                
+                # Commit journal entry
+                conn.commit()
+                conn.close()
+                
+                # STEP 4: Update destination account
+                if transfer_to == "💰 Cash in Hand":
+                    current_cash = get_cash_balance()
+                    new_cash = current_cash + withdraw_amount
+                    c_vouch = generate_cash_voucher_no()
+                    run_query("""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (today_str, c_vouch, f"Retrieval Withdrawal - {ret_data['account_no']}", 
+                          withdraw_amount, 0, new_cash, dest_account_code, 
+                          jv_narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    st.success(f"✅ Funds transferred to Cash in Hand!")
+                    
+                elif transfer_to == "🏦 Bank Account":
+                    current_bank = get_bank_balance(dest_account_name)
+                    new_bank = current_bank + withdraw_amount
+                    b_vouch = generate_bank_voucher_no()
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (today_str, b_vouch, f"Retrieval Withdrawal - {ret_data['account_no']}", 
+                          withdraw_amount, 0, new_bank, dest_account_name, 
+                          dest_account_code, jv_narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    st.success(f"✅ Funds transferred to {dest_account_name}!")
+                    
+                else:  # SB Account
+                    current_sb = run_query("SELECT balance FROM sb_accounts WHERE account_no = ?", (dest_account_code,))[0][0]
+                    new_sb = current_sb + withdraw_amount
+                    run_query("UPDATE sb_accounts SET balance = ? WHERE account_no = ?", (new_sb, dest_account_code), fetch=False)
+                    
+                    # Record transaction in transactions table
+                    tx_id = f"RET-WD-{int(time.time())}"
+                    run_query(
+                        "INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (tx_id, dest_account_code, "CREDIT", withdraw_amount, "RETRIEVAL WITHDRAWAL", 
+                         f"Retrieval Withdrawal - {ret_data['account_no']}", today_str),
+                        fetch=False
+                    )
+                    
+                    st.success(f"✅ Funds transferred to SB Account: {dest_account_code}!")
+                
+                # STEP 5: Show success message
+                st.success("✅ " + "="*50)
+                st.success(f"✅ Withdrawal of ₹{withdraw_amount:,.2f} completed successfully!")
+                st.success(f"💰 New Retrieval Balance: ₹{new_ret_balance:,.2f}")
+                st.success(f"📝 Journal Voucher JV-{jv_id} created")
+                st.success("✅ " + "="*50)
+                
+                # Show accounting impact
+                st.info("📊 **Accounting Impact:**")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Debit", f"{liability_code}\n{liability_name}\n(Decreased)")
+                with col2:
+                    st.metric("Credit", f"{dest_account_code}\n{dest_account_name}\n(Increased)")
+                with col3:
+                    st.metric("Amount", f"₹{withdraw_amount:,.2f}")
+                
+                st.balloons()
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Error processing withdrawal: {str(e)}")
+                if 'conn' in locals():
+                    conn.rollback()
+                    conn.close()
     else:
-        st.write("No funds currently resting in the Retrieval Accounts pool.")
+        st.info("ℹ️ No retrieval accounts found. Funds will appear here when FDs or RDs mature.")
+        
+        # Show option to create a retrieval account manually
+        st.subheader("➕ Create Retrieval Account")
+        customers = run_query("SELECT id, name FROM customers")
+        if customers:
+            cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
+            selected_cust = st.selectbox("Select Customer", list(cust_dict.keys()), key="ret_create_cust")
+            initial_balance = st.number_input("Initial Balance (₹)", min_value=0.0, value=0.0)
+            
+            if st.button("Create Retrieval Account"):
+                ret_acc_no = f"RET{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                run_query("""
+                    INSERT INTO retrieval_accounts (account_no, customer_id, balance) 
+                    VALUES (?, ?, ?)
+                """, (ret_acc_no, cust_dict[selected_cust], initial_balance), fetch=False)
+                st.success(f"✅ Retrieval Account {ret_acc_no} created successfully!")
+                st.rerun()
 
 # --- CHART OF ACCOUNTS ---
 elif menu == "Chart of Accounts":

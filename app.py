@@ -1407,7 +1407,7 @@ elif menu == "Bank Book":
         else:
             st.info("No Bank Book vouchers available.")
 
-# --- JOURNAL VOUCHERS ---
+
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")

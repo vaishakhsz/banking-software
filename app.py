@@ -1410,6 +1410,7 @@ elif menu == "Bank Book":
             st.info("No Bank Book vouchers available.")
 
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
@@ -1422,11 +1423,20 @@ elif menu == "Journal Vouchers":
         - **18% Depreciation**: Debit `EXP-205 - Depreciation 18%` | Credit the Asset account (e.g., AST-108 - Building)
         
         **Example for Building Depreciation:**
+        - Building Value: ₹50,000
+        - 18% Depreciation = ₹50,000 × 18% = ₹9,000
         - Debit: EXP-205 (Depreciation 18%) = ₹9,000
         - Credit: AST-108 (Building) = ₹9,000
         
         These entries will automatically appear in your Balance Sheet and Profit & Loss Statement.
         """)
+        
+        # Initialize session state for JV result
+        if 'jv_posted' not in st.session_state:
+            st.session_state.jv_posted = False
+            st.session_state.jv_id = None
+            st.session_state.jv_data = None
+            st.session_state.jv_narration = ""
         
         with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
@@ -1437,20 +1447,139 @@ elif menu == "Journal Vouchers":
             
             col_acc, col_dr, col_cr = st.columns(3)
             acc1 = col_acc.selectbox("Account Head 1", list(coa_dict.keys()), key="jv_acc1")
+            
+            # Auto-calculate depreciation if depreciation account is selected
             dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
             cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
             
-            acc2 = col_acc.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
-            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
-            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
+            # Check if account is a depreciation account
+            if "EXP-204" in acc1 or "EXP-205" in acc1:
+                dep_rate = 15 if "EXP-204" in acc1 else 18
+                st.info(f"💡 **Depreciation Account Detected!**")
+                
+                # Get asset list (non-current assets)
+                asset_list = run_query("""
+                    SELECT account_code, account_name 
+                    FROM chart_of_accounts 
+                    WHERE account_type = 'Asset' AND category = 'Non Current Assets'
+                """)
+                asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_list} if asset_list else {}
+                
+                if asset_dict:
+                    selected_asset = st.selectbox(
+                        f"Select Asset to Depreciate ({dep_rate}%)", 
+                        list(asset_dict.keys()),
+                        key="dep_asset_select"
+                    )
+                    asset_code = asset_dict[selected_asset]
+                    
+                    # Get current asset balance from journal entries
+                    asset_balance_result = run_query("""
+                        SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0)
+                        FROM jv_entries
+                        WHERE account_code = ?
+                    """, (asset_code,))
+                    current_asset_value = asset_balance_result[0][0] if asset_balance_result else 0
+                    
+                    st.write(f"**Current {selected_asset.split(' - ')[1]} Value:** ₹{current_asset_value:,.2f}")
+                    
+                    # Calculate depreciation
+                    dep_amount = current_asset_value * (dep_rate / 100)
+                    st.info(f"**Calculated {dep_rate}% Depreciation:** ₹{dep_amount:,.2f}")
+                    
+                    # Auto-fill the debit amount with calculated depreciation
+                    if st.button(f"Apply {dep_rate}% Depreciation Amount"):
+                        dr1 = dep_amount
+                        st.rerun()
+                    
+                    # If user manually enters amount, use that instead
+                    manual_amount = st.number_input(
+                        f"Or enter manual depreciation amount (₹)", 
+                        value=dep_amount if dr1 == 0 else dr1,
+                        min_value=0.0,
+                        step=100.0,
+                        key="manual_dep_amount"
+                    )
+                    if manual_amount != dr1:
+                        dr1 = manual_amount
+                        
+                    # If depreciation amount is entered, auto-fill the credit side with asset
+                    if dr1 > 0:
+                        # Auto-select the asset for credit side
+                        st.info(f"✅ Credit: {selected_asset} for ₹{dr1:,.2f}")
+                        # Set second account to asset
+                        acc2 = selected_asset
+                        cr2 = dr1
+                    else:
+                        acc2 = list(coa_dict.keys())[0]
+                        cr2 = 0.0
+                else:
+                    acc2 = list(coa_dict.keys())[0] if coa_dict else ""
+                    cr2 = 0.0
+            else:
+                acc2 = col_acc.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
+                dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
+                cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
             acc3 = col_acc.selectbox("Account Head 3 (Optional)", list(coa_dict.keys()), key="jv_acc3")
             dr3 = col_dr.number_input("Debit 3 (₹)", value=0.0, key="jv_dr3")
             cr3 = col_cr.number_input("Credit 3 (₹)", value=0.0, key="jv_cr3")
             
-            if st.form_submit_button("Save and Post JV"):
-                total_dr = dr1 + dr2 + dr3
-                total_cr = cr1 + cr2 + cr3
+            # Use the values from the form
+            # We need to handle the depreciation case differently
+            final_dr1 = dr1
+            final_cr1 = cr1
+            final_acc2 = acc2
+            final_dr2 = dr2 if 'dr2' in locals() else 0.0
+            final_cr2 = cr2 if 'cr2' in locals() else 0.0
+            
+            # If depreciation case, use the auto-calculated values
+            if "EXP-204" in acc1 or "EXP-205" in acc1:
+                # Get the actual values from session state
+                pass
+            
+            submit_button = st.form_submit_button("Save and Post JV")
+            
+            if submit_button:
+                # Re-calculate values for depreciation case
+                if "EXP-204" in acc1 or "EXP-205" in acc1:
+                    # Use the manual amount or calculated amount
+                    if 'manual_dep_amount' in locals() and manual_amount > 0:
+                        final_dr1 = manual_amount
+                    else:
+                        # Get asset value again
+                        asset_code = asset_dict[selected_asset] if 'selected_asset' in locals() else None
+                        if asset_code:
+                            asset_balance_result = run_query("""
+                                SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0)
+                                FROM jv_entries
+                                WHERE account_code = ?
+                            """, (asset_code,))
+                            current_asset_value = asset_balance_result[0][0] if asset_balance_result else 0
+                            dep_rate = 15 if "EXP-204" in acc1 else 18
+                            final_dr1 = current_asset_value * (dep_rate / 100)
+                        else:
+                            final_dr1 = 0
+                    
+                    final_cr1 = 0
+                    final_acc2 = selected_asset if 'selected_asset' in locals() else list(coa_dict.keys())[0]
+                    final_cr2 = final_dr1
+                    final_dr2 = 0
+                else:
+                    final_dr1 = dr1
+                    final_cr1 = cr1
+                    final_acc2 = acc2
+                    final_dr2 = dr2 if 'dr2' in locals() else 0.0
+                    final_cr2 = cr2 if 'cr2' in locals() else 0.0
+                
+                # Get final values for acc3
+                final_dr3 = dr3 if 'dr3' in locals() else 0.0
+                final_cr3 = cr3 if 'cr3' in locals() else 0.0
+                final_acc3 = acc3
+                
+                total_dr = final_dr1 + final_dr2 + final_dr3
+                total_cr = final_cr1 + final_cr2 + final_cr3
+                
                 if total_dr == total_cr and total_dr > 0:
                     conn = get_connection()
                     cursor = conn.cursor()
@@ -1458,71 +1587,83 @@ elif menu == "Journal Vouchers":
                     jv_id = cursor.lastrowid
                     
                     # Insert entries (skip zero amount rows)
-                    if dr1 > 0 or cr1 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                    if dr2 > 0 or cr2 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
-                    if dr3 > 0 or cr3 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc3], dr3, cr3))
+                    if final_dr1 > 0 or final_cr1 > 0:
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], final_dr1, final_cr1))
+                    if final_dr2 > 0 or final_cr2 > 0:
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[final_acc2], final_dr2, final_cr2))
+                    if final_dr3 > 0 or final_cr3 > 0:
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[final_acc3], final_dr3, final_cr3))
                     
                     conn.commit()
                     conn.close()
+                    
+                    # Store in session state for display outside form
+                    st.session_state.jv_posted = True
+                    st.session_state.jv_id = jv_id
+                    st.session_state.jv_narration = narration
+                    st.session_state.jv_data = fetch_jv_voucher(jv_id)
                     
                     st.success(f"✅ Balanced Journal Voucher posted successfully! JV ID: {jv_id}")
                     
                     # Check if this was a depreciation entry
                     is_depreciation = False
                     dep_account = None
-                    for acc in [acc1, acc2, acc3]:
+                    dep_amount_display = 0
+                    for acc in [acc1, final_acc2, final_acc3]:
                         if "EXP-204" in acc:
                             is_depreciation = True
                             dep_account = "15%"
+                            dep_amount_display = final_dr1
                             break
                         elif "EXP-205" in acc:
                             is_depreciation = True
                             dep_account = "18%"
+                            dep_amount_display = final_dr1
                             break
                     
                     if is_depreciation:
-                        st.success(f"📌 **Depreciation Entry Detected ({dep_account})!** This will automatically reflect in:")
+                        st.success(f"📌 **Depreciation Entry Detected ({dep_account})!**")
+                        st.info(f"💡 **Depreciation Amount: ₹{dep_amount_display:,.2f}**")
                         st.markdown("""
                         - **Balance Sheet**: Asset values will be reduced
                         - **P&L Statement**: Depreciation will appear under Expenses
                         - **Trial Balance**: Will show both debit and credit entries
                         """)
                     
-                    # Show the journal entry details
-                    st.subheader("Posted Journal Entry")
-                    jv_data = fetch_jv_voucher(jv_id)
-                    if jv_data:
-                        rows_list = []
-                        total_dr_display = 0.0
-                        total_cr_display = 0.0
-                        for row in jv_data:
-                            _, _, acc_code, acc_name, dr, cr = row
-                            account_display = f"{acc_code} - {acc_name}"
-                            rows_list.append([account_display, f"₹{dr:,.2f}" if dr > 0 else "-", f"₹{cr:,.2f}" if cr > 0 else "-"])
-                            total_dr_display += dr
-                            total_cr_display += cr
-                        
-                        df_jv_display = pd.DataFrame(rows_list, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
-                        st.dataframe(df_jv_display, use_container_width=True, hide_index=True)
-                        col1, col2 = st.columns(2)
-                        col1.write(f"**Total Debit:** ₹{total_dr_display:,.2f}")
-                        col2.write(f"**Total Credit:** ₹{total_cr_display:,.2f}")
-                        st.write(f"**Narration:** {narration}")
-                        
-                        # Download button for the JV
-                        pdf_data = generate_voucher_pdf('JV', jv_data, jv_id)
-                        st.download_button(
-                            label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
-                            data=pdf_data,
-                            file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
-                            mime="application/pdf",
-                            key=f"download_jv_{jv_id}_new"
-                        )
+                    st.rerun()
                 else:
                     st.error("❌ Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+        
+        # Display posted JV outside the form
+        if st.session_state.jv_posted and st.session_state.jv_data:
+            st.subheader("Posted Journal Entry")
+            jv_data = st.session_state.jv_data
+            rows_list = []
+            total_dr_display = 0.0
+            total_cr_display = 0.0
+            for row in jv_data:
+                _, _, acc_code, acc_name, dr, cr = row
+                account_display = f"{acc_code} - {acc_name}"
+                rows_list.append([account_display, f"₹{dr:,.2f}" if dr > 0 else "-", f"₹{cr:,.2f}" if cr > 0 else "-"])
+                total_dr_display += dr
+                total_cr_display += cr
+            
+            df_jv_display = pd.DataFrame(rows_list, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
+            st.dataframe(df_jv_display, use_container_width=True, hide_index=True)
+            col1, col2 = st.columns(2)
+            col1.write(f"**Total Debit:** ₹{total_dr_display:,.2f}")
+            col2.write(f"**Total Credit:** ₹{total_cr_display:,.2f}")
+            st.write(f"**Narration:** {st.session_state.jv_narration}")
+            
+            # Download button outside the form
+            pdf_data = generate_voucher_pdf('JV', jv_data, st.session_state.jv_id)
+            st.download_button(
+                label=f"📥 Download Journal Voucher JV-{st.session_state.jv_id} (PDF)",
+                data=pdf_data,
+                file_name=f"Journal_Voucher_JV-{st.session_state.jv_id}.pdf",
+                mime="application/pdf",
+                key=f"download_jv_{st.session_state.jv_id}_new"
+            )
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY jv_id DESC")
@@ -1602,86 +1743,6 @@ elif menu == "Journal Vouchers":
                     )
         else:
             st.info("No Journal Vouchers available.")
-
-# --- ADMIN RECORD EDITOR ---
-elif menu == "Admin Record Editor":
-    st.title("🛠️ Universal Database Record Editor")
-    tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-    table_list = [t[0] for t in tables_res]
-    selected_table = st.selectbox("Select Database Table to Manage", table_list)
-    
-    if selected_table:
-        pk_info = run_query(f"PRAGMA table_info({selected_table})")
-        pk_col = None
-        for col in pk_info:
-            if col[5] == 1:
-                pk_col = col[1]
-                break
-        if not pk_col and pk_info:
-            pk_col = pk_info[0][1]
-
-        rows = run_query(f"SELECT * FROM {selected_table}")
-        col_names = [col[1] for col in pk_info]
-        
-        if rows:
-            df_table = pd.DataFrame(rows, columns=col_names)
-            st.dataframe(df_table, use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader(f"Manage Records in `{selected_table}`")
-            
-            action = st.radio("Select Action", ["Delete Record", "Edit Record"], horizontal=True)
-            
-            if action == "Delete Record":
-                record_id_to_del = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to delete")
-                if st.button("Delete Record", type="primary"):
-                    if record_id_to_del:
-                        try:
-                            val = int(record_id_to_del)
-                        except ValueError:
-                            val = record_id_to_del
-                            
-                        run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
-                        st.success(f"Record with {pk_col} = {val} deleted successfully from {selected_table}!")
-                        st.rerun()
-                    else:
-                        st.error("Please enter a valid identifier value.")
-            
-            elif action == "Edit Record":
-                record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
-                if record_id_to_edit:
-                    try:
-                        edit_val = int(record_id_to_edit)
-                    except ValueError:
-                        edit_val = record_id_to_edit
-                        
-                    target_row = run_query(f"SELECT * FROM {selected_table} WHERE {pk_col} = ?", (edit_val,))
-                    if target_row:
-                        row_data = target_row[0]
-                        with st.form("admin_edit_form"):
-                            st.info(f"Editing record where {pk_col} = {edit_val}")
-                            updated_values = []
-                            for idx, col_name in enumerate(col_names):
-                                current_val = row_data[idx]
-                                if col_name == pk_col:
-                                    st.text(f"{col_name} (Primary Key - Read Only): {current_val}")
-                                    updated_values.append(current_val)
-                                else:
-                                    new_input = st.text_input(f"Field: {col_name}", value="" if current_val is None else str(current_val))
-                                    updated_values.append(new_input)
-                            
-                            if st.form_submit_button("Save Changes"):
-                                set_clauses = [f"{col_names[i]} = ?" for i in range(len(col_names)) if col_names[i] != pk_col]
-                                update_vals = [updated_values[i] for i in range(len(col_names)) if col_names[i] != pk_col] + [edit_val]
-                                update_sql = f"UPDATE {selected_table} SET {', '.join(set_clauses)} WHERE {pk_col} = ?"
-                                run_query(update_sql, tuple(update_vals), fetch=False)
-                                st.success(f"Record {edit_val} updated successfully!")
-                                st.rerun()
-                    else:
-                        st.warning(f"No record found with {pk_col} = {edit_val}")
-        else:
-            st.info(f"Table `{selected_table}` is currently empty.")
-
 # --- FINANCIAL STATEMENTS ---
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")

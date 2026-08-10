@@ -1409,6 +1409,7 @@ elif menu == "Bank Book":
         else:
             st.info("No Bank Book vouchers available.")
 
+
 # --- JOURNAL VOUCHERS ---
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
@@ -1419,8 +1420,8 @@ elif menu == "Journal Vouchers":
         st.subheader("Create Journal Voucher")
         st.info("""
         **For Depreciation Entries:**
-        - **15% Depreciation**: Debit `EXP-204 - Depreciation 15%` | Credit the Asset account (e.g., AST-108 - Building)
-        - **18% Depreciation**: Debit `EXP-205 - Depreciation 18%` | Credit the Asset account (e.g., AST-108 - Building)
+        - **15% Depreciation**: Debit `EXP-204 - Depreciation 15%` | Credit the Asset account
+        - **18% Depreciation**: Debit `EXP-205 - Depreciation 18%` | Credit the Asset account
         
         **Example for Building Depreciation:**
         - Building Value: ₹50,000
@@ -1447,138 +1448,138 @@ elif menu == "Journal Vouchers":
             
             col_acc, col_dr, col_cr = st.columns(3)
             acc1 = col_acc.selectbox("Account Head 1", list(coa_dict.keys()), key="jv_acc1")
-            
-            # Auto-calculate depreciation if depreciation account is selected
             dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
             cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
             
-            # Check if account is a depreciation account
-            if "EXP-204" in acc1 or "EXP-205" in acc1:
-                dep_rate = 15 if "EXP-204" in acc1 else 18
-                st.info(f"💡 **Depreciation Account Detected!**")
-                
-                # Get asset list (non-current assets)
-                asset_list = run_query("""
-                    SELECT account_code, account_name 
-                    FROM chart_of_accounts 
-                    WHERE account_type = 'Asset' AND category = 'Non Current Assets'
-                """)
-                asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_list} if asset_list else {}
-                
-                if asset_dict:
-                    selected_asset = st.selectbox(
-                        f"Select Asset to Depreciate ({dep_rate}%)", 
-                        list(asset_dict.keys()),
-                        key="dep_asset_select"
-                    )
-                    asset_code = asset_dict[selected_asset]
-                    
-                    # Get current asset balance from journal entries
-                    asset_balance_result = run_query("""
-                        SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0)
-                        FROM jv_entries
-                        WHERE account_code = ?
-                    """, (asset_code,))
-                    current_asset_value = asset_balance_result[0][0] if asset_balance_result else 0
-                    
-                    st.write(f"**Current {selected_asset.split(' - ')[1]} Value:** ₹{current_asset_value:,.2f}")
-                    
-                    # Calculate depreciation
-                    dep_amount = current_asset_value * (dep_rate / 100)
-                    st.info(f"**Calculated {dep_rate}% Depreciation:** ₹{dep_amount:,.2f}")
-                    
-                    # Auto-fill the debit amount with calculated depreciation
-                    if st.button(f"Apply {dep_rate}% Depreciation Amount"):
-                        dr1 = dep_amount
-                        st.rerun()
-                    
-                    # If user manually enters amount, use that instead
-                    manual_amount = st.number_input(
-                        f"Or enter manual depreciation amount (₹)", 
-                        value=dep_amount if dr1 == 0 else dr1,
-                        min_value=0.0,
-                        step=100.0,
-                        key="manual_dep_amount"
-                    )
-                    if manual_amount != dr1:
-                        dr1 = manual_amount
-                        
-                    # If depreciation amount is entered, auto-fill the credit side with asset
-                    if dr1 > 0:
-                        # Auto-select the asset for credit side
-                        st.info(f"✅ Credit: {selected_asset} for ₹{dr1:,.2f}")
-                        # Set second account to asset
-                        acc2 = selected_asset
-                        cr2 = dr1
-                    else:
-                        acc2 = list(coa_dict.keys())[0]
-                        cr2 = 0.0
-                else:
-                    acc2 = list(coa_dict.keys())[0] if coa_dict else ""
-                    cr2 = 0.0
-            else:
-                acc2 = col_acc.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
-                dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
-                cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
+            acc2 = col_acc.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
+            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
+            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
             acc3 = col_acc.selectbox("Account Head 3 (Optional)", list(coa_dict.keys()), key="jv_acc3")
             dr3 = col_dr.number_input("Debit 3 (₹)", value=0.0, key="jv_dr3")
             cr3 = col_cr.number_input("Credit 3 (₹)", value=0.0, key="jv_cr3")
             
-            # Use the values from the form
-            # We need to handle the depreciation case differently
-            final_dr1 = dr1
-            final_cr1 = cr1
-            final_acc2 = acc2
-            final_dr2 = dr2 if 'dr2' in locals() else 0.0
-            final_cr2 = cr2 if 'cr2' in locals() else 0.0
+            # Check if this is a depreciation entry (EXP-204 or EXP-205 on debit side)
+            is_depreciation = False
+            dep_percentage = None
+            if "EXP-204" in acc1 and dr1 > 0:
+                is_depreciation = True
+                dep_percentage = 15
+            elif "EXP-205" in acc1 and dr1 > 0:
+                is_depreciation = True
+                dep_percentage = 18
             
-            # If depreciation case, use the auto-calculated values
-            if "EXP-204" in acc1 or "EXP-205" in acc1:
-                # Get the actual values from session state
-                pass
+            # If depreciation is detected, show asset selection helper
+            if is_depreciation:
+                st.divider()
+                st.markdown("### 💡 Depreciation Helper")
+                st.info(f"**Depreciation Rate: {dep_percentage}%**")
+                
+                # Get ALL assets (both current and non-current)
+                asset_list = run_query("""
+                    SELECT account_code, account_name, category 
+                    FROM chart_of_accounts 
+                    WHERE account_type = 'Asset'
+                    ORDER BY category, account_name
+                """)
+                
+                if asset_list:
+                    # Create asset options with category grouping
+                    asset_options = []
+                    current_assets = []
+                    non_current_assets = []
+                    
+                    for a in asset_list:
+                        display_text = f"{a[0]} - {a[1]}"
+                        if a[2] == "Current Assets":
+                            current_assets.append(display_text)
+                        else:
+                            non_current_assets.append(display_text)
+                    
+                    # Build options list with headers
+                    if current_assets:
+                        asset_options.append("--- Current Assets ---")
+                        asset_options.extend(current_assets)
+                    if non_current_assets:
+                        asset_options.append("--- Non-Current Assets ---")
+                        asset_options.extend(non_current_assets)
+                    
+                    # Get current asset balances
+                    st.markdown("**Asset Balances:**")
+                    asset_balances_data = []
+                    for a in asset_list:
+                        acc_code = a[0]
+                        acc_name = a[1]
+                        
+                        # Get current balance from journal entries
+                        balance_result = run_query("""
+                            SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0)
+                            FROM jv_entries
+                            WHERE account_code = ?
+                        """, (acc_code,))
+                        current_value = balance_result[0][0] if balance_result else 0
+                        
+                        if current_value > 0:
+                            asset_balances_data.append({
+                                "Account": f"{acc_code} - {acc_name}",
+                                "Category": a[2] if a[2] else "Other",
+                                "Current Value": current_value,
+                                "Depreciation ({}%)".format(dep_percentage): current_value * (dep_percentage / 100)
+                            })
+                    
+                    if asset_balances_data:
+                        df_assets = pd.DataFrame(asset_balances_data)
+                        st.dataframe(df_assets, use_container_width=True, hide_index=True)
+                        
+                        # Let user select which asset to depreciate
+                        selected_asset_display = st.selectbox(
+                            "Select Asset to Depreciate (auto-calculate depreciation)", 
+                            [a["Account"] for a in asset_balances_data],
+                            key="dep_asset_select"
+                        )
+                        
+                        # Get the selected asset details
+                        selected_asset_info = next((a for a in asset_balances_data if a["Account"] == selected_asset_display), None)
+                        
+                        if selected_asset_info:
+                            asset_value = selected_asset_info["Current Value"]
+                            calc_depreciation = asset_value * (dep_percentage / 100)
+                            
+                            st.info(f"""
+                            **Selected Asset:** {selected_asset_display}
+                            **Current Value:** ₹{asset_value:,.2f}
+                            **Calculated {dep_percentage}% Depreciation:** ₹{calc_depreciation:,.2f}
+                            """)
+                            
+                            # Button to auto-fill the journal entry
+                            if st.button(f"✅ Auto-fill {dep_percentage}% Depreciation Entry", key="auto_fill_dep"):
+                                # Get the account code from the selected asset
+                                selected_code = selected_asset_display.split(" - ")[0]
+                                
+                                # Set the form values
+                                st.session_state['jv_dr1'] = calc_depreciation
+                                st.session_state['jv_cr2'] = calc_depreciation
+                                st.session_state['jv_acc2'] = selected_asset_display
+                                
+                                st.rerun()
+                    else:
+                        st.warning("No assets with positive balance found to depreciate.")
+                else:
+                    st.warning("No asset accounts found in Chart of Accounts.")
             
             submit_button = st.form_submit_button("Save and Post JV")
             
             if submit_button:
-                # Re-calculate values for depreciation case
-                if "EXP-204" in acc1 or "EXP-205" in acc1:
-                    # Use the manual amount or calculated amount
-                    if 'manual_dep_amount' in locals() and manual_amount > 0:
-                        final_dr1 = manual_amount
-                    else:
-                        # Get asset value again
-                        asset_code = asset_dict[selected_asset] if 'selected_asset' in locals() else None
-                        if asset_code:
-                            asset_balance_result = run_query("""
-                                SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0)
-                                FROM jv_entries
-                                WHERE account_code = ?
-                            """, (asset_code,))
-                            current_asset_value = asset_balance_result[0][0] if asset_balance_result else 0
-                            dep_rate = 15 if "EXP-204" in acc1 else 18
-                            final_dr1 = current_asset_value * (dep_rate / 100)
-                        else:
-                            final_dr1 = 0
-                    
-                    final_cr1 = 0
-                    final_acc2 = selected_asset if 'selected_asset' in locals() else list(coa_dict.keys())[0]
-                    final_cr2 = final_dr1
-                    final_dr2 = 0
-                else:
-                    final_dr1 = dr1
-                    final_cr1 = cr1
-                    final_acc2 = acc2
-                    final_dr2 = dr2 if 'dr2' in locals() else 0.0
-                    final_cr2 = cr2 if 'cr2' in locals() else 0.0
+                # Get values from session state if auto-filled
+                if 'jv_dr1' in st.session_state:
+                    dr1 = st.session_state.jv_dr1
+                if 'jv_cr2' in st.session_state:
+                    cr2 = st.session_state.jv_cr2
+                if 'jv_acc2' in st.session_state:
+                    acc2 = st.session_state.jv_acc2
                 
-                # Get final values for acc3
-                final_dr3 = dr3 if 'dr3' in locals() else 0.0
-                final_cr3 = cr3 if 'cr3' in locals() else 0.0
-                final_acc3 = acc3
-                
-                total_dr = final_dr1 + final_dr2 + final_dr3
-                total_cr = final_cr1 + final_cr2 + final_cr3
+                total_dr = dr1 + dr2 + dr3
+                total_cr = cr1 + cr2 + cr3
                 
                 if total_dr == total_cr and total_dr > 0:
                     conn = get_connection()
@@ -1587,15 +1588,23 @@ elif menu == "Journal Vouchers":
                     jv_id = cursor.lastrowid
                     
                     # Insert entries (skip zero amount rows)
-                    if final_dr1 > 0 or final_cr1 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], final_dr1, final_cr1))
-                    if final_dr2 > 0 or final_cr2 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[final_acc2], final_dr2, final_cr2))
-                    if final_dr3 > 0 or final_cr3 > 0:
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[final_acc3], final_dr3, final_cr3))
+                    if dr1 > 0 or cr1 > 0:
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
+                    if dr2 > 0 or cr2 > 0:
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
+                    if dr3 > 0 or cr3 > 0:
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc3], dr3, cr3))
                     
                     conn.commit()
                     conn.close()
+                    
+                    # Clear session state
+                    if 'jv_dr1' in st.session_state:
+                        del st.session_state.jv_dr1
+                    if 'jv_cr2' in st.session_state:
+                        del st.session_state.jv_cr2
+                    if 'jv_acc2' in st.session_state:
+                        del st.session_state.jv_acc2
                     
                     # Store in session state for display outside form
                     st.session_state.jv_posted = True
@@ -1606,22 +1615,22 @@ elif menu == "Journal Vouchers":
                     st.success(f"✅ Balanced Journal Voucher posted successfully! JV ID: {jv_id}")
                     
                     # Check if this was a depreciation entry
-                    is_depreciation = False
+                    is_depreciation_entry = False
                     dep_account = None
                     dep_amount_display = 0
-                    for acc in [acc1, final_acc2, final_acc3]:
+                    for acc in [acc1, acc2, acc3]:
                         if "EXP-204" in acc:
-                            is_depreciation = True
+                            is_depreciation_entry = True
                             dep_account = "15%"
-                            dep_amount_display = final_dr1
+                            dep_amount_display = dr1 if dr1 > 0 else dr2 if dr2 > 0 else dr3
                             break
                         elif "EXP-205" in acc:
-                            is_depreciation = True
+                            is_depreciation_entry = True
                             dep_account = "18%"
-                            dep_amount_display = final_dr1
+                            dep_amount_display = dr1 if dr1 > 0 else dr2 if dr2 > 0 else dr3
                             break
                     
-                    if is_depreciation:
+                    if is_depreciation_entry:
                         st.success(f"📌 **Depreciation Entry Detected ({dep_account})!**")
                         st.info(f"💡 **Depreciation Amount: ₹{dep_amount_display:,.2f}**")
                         st.markdown("""

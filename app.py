@@ -219,8 +219,7 @@ def init_db():
             ("EXP-201", "Salaries & Benefits", "Expense", "Operating Expenses"),
             ("EXP-202", "Rent & Utilities", "Expense", "Operating Expenses"),
             ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
-            ("EXP-204", "Depreciation 15%", "Expense", "Operating Expenses"),
-            ("EXP-205", "Depreciation 18%", "Expense", "Operating Expenses"),
+            ("EXP-204", "Depreciation", "Expense", "Operating Expenses"),
             ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
@@ -229,10 +228,7 @@ def init_db():
             ("AST-104", "Retrieval Pool Account", "Asset", "Current Assets"),
             ("AST-105", "Fixed Asset Computer", "Asset", "Non Current Assets"),
             ("AST-106", "Fixed Asset Furniture & Fixtures", "Asset", "Non Current Assets"),
-            ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),
-
-            ("AST-108","Building","Asset","Non Current Assets"),
-  
+            ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),  
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
             ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
@@ -1263,7 +1259,7 @@ elif menu == "Bank Book":
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal / Transfer to Cash/Utilization)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description (e.g. Customer Name for Capital Deposit)")
+            particulars = st.text_input("Particulars / Description")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
@@ -1282,14 +1278,7 @@ elif menu == "Bank Book":
                     if entry_type == "DEBIT (Deposit)":
                         new_balance = current_balance + amount
                         debit_amount, credit_amount = amount, 0
-                        
-                        # Capital / Equity deposit tracking via narration
-                        if account_code == "EQT-101" or "Capital" in account_head:
-                            jv_narr = f"Capital Deposit: {particulars}"
-                        else:
-                            jv_narr = f"Bank Deposit: {particulars} - {selected_bank}"
-                            
-                        post_automated_jv(jv_narr, bank_code, account_code, amount)
+                        post_automated_jv(f"Bank Deposit: {particulars} - {selected_bank}", bank_code, account_code, amount)
                     else:
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Bank Balance!")
@@ -1753,35 +1742,18 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
             
-            # Equity / Capital Accounts detailed breakdown by Narration
-            equity_details = run_query("""
-                SELECT 
-                    COALESCE(JV.narration, 'Capital Account') as narration,
-                    COALESCE(SUM(JE.credit - JE.debit), 0) as amount
+            # Equity
+            equity_result = run_query("""
+                SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
                 FROM jv_entries JE
                 JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-                LEFT JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
                 WHERE CO.account_type = 'Equity'
-                GROUP BY JV.jv_id, JV.narration
-                HAVING amount != 0
             """)
+            equity_balance = equity_result[0][0] if equity_result and equity_result[0][0] is not None else 0.0
             
-            if equity_details:
-                for row in equity_details:
-                    narr, amt = row
-                    lia_data.append([narr, f"₹{amt:,.2f}"])
-                    total_lia += amt
-            else:
-                equity_result = run_query("""
-                    SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
-                    FROM jv_entries JE
-                    JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-                    WHERE CO.account_type = 'Equity'
-                """)
-                equity_balance = equity_result[0][0] if equity_result and equity_result[0][0] is not None else 0.0
-                if equity_balance != 0:
-                    lia_data.append(["Equity", f"₹{equity_balance:,.2f}"])
-                    total_lia += equity_balance
+            if equity_balance != 0:
+                lia_data.append(["Equity", f"₹{equity_balance:,.2f}"])
+                total_lia += equity_balance
             
             # Add current year profit/loss
             if net_profit_loss != 0:
@@ -1990,4 +1962,28 @@ elif menu == "SB Interest Calculation":
                             st.error(f"Failed to credit account {acct_no}: {ex}")
                 
                 st.success(f"Successfully credited interest to {success_count} SB accounts and recorded transactions!")
+                del st.session_state["interest_preview_df"]
+    else:
+        st.info("No Savings Bank (SB) accounts found in the database to calculate interest.")
+
+# --- CUSTOMER PORTAL ---
+elif menu == "Customer Portal":
+    st.title("👤 Customer Account Portal")
+    cust_id_login = st.number_input("Enter Your Customer ID", min_value=1, step=1)
+    if st.button("Access My Accounts"):
+        cust_info = run_query("SELECT name, phone, kyc_status FROM customers WHERE id=?", (cust_id_login,))
+        if cust_info:
+            name, phone, kyc = cust_info[0]
+            st.success(f"Welcome back, **{name}**! KYC Status: `{kyc}`")
+            
+            sb_results = run_query("SELECT account_no, balance, interest_rate FROM sb_accounts WHERE customer_id=?", (cust_id_login,))
+            if sb_results:
+                st.subheader("Your Savings Bank Accounts")
+                df_portal_sb = pd.DataFrame(sb_results, columns=["Account No", "Balance (₹)", "Interest Rate (%)"])
+                st.dataframe(df_portal_sb, use_container_width=True)
+        else:
+            st.error("Customer ID not found.")
+
+
+
 

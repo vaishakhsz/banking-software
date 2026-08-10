@@ -1410,6 +1410,7 @@ elif menu == "Bank Book":
 
 # --- JOURNAL VOUCHERS ---
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
@@ -1423,23 +1424,20 @@ elif menu == "Journal Vouchers":
             with st.form("auto_dep_form"):
                 dep_date = st.date_input("Voucher Date", value=date.today())
                 
-                # Fetch non-current assets
-                asset_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND category = 'Non Current Assets'")
+                # Fetch all asset accounts broadly to ensure everything shows up
+                asset_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type LIKE '%Asset%'")
                 asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_list} if asset_list else {}
                 
                 if not asset_dict:
-                    # Fallback if specific category is empty
-                    all_assets = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
-                    asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in all_assets}
+                    st.warning("⚠️ No asset accounts found in the Chart of Accounts. Please add asset accounts in your settings or database.")
                 
-                selected_asset_str = st.selectbox("Select Asset Account (Credit / Reduction)", list(asset_dict.keys()))
-                asset_code = asset_dict[selected_asset_str]
+                selected_asset_str = st.selectbox("Select Asset Account (Credit / Reduction)", list(asset_dict.keys()) if asset_dict else ["No Assets Available"])
+                asset_code = asset_dict.get(selected_asset_str, "")
                 
                 dep_rate = st.selectbox("Depreciation Rate", [15, 18], format_func=lambda x: f"{x}%")
                 
                 # Determine corresponding expense account code
                 exp_code = "EXP-204" if dep_rate == 15 else "EXP-205"
-                exp_name = get_account_name(exp_code)
                 
                 asset_book_value = st.number_input("Asset Book Value / Base Amount (₹)", min_value=0.0, value=10000.0, step=500.0)
                 
@@ -1449,7 +1447,9 @@ elif menu == "Journal Vouchers":
                 dep_narration = st.text_input("Narration", value=f"Depreciation at {dep_rate}% on {selected_asset_str}")
                 
                 if st.form_submit_button("Post Depreciation Voucher"):
-                    if calculated_dep_amount > 0:
+                    if not asset_dict:
+                        st.error("Cannot post voucher: No asset accounts available.")
+                    elif calculated_dep_amount > 0:
                         conn = get_connection()
                         cursor = conn.cursor()
                         cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(dep_date), dep_narration))

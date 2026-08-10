@@ -1424,93 +1424,132 @@ elif menu == "Journal Vouchers":
             - The asset value on the Balance Sheet will be reduced by this amount
             """)
             
-            # First, let's check what's in the database
-            st.subheader("🔍 Database Check - Asset Accounts Found")
+            # Get depreciation accounts
+            dep_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
             
-            # Get ALL asset accounts from the database
-            all_asset_accounts = run_query("SELECT account_code, account_name, category FROM chart_of_accounts WHERE account_type = 'Asset' ORDER BY account_code")
+            # Get ALL asset accounts
+            asset_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' ORDER BY account_code")
             
-            if all_asset_accounts:
-                st.success(f"✅ Found {len(all_asset_accounts)} asset accounts in the database:")
-                asset_df = pd.DataFrame(all_asset_accounts, columns=["Account Code", "Account Name", "Category"])
-                st.dataframe(asset_df, use_container_width=True, hide_index=True)
-            else:
-                st.error("❌ No asset accounts found in the database! Please check the Chart of Accounts.")
+            # Check if we have accounts
+            if not dep_coa_list:
+                st.error("❌ No Depreciation accounts found! Please add them in Chart of Accounts.")
+                st.stop()
+            
+            if not asset_coa_list:
+                st.error("❌ No Asset accounts found! Please add them in Chart of Accounts.")
+                st.stop()
+            
+            # Create dictionaries
+            dep_dict = {f"{c[0]} - {c[1]}": c[0] for c in dep_coa_list}
+            asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_coa_list}
+            
+            # Show available accounts
+            st.subheader("📋 Available Accounts")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Depreciation Accounts:**")
+                for code, name in dep_coa_list:
+                    st.write(f"- {code}: {name}")
+            with col2:
+                st.write("**Asset Accounts:**")
+                for code, name in asset_coa_list:
+                    st.write(f"- {code}: {name}")
             
             st.divider()
             
-            # Get depreciation accounts
-            dep_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
-            dep_dict = {f"{c[0]} - {c[1]}": c[0] for c in dep_coa_list} if dep_coa_list else {}
+            # Selection UI
+            col_dep1, col_dep2, col_dep3 = st.columns(3)
             
-            # Get ALL asset accounts (not filtered)
-            asset_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' ORDER BY account_code")
-            asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_coa_list} if asset_coa_list else {}
+            with col_dep1:
+                selected_dep_acc = st.selectbox("Select Depreciation Expense Head", list(dep_dict.keys()), key="auto_dep_acc")
+            with col_dep2:
+                selected_asset_acc = st.selectbox("Select Asset Head", list(asset_dict.keys()), key="auto_dep_asset")
+            with col_dep3:
+                asset_val = st.number_input(
+                    "Asset Book Value (₹)", 
+                    min_value=0.0, 
+                    value=50000.0, 
+                    step=1000.0,
+                    key="auto_dep_value",
+                    help="Enter the total book value/cost of the asset"
+                )
             
-            if dep_dict and asset_dict:
-                col_dep1, col_dep2, col_dep3 = st.columns(3)
-                
-                with col_dep1:
-                    selected_dep_acc = st.selectbox("Select Depreciation Expense Head", list(dep_dict.keys()), key="auto_dep_acc")
-                with col_dep2:
-                    selected_asset_acc = st.selectbox("Select Asset Head", list(asset_dict.keys()), key="auto_dep_asset")
-                with col_dep3:
-                    asset_val = st.number_input(
-                        "Asset Book Value (₹)", 
-                        min_value=0.0, 
-                        value=50000.0, 
-                        step=1000.0,
-                        key="auto_dep_value",
-                        help="Enter the total book value/cost of the asset"
-                    )
-                
-                # Extract percentage from account name
-                dep_name = selected_dep_acc.split(" - ")[1]
+            # Extract percentage from account name
+            dep_name = selected_dep_acc.split(" - ")[1]
+            rate = 18.0
+            if "15%" in dep_name:
+                rate = 15.0
+            elif "18%" in dep_name:
                 rate = 18.0
-                if "15%" in dep_name:
-                    rate = 15.0
-                elif "18%" in dep_name:
-                    rate = 18.0
-                else:
-                    numbers = re.findall(r'\d+(?:\.\d+)?', dep_name)
-                    if numbers:
-                        rate = float(numbers[0])
-                
-                calculated_dep_amt = round(asset_val * (rate / 100), 2)
-                
-                st.success(f"📊 **Calculated Depreciation:** {rate}% of ₹{asset_val:,.2f} = **₹{calculated_dep_amt:,.2f}**")
-                
-                dep_narration = st.text_input("Depreciation Narration", value=f"Depreciation @ {rate}% on {selected_asset_acc.split(' - ')[1]}")
-                dep_date = st.date_input("Depreciation Date", value=date.today(), key="auto_dep_date")
-                
-                if st.button("Post Calculated Depreciation JV", type="primary"):
-                    if calculated_dep_amt > 0:
+            else:
+                numbers = re.findall(r'\d+(?:\.\d+)?', dep_name)
+                if numbers:
+                    rate = float(numbers[0])
+            
+            # Calculate depreciation
+            calculated_dep_amt = round(asset_val * (rate / 100), 2)
+            
+            # Show calculation clearly
+            st.success(f"""
+            📊 **Depreciation Calculation:**
+            - Asset Value: ₹{asset_val:,.2f}
+            - Depreciation Rate: {rate}%
+            - **Calculated Depreciation: ₹{calculated_dep_amt:,.2f}**
+            """)
+            
+            dep_narration = st.text_input("Depreciation Narration", value=f"Depreciation @ {rate}% on {selected_asset_acc.split(' - ')[1]}")
+            dep_date = st.date_input("Depreciation Date", value=date.today(), key="auto_dep_date")
+            
+            # Debug info
+            st.write("**Debug Info:**")
+            st.write(f"Selected Dep Account: {selected_dep_acc} -> Code: {dep_dict[selected_dep_acc]}")
+            st.write(f"Selected Asset Account: {selected_asset_acc} -> Code: {asset_dict[selected_asset_acc]}")
+            st.write(f"Amount to Post: ₹{calculated_dep_amt:,.2f}")
+            
+            if st.button("Post Calculated Depreciation JV", type="primary"):
+                if calculated_dep_amt > 0:
+                    try:
                         conn = get_connection()
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(dep_date), dep_narration))
+                        
+                        # Insert into journal_vouchers
+                        cursor.execute(
+                            "INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                            (str(dep_date), dep_narration)
+                        )
                         jv_id = cursor.lastrowid
-                        # Debit Depreciation Expense
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, dep_dict[selected_dep_acc], calculated_dep_amt))
-                        # Credit Asset Account (reducing asset value)
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, asset_dict[selected_asset_acc], calculated_dep_amt))
+                        st.write(f"✅ Created JV ID: {jv_id}")
+                        
+                        # Get account codes
+                        dep_code = dep_dict[selected_dep_acc]
+                        asset_code = asset_dict[selected_asset_acc]
+                        
+                        # Insert debit entry (Depreciation Expense)
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                            (jv_id, dep_code, calculated_dep_amt)
+                        )
+                        st.write(f"✅ Debited {dep_code} with ₹{calculated_dep_amt:,.2f}")
+                        
+                        # Insert credit entry (Asset Account)
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                            (jv_id, asset_code, calculated_dep_amt)
+                        )
+                        st.write(f"✅ Credited {asset_code} with ₹{calculated_dep_amt:,.2f}")
+                        
                         conn.commit()
                         conn.close()
+                        
                         st.success(f"✅ Successfully posted depreciation of ₹{calculated_dep_amt:,.2f} ({rate}%)!")
                         st.balloons()
                         st.rerun()
-                    else:
-                        st.error("Calculated depreciation amount must be greater than zero.")
-            else:
-                st.warning("""
-                ⚠️ Depreciation or Asset accounts not found in Chart of Accounts.
-                
-                Please make sure:
-                1. You have depreciation accounts (EXP-204, EXP-205) in the Chart of Accounts
-                2. You have asset accounts (AST-101 to AST-108) in the Chart of Accounts
-                3. The database has been properly initialized
-                
-                You can add missing accounts in the "Chart of Accounts" section.
-                """)
+                    except Exception as e:
+                        st.error(f"❌ Error posting depreciation: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
+                else:
+                    st.error("Calculated depreciation amount must be greater than zero.")
 
         st.markdown("---")
         st.subheader("Manual Journal Voucher Entry")
@@ -2050,5 +2089,4 @@ elif menu == "SB Interest Calculation":
 
             csv_data = preview_df.to_csv(index=False).encode('utf-8')
             st.download_button("Download CSV Interest Report", csv_data, "interest_report.csv", "text/csv")
-
 

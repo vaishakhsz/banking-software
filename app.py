@@ -1957,6 +1957,7 @@ elif menu == "Reports":
                 st.info("No transaction records found.")
 
 # --- SB INTEREST CALCULATION & CREDIT ---
+# --- SB INTEREST CALCULATION & CREDIT ---
 elif menu == "SB Interest Calculation":
     st.title("💰 Savings Bank (SB) Interest Calculation & Crediting")
     st.write("Calculate periodic interest for SB accounts, review details, print/export sheet, and credit directly.")
@@ -1974,6 +1975,7 @@ elif menu == "SB Interest Calculation":
         
         if st.button("Calculate Interest Preview", type="primary"):
             calculated_rows = []
+            total_interest = 0
             for idx, row in df_sb.iterrows():
                 acct = row["Account No"]
                 name = row["Customer Name"]
@@ -1988,9 +1990,11 @@ elif menu == "SB Interest Calculation":
                     "Interest Rate (%)": rate,
                     "Calculated Interest": calculated_interest
                 })
+                total_interest += calculated_interest
             
             st.session_state["interest_preview_df"] = pd.DataFrame(calculated_rows)
-            st.success("Interest calculated successfully! Review details below.")
+            st.session_state["total_interest_amount"] = total_interest
+            st.success(f"Interest calculated successfully! Total interest payable: ₹{total_interest:,.2f}")
 
         if "interest_preview_df" in st.session_state and not st.session_state["interest_preview_df"].empty:
             preview_df = st.session_state["interest_preview_df"]
@@ -2009,28 +2013,135 @@ elif menu == "SB Interest Calculation":
             )
 
             st.divider()
+            
+            # Add option to select funding source for interest payment
+            st.subheader("💰 Select Funding Source for Interest Payment")
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            if asset_dict:
+                selected_asset_code = st.selectbox(
+                    "Select Asset Account to fund interest payment", 
+                    list(asset_dict.keys()), 
+                    key="interest_funding_source"
+                )
+                funding_asset_code = asset_dict[selected_asset_code]
+                funding_account_name = selected_asset_code.split(" - ")[1]
+            else:
+                funding_asset_code = "AST-101"
+                funding_account_name = "Cash in Hand"
+            
+            st.info(f"Interest will be paid from: **{funding_account_name}**")
+            
             if st.button("✅ Confirm & Credit Interest to SB Accounts", type="primary"):
                 success_count = 0
                 today_str = datetime.now().strftime("%Y-%m-%d")
+                total_interest_credited = 0
                 
-                for idx, row in preview_df.iterrows():
-                    acct_no = row["Account No"]
-                    interest_amt = row["Calculated Interest"]
+                # Get the SB Interest Expense account code
+                expense_account = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = 'EXP-101'")
+                if not expense_account:
+                    st.error("SB Interest Paid (EXP-101) account not found in Chart of Accounts!")
+                    st.stop()
+                
+                expense_code = expense_account[0][0]
+                
+                # First, create a single journal voucher for the total interest
+                total_interest = st.session_state.get("total_interest_amount", 0)
+                
+                if total_interest > 0:
+                    # Create Journal Voucher for interest expense
+                    conn = get_connection()
+                    cursor = conn.cursor()
                     
-                    if interest_amt > 0:
-                        try:
-                            run_query("UPDATE sb_accounts SET balance = balance + ? WHERE account_no = ?", (interest_amt, acct_no), fetch=False)
-                            tx_id = f"INT-{int(time.time())}-{acct_no}"
-                            run_query(
-                                "INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                (tx_id, acct_no, "CREDIT", interest_amt, "SYSTEM", f"SB Interest Credited ({calc_period})", today_str),
-                                fetch=False
-                            )
-                            success_count += 1
-                        except Exception as ex:
-                            st.error(f"Failed to credit account {acct_no}: {ex}")
-                
-                st.success(f"Successfully credited interest to {success_count} SB accounts and recorded transactions!")
+                    # Insert the journal voucher
+                    jv_narration = f"SB Interest Credited for {calc_period} period - Total: ₹{total_interest:,.2f}"
+                    cursor.execute(
+                        "INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                        (today_str, jv_narration)
+                    )
+                    jv_id = cursor.lastrowid
+                    
+                    # Debit entry - SB Interest Paid (Expense)
+                    cursor.execute(
+                        "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                        (jv_id, expense_code, total_interest)
+                    )
+                    
+                    # Credit entry - Asset account (Cash/Bank)
+                    cursor.execute(
+                        "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                        (jv_id, funding_asset_code, total_interest)
+                    )
+                    
+                    # Also update cash/bank book if funding from cash
+                    if funding_asset_code == "AST-101":  # Cash in Hand
+                        current_cash = get_cash_balance()
+                        new_cash_balance = current_cash - total_interest
+                        if new_cash_balance < 0:
+                            st.error(f"Insufficient cash balance! Available: ₹{current_cash:,.2f}, Required: ₹{total_interest:,.2f}")
+                            conn.rollback()
+                            conn.close()
+                            st.stop()
+                        
+                        c_vouch = generate_cash_voucher_no()
+                        cursor.execute("""
+                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (today_str, c_vouch, f"SB Interest Payment ({calc_period})", 0, total_interest, new_cash_balance, expense_code, 
+                              jv_narration, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                    
+                    elif "Bank" in funding_account_name:
+                        # Update bank book
+                        current_bank = get_bank_balance(funding_account_name)
+                        new_bank_balance = current_bank - total_interest
+                        if new_bank_balance < 0:
+                            st.error(f"Insufficient balance in {funding_account_name}! Available: ₹{current_bank:,.2f}, Required: ₹{total_interest:,.2f}")
+                            conn.rollback()
+                            conn.close()
+                            st.stop()
+                        
+                        b_vouch = generate_bank_voucher_no()
+                        cursor.execute("""
+                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (today_str, b_vouch, f"SB Interest Payment ({calc_period})", 0, total_interest, new_bank_balance, 
+                              funding_account_name, expense_code, jv_narration, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    # Now credit each SB account
+                    for idx, row in preview_df.iterrows():
+                        acct_no = row["Account No"]
+                        interest_amt = row["Calculated Interest"]
+                        
+                        if interest_amt > 0:
+                            try:
+                                # Update SB account balance
+                                run_query("UPDATE sb_accounts SET balance = balance + ? WHERE account_no = ?", (interest_amt, acct_no), fetch=False)
+                                
+                                # Record transaction
+                                tx_id = f"INT-{int(time.time())}-{acct_no}"
+                                run_query(
+                                    "INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                    (tx_id, acct_no, "CREDIT", interest_amt, "SYSTEM", f"SB Interest Credited ({calc_period})", today_str),
+                                    fetch=False
+                                )
+                                success_count += 1
+                                total_interest_credited += interest_amt
+                            except Exception as ex:
+                                st.error(f"Failed to credit account {acct_no}: {ex}")
+                    
+                    st.success(f"✅ Successfully credited interest to {success_count} SB accounts!")
+                    st.success(f"💰 Total interest credited: ₹{total_interest_credited:,.2f}")
+                    st.success(f"📝 Journal Voucher JV-{jv_id} created for interest expense")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.warning("No interest to credit. Total interest amount is zero.")
+    else:
+        st.info("No SB accounts found. Please open SB accounts first.")
 
 
 

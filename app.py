@@ -1409,6 +1409,7 @@ elif menu == "Bank Book":
 
 
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
@@ -1418,7 +1419,7 @@ elif menu == "Journal Vouchers":
         
         jv_mode = st.radio("Voucher Entry Mode", ["Standard Journal Voucher", "Automated Asset Depreciation"], horizontal=True)
         
-        if JV_mode == "Automated Asset Depreciation":
+        if jv_mode == "Automated Asset Depreciation":
             with st.form("auto_dep_form"):
                 dep_date = st.date_input("Voucher Date", value=date.today())
                 

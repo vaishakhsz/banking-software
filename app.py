@@ -1413,17 +1413,19 @@ elif menu == "Bank Book":
 # --- JOURNAL VOUCHERS ---
 # --- JOURNAL VOUCHERS ---
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
         st.subheader("Create Journal Voucher")
-        st.info("💡 **Manual Entry Mode:** Select your accounts and manually type your calculated debit and credit amounts.")
+        st.info("💡 **Automated Depreciation:** Select a Depreciation expense head and enter the asset book value. The system will automatically calculate the percentage and balance the entry.")
         
         # Fetch chart of accounts
         coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
         coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+        coa_names = {c[0]: c[1] for c in coa_list}
         
         # Fetch all asset accounts broadly for credit side
         asset_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type LIKE '%Asset%'")
@@ -1434,22 +1436,42 @@ elif menu == "Journal Vouchers":
             narration = st.text_input("Narration / Description", value="Depreciation entry")
             
             st.markdown("---")
-            st.markdown("#### **Debit Entry (Expense Head - e.g., Depreciation 15% or 18%)**")
+            st.markdown("#### **Debit Entry (Expense Head)**")
             col_acc1, col_dr1 = st.columns([2, 1])
             acc1 = col_acc1.selectbox("Debit Account Head", list(coa_dict.keys()), key="jv_acc1")
             acc1_code = coa_dict[acc1]
+            acc1_name_lower = coa_names.get(acc1_code, "").lower()
             
-            dr1 = col_dr1.number_input("Debit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr1")
+            # Check if selected account is depreciation
+            is_depreciation = acc1_code in ["EXP-204", "EXP-205"] or "depreciation" in acc1_name_lower
+            
+            if is_depreciation:
+                # Determine rate based on code or name
+                rate = 15 if "15" in acc1_name_lower or acc1_code == "EXP-204" else 18
+                
+                st.info(f"⚙️ **{rate}% Depreciation Account Detected:** Enter the Asset Book Value below for automatic calculation.")
+                dep_base_val = st.number_input("Asset Book Value / Base Amount (₹)", min_value=0.0, value=10000.0, step=500.0, key="jv_dep_base")
+                
+                calculated_amount = round(dep_base_val * (rate / 100.0), 2)
+                col_dr1.write(f"**Debit Amount:**")
+                col_dr1.markdown(f"### ₹{calculated_amount:,.2f}")
+                dr1 = calculated_amount
+            else:
+                dr1 = col_dr1.number_input("Debit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr1")
             
             st.markdown("---")
             st.markdown("#### **Credit Entry (Asset Reduction)**")
             col_acc2, col_cr2 = st.columns([2, 1])
             
-            # Allow selecting from asset accounts or general chart of accounts
             acc2 = col_acc2.selectbox("Credit Account Head (Asset)", list(asset_dict.keys()), key="jv_acc2")
             acc2_code = asset_dict[acc2]
             
-            cr2 = col_cr2.number_input("Credit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
+            if is_depreciation:
+                col_cr2.write(f"**Credit Amount:**")
+                col_cr2.markdown(f"### ₹{calculated_amount:,.2f}")
+                cr2 = calculated_amount
+            else:
+                cr2 = col_cr2.number_input("Credit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
             
             submitted = st.form_submit_button("Post Journal Voucher")
             if submitted:
@@ -1519,7 +1541,6 @@ elif menu == "Journal Vouchers":
                     )
         else:
             st.info("No Journal Vouchers available.")
-
 # --- ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":
     st.title("🛠️ Universal Database Record Editor")

@@ -864,9 +864,10 @@ elif menu == "SB Accounts":
             st.info("No active SB accounts found.")
 
 # --- FIXED DEPOSITS ---
+# --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
     st.title("📈 Fixed Deposits Management")
-    tab1, tab2 = st.tabs(["Open FD", "Active FDs"])
+    tab1, tab2, tab3 = st.tabs(["Open FD", "Active FDs", "Mature / Close FD"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -909,20 +910,239 @@ elif menu == "Fixed Deposits (FD)":
 
     with tab2:
         fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode
+            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode, f.created_at
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
         if fds:
-            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Payment Mode"])
+            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Payment Mode", "Created Date"])
             st.dataframe(df_fds, use_container_width=True)
+            
+            # Filter active FDs
+            active_fds = [f for f in fds if f[6] == "ACTIVE"]
+            if active_fds:
+                st.info(f"📊 Active FDs: {len(active_fds)}")
+            
             st.download_button("Download FDs PDF Report", create_pdf_report("Fixed Deposits Report", df_fds), "fixed_deposits.pdf", "application/pdf")
         else:
             st.info("No fixed deposits found.")
 
+    with tab3:
+        st.subheader("🔓 Mature / Close Fixed Deposit")
+        st.warning("⚠️ This action will mature/close the FD and transfer funds to the selected account.")
+        
+        # Get all ACTIVE FDs
+        active_fds = run_query("""
+            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode, f.created_at, f.customer_id
+            FROM fixed_deposits f 
+            JOIN customers c ON f.customer_id = c.id 
+            WHERE f.status = 'ACTIVE'
+        """)
+        
+        if active_fds:
+            # Create display options
+            fd_options = {}
+            for fd in active_fds:
+                fd_id, name, principal, tenure, rate, maturity, status, mode, created, cust_id = fd
+                display_text = f"FD #{fd_id} - {name} (₹{principal:,.2f} @ {rate}% → Maturity: ₹{maturity:,.2f})"
+                fd_options[display_text] = {
+                    'fd_id': fd_id,
+                    'customer_id': cust_id,
+                    'customer_name': name,
+                    'principal': principal,
+                    'maturity_amount': maturity,
+                    'interest_rate': rate,
+                    'tenure_months': tenure
+                }
+            
+            selected_fd_display = st.selectbox("Select FD to Mature/Close", list(fd_options.keys()))
+            selected_fd = fd_options[selected_fd_display]
+            
+            # Show FD details
+            st.info(f"""
+            **FD Details:**
+            - Customer: {selected_fd['customer_name']}
+            - Principal: ₹{selected_fd['principal']:,.2f}
+            - Interest Rate: {selected_fd['interest_rate']}%
+            - Tenure: {selected_fd['tenure_months']} months
+            - Maturity Amount: **₹{selected_fd['maturity_amount']:,.2f}**
+            """)
+            
+            # Transfer options
+            st.subheader("💰 Select Transfer Destination")
+            transfer_to = st.radio(
+                "Transfer maturity amount to:",
+                ["Retrieval Account", "Savings Account (SB)"],
+                help="Retrieval Account: Funds will be parked in retrieval pool. SB Account: Funds will be credited to customer's SB account."
+            )
+            
+            # Get customer's SB accounts if choosing SB
+            if transfer_to == "Savings Account (SB)":
+                customer_sb = run_query("""
+                    SELECT account_no, balance 
+                    FROM sb_accounts 
+                    WHERE customer_id = ?
+                """, (selected_fd['customer_id'],))
+                
+                if customer_sb:
+                    sb_options = {f"{acc[0]} (Balance: ₹{acc[1]:,.2f})": acc[0] for acc in customer_sb}
+                    selected_sb = st.selectbox("Select SB Account to transfer to", list(sb_options.keys()))
+                    sb_account_no = sb_options[selected_sb]
+                else:
+                    st.error("❌ Customer does not have an SB account! Please open an SB account first.")
+                    st.stop()
+            
+            # Select asset account for funding source
+            st.subheader("🏦 Select Asset Account for Journal Entry")
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            if asset_dict:
+                selected_asset = st.selectbox(
+                    "Select Asset Account to credit (where funds are coming from)", 
+                    list(asset_dict.keys()),
+                    key="fd_close_asset"
+                )
+                asset_code = asset_dict[selected_asset]
+                asset_name = selected_asset.split(" - ")[1]
+            else:
+                asset_code = "AST-101"
+                asset_name = "Cash in Hand"
+            
+            # Confirm closure
+            if st.button("✅ Confirm FD Maturity & Transfer", type="primary"):
+                try:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    
+                    fd_id = selected_fd['fd_id']
+                    maturity_amt = selected_fd['maturity_amount']
+                    customer_id = selected_fd['customer_id']
+                    
+                    # STEP 1: Update FD status to MATURED
+                    cursor.execute(
+                        "UPDATE fixed_deposits SET status = 'MATURED' WHERE fd_id = ?",
+                        (fd_id,)
+                    )
+                    
+                    # STEP 2: Create Journal Voucher
+                    jv_narration = f"FD Maturity - FD#{fd_id} - {selected_fd['customer_name']} - ₹{maturity_amt:,.2f}"
+                    cursor.execute(
+                        "INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                        (today_str, jv_narration)
+                    )
+                    jv_id = cursor.lastrowid
+                    
+                    # STEP 3: Journal Entries
+                    # DEBIT: Asset Account (where funds are coming from)
+                    cursor.execute(
+                        "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                        (jv_id, asset_code, maturity_amt)
+                    )
+                    
+                    if transfer_to == "Retrieval Account":
+                        # CREDIT: Retrieval Account (Liability)
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                            (jv_id, "LIA-102", maturity_amt)  # FD Deposits Control liability reduced
+                        )
+                        
+                        # CREDIT: Also need to increase Retrieval Pool Asset
+                        # Create second JV entry for retrieval pool
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                            (jv_id, "AST-104", maturity_amt)  # Debit Retrieval Pool Asset
+                        )
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                            (jv_id, "LIA-102", maturity_amt)  # Credit FD Liability
+                        )
+                        
+                        # Update or create Retrieval Account
+                        ret_check = run_query("SELECT account_no FROM retrieval_accounts WHERE customer_id = ?", (customer_id,))
+                        if ret_check:
+                            current_ret = run_query("SELECT balance FROM retrieval_accounts WHERE customer_id = ?", (customer_id,))[0][0]
+                            new_ret = current_ret + maturity_amt
+                            run_query("UPDATE retrieval_accounts SET balance = ? WHERE customer_id = ?", (new_ret, customer_id), fetch=False)
+                        else:
+                            ret_acc_no = f"RET{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                            run_query("INSERT INTO retrieval_accounts (account_no, customer_id, balance) VALUES (?, ?, ?)", 
+                                     (ret_acc_no, customer_id, maturity_amt), fetch=False)
+                        
+                        st.success(f"✅ Funds transferred to Retrieval Account!")
+                        
+                    else:  # Savings Account (SB)
+                        # CREDIT: FD Liability reduced
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                            (jv_id, "LIA-102", maturity_amt)
+                        )
+                        
+                        # Update SB Account balance
+                        current_sb = run_query("SELECT balance FROM sb_accounts WHERE account_no = ?", (sb_account_no,))[0][0]
+                        new_sb = current_sb + maturity_amt
+                        run_query("UPDATE sb_accounts SET balance = ? WHERE account_no = ?", (new_sb, sb_account_no), fetch=False)
+                        
+                        # Record transaction in transactions table
+                        tx_id = f"FD-MAT-{int(time.time())}"
+                        run_query(
+                            "INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (tx_id, sb_account_no, "CREDIT", maturity_amt, "FD MATURITY", 
+                             f"FD Maturity - FD#{fd_id}", today_str),
+                            fetch=False
+                        )
+                        
+                        st.success(f"✅ Funds transferred to SB Account: {sb_account_no}!")
+                    
+                    # Commit all changes
+                    conn.commit()
+                    conn.close()
+                    
+                    # STEP 4: Update Cash/Bank Book if applicable
+                    if asset_code == "AST-101":
+                        current_cash = get_cash_balance()
+                        new_cash = current_cash - maturity_amt
+                        c_vouch = generate_cash_voucher_no()
+                        run_query("""
+                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (today_str, c_vouch, f"FD Maturity Payment - FD#{fd_id}", 
+                              0, maturity_amt, new_cash, asset_code, 
+                              jv_narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    elif "Bank" in asset_name:
+                        current_bank = get_bank_balance(asset_name)
+                        new_bank = current_bank - maturity_amt
+                        b_vouch = generate_bank_voucher_no()
+                        run_query("""
+                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (today_str, b_vouch, f"FD Maturity Payment - FD#{fd_id}", 
+                              0, maturity_amt, new_bank, asset_name, 
+                              asset_code, jv_narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    st.success("✅ " + "="*50)
+                    st.success(f"✅ FD #{fd_id} matured successfully!")
+                    st.success(f"💰 Maturity Amount: ₹{maturity_amt:,.2f}")
+                    st.success(f"📝 Journal Voucher JV-{jv_id} created")
+                    st.success("✅ " + "="*50)
+                    
+                    st.balloons()
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error processing FD maturity: {str(e)}")
+                    if 'conn' in locals():
+                        conn.rollback()
+                        conn.close()
+        else:
+            st.info("ℹ️ No active FDs available to mature/close.")
+
+# --- RECURRING DEPOSITS ---
 # --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":
     st.title("🔄 Recurring Deposits Management")
-    tab1, tab2, tab3 = st.tabs(["Open RD", "Pay Installment", "Active RDs"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Mature / Close RD"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers")
@@ -949,6 +1169,14 @@ elif menu == "Recurring Deposits (RD)":
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
+            # Calculate estimated maturity amount
+            # RD Maturity = Monthly Payment * ((1 + r/n)^(nt) - 1) / (r/n)
+            # Simplified formula for approximate maturity
+            r = interest_rate / 100 / 12  # Monthly interest rate
+            n = tenure
+            maturity_est = monthly_amt * (((1 + r) ** n - 1) / r) if r > 0 else monthly_amt * n
+            st.info(f"Estimated Maturity Amount: **₹{maturity_est:,.2f}**")
+            
             if st.button("Open RD Account"):
                 run_query("""
                     INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode)
@@ -969,6 +1197,13 @@ elif menu == "Recurring Deposits (RD)":
             chosen_rd_str = st.selectbox("Select Active RD Account", list(rd_dict.keys()))
             selected_rd = rd_dict[chosen_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst = selected_rd
+            
+            # Calculate maturity amount for this RD
+            interest_rate = run_query("SELECT interest_rate FROM recurring_deposits WHERE rd_id = ?", (rd_id,))[0][0]
+            r = interest_rate / 100 / 12
+            maturity_est = monthly_amt * (((1 + r) ** tenure_m - 1) / r) if r > 0 else monthly_amt * tenure_m
+            
+            st.info(f"📊 RD Status: {paid_inst}/{tenure_m} installments paid | Estimated Maturity: ₹{maturity_est:,.2f}")
             
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
@@ -1003,6 +1238,245 @@ elif menu == "Recurring Deposits (RD)":
         if rds:
             df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status", "Payment Mode"])
             st.dataframe(df_rds, use_container_width=True)
+            
+            # Filter active RDs
+            active_rds_count = len([r for r in rds if r[6] == "ACTIVE"])
+            if active_rds_count > 0:
+                st.info(f"📊 Active RDs: {active_rds_count}")
+            
+            # Show completed RDs
+            completed_rds = [r for r in rds if r[6] == "COMPLETED"]
+            if completed_rds:
+                st.info(f"✅ Completed RDs: {len(completed_rds)}")
+        else:
+            st.info("No recurring deposits found.")
+
+    with tab4:
+        st.subheader("🔓 Mature / Close Recurring Deposit")
+        st.warning("⚠️ This action will mature/close the RD and transfer funds to the selected account.")
+        
+        # Get all ACTIVE RDs
+        active_rds = run_query("""
+            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.payment_mode, r.created_at, r.customer_id
+            FROM recurring_deposits r 
+            JOIN customers c ON r.customer_id = c.id 
+            WHERE r.status = 'ACTIVE'
+        """)
+        
+        if active_rds:
+            rd_options = {}
+            for rd in active_rds:
+                rd_id, name, monthly, tenure, rate, paid, status, mode, created, cust_id = rd
+                
+                # Calculate maturity amount
+                r = rate / 100 / 12
+                maturity_amt = monthly * (((1 + r) ** tenure - 1) / r) if r > 0 else monthly * tenure
+                
+                display_text = f"RD #{rd_id} - {name} (₹{monthly:,.2f}/month, {paid}/{tenure} paid → Maturity: ₹{maturity_amt:,.2f})"
+                rd_options[display_text] = {
+                    'rd_id': rd_id,
+                    'customer_id': cust_id,
+                    'customer_name': name,
+                    'monthly_amount': monthly,
+                    'tenure_months': tenure,
+                    'interest_rate': rate,
+                    'installments_paid': paid,
+                    'maturity_amount': maturity_amt,
+                    'status': status
+                }
+            
+            selected_rd_display = st.selectbox("Select RD to Mature/Close", list(rd_options.keys()))
+            selected_rd = rd_options[selected_rd_display]
+            
+            # Show RD details
+            st.info(f"""
+            **RD Details:**
+            - Customer: {selected_rd['customer_name']}
+            - Monthly Amount: ₹{selected_rd['monthly_amount']:,.2f}
+            - Interest Rate: {selected_rd['interest_rate']}%
+            - Tenure: {selected_rd['tenure_months']} months
+            - Installments Paid: {selected_rd['installments_paid']}/{selected_rd['tenure_months']}
+            - Maturity Amount: **₹{selected_rd['maturity_amount']:,.2f}**
+            """)
+            
+            # Check if all installments are paid
+            if selected_rd['installments_paid'] < selected_rd['tenure_months']:
+                st.warning(f"⚠️ Only {selected_rd['installments_paid']} out of {selected_rd['tenure_months']} installments paid. Early closure may have penalties.")
+                
+                early_closure = st.checkbox("I understand this is an early closure of RD")
+                if not early_closure:
+                    st.info("Please complete all installments or check the box for early closure.")
+                    st.stop()
+            
+            # Transfer options
+            st.subheader("💰 Select Transfer Destination")
+            transfer_to = st.radio(
+                "Transfer maturity amount to:",
+                ["Retrieval Account", "Savings Account (SB)"],
+                help="Retrieval Account: Funds will be parked in retrieval pool. SB Account: Funds will be credited to customer's SB account."
+            )
+            
+            # Get customer's SB accounts if choosing SB
+            if transfer_to == "Savings Account (SB)":
+                customer_sb = run_query("""
+                    SELECT account_no, balance 
+                    FROM sb_accounts 
+                    WHERE customer_id = ?
+                """, (selected_rd['customer_id'],))
+                
+                if customer_sb:
+                    sb_options = {f"{acc[0]} (Balance: ₹{acc[1]:,.2f})": acc[0] for acc in customer_sb}
+                    selected_sb = st.selectbox("Select SB Account to transfer to", list(sb_options.keys()))
+                    sb_account_no = sb_options[selected_sb]
+                else:
+                    st.error("❌ Customer does not have an SB account! Please open an SB account first.")
+                    st.stop()
+            
+            # Select asset account for funding source
+            st.subheader("🏦 Select Asset Account for Journal Entry")
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            if asset_dict:
+                selected_asset = st.selectbox(
+                    "Select Asset Account to credit (where funds are coming from)", 
+                    list(asset_dict.keys()),
+                    key="rd_close_asset"
+                )
+                asset_code = asset_dict[selected_asset]
+                asset_name = selected_asset.split(" - ")[1]
+            else:
+                asset_code = "AST-101"
+                asset_name = "Cash in Hand"
+            
+            # Confirm closure
+            if st.button("✅ Confirm RD Maturity & Transfer", type="primary"):
+                try:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    
+                    rd_id = selected_rd['rd_id']
+                    maturity_amt = selected_rd['maturity_amount']
+                    customer_id = selected_rd['customer_id']
+                    
+                    # STEP 1: Update RD status to COMPLETED
+                    cursor.execute(
+                        "UPDATE recurring_deposits SET status = 'COMPLETED' WHERE rd_id = ?",
+                        (rd_id,)
+                    )
+                    
+                    # STEP 2: Create Journal Voucher
+                    jv_narration = f"RD Maturity - RD#{rd_id} - {selected_rd['customer_name']} - ₹{maturity_amt:,.2f}"
+                    cursor.execute(
+                        "INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                        (today_str, jv_narration)
+                    )
+                    jv_id = cursor.lastrowid
+                    
+                    # STEP 3: Journal Entries
+                    # DEBIT: Asset Account (where funds are coming from)
+                    cursor.execute(
+                        "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                        (jv_id, asset_code, maturity_amt)
+                    )
+                    
+                    if transfer_to == "Retrieval Account":
+                        # CREDIT: Retrieval Account (Liability)
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                            (jv_id, "LIA-103", maturity_amt)  # RD Deposits Control liability reduced
+                        )
+                        
+                        # Also create entry for retrieval pool
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                            (jv_id, "AST-104", maturity_amt)  # Debit Retrieval Pool Asset
+                        )
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                            (jv_id, "LIA-103", maturity_amt)  # Credit RD Liability
+                        )
+                        
+                        # Update or create Retrieval Account
+                        ret_check = run_query("SELECT account_no FROM retrieval_accounts WHERE customer_id = ?", (customer_id,))
+                        if ret_check:
+                            current_ret = run_query("SELECT balance FROM retrieval_accounts WHERE customer_id = ?", (customer_id,))[0][0]
+                            new_ret = current_ret + maturity_amt
+                            run_query("UPDATE retrieval_accounts SET balance = ? WHERE customer_id = ?", (new_ret, customer_id), fetch=False)
+                        else:
+                            ret_acc_no = f"RET{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                            run_query("INSERT INTO retrieval_accounts (account_no, customer_id, balance) VALUES (?, ?, ?)", 
+                                     (ret_acc_no, customer_id, maturity_amt), fetch=False)
+                        
+                        st.success(f"✅ Funds transferred to Retrieval Account!")
+                        
+                    else:  # Savings Account (SB)
+                        # CREDIT: RD Liability reduced
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                            (jv_id, "LIA-103", maturity_amt)
+                        )
+                        
+                        # Update SB Account balance
+                        current_sb = run_query("SELECT balance FROM sb_accounts WHERE account_no = ?", (sb_account_no,))[0][0]
+                        new_sb = current_sb + maturity_amt
+                        run_query("UPDATE sb_accounts SET balance = ? WHERE account_no = ?", (new_sb, sb_account_no), fetch=False)
+                        
+                        # Record transaction in transactions table
+                        tx_id = f"RD-MAT-{int(time.time())}"
+                        run_query(
+                            "INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (tx_id, sb_account_no, "CREDIT", maturity_amt, "RD MATURITY", 
+                             f"RD Maturity - RD#{rd_id}", today_str),
+                            fetch=False
+                        )
+                        
+                        st.success(f"✅ Funds transferred to SB Account: {sb_account_no}!")
+                    
+                    # Commit all changes
+                    conn.commit()
+                    conn.close()
+                    
+                    # STEP 4: Update Cash/Bank Book if applicable
+                    if asset_code == "AST-101":
+                        current_cash = get_cash_balance()
+                        new_cash = current_cash - maturity_amt
+                        c_vouch = generate_cash_voucher_no()
+                        run_query("""
+                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (today_str, c_vouch, f"RD Maturity Payment - RD#{rd_id}", 
+                              0, maturity_amt, new_cash, asset_code, 
+                              jv_narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    elif "Bank" in asset_name:
+                        current_bank = get_bank_balance(asset_name)
+                        new_bank = current_bank - maturity_amt
+                        b_vouch = generate_bank_voucher_no()
+                        run_query("""
+                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (today_str, b_vouch, f"RD Maturity Payment - RD#{rd_id}", 
+                              0, maturity_amt, new_bank, asset_name, 
+                              asset_code, jv_narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    st.success("✅ " + "="*50)
+                    st.success(f"✅ RD #{rd_id} matured successfully!")
+                    st.success(f"💰 Maturity Amount: ₹{maturity_amt:,.2f}")
+                    st.success(f"📝 Journal Voucher JV-{jv_id} created")
+                    st.success("✅ " + "="*50)
+                    
+                    st.balloons()
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error processing RD maturity: {str(e)}")
+                    if 'conn' in locals():
+                        conn.rollback()
+                        conn.close()
+        else:
+            st.info("ℹ️ No active RDs available to mature/close.")
 
 # --- RETRIEVAL ACCOUNT ---
 elif menu == "Retrieval Account":

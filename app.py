@@ -5,7 +5,6 @@ from datetime import datetime, date
 import io
 import os
 import time
-import re
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -205,7 +204,7 @@ def init_db():
             )
         """)
 
-        # Comprehensive default Chart of Accounts list (Including Building Asset)
+        # Comprehensive default Chart of Accounts list
         default_accounts = [
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
             ("INC-102", "Investment Income", "Income", "Primary Revenue"),
@@ -230,8 +229,10 @@ def init_db():
             ("AST-104", "Retrieval Pool Account", "Asset", "Current Assets"),
             ("AST-105", "Fixed Asset Computer", "Asset", "Non Current Assets"),
             ("AST-106", "Fixed Asset Furniture & Fixtures", "Asset", "Non Current Assets"),
-            ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),  
-            ("AST-108", "Building", "Asset", "Non Current Assets"),
+            ("AST-107", "Office Equipments", "Asset", "Non Current Assets"),
+
+            ("AST-108","Building","Asset","Non Current Assets"),
+  
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
             ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
@@ -1262,11 +1263,11 @@ elif menu == "Bank Book":
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal / Transfer to Cash/Utilization)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description (e.g. Purchase of Building)")
+            particulars = st.text_input("Particulars / Description (e.g. Customer Name for Capital Deposit)")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            account_head = st.selectbox("Corresponding Account Head (e.g., AST-108 Building)", list(coa_dict.keys()))
+            account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
             narration = st.text_area("Narration", height=68)
             
             if st.form_submit_button("Record Bank Entry"):
@@ -1282,6 +1283,7 @@ elif menu == "Bank Book":
                         new_balance = current_balance + amount
                         debit_amount, credit_amount = amount, 0
                         
+                        # Capital / Equity deposit tracking via narration
                         if account_code == "EQT-101" or "Capital" in account_head:
                             jv_narr = f"Capital Deposit: {particulars}"
                         else:
@@ -1305,7 +1307,6 @@ elif menu == "Bank Book":
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (today, c_vouch, f"Withdrawal from {selected_bank}: {particulars}", amount, 0, new_cash_bal, bank_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                         else:
-                            # Automatically debits selected account (e.g. Building AST-108) and credits bank
                             post_automated_jv(f"Bank Withdrawal: {particulars} - {selected_bank}", account_code, bank_code, amount)
                     
                     run_query("""
@@ -1407,78 +1408,43 @@ elif menu == "Bank Book":
         else:
             st.info("No Bank Book vouchers available.")
 
-
 # --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
-        st.subheader("Create Journal Voucher")
-        st.info("💡 **Dynamic Depreciation Calculation:** Select a depreciation expense head, enter your custom base amount, and the system will automatically calculate the exact percentage of the amount you entered.")
-        
-        coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
-        coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-        coa_names = {c[0]: c[1] for c in coa_list}
-        
-        asset_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type LIKE '%Asset%'")
-        asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_list} if asset_list else coa_dict
-
-        with st.form("unified_jv_form"):
+        with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
-            narration = st.text_input("Narration / Description", value="Depreciation entry")
+            narration = st.text_input("Narration / Description")
             
-            st.markdown("---")
-            st.markdown("#### **Debit Entry (Expense Head)**")
-            col_acc1, col_dr1 = st.columns([2, 1])
-            acc1 = col_acc1.selectbox("Debit Account Head", list(coa_dict.keys()), key="jv_acc1")
-            acc1_code = coa_dict[acc1]
-            acc1_name_lower = coa_names.get(acc1_code, "").lower()
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
-            is_depreciation = acc1_code in ["EXP-204", "EXP-205"] or "depreciation" in acc1_name_lower
+            col_acc, col_dr, col_cr = st.columns(3)
+            acc1 = col_acc.selectbox("Account Head 1", list(coa_dict.keys()), key="jv_acc1")
+            dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
+            cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
             
-            if is_depreciation:
-                rate = 15 if "15" in acc1_name_lower or acc1_code == "EXP-204" else 18
-                st.info(f"⚙️ **{rate}% Depreciation Head Detected:** Enter your exact base amount below.")
-                
-                # Custom base amount input (defaults to 0.0 so it calculates precisely what you type)
-                base_amount = st.number_input("Enter Base Amount / Asset Value (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_base_amt")
-                
-                calculated_dep = round(base_amount * (rate / 100.0), 2)
-                col_dr1.write(f"**Calculated Debit ({rate}%):**")
-                col_dr1.markdown(f"### ₹{calculated_dep:,.2f}")
-                dr1 = calculated_dep
-            else:
-                dr1 = col_dr1.number_input("Debit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr1")
+            acc2 = col_acc.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
+            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
+            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
-            st.markdown("---")
-            st.markdown("#### **Credit Entry (Asset Account Reduction)**")
-            col_acc2, col_cr2 = st.columns([2, 1])
-            
-            acc2 = col_acc2.selectbox("Credit Account Head (Asset)", list(asset_dict.keys()), key="jv_acc2")
-            acc2_code = asset_dict[acc2]
-            
-            if is_depreciation:
-                col_cr2.write(f"**Calculated Credit:**")
-                col_cr2.markdown(f"### ₹{calculated_dep:,.2f}")
-                cr2 = calculated_dep
-            else:
-                cr2 = col_cr2.number_input("Credit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
-            
-            submitted = st.form_submit_button("Post Journal Voucher")
-            if submitted:
-                if dr1 == cr2 and dr1 > 0:
+            if st.form_submit_button("Save and Post JV"):
+                total_dr = dr1 + dr2
+                total_cr = cr1 + cr2
+                if total_dr == total_cr and total_dr > 0:
                     conn = get_connection()
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
                     jv_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, acc1_code, dr1))
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc2_code, cr2))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
                     conn.commit()
                     conn.close()
-                    st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully with amount ₹{dr1:,.2f}!")
+                    st.success("Balanced Journal Voucher posted successfully!")
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits and be greater than zero.")
+                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
@@ -1533,6 +1499,7 @@ elif menu == "Journal Vouchers":
                     )
         else:
             st.info("No Journal Vouchers available.")
+
 # --- ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":
     st.title("🛠️ Universal Database Record Editor")
@@ -1744,7 +1711,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 asset_rows.append(["Retrieval Pool Account", "", f"₹{retrieval_pool_bal:,.2f}"])
                 total_assets += retrieval_pool_bal
             
-            # Other assets (including Building AST-108 and Fixed Assets)
+            # Other assets
             if other_asset_balances:
                 for row in other_asset_balances:
                     acc_code, acc_name, net_val = row
@@ -1773,6 +1740,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             lia_data = []
             total_lia = 0
             
+            # Liabilities from journal entries
             if sb_liability > 0:
                 lia_data.append(["SB Deposits Control", f"₹{sb_liability:,.2f}"])
                 total_lia += sb_liability
@@ -1785,6 +1753,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
             
+            # Equity / Capital Accounts detailed breakdown by Narration
             equity_details = run_query("""
                 SELECT 
                     COALESCE(JV.narration, 'Capital Account') as narration,
@@ -1814,6 +1783,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     lia_data.append(["Equity", f"₹{equity_balance:,.2f}"])
                     total_lia += equity_balance
             
+            # Add current year profit/loss
             if net_profit_loss != 0:
                 label_pnl = "Current Year Profit" if net_profit_loss > 0 else "Current Year Loss"
                 lia_data.append([label_pnl, f"₹{net_profit_loss:,.2f}"])
@@ -1990,4 +1960,34 @@ elif menu == "SB Interest Calculation":
             st.metric("Total Interest Payout Amount", f"₹ {total_interest_payout:,.2f}")
 
             csv_data = preview_df.to_csv(index=False).encode('utf-8')
-            st.download_button("Download CSV Interest Report", csv_data, "interest_report.csv", "text/csv")
+            st.download_button(
+                label="🖨️ Print / Download Interest Sheet (CSV)",
+                data=csv_data,
+                file_name=f"sb_interest_sheet_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+            )
+
+            st.divider()
+            if st.button("✅ Confirm & Credit Interest to SB Accounts", type="primary"):
+                success_count = 0
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                
+                for idx, row in preview_df.iterrows():
+                    acct_no = row["Account No"]
+                    interest_amt = row["Calculated Interest"]
+                    
+                    if interest_amt > 0:
+                        try:
+                            run_query("UPDATE sb_accounts SET balance = balance + ? WHERE account_no = ?", (interest_amt, acct_no), fetch=False)
+                            tx_id = f"INT-{int(time.time())}-{acct_no}"
+                            run_query(
+                                "INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (tx_id, acct_no, "CREDIT", interest_amt, "SYSTEM", f"SB Interest Credited ({calc_period})", today_str),
+                                fetch=False
+                            )
+                            success_count += 1
+                        except Exception as ex:
+                            st.error(f"Failed to credit account {acct_no}: {ex}")
+                
+                st.success(f"Successfully credited interest to {success_count} SB accounts and recorded transactions!")
+

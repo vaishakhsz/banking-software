@@ -5,6 +5,7 @@ from datetime import datetime, date
 import io
 import os
 import time
+import re
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -1409,14 +1410,15 @@ elif menu == "Bank Book":
             st.info("No Bank Book vouchers available.")
 
 # --- JOURNAL VOUCHERS ---
-# --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS --
+
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
         st.subheader("Create Journal Voucher")
-        st.info("💡 **Depreciation with Custom Percentage:** Select a depreciation expense head, enter your base amount and percentage, and the system will calculate and post the exact entry.")
+        st.info("💡 **Dynamic Depreciation:** Select any depreciation account (e.g., containing 'Depreciation' and a percentage like '@ 20%'), enter your base amount, and the system will automatically parse the rate and calculate the entry.")
         
         coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
         coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
@@ -1434,16 +1436,22 @@ elif menu == "Journal Vouchers":
             col_acc1, col_dummy = st.columns([2, 1])
             acc1 = col_acc1.selectbox("Debit Account Head", list(coa_dict.keys()), key="jv_acc1")
             acc1_code = coa_dict[acc1]
-            acc1_name_lower = coa_names.get(acc1_code, "").lower()
+            acc1_name = coa_names.get(acc1_code, "")
+            acc1_name_lower = acc1_name.lower()
             
-            is_depreciation = acc1_code in ["EXP-204", "EXP-205"] or "depreciation" in acc1_name_lower
+            # Check if it's a depreciation account dynamically
+            is_depreciation = "depreciation" in acc1_name_lower
             
             if is_depreciation:
-                st.markdown("##### ⚙️ Depreciation Calculation Parameters")
-                col_p1, col_p2 = st.columns(2)
+                st.markdown("##### ⚙️ Dynamic Depreciation Calculator")
                 
-                default_rate = 15.0 if "15" in acc1_name_lower or acc1_code == "EXP-204" else 18.0
-                dep_percentage = col_p1.number_input("Depreciation Percentage (%)", min_value=0.0, max_value=100.0, value=default_rate, step=0.5, key="jv_dep_rate")
+                # Automatically extract percentage from account name using Regex (e.g., looks for "20", "18%", "15.5")
+                rate_match = re.search(r'(\d+(?:\.\d+)?)%', acc1_name)
+                extracted_rate = float(rate_match.group(1)) if rate_match else 0.0
+                
+                col_p1, col_p2 = st.columns(2)
+                # Allow manual override if the name doesn't contain a strict percentage number
+                dep_percentage = col_p1.number_input("Depreciation Percentage (%)", min_value=0.0, max_value=100.0, value=extracted_rate, step=0.5, key="jv_dep_rate")
                 base_amount = col_p2.number_input("Enter Base Amount / Asset Value (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_base_amt")
                 
                 calculated_dep = round(base_amount * (dep_percentage / 100.0), 2)

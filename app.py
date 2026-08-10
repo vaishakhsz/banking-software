@@ -1408,79 +1408,280 @@ elif menu == "Bank Book":
             st.info("No Bank Book vouchers available.")
 
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
-        st.markdown("### 💡 Automated Depreciation Calculator & Journal Entry")
-        st.write("Select a depreciation account below. The system will automatically compute the correct depreciation amount based on your asset's book value and populate the Journal Voucher.")
+        st.info("💡 **Depreciation Calculator & Poster:** Use the automated calculator below to automatically compute and post the correct depreciation percentage (e.g., 18% of asset value) instead of manual calculations.")
         
-        coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
-        coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-        
-        selected_dep_acc = st.selectbox("Select Account Head (Depreciation / Standard)", list(coa_dict.keys()), key="calc_dep_acc")
-        
-        is_dep = "depreciation" in selected_dep_acc.lower()
-        computed_amt = 0.0
-        
-        if is_dep:
-            rate_match = re.search(r'(\d+(?:\.\d+)?)%', selected_dep_acc)
-            rate = float(rate_match.group(1)) if rate_match else 0.0
-            asset_val = st.number_input("Enter Asset Book Value / Base Amount (₹)", min_value=0.0, value=50000.0, step=1000.0)
-            if rate > 0:
-                computed_amt = round(asset_val * (rate / 100.0), 2)
-                st.success(f"✅ Calculated Depreciation Amount: **{rate}%** of ₹{asset_val:,.2f} = **₹{computed_amt:,.2f}** (Only this calculated amount will be posted to expenses and asset deduction).")
+        with st.expander("🛠️ Automatic Depreciation Calculator & Poster", expanded=False):
+            st.info("""
+            💡 **How Depreciation Works:**
+            - Enter the **Book Value** of the asset (e.g., ₹50,000)
+            - The system will automatically calculate: Book Value × Depreciation Rate%
+            - Example: ₹50,000 × 18% = ₹9,000 depreciation expense
+            - The asset value on the Balance Sheet will be reduced by this amount
+            """)
+            
+            # FIRST: Ensure depreciation accounts exist
+            dep_check = run_query("SELECT COUNT(*) FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
+            if dep_check and dep_check[0][0] == 0:
+                st.warning("⚠️ Depreciation accounts not found. Creating them now...")
+                # Insert depreciation accounts if they don't exist
+                run_query("""
+                    INSERT OR IGNORE INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                    VALUES ('EXP-204', 'Depreciation 15%', 'Expense', 'Operating Expenses')
+                """, fetch=False)
+                run_query("""
+                    INSERT OR IGNORE INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                    VALUES ('EXP-205', 'Depreciation 18%', 'Expense', 'Operating Expenses')
+                """, fetch=False)
+                st.success("✅ Depreciation accounts created successfully!")
+                st.rerun()
+            
+            # Get depreciation accounts
+            dep_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Expense' AND account_name LIKE '%Depreciation%'")
+            
+            # Get ALL asset accounts
+            asset_coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' ORDER BY account_code")
+            
+            # Check if we have accounts
+            if not dep_coa_list:
+                st.error("❌ No Depreciation accounts found!")
+                if st.button("➕ Add Depreciation Accounts Now"):
+                    run_query("""
+                        INSERT OR IGNORE INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                        VALUES ('EXP-204', 'Depreciation 15%', 'Expense', 'Operating Expenses')
+                    """, fetch=False)
+                    run_query("""
+                        INSERT OR IGNORE INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                        VALUES ('EXP-205', 'Depreciation 18%', 'Expense', 'Operating Expenses')
+                    """, fetch=False)
+                    st.success("✅ Depreciation accounts created! Please refresh the page.")
+                    st.rerun()
+                st.stop()
+            
+            if not asset_coa_list:
+                st.error("❌ No Asset accounts found! Please add them in Chart of Accounts.")
+                st.stop()
+            
+            # Create dictionaries
+            dep_dict = {f"{c[0]} - {c[1]}": c[0] for c in dep_coa_list}
+            asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_coa_list}
+            
+            # Selection UI
+            col_dep1, col_dep2, col_dep3 = st.columns(3)
+            
+            with col_dep1:
+                selected_dep_acc = st.selectbox("Select Depreciation Expense Head", list(dep_dict.keys()), key="auto_dep_acc")
+            with col_dep2:
+                selected_asset_acc = st.selectbox("Select Asset Head", list(asset_dict.keys()), key="auto_dep_asset")
+            with col_dep3:
+                asset_val = st.number_input(
+                    "Asset Book Value (₹)", 
+                    min_value=0.0, 
+                    value=50000.0, 
+                    step=1000.0,
+                    key="auto_dep_value",
+                    help="Enter the total book value/cost of the asset"
+                )
+            
+            # Extract percentage from account name
+            dep_name = selected_dep_acc.split(" - ")[1]
+            rate = 18.0
+            if "15%" in dep_name:
+                rate = 15.0
+            elif "18%" in dep_name:
+                rate = 18.0
+            else:
+                numbers = re.findall(r'\d+(?:\.\d+)?', dep_name)
+                if numbers:
+                    rate = float(numbers[0])
+            
+            # Calculate depreciation
+            calculated_dep_amt = round(asset_val * (rate / 100), 2)
+            
+            # Show calculation clearly
+            st.success(f"""
+            📊 **Depreciation Calculation:**
+            - Asset Value: ₹{asset_val:,.2f}
+            - Depreciation Rate: {rate}%
+            - **Calculated Depreciation: ₹{calculated_dep_amt:,.2f}**
+            """)
+            
+            dep_narration = st.text_input("Depreciation Narration", value=f"Depreciation @ {rate}% on {selected_asset_acc.split(' - ')[1]}")
+            dep_date = st.date_input("Depreciation Date", value=date.today(), key="auto_dep_date")
+            
+            if st.button("Post Calculated Depreciation JV", type="primary"):
+                if calculated_dep_amt > 0:
+                    try:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        
+                        # Insert into journal_vouchers
+                        cursor.execute(
+                            "INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                            (str(dep_date), dep_narration)
+                        )
+                        jv_id = cursor.lastrowid
+                        
+                        # Get account codes
+                        dep_code = dep_dict[selected_dep_acc]
+                        asset_code = asset_dict[selected_asset_acc]
+                        
+                        # Insert debit entry (Depreciation Expense)
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", 
+                            (jv_id, dep_code, calculated_dep_amt)
+                        )
+                        
+                        # Insert credit entry (Asset Account)
+                        cursor.execute(
+                            "INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", 
+                            (jv_id, asset_code, calculated_dep_amt)
+                        )
+                        
+                        conn.commit()
+                        conn.close()
+                        
+                        st.success(f"✅ Successfully posted depreciation of ₹{calculated_dep_amt:,.2f} ({rate}%)!")
+                        st.balloons()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error posting depreciation: {str(e)}")
+                else:
+                    st.error("Calculated depreciation amount must be greater than zero.")
 
+        st.markdown("---")
+        st.subheader("📝 Manual Journal Voucher Entry")
+        st.info("Enter Debit and Credit entries below. Total Debits must equal Total Credits.")
+        
         with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
-            default_narr = f"Depreciation on Building ({computed_amt:,.2f})" if is_dep and computed_amt > 0 else ""
-            narration = st.text_input("Narration / Description", value=default_narr)
+            narration = st.text_input("Narration / Description", key="manual_narration", placeholder="e.g., Purchase of Building, Salary Payment, etc.")
             
-            col_acc, col_dr, col_cr = st.columns(3)
-            acc1 = col_acc.selectbox("Account Head 1 (Debit)", list(coa_dict.keys()), index=list(coa_dict.keys()).index(selected_dep_acc) if selected_dep_acc in coa_dict else 0, key="jv_acc1")
+            st.markdown("### Entry 1")
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
+            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
-            default_dr1 = computed_amt if is_dep and computed_amt > 0 else 0.0
-            dr1 = col_dr.number_input("Debit 1 (₹)", value=default_dr1, key="jv_dr1")
-            cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
+            col_acc1, col_dr1, col_cr1 = st.columns(3)
+            with col_acc1:
+                acc1 = st.selectbox("Account Head 1", list(coa_dict.keys()), key="jv_acc1")
+            with col_dr1:
+                dr1 = st.number_input("Debit 1 (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr1")
+            with col_cr1:
+                cr1 = st.number_input("Credit 1 (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr1")
             
-            # Find Building AST-108 as default account 2 if depreciation
-            default_acc2_idx = 0
-            for idx, k in enumerate(coa_dict.keys()):
-                if "AST-108" in k or "Building" in k:
-                    default_acc2_idx = idx
-                    break
+            st.markdown("### Entry 2")
+            col_acc2, col_dr2, col_cr2 = st.columns(3)
+            with col_acc2:
+                acc2 = st.selectbox("Account Head 2", list(coa_dict.keys()), key="jv_acc2")
+            with col_dr2:
+                dr2 = st.number_input("Debit 2 (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr2")
+            with col_cr2:
+                cr2 = st.number_input("Credit 2 (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
             
-            acc2 = col_acc.selectbox("Account Head 2 (Credit)", list(coa_dict.keys()), index=default_acc2_idx, key="jv_acc2")
-            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
+            st.markdown("### Entry 3 (Optional)")
+            col_acc3, col_dr3, col_cr3 = st.columns(3)
+            with col_acc3:
+                acc3 = st.selectbox("Account Head 3 (Optional)", ["None"] + list(coa_dict.keys()), key="jv_acc3")
+            with col_dr3:
+                dr3 = st.number_input("Debit 3 (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr3")
+            with col_cr3:
+                cr3 = st.number_input("Credit 3 (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr3")
             
-            default_cr2 = computed_amt if is_dep and computed_amt > 0 else 0.0
-            cr2 = col_cr.number_input("Credit 2 (₹)", value=default_cr2, key="jv_cr2")
+            # Calculate totals
+            total_dr = dr1 + dr2 + dr3
+            total_cr = cr1 + cr2 + cr3
             
-            if st.form_submit_button("Save and Post JV"):
-                total_dr = dr1 + dr2
-                total_cr = cr1 + cr2
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Total Debits", f"₹{total_dr:,.2f}")
+            with col2:
+                st.metric("Total Credits", f"₹{total_cr:,.2f}")
+            
+            if total_dr == total_cr and total_dr > 0:
+                st.success("✅ Debits and Credits are balanced!")
+            elif total_dr > 0 or total_cr > 0:
+                st.error(f"❌ Unbalanced! Difference: ₹{abs(total_dr - total_cr):,.2f}")
+            
+            submitted = st.form_submit_button("Save and Post Journal Voucher", type="primary")
+            if submitted:
+                total_dr = dr1 + dr2 + dr3
+                total_cr = cr1 + cr2 + cr3
+                
                 if total_dr == total_cr and total_dr > 0:
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
-                    jv_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
-                    conn.commit()
-                    conn.close()
-                    st.success("Balanced Journal Voucher posted successfully with the correct calculated amount!")
+                    try:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
+                                     (str(v_date), narration))
+                        jv_id = cursor.lastrowid
+                        
+                        # Entry 1
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", 
+                                     (jv_id, coa_dict[acc1], dr1, cr1))
+                        
+                        # Entry 2
+                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", 
+                                     (jv_id, coa_dict[acc2], dr2, cr2))
+                        
+                        # Entry 3 (if selected)
+                        if acc3 != "None" and (dr3 > 0 or cr3 > 0):
+                            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", 
+                                         (jv_id, coa_dict[acc3], dr3, cr3))
+                        
+                        conn.commit()
+                        conn.close()
+                        st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully!")
+                        st.balloons()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error posting JV: {str(e)}")
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
-
+                    st.error("❌ Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+    
     with tab2:
-        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
+        st.subheader("📋 Journal Voucher Directory")
+        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY jv_id DESC")
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
-            st.dataframe(df_jvs, use_container_width=True)
-
+            st.dataframe(df_jvs, use_container_width=True, hide_index=True)
+            
+            st.divider()
+            st.subheader("🔍 View JV Details")
+            jv_id_to_view = st.selectbox("Select JV ID to view details", [j[0] for j in jvs])
+            if jv_id_to_view:
+                entries = fetch_jv_voucher(jv_id_to_view)
+                if entries:
+                    st.write(f"**JV ID:** JV-{jv_id_to_view}")
+                    st.write(f"**Date:** {entries[0][0]}")
+                    st.write(f"**Narration:** {entries[0][1]}")
+                    st.divider()
+                    
+                    detail_data = []
+                    total_dr = 0
+                    total_cr = 0
+                    for row in entries:
+                        _, _, acc_code, acc_name, dr, cr = row
+                        detail_data.append([f"{acc_code} - {acc_name}", f"₹{dr:,.2f}" if dr > 0 else "-", f"₹{cr:,.2f}" if cr > 0 else "-"])
+                        total_dr += dr
+                        total_cr += cr
+                    
+                    df_detail = pd.DataFrame(detail_data, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
+                    st.dataframe(df_detail, use_container_width=True, hide_index=True)
+                    
+                    col1, col2 = st.columns(2)
+                    col1.metric("Total Debit", f"₹{total_dr:,.2f}")
+                    col2.metric("Total Credit", f"₹{total_cr:,.2f}")
+        else:
+            st.info("No Journal Vouchers found.")
+    
     with tab3:
-        st.subheader("🖨️ Journal Voucher (JV) Drill-Down Print")
+        st.subheader("🖨️ Print Journal Voucher")
         jv_records = run_query("SELECT jv_id, voucher_date, narration FROM journal_vouchers ORDER BY jv_id DESC")
         if jv_records:
             jv_dict = {f"JV-{r[0]} - {r[2]} ({r[1]})": r[0] for r in jv_records}
@@ -1489,13 +1690,23 @@ elif menu == "Journal Vouchers":
                 jv_id = jv_dict[selected_jv]
                 v_data = fetch_jv_voucher(jv_id)
                 if v_data:
+                    # Display voucher preview
                     with st.container(border=True):
-                        col1, col2 = st.columns(2)
-                        col1.markdown("### **JOURNAL VOUCHER (JV)**")
-                        col1.write(f"**Voucher ID:** JV-{jv_id}")
-                        col2.write(f"**Date:** {v_data[0][0]}")
-                        st.divider()
+                        st.markdown("### 📄 VOUCHER PREVIEW")
+                        st.markdown("---")
                         
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**AASHA NIDHI BANK**")
+                            st.markdown(f"**Voucher ID:** JV-{jv_id}")
+                        with col2:
+                            st.markdown(f"**Date:** {v_data[0][0]}")
+                        
+                        st.markdown("---")
+                        st.markdown("**Narration:** " + v_data[0][1])
+                        st.markdown("---")
+                        
+                        # Table of entries
                         rows_list = []
                         total_dr = 0.0
                         total_cr = 0.0
@@ -1508,24 +1719,30 @@ elif menu == "Journal Vouchers":
                         
                         df_jv_print = pd.DataFrame(rows_list, columns=["Account Head", "Debit (₹)", "Credit (₹)"])
                         st.dataframe(df_jv_print, use_container_width=True, hide_index=True)
-                        st.write(f"**Narration:** {v_data[0][1] if v_data[0][1] else 'N/A'}")
-                        st.divider()
-                        col_f1, col_f2 = st.columns(2)
-                        col_f1.write(f"**Total Debit:** ₹{total_dr:,.2f}")
-                        col_f2.write(f"**Total Credit:** ₹{total_cr:,.2f}")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown(f"**Total Debit:** ₹{total_dr:,.2f}")
+                        with col2:
+                            st.markdown(f"**Total Credit:** ₹{total_cr:,.2f}")
+                        
                         st.markdown("---")
                         st.caption("Authorized Signature / Auditor Stamp")
                     
-                    pdf_data = generate_voucher_pdf('JV', v_data, jv_id)
-                    st.download_button(
-                        label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
-                        data=pdf_data,
-                        file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
-                        mime="application/pdf",
-                        key=f"download_jv_{jv_id}"
-                    )
+                    # Download PDF
+                    try:
+                        pdf_data = generate_voucher_pdf('JV', v_data, jv_id)
+                        st.download_button(
+                            label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
+                            data=pdf_data,
+                            file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
+                            mime="application/pdf",
+                            key=f"download_jv_{jv_id}"
+                        )
+                    except Exception as e:
+                        st.error(f"Error generating PDF: {str(e)}")
         else:
-            st.info("No Journal Vouchers available.")
+            st.info("No Journal Vouchers available to print.")
 
 # --- ADMIN RECORD EDITOR ---
 elif menu == "Admin Record Editor":

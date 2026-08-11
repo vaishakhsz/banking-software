@@ -1070,6 +1070,7 @@ elif menu == "Fixed Deposits (FD)":
             st.info("No active fixed deposits found.")
 
     with tab3:
+        
         st.subheader("Close Fixed Deposit")
         active_fds = run_query("""
             SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months
@@ -1085,6 +1086,7 @@ elif menu == "Fixed Deposits (FD)":
             
             interest_earned = maturity_amount - principal
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
+            st.info(f"Total Maturity Amount (Principal + Interest): ₹{maturity_amount:,.2f}")
             
             if st.button("Close FD", type="primary"):
                 # Update FD status
@@ -1094,14 +1096,18 @@ elif menu == "Fixed Deposits (FD)":
                     WHERE fd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                # FD Deposits Control (LIA-102) -> SB Deposits Control (LIA-101)
-                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to FD Deposits Control", "LIA-102", maturity_amount)
-                
-                # FD Interest Expense (EXP-102) -> FD Deposits Control (LIA-102)
+                # Step 1: Record Interest Expense -> This accumulates in FD Deposits Control (LIA-102)
+                # Debit: EXP-102 (FD Interest Paid) | Credit: LIA-102 (FD Deposits Control)
                 if interest_earned > 0:
-                    post_automated_jv(f"FD #{fd_id} Interest Expense", "EXP-102", "LIA-102", interest_earned)
+                    post_automated_jv(f"FD #{fd_id} Interest Accrued", "EXP-102", "LIA-102", interest_earned)
                 
-                st.success(f"FD #{fd_id} closed successfully! Amount transferred to SB Deposits Control")
+                # Step 2: Now FD Deposits Control (LIA-102) has Principal + Interest = Maturity Amount
+                # Transfer full maturity from FD Deposits Control to SB Deposits Control
+                # Debit: LIA-102 (FD Deposits Control) | Credit: LIA-101 (SB Deposits Control)
+                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB", "LIA-102", "LIA-101", maturity_amount)
+                
+                st.success(f"FD #{fd_id} closed successfully!")
+                st.info(f"₹{maturity_amount:,.2f} transferred from FD Deposits Control to SB Deposits Control")
                 st.rerun()
         else:
             st.info("No active FDs available to close.")

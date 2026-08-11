@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -1196,8 +1197,11 @@ elif menu == "Cash Book":
                         debit_amount, credit_amount = amount, 0
                         
                         if "Union Bank" in account_head:
-                            post_automated_jv(f"Cash Withdrawal from Union Bank: {particulars}", "AST-101", account_code, amount)
                             union_curr = get_bank_balance("Union Bank of India")
+                            if union_curr < amount:
+                                st.error(f"❌ Insufficient Union Bank Balance! Available: ₹{union_curr:,.2f}")
+                                st.stop()
+                            post_automated_jv(f"Cash Withdrawal from Union Bank: {particulars}", "AST-101", account_code, amount)
                             new_union_bal = union_curr - amount
                             b_vouch = generate_bank_voucher_no()
                             run_query("""
@@ -1205,8 +1209,11 @@ elif menu == "Cash Book":
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (today, b_vouch, f"Transfer to Cash: {particulars}", 0, amount, new_union_bal, "Union Bank of India", account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                         elif "State Bank" in account_head:
-                            post_automated_jv(f"Cash Withdrawal from SBI: {particulars}", "AST-101", account_code, amount)
                             sbi_curr = get_bank_balance("State Bank of India")
+                            if sbi_curr < amount:
+                                st.error(f"❌ Insufficient State Bank Balance! Available: ₹{sbi_curr:,.2f}")
+                                st.stop()
+                            post_automated_jv(f"Cash Withdrawal from SBI: {particulars}", "AST-101", account_code, amount)
                             new_sbi_bal = sbi_curr - amount
                             b_vouch = generate_bank_voucher_no()
                             run_query("""
@@ -1375,6 +1382,7 @@ elif menu == "Bank Book":
                     bank_code = bank_code_result[0][0] if bank_code_result else "AST-102"
                     
                     if entry_type == "DEBIT (Deposit)":
+                        # Deposits can always be made even if bank balance is 0 or empty
                         new_balance = current_balance + amount
                         debit_amount, credit_amount = amount, 0
                         
@@ -1385,8 +1393,9 @@ elif menu == "Bank Book":
                             
                         post_automated_jv(jv_narr, bank_code, account_code, amount)
                     else:
+                        # Withdrawals require sufficient balance
                         if current_balance < amount:
-                            st.error(f"❌ Insufficient Bank Balance!")
+                            st.error(f"❌ Insufficient Bank Balance in {selected_bank}! Available: ₹{current_balance:,.2f}")
                             st.stop()
                         new_balance = current_balance - amount
                         debit_amount, credit_amount = 0, amount
@@ -1742,7 +1751,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         union_bank_bal = asset_balance_dict.get('AST-102', 0)  # Union Bank
         sbi_bal = asset_balance_dict.get('AST-103', 0)  # SBI
         
-        # Get SB, FD, RD liability balances from journal entries
+        # Get SB, FD, RD liability balances from journal entries (Strictly under Liabilities)
         sb_liability = run_query("""
             SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
             FROM jv_entries JE
@@ -1764,7 +1773,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_code = 'LIA-103'
         """)[0][0] or 0.0
         
-        # Get other assets (excluding the ones we already have)
+        # Get other assets (excluding cash and banks)
         other_asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -1775,10 +1784,9 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_type = 'Asset' 
               AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103')
             GROUP BY CO.account_code, CO.account_name
-            HAVING net_balance != 0
         """)
 
-        # Get income and expense for P&L
+        # Get income and expense for P&L (Interests are strictly under Expense)
         income_entries_res = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         expense_entries_res = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
@@ -1795,36 +1803,35 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             
             # Cash in Hand
             if cash_bal != 0:
-                asset_rows.append(["Cash in Hand", "", f"₹{cash_bal:,.2f}"])
+                asset_rows.append(["Cash in Hand", f"₹{cash_bal:,.2f}"])
                 total_assets += cash_bal
             
-            # Bank Accounts
+            # Bank Accounts (Including Union Bank)
             if union_bank_bal != 0:
-                asset_rows.append(["Union Bank of India", "", f"₹{union_bank_bal:,.2f}"])
+                asset_rows.append(["Union Bank of India", f"₹{union_bank_bal:,.2f}"])
                 total_assets += union_bank_bal
             
             if sbi_bal != 0:
-                asset_rows.append(["State Bank of India", "", f"₹{sbi_bal:,.2f}"])
+                asset_rows.append(["State Bank of India", f"₹{sbi_bal:,.2f}"])
                 total_assets += sbi_bal
             
-            # Other assets (including Building AST-107 and Fixed Assets)
+            # Other assets (Fixed Assets with depreciation automatically deducted via credit JV entries)
             if other_asset_balances:
                 for row in other_asset_balances:
                     acc_code, acc_name, net_val = row
                     if net_val != 0:
-                        asset_rows.append([acc_name, "", f"₹{net_val:,.2f}"])
+                        asset_rows.append([f"{acc_code} - {acc_name}", f"₹{net_val:,.2f}"])
                         total_assets += net_val
             
             if asset_rows:
-                df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Inner (₹)", "Outer (₹)"])
+                df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Amount (₹)"])
                 st.dataframe(
                     df_assets, 
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Account Description": st.column_config.TextColumn("Account Description", width="medium"),
-                        "Inner (₹)": st.column_config.TextColumn("Inner (₹)", width="small"),
-                        "Outer (₹)": st.column_config.TextColumn("Outer (₹)", width="small"),
+                        "Amount (₹)": st.column_config.TextColumn("Amount (₹)", width="small"),
                     }
                 )
                 st.metric("Total Assets", f"₹{total_assets:,.2f}")
@@ -1928,7 +1935,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         col_pl1, col_pl2 = st.columns(2)
         
         with col_pl1:
-            st.markdown("### Expenditure")
+            st.markdown("### Expenditure (Including Depreciation & Interest Paid)")
             exp_rows = []
             total_exp = 0.0
             
@@ -2083,4 +2090,6 @@ elif menu == "SB Interest Calculation":
                 st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
+
+
 

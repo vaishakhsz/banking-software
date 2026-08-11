@@ -2256,4 +2256,5 @@ elif menu == "SB Interest Calculation":
                 st.success(f"✅ Interest credited to all SB accounts successfully!")
                 st.rerun()
     else:
+        
         st.info("No SB accounts found to calculate interest.")

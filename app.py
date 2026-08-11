@@ -953,10 +953,10 @@ elif menu == "Fixed Deposits (FD)":
                     WHERE fd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                # Journal entry: FD Deposits Control (LIA-102) -> SB Deposits Control (LIA-101)
+                # FD Deposits Control (LIA-102) -> SB Deposits Control (LIA-101)
                 post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB Deposits Control", "LIA-102", "LIA-101", maturity_amount)
                 
-                # Journal entry for interest expense - goes to P&L
+                # FD Interest Expense (EXP-102) -> FD Deposits Control (LIA-102)
                 if interest_earned > 0:
                     post_automated_jv(f"FD #{fd_id} Interest Expense", "EXP-102", "LIA-102", interest_earned)
                 
@@ -1099,10 +1099,10 @@ elif menu == "Recurring Deposits (RD)":
                     WHERE rd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), rd_id), fetch=False)
                 
-                # Journal entry: RD Deposits Control (LIA-103) -> SB Deposits Control (LIA-101)
+                # RD Deposits Control (LIA-103) -> SB Deposits Control (LIA-101)
                 post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB Deposits Control", "LIA-103", "LIA-101", maturity_amount_to_pay)
                 
-                # Journal entry for interest expense - goes to P&L
+                # RD Interest Expense (EXP-103) -> RD Deposits Control (LIA-103)
                 if interest_earned > 0:
                     post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned)
                 
@@ -2083,5 +2083,3 @@ elif menu == "SB Interest Calculation":
                 st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
-
-

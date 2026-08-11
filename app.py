@@ -2062,7 +2062,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 for row in depreciation_balances:
                     acc_code, acc_name, dep_val = row
                     if dep_val != 0:
-                        reduced_val = -dep_val
+                        reduced_val == dep_val
                         asset_rows.append([f"Less: {acc_code} - {acc_name}", f"₹{reduced_val:,.2f}"])
                         total_assets += reduced_val
             

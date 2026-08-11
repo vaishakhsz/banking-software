@@ -2064,7 +2064,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     acc_code, acc_name, dep_val = row
                     if dep_val != 0:
                       
-                        asset_rows.append([f"Less: {acc_code} - {acc_name}", f"₹{reduced_val:,.2f}"])
+                        asset_rows.append([f"Less: {acc_code} - {acc_name}", f"₹{dep_val:,.2f}"])
                         
             
             if asset_rows:

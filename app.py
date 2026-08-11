@@ -946,21 +946,18 @@ elif menu == "Fixed Deposits (FD)":
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
             
             if st.button("Close FD", type="primary"):
-                # Update FD status
+                # Update FD status - stays in FD Deposits Control (LIA-102)
                 run_query("""
                     UPDATE fixed_deposits 
                     SET status = 'CLOSED', closed_date = ?
                     WHERE fd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                # FD Deposits Control (LIA-102) -> SB Deposits Control (LIA-101)
-                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB Deposits Control", "LIA-102", "LIA-101", maturity_amount)
-                
                 # FD Interest Expense (EXP-102) -> FD Deposits Control (LIA-102)
                 if interest_earned > 0:
                     post_automated_jv(f"FD #{fd_id} Interest Expense", "EXP-102", "LIA-102", interest_earned)
                 
-                st.success(f"FD #{fd_id} closed successfully! Amount transferred to SB Deposits Control")
+                st.success(f"FD #{fd_id} closed successfully! Amount remains in FD Deposits Control")
                 st.rerun()
         else:
             st.info("No active FDs available to close.")
@@ -1092,21 +1089,18 @@ elif menu == "Recurring Deposits (RD)":
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
             
             if st.button("Close RD", type="primary"):
-                # Update RD status
+                # Update RD status - stays in RD Deposits Control (LIA-103)
                 run_query("""
                     UPDATE recurring_deposits 
                     SET status = 'CLOSED', closed_date = ?
                     WHERE rd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), rd_id), fetch=False)
                 
-                # RD Deposits Control (LIA-103) -> SB Deposits Control (LIA-101)
-                post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB Deposits Control", "LIA-103", "LIA-101", maturity_amount_to_pay)
-                
                 # RD Interest Expense (EXP-103) -> RD Deposits Control (LIA-103)
                 if interest_earned > 0:
                     post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned)
                 
-                st.success(f"RD #{rd_id} closed successfully! Amount transferred to SB Deposits Control")
+                st.success(f"RD #{rd_id} closed successfully! Amount remains in RD Deposits Control")
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
@@ -1358,11 +1352,11 @@ elif menu == "Bank Book":
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal / Transfer to Cash/Utilization)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description (e.g. Purchase of Building)")
+            particulars = st.text_input("Particulars / Description")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            account_head = st.selectbox("Corresponding Account Head (e.g., AST-107 Building)", list(coa_dict.keys()))
+            account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
             narration = st.text_area("Narration", height=68)
             
             if st.form_submit_button("Record Bank Entry"):
@@ -1401,7 +1395,6 @@ elif menu == "Bank Book":
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (today, c_vouch, f"Withdrawal from {selected_bank}: {particulars}", amount, 0, new_cash_bal, bank_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                         else:
-                            # Automatically debits selected account (e.g. Building AST-107) and credits bank
                             post_automated_jv(f"Bank Withdrawal: {particulars} - {selected_bank}", account_code, bank_code, amount)
                     
                     run_query("""
@@ -1740,7 +1733,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         # Get specific bank balances
         cash_bal = asset_balance_dict.get('AST-101', 0)  # Cash in Hand
         union_bank_bal = asset_balance_dict.get('AST-102', 0)  # Union Bank
-        sbi_bal = asset_balance_dict.get('AST-103', 0)  # SBI
+        sbi_bal = asset_balance_dict.get('AST-103', 0)  # State Bank of India
         
         # Get SB, FD, RD liability balances from journal entries
         sb_liability = run_query("""
@@ -1798,11 +1791,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 asset_rows.append(["Cash in Hand", "", f"₹{cash_bal:,.2f}"])
                 total_assets += cash_bal
             
-            # Bank Accounts
+            # Bank Accounts - Union Bank of India
             if union_bank_bal != 0:
                 asset_rows.append(["Union Bank of India", "", f"₹{union_bank_bal:,.2f}"])
                 total_assets += union_bank_bal
             
+            # Bank Accounts - State Bank of India
             if sbi_bal != 0:
                 asset_rows.append(["State Bank of India", "", f"₹{sbi_bal:,.2f}"])
                 total_assets += sbi_bal

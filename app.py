@@ -806,7 +806,7 @@ elif menu == "SB Accounts":
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    # SB Deposit goes to Liability
+                    # SB Deposit goes to SB Deposits Control (LIA-101)
                     post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
 
                 st.success(f"SB Account created successfully! Account No: {acc_no}")
@@ -910,7 +910,7 @@ elif menu == "Fixed Deposits (FD)":
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
-                # FD goes to Liability
+                # FD goes to FD Deposits Control (LIA-102)
                 post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
                 st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
         else:
@@ -953,14 +953,14 @@ elif menu == "Fixed Deposits (FD)":
                     WHERE fd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                # Journal entry: Transfer from FD Liability to SB Liability
-                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB Liability", "LIA-102", "LIA-101", maturity_amount)
+                # Journal entry: FD Deposits Control (LIA-102) -> SB Deposits Control (LIA-101)
+                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB Deposits Control", "LIA-102", "LIA-101", maturity_amount)
                 
-                # Journal entry for interest expense (if any) - goes to P&L
+                # Journal entry for interest expense - goes to P&L
                 if interest_earned > 0:
                     post_automated_jv(f"FD #{fd_id} Interest Expense", "EXP-102", "LIA-102", interest_earned)
                 
-                st.success(f"FD #{fd_id} closed successfully! Amount transferred to SB Liability")
+                st.success(f"FD #{fd_id} closed successfully! Amount transferred to SB Deposits Control")
                 st.rerun()
         else:
             st.info("No active FDs available to close.")
@@ -1043,7 +1043,7 @@ elif menu == "Recurring Deposits (RD)":
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
                     run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
-                    # RD installment goes to Liability
+                    # RD installment goes to RD Deposits Control (LIA-103)
                     post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
                     st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
                     st.rerun()
@@ -1089,6 +1089,7 @@ elif menu == "Recurring Deposits (RD)":
             
             total_paid = monthly_amt * paid_inst
             interest_earned = maturity_amount_to_pay - total_paid
+            st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
             
             if st.button("Close RD", type="primary"):
                 # Update RD status
@@ -1098,14 +1099,14 @@ elif menu == "Recurring Deposits (RD)":
                     WHERE rd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), rd_id), fetch=False)
                 
-                # Journal entry: Transfer from RD Liability to SB Liability
-                post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB Liability", "LIA-103", "LIA-101", maturity_amount_to_pay)
+                # Journal entry: RD Deposits Control (LIA-103) -> SB Deposits Control (LIA-101)
+                post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB Deposits Control", "LIA-103", "LIA-101", maturity_amount_to_pay)
                 
-                # Calculate and post interest expense if any - goes to P&L
+                # Journal entry for interest expense - goes to P&L
                 if interest_earned > 0:
                     post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned)
                 
-                st.success(f"RD #{rd_id} closed successfully! Amount transferred to SB Liability")
+                st.success(f"RD #{rd_id} closed successfully! Amount transferred to SB Deposits Control")
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
@@ -1835,19 +1836,22 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             lia_data = []
             total_lia = 0
             
-            # All deposits are liabilities
-            if sb_liability > 0:
+            # SB Deposits Control (LIA-101)
+            if sb_liability != 0:
                 lia_data.append(["SB Deposits Control", f"₹{sb_liability:,.2f}"])
                 total_lia += sb_liability
             
-            if fd_liability > 0:
+            # FD Deposits Control (LIA-102)
+            if fd_liability != 0:
                 lia_data.append(["FD Deposits Control", f"₹{fd_liability:,.2f}"])
                 total_lia += fd_liability
             
-            if rd_liability > 0:
+            # RD Deposits Control (LIA-103)
+            if rd_liability != 0:
                 lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
             
+            # Equity
             equity_details = run_query("""
                 SELECT 
                     COALESCE(JV.narration, 'Capital Account') as narration,
@@ -1877,6 +1881,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     lia_data.append(["Equity", f"₹{equity_balance:,.2f}"])
                     total_lia += equity_balance
             
+            # Net Profit/Loss
             if net_profit_loss != 0:
                 label_pnl = "Current Year Profit" if net_profit_loss > 0 else "Current Year Loss"
                 lia_data.append([label_pnl, f"₹{net_profit_loss:,.2f}"])
@@ -2071,7 +2076,7 @@ elif menu == "SB Interest Calculation":
                         """, (f"INT{datetime.now().strftime('%M%S%f')}", acct, interest_amt, 
                               f"Interest for {calc_period} period", datetime.now().strftime("%Y-%m-%d")), fetch=False)
                         
-                        # Post interest expense - goes to P&L
+                        # SB Interest Expense (EXP-101) -> SB Deposits Control (LIA-101)
                         post_automated_jv(f"SB Interest - Account {acct} ({calc_period})", "EXP-101", "LIA-101", interest_amt)
                 
                 st.success(f"✅ Interest credited to all SB accounts successfully!")

@@ -292,13 +292,46 @@ def get_cash_balance():
         return 0
 
 def get_bank_balance(bank_name=None):
+    """Get bank balance from bank_book table - FIXED to show correct balance"""
     try:
         if bank_name:
-            result = run_query("SELECT balance FROM bank_book WHERE bank_name = ? ORDER BY id DESC LIMIT 1", (bank_name,))
+            # Get the latest balance for specific bank from bank_book
+            result = run_query("""
+                SELECT balance FROM bank_book 
+                WHERE bank_name = ? 
+                ORDER BY id DESC 
+                LIMIT 1
+            """, (bank_name,))
         else:
-            result = run_query("SELECT balance FROM bank_book ORDER BY id DESC LIMIT 1")
+            # Get the latest balance overall
+            result = run_query("""
+                SELECT balance FROM bank_book 
+                ORDER BY id DESC 
+                LIMIT 1
+            """)
+        
+        # If no entries, try to get from journal entries (initial balance)
+        if not result or result[0][0] is None:
+            # Fallback: calculate from journal entries
+            if bank_name:
+                # Map bank name to account code
+                bank_code_map = {
+                    "Union Bank of India": "AST-102",
+                    "State Bank of India": "AST-103"
+                }
+                account_code = bank_code_map.get(bank_name)
+                if account_code:
+                    jv_result = run_query("""
+                        SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) 
+                        FROM jv_entries 
+                        WHERE account_code = ?
+                    """, (account_code,))
+                    return jv_result[0][0] if jv_result else 0
+            return 0
+        
         return result[0][0] if result else 0
-    except:
+    except Exception as e:
+        print(f"Error getting bank balance: {e}")
         return 0
 
 def generate_cash_voucher_no():
@@ -943,21 +976,91 @@ elif menu == "Fixed Deposits (FD)":
             fd_id, cust_name, principal, maturity_amount, interest_rate, tenure = selected_fd
             
             interest_earned = maturity_amount - principal
+            
+            # Ask where to transfer the funds
+            transfer_to = st.radio(
+                "Transfer maturity amount to:",
+                ["Union Bank of India", "State Bank of India", "Cash in Hand"],
+                index=0
+            )
+            
+            # Map to account code
+            transfer_account_map = {
+                "Union Bank of India": "AST-102",
+                "State Bank of India": "AST-103",
+                "Cash in Hand": "AST-101"
+            }
+            transfer_acc_code = transfer_account_map[transfer_to]
+            
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
+            st.info(f"Total Maturity Amount: ₹{maturity_amount:,.2f} will be transferred to {transfer_to}")
             
             if st.button("Close FD", type="primary"):
-                # Update FD status - stays in FD Deposits Control (LIA-102)
+                # Update FD status
                 run_query("""
                     UPDATE fixed_deposits 
                     SET status = 'CLOSED', closed_date = ?
                     WHERE fd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                # FD Interest Expense (EXP-102) -> FD Deposits Control (LIA-102)
-                if interest_earned > 0:
-                    post_automated_jv(f"FD #{fd_id} Interest Expense", "EXP-102", "LIA-102", interest_earned)
+                # Transfer maturity amount from FD Deposits Control to the selected asset
+                post_automated_jv(
+                    f"FD #{fd_id} Maturity Transfer to {transfer_to}",
+                    transfer_acc_code,  # Debit: Asset (Union Bank/Cash)
+                    "LIA-102",          # Credit: FD Deposits Control
+                    maturity_amount
+                )
                 
-                st.success(f"FD #{fd_id} closed successfully! Amount remains in FD Deposits Control")
+                # Record interest expense separately
+                if interest_earned > 0:
+                    post_automated_jv(
+                        f"FD #{fd_id} Interest Expense",
+                        "EXP-102",       # FD Interest Expense
+                        "LIA-102",        # FD Deposits Control
+                        interest_earned
+                    )
+                
+                # Also update the bank book if transferred to bank
+                if transfer_to in ["Union Bank of India", "State Bank of India"]:
+                    current_bank_bal = get_bank_balance(transfer_to)
+                    new_bank_bal = current_bank_bal + maturity_amount
+                    b_vouch = generate_bank_voucher_no()
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        datetime.now().strftime("%Y-%m-%d"),
+                        b_vouch,
+                        f"FD #{fd_id} Maturity Deposit",
+                        maturity_amount,
+                        0,
+                        new_bank_bal,
+                        transfer_to,
+                        transfer_acc_code,
+                        f"FD #{fd_id} maturity amount credited",
+                        datetime.now().strftime("%Y-%m-%d %H:%M")
+                    ), fetch=False)
+                elif transfer_to == "Cash in Hand":
+                    # Update cash book
+                    current_cash_bal = get_cash_balance()
+                    new_cash_bal = current_cash_bal + maturity_amount
+                    c_vouch = generate_cash_voucher_no()
+                    run_query("""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        datetime.now().strftime("%Y-%m-%d"),
+                        c_vouch,
+                        f"FD #{fd_id} Maturity Receipt",
+                        maturity_amount,
+                        0,
+                        new_cash_bal,
+                        transfer_acc_code,
+                        f"FD #{fd_id} maturity amount received",
+                        datetime.now().strftime("%Y-%m-%d %H:%M")
+                    ), fetch=False)
+                
+                st.success(f"FD #{fd_id} closed successfully! ₹{maturity_amount:,.2f} transferred to {transfer_to}")
                 st.rerun()
         else:
             st.info("No active FDs available to close.")
@@ -1086,21 +1189,92 @@ elif menu == "Recurring Deposits (RD)":
             
             total_paid = monthly_amt * paid_inst
             interest_earned = maturity_amount_to_pay - total_paid
+            
+            # Ask where to transfer the funds
+            transfer_to = st.radio(
+                "Transfer maturity amount to:",
+                ["Union Bank of India", "State Bank of India", "Cash in Hand"],
+                index=0,
+                key="rd_transfer_to"
+            )
+            
+            # Map to account code
+            transfer_account_map = {
+                "Union Bank of India": "AST-102",
+                "State Bank of India": "AST-103",
+                "Cash in Hand": "AST-101"
+            }
+            transfer_acc_code = transfer_account_map[transfer_to]
+            
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
+            st.info(f"Total Maturity Amount: ₹{maturity_amount_to_pay:,.2f} will be transferred to {transfer_to}")
             
             if st.button("Close RD", type="primary"):
-                # Update RD status - stays in RD Deposits Control (LIA-103)
+                # Update RD status
                 run_query("""
                     UPDATE recurring_deposits 
                     SET status = 'CLOSED', closed_date = ?
                     WHERE rd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), rd_id), fetch=False)
                 
-                # RD Interest Expense (EXP-103) -> RD Deposits Control (LIA-103)
-                if interest_earned > 0:
-                    post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned)
+                # Transfer maturity amount from RD Deposits Control to the selected asset
+                post_automated_jv(
+                    f"RD #{rd_id} Maturity Transfer to {transfer_to}",
+                    transfer_acc_code,  # Debit: Asset (Union Bank/Cash)
+                    "LIA-103",          # Credit: RD Deposits Control
+                    maturity_amount_to_pay
+                )
                 
-                st.success(f"RD #{rd_id} closed successfully! Amount remains in RD Deposits Control")
+                # Record interest expense separately
+                if interest_earned > 0:
+                    post_automated_jv(
+                        f"RD #{rd_id} Interest Expense",
+                        "EXP-103",       # RD Interest Expense
+                        "LIA-103",        # RD Deposits Control
+                        interest_earned
+                    )
+                
+                # Also update the bank book if transferred to bank
+                if transfer_to in ["Union Bank of India", "State Bank of India"]:
+                    current_bank_bal = get_bank_balance(transfer_to)
+                    new_bank_bal = current_bank_bal + maturity_amount_to_pay
+                    b_vouch = generate_bank_voucher_no()
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        datetime.now().strftime("%Y-%m-%d"),
+                        b_vouch,
+                        f"RD #{rd_id} Maturity Deposit",
+                        maturity_amount_to_pay,
+                        0,
+                        new_bank_bal,
+                        transfer_to,
+                        transfer_acc_code,
+                        f"RD #{rd_id} maturity amount credited",
+                        datetime.now().strftime("%Y-%m-%d %H:%M")
+                    ), fetch=False)
+                elif transfer_to == "Cash in Hand":
+                    # Update cash book
+                    current_cash_bal = get_cash_balance()
+                    new_cash_bal = current_cash_bal + maturity_amount_to_pay
+                    c_vouch = generate_cash_voucher_no()
+                    run_query("""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        datetime.now().strftime("%Y-%m-%d"),
+                        c_vouch,
+                        f"RD #{rd_id} Maturity Receipt",
+                        maturity_amount_to_pay,
+                        0,
+                        new_cash_bal,
+                        transfer_acc_code,
+                        f"RD #{rd_id} maturity amount received",
+                        datetime.now().strftime("%Y-%m-%d %H:%M")
+                    ), fetch=False)
+                
+                st.success(f"RD #{rd_id} closed successfully! ₹{maturity_amount_to_pay:,.2f} transferred to {transfer_to}")
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
@@ -1345,6 +1519,7 @@ elif menu == "Bank Book":
         bank_list = [b[0] for b in bank_accounts] if bank_accounts else ["Union Bank of India", "State Bank of India"]
         selected_bank = st.selectbox("Select Bank", bank_list, key="bank_select")
         
+        # FIXED: Using the improved get_bank_balance function
         current_balance = get_bank_balance(selected_bank)
         st.info(f"🏦 **{selected_bank} Current Balance:** ₹{current_balance:,.2f}")
         
@@ -2072,6 +2247,11 @@ elif menu == "SB Interest Calculation":
                         
                         # SB Interest Expense (EXP-101) -> SB Deposits Control (LIA-101)
                         post_automated_jv(f"SB Interest - Account {acct} ({calc_period})", "EXP-101", "LIA-101", interest_amt)
+                
+                st.success(f"✅ Interest credited to all SB accounts successfully!")
+                st.rerun()
+    else:
+        st.info("No SB accounts found to calculate interest.")
                 
                 st.success(f"✅ Interest credited to all SB accounts successfully!")
                 st.rerun()

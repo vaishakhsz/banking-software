@@ -1912,6 +1912,7 @@ elif menu == "Admin Record Editor":
             st.info(f"Table `{selected_table}` is currently empty.")
 
 # --- FINANCIAL STATEMENTS ---
+
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -2008,6 +2009,20 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             GROUP BY CO.account_code, CO.account_name
         """)
 
+        # Get depreciation / expense balances to show reduction on assets side
+        depreciation_balances = run_query("""
+            SELECT 
+                CO.account_code,
+                CO.account_name,
+                COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            WHERE CO.account_type = 'Expense' 
+              AND (CO.account_code LIKE 'EXP-20%' OR LOWER(CO.account_name) LIKE '%depreciation%')
+            GROUP BY CO.account_code, CO.account_name
+            HAVING net_balance != 0
+        """)
+
         # Get income and expense
         tot_inc_result = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         tot_exp_result = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
@@ -2016,8 +2031,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         tot_exp = tot_exp_result[0][0] if tot_exp_result and tot_exp_result[0][0] is not None else 0.0
         net_profit_loss = tot_inc - tot_exp
 
-        col1, col2 = st.columns(2)
-        with col1:
+        col_bs1, col_bs2 = st.columns(2)
+        with col_bs1:
             st.markdown("### Assets")
             
             asset_rows = []
@@ -2041,6 +2056,15 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                     if net_val != 0:
                         asset_rows.append([f"{acc_code} - {acc_name}", f"₹{net_val:,.2f}"])
                         total_assets += net_val
+
+            # Append depreciation heads as negative values to show asset reduction
+            if depreciation_balances:
+                for row in depreciation_balances:
+                    acc_code, acc_name, dep_val = row
+                    if dep_val != 0:
+                        reduced_val = -dep_val
+                        asset_rows.append([f"Less: {acc_code} - {acc_name}", f"₹{reduced_val:,.2f}"])
+                        total_assets += reduced_val
             
             if asset_rows:
                 df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Amount (₹)"])
@@ -2049,7 +2073,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             else:
                 st.info("No assets recorded.")
 
-        with col2:
+        with col_bs2:
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0
@@ -2160,6 +2184,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.error(f"**Net Loss for the Period:** ₹{abs(net_result):,.2f}")
         else:
             st.info("**Net Result:** Balanced (₹0.00)")
+
+
 
 # --- REPORTS ---
 elif menu == "Reports":

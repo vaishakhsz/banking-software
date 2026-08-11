@@ -292,66 +292,14 @@ def get_cash_balance():
         return 0
 
 def get_bank_balance(bank_name=None):
-    """Get bank balance from bank_book table"""
     try:
         if bank_name:
-            result = run_query("""
-                SELECT balance FROM bank_book 
-                WHERE bank_name = ? 
-                ORDER BY id DESC 
-                LIMIT 1
-            """, (bank_name,))
+            result = run_query("SELECT balance FROM bank_book WHERE bank_name = ? ORDER BY id DESC LIMIT 1", (bank_name,))
         else:
-            result = run_query("""
-                SELECT balance FROM bank_book 
-                ORDER BY id DESC 
-                LIMIT 1
-            """)
-        
-        if not result or result[0][0] is None:
-            if bank_name:
-                bank_code_map = {
-                    "Union Bank of India": "AST-102",
-                    "State Bank of India": "AST-103"
-                }
-                account_code = bank_code_map.get(bank_name)
-                if account_code:
-                    jv_result = run_query("""
-                        SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) 
-                        FROM jv_entries 
-                        WHERE account_code = ?
-                    """, (account_code,))
-                    return jv_result[0][0] if jv_result else 0
-            return 0
-        
-        return result[0][0] if result else 0
-    except Exception as e:
-        print(f"Error getting bank balance: {e}")
-        return 0
-
-def get_asset_balance(account_code):
-    """Get balance for any asset account from journal entries"""
-    try:
-        result = run_query("""
-            SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0)
-            FROM jv_entries
-            WHERE account_code = ?
-        """, (account_code,))
+            result = run_query("SELECT balance FROM bank_book ORDER BY id DESC LIMIT 1")
         return result[0][0] if result else 0
     except:
         return 0
-
-def validate_funding_source(account_code, amount):
-    """Validate if the funding source has sufficient balance"""
-    if account_code == "AST-101":  # Cash in Hand
-        current_balance = get_cash_balance()
-    elif account_code in ["AST-102", "AST-103"]:  # Bank accounts
-        bank_name = "Union Bank of India" if account_code == "AST-102" else "State Bank of India"
-        current_balance = get_bank_balance(bank_name)
-    else:
-        current_balance = get_asset_balance(account_code)
-    
-    return current_balance >= amount, current_balance
 
 def generate_cash_voucher_no():
     today = datetime.now().strftime("%Y%m%d")
@@ -850,30 +798,18 @@ elif menu == "SB Accounts":
                 chosen_asset_code = "AST-101"
                 mode = "CASH"
             
-            # Check if funding source has sufficient balance
-            has_balance, current_balance = validate_funding_source(chosen_asset_code, init_bal)
-            
-            if not has_balance and init_bal > 0:
-                st.error(f"❌ Insufficient balance in {mode}! Available: ₹{current_balance:,.2f}")
-            else:
-                if init_bal > 0:
-                    st.success(f"✅ {mode} balance is sufficient: ₹{current_balance:,.2f}")
-            
             if st.button("Create SB Account"):
-                if init_bal > 0 and not has_balance:
-                    st.error("Cannot create SB account due to insufficient funds!")
-                else:
-                    acc_no = f"SB{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                    run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
-                              (acc_no, cust_id, init_bal, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    
-                    if init_bal > 0:
-                        run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
-                                  (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                        # SB Deposit goes to SB Deposits Control (LIA-101)
-                        post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
+                acc_no = f"SB{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
+                          (acc_no, cust_id, init_bal, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                
+                if init_bal > 0:
+                    run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
+                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    # SB Deposit goes to SB Deposits Control (LIA-101)
+                    post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
 
-                    st.success(f"SB Account created successfully! Account No: {acc_no}")
+                st.success(f"SB Account created successfully! Account No: {acc_no}")
         else:
             st.warning("Please register a customer first.")
 
@@ -900,39 +836,26 @@ elif menu == "SB Accounts":
             else:
                 chosen_asset_code = "AST-101"
                 pay_mode = "CASH"
-            
-            # Check if funding source has sufficient balance for deposit
-            if tx_type == "DEPOSIT":
-                has_balance, current_balance = validate_funding_source(chosen_asset_code, amount)
-                if not has_balance:
-                    st.error(f"❌ Insufficient balance in {pay_mode}! Available: ₹{current_balance:,.2f}")
-            
+                
             narration = st.text_input("Narration / Remarks", value="Counter transaction")
             
             if st.button("Execute Transaction"):
                 current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acc_choice,))[0][0]
-                
-                if tx_type == "DEPOSIT":
-                    if not has_balance:
-                        st.error("Transaction failed! Insufficient funds in payment source.")
-                    else:
-                        new_bal = current_bal + amount
-                        run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
-                        run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)",
-                                  (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                if tx_type == "WITHDRAWAL" and current_bal < amount:
+                    st.error("Insufficient account balance!")
+                else:
+                    new_bal = current_bal + amount if tx_type == "DEPOSIT" else current_bal - amount
+                    db_type = "CREDIT" if tx_type == "DEPOSIT" else "DEBIT"
+                    run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
+                    run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, db_type, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    
+                    if tx_type == "DEPOSIT":
                         post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", chosen_asset_code, "LIA-101", amount)
-                        st.success(f"Deposit successful! New Balance: ₹{new_bal:,.2f}")
-                        
-                elif tx_type == "WITHDRAWAL":
-                    if current_bal < amount:
-                        st.error("Insufficient SB account balance!")
                     else:
-                        new_bal = current_bal - amount
-                        run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
-                        run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'DEBIT', ?, ?, ?, ?)",
-                                  (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
                         post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
-                        st.success(f"Withdrawal successful! New Balance: ₹{new_bal:,.2f}")
+
+                    st.success(f"Transaction successful! New Balance: ₹{new_bal:,.2f}")
         else:
             st.info("No active SB accounts found.")
 
@@ -978,29 +901,18 @@ elif menu == "Fixed Deposits (FD)":
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
-            # Check if funding source has sufficient balance
-            has_balance, current_balance = validate_funding_source(chosen_asset_code, principal)
-            
-            if not has_balance:
-                st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{current_balance:,.2f}")
-            else:
-                st.success(f"✅ {payment_mode} balance is sufficient: ₹{current_balance:,.2f}")
-            
             maturity_amount = principal + (principal * interest_rate * (tenure / 12) / 100)
             st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
             
             if st.button("Open FD Account"):
-                if not has_balance:
-                    st.error("Cannot open FD due to insufficient funds!")
-                else:
-                    run_query("""
-                        INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
-                        VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
-                    """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
-                    
-                    # FD goes to FD Deposits Control (LIA-102)
-                    post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
-                    st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
+                run_query("""
+                    INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
+                    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+                """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
+                
+                # FD goes to FD Deposits Control (LIA-102)
+                post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
+                st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
         else:
             st.warning("Register a customer first.")
 
@@ -1031,24 +943,7 @@ elif menu == "Fixed Deposits (FD)":
             fd_id, cust_name, principal, maturity_amount, interest_rate, tenure = selected_fd
             
             interest_earned = maturity_amount - principal
-            
-            # Ask where to transfer the funds
-            transfer_to = st.radio(
-                "Transfer maturity amount to:",
-                ["Union Bank of India", "State Bank of India", "Cash in Hand"],
-                index=0
-            )
-            
-            # Map to account code
-            transfer_account_map = {
-                "Union Bank of India": "AST-102",
-                "State Bank of India": "AST-103",
-                "Cash in Hand": "AST-101"
-            }
-            transfer_acc_code = transfer_account_map[transfer_to]
-            
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
-            st.info(f"Total Maturity Amount: ₹{maturity_amount:,.2f} will be transferred to {transfer_to}")
             
             if st.button("Close FD", type="primary"):
                 # Update FD status
@@ -1058,64 +953,14 @@ elif menu == "Fixed Deposits (FD)":
                     WHERE fd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                # Transfer maturity amount from FD Deposits Control to the selected asset
-                post_automated_jv(
-                    f"FD #{fd_id} Maturity Transfer to {transfer_to}",
-                    transfer_acc_code,  # Debit: Asset (Union Bank/Cash)
-                    "LIA-102",          # Credit: FD Deposits Control
-                    maturity_amount
-                )
+                # FD Deposits Control (LIA-102) -> SB Deposits Control (LIA-101)
+                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB Deposits Control", "LIA-102", "LIA-101", maturity_amount)
                 
-                # Record interest expense separately
+                # FD Interest Expense (EXP-102) -> FD Deposits Control (LIA-102)
                 if interest_earned > 0:
-                    post_automated_jv(
-                        f"FD #{fd_id} Interest Expense",
-                        "EXP-102",       # FD Interest Expense
-                        "LIA-102",        # FD Deposits Control
-                        interest_earned
-                    )
+                    post_automated_jv(f"FD #{fd_id} Interest Expense", "EXP-102", "LIA-102", interest_earned)
                 
-                # Also update the bank book if transferred to bank
-                if transfer_to in ["Union Bank of India", "State Bank of India"]:
-                    current_bank_bal = get_bank_balance(transfer_to)
-                    new_bank_bal = current_bank_bal + maturity_amount
-                    b_vouch = generate_bank_voucher_no()
-                    run_query("""
-                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        datetime.now().strftime("%Y-%m-%d"),
-                        b_vouch,
-                        f"FD #{fd_id} Maturity Deposit",
-                        maturity_amount,
-                        0,
-                        new_bank_bal,
-                        transfer_to,
-                        transfer_acc_code,
-                        f"FD #{fd_id} maturity amount credited",
-                        datetime.now().strftime("%Y-%m-%d %H:%M")
-                    ), fetch=False)
-                elif transfer_to == "Cash in Hand":
-                    # Update cash book
-                    current_cash_bal = get_cash_balance()
-                    new_cash_bal = current_cash_bal + maturity_amount
-                    c_vouch = generate_cash_voucher_no()
-                    run_query("""
-                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        datetime.now().strftime("%Y-%m-%d"),
-                        c_vouch,
-                        f"FD #{fd_id} Maturity Receipt",
-                        maturity_amount,
-                        0,
-                        new_cash_bal,
-                        transfer_acc_code,
-                        f"FD #{fd_id} maturity amount received",
-                        datetime.now().strftime("%Y-%m-%d %H:%M")
-                    ), fetch=False)
-                
-                st.success(f"FD #{fd_id} closed successfully! ₹{maturity_amount:,.2f} transferred to {transfer_to}")
+                st.success(f"FD #{fd_id} closed successfully! Amount transferred to SB Deposits Control")
                 st.rerun()
         else:
             st.info("No active FDs available to close.")
@@ -1150,14 +995,6 @@ elif menu == "Recurring Deposits (RD)":
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
-            # Check if funding source has sufficient balance
-            has_balance, current_balance = validate_funding_source(chosen_asset_code, monthly_amt)
-            
-            if not has_balance:
-                st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{current_balance:,.2f}")
-            else:
-                st.success(f"✅ {payment_mode} balance is sufficient: ₹{current_balance:,.2f}")
-            
             # Calculate approximate maturity
             total_deposits = monthly_amt * tenure
             approx_interest = total_deposits * (interest_rate / 100) * (tenure / 24)  # Simplified
@@ -1166,15 +1003,12 @@ elif menu == "Recurring Deposits (RD)":
             st.info(f"**Estimated Maturity:** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
             
             if st.button("Open RD Account"):
-                if not has_balance:
-                    st.error("Cannot open RD due to insufficient funds!")
-                else:
-                    run_query("""
-                        INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount)
-                        VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?)
-                    """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
-                          datetime.now().strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
-                    st.success(f"Recurring Deposit opened successfully via {payment_mode}!")
+                run_query("""
+                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount)
+                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?)
+                """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
+                      datetime.now().strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
+                st.success(f"Recurring Deposit opened successfully via {payment_mode}!")
         else:
             st.warning("Register customers first.")
 
@@ -1205,27 +1039,14 @@ elif menu == "Recurring Deposits (RD)":
                 chosen_asset_code = "AST-101"
                 payment_mode_pay = "Cash"
             
-            # Check if funding source has sufficient balance
-            has_balance, current_balance = validate_funding_source(chosen_asset_code, monthly_amt)
-            
-            if not has_balance:
-                st.error(f"❌ Insufficient balance in {payment_mode_pay}! Available: ₹{current_balance:,.2f}")
-            else:
-                st.success(f"✅ {payment_mode_pay} balance is sufficient: ₹{current_balance:,.2f}")
-            
             if st.button("Confirm & Pay Installment"):
                 if paid_inst < tenure_m:
-                    if not has_balance:
-                        st.error("Cannot pay installment due to insufficient funds!")
-                    else:
-                        new_paid = paid_inst + 1
-                        run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
-                        # RD installment goes to RD Deposits Control (LIA-103)
-                        post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
-                        st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
-                        st.rerun()
-                else:
-                    st.warning("All installments already paid!")
+                    new_paid = paid_inst + 1
+                    run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
+                    # RD installment goes to RD Deposits Control (LIA-103)
+                    post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
+                    st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
+                    st.rerun()
         else:
             st.info("No active recurring deposits found.")
 
@@ -1268,25 +1089,7 @@ elif menu == "Recurring Deposits (RD)":
             
             total_paid = monthly_amt * paid_inst
             interest_earned = maturity_amount_to_pay - total_paid
-            
-            # Ask where to transfer the funds
-            transfer_to = st.radio(
-                "Transfer maturity amount to:",
-                ["Union Bank of India", "State Bank of India", "Cash in Hand"],
-                index=0,
-                key="rd_transfer_to"
-            )
-            
-            # Map to account code
-            transfer_account_map = {
-                "Union Bank of India": "AST-102",
-                "State Bank of India": "AST-103",
-                "Cash in Hand": "AST-101"
-            }
-            transfer_acc_code = transfer_account_map[transfer_to]
-            
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
-            st.info(f"Total Maturity Amount: ₹{maturity_amount_to_pay:,.2f} will be transferred to {transfer_to}")
             
             if st.button("Close RD", type="primary"):
                 # Update RD status
@@ -1296,64 +1099,14 @@ elif menu == "Recurring Deposits (RD)":
                     WHERE rd_id = ?
                 """, (datetime.now().strftime("%Y-%m-%d"), rd_id), fetch=False)
                 
-                # Transfer maturity amount from RD Deposits Control to the selected asset
-                post_automated_jv(
-                    f"RD #{rd_id} Maturity Transfer to {transfer_to}",
-                    transfer_acc_code,  # Debit: Asset (Union Bank/Cash)
-                    "LIA-103",          # Credit: RD Deposits Control
-                    maturity_amount_to_pay
-                )
+                # RD Deposits Control (LIA-103) -> SB Deposits Control (LIA-101)
+                post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB Deposits Control", "LIA-103", "LIA-101", maturity_amount_to_pay)
                 
-                # Record interest expense separately
+                # RD Interest Expense (EXP-103) -> RD Deposits Control (LIA-103)
                 if interest_earned > 0:
-                    post_automated_jv(
-                        f"RD #{rd_id} Interest Expense",
-                        "EXP-103",       # RD Interest Expense
-                        "LIA-103",        # RD Deposits Control
-                        interest_earned
-                    )
+                    post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned)
                 
-                # Also update the bank book if transferred to bank
-                if transfer_to in ["Union Bank of India", "State Bank of India"]:
-                    current_bank_bal = get_bank_balance(transfer_to)
-                    new_bank_bal = current_bank_bal + maturity_amount_to_pay
-                    b_vouch = generate_bank_voucher_no()
-                    run_query("""
-                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        datetime.now().strftime("%Y-%m-%d"),
-                        b_vouch,
-                        f"RD #{rd_id} Maturity Deposit",
-                        maturity_amount_to_pay,
-                        0,
-                        new_bank_bal,
-                        transfer_to,
-                        transfer_acc_code,
-                        f"RD #{rd_id} maturity amount credited",
-                        datetime.now().strftime("%Y-%m-%d %H:%M")
-                    ), fetch=False)
-                elif transfer_to == "Cash in Hand":
-                    # Update cash book
-                    current_cash_bal = get_cash_balance()
-                    new_cash_bal = current_cash_bal + maturity_amount_to_pay
-                    c_vouch = generate_cash_voucher_no()
-                    run_query("""
-                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        datetime.now().strftime("%Y-%m-%d"),
-                        c_vouch,
-                        f"RD #{rd_id} Maturity Receipt",
-                        maturity_amount_to_pay,
-                        0,
-                        new_cash_bal,
-                        transfer_acc_code,
-                        f"RD #{rd_id} maturity amount received",
-                        datetime.now().strftime("%Y-%m-%d %H:%M")
-                    ), fetch=False)
-                
-                st.success(f"RD #{rd_id} closed successfully! ₹{maturity_amount_to_pay:,.2f} transferred to {transfer_to}")
+                st.success(f"RD #{rd_id} closed successfully! Amount transferred to SB Deposits Control")
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
@@ -1605,11 +1358,11 @@ elif menu == "Bank Book":
             col1, col2 = st.columns(2)
             entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal / Transfer to Cash/Utilization)"])
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description")
+            particulars = st.text_input("Particulars / Description (e.g. Purchase of Building)")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
+            account_head = st.selectbox("Corresponding Account Head (e.g., AST-107 Building)", list(coa_dict.keys()))
             narration = st.text_area("Narration", height=68)
             
             if st.form_submit_button("Record Bank Entry"):
@@ -1648,6 +1401,7 @@ elif menu == "Bank Book":
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (today, c_vouch, f"Withdrawal from {selected_bank}: {particulars}", amount, 0, new_cash_bal, bank_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                         else:
+                            # Automatically debits selected account (e.g. Building AST-107) and credits bank
                             post_automated_jv(f"Bank Withdrawal: {particulars} - {selected_bank}", account_code, bank_code, amount)
                     
                     run_query("""
@@ -1750,91 +1504,48 @@ elif menu == "Bank Book":
             st.info("No Bank Book vouchers available.")
 
 # --- JOURNAL VOUCHERS ---
-# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
-        st.subheader("Create Journal Voucher")
-        st.info("💡 **Depreciation Posting:** Selecting an expense head like EXP-204 to EXP-207 allows you to enter the asset base value. The system computes the depreciation, debits the P&L expense, and credits (reduces) the asset on the Balance Sheet.")
+        st.info("💡 **Depreciation Heads Available:**")
+        st.info("• EXP-204: Depreciation 5%")
+        st.info("• EXP-205: Depreciation 10%")
+        st.info("• EXP-206: Depreciation 15%")
+        st.info("• EXP-207: Depreciation 40%")
         
-        coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
-        coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-        coa_names = {c[0]: c[1] for c in coa_list}
-        
-        asset_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type LIKE '%Asset%'")
-        asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_list} if asset_list else coa_dict
-
-        # Explicit mapping for your specific depreciation heads
-        dep_rate_map = {
-            "EXP-204": 5.0,
-            "EXP-205": 10.0,
-            "EXP-206": 15.0,
-            "EXP-207": 40.0
-        }
-
-        with st.form("unified_jv_form"):
+        with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
-            narration = st.text_input("Narration / Description", value="Depreciation entry")
+            narration = st.text_input("Narration / Description")
             
-            st.markdown("---")
-            st.markdown("#### **Debit Entry (Expense Head)**")
-            col_acc1, col_dummy = st.columns([2, 1])
-            acc1 = col_acc1.selectbox("Debit Account Head", list(coa_dict.keys()), key="jv_acc1")
-            acc1_code = coa_dict[acc1]
-            acc1_name = coa_names.get(acc1_code, "")
-            acc1_name_lower = acc1_name.lower()
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
-            is_depreciation = acc1_code in dep_rate_map or "depreciation" in acc1_name_lower
+            col_acc, col_dr, col_cr = st.columns(3)
+            acc1 = col_acc.selectbox("Account Head 1 (Debit)", list(coa_dict.keys()), key="jv_acc1")
+            dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
+            cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
             
-            if is_depreciation:
-                # Determine rate from map or fallback to regex extraction
-                if acc1_code in dep_rate_map:
-                    default_rate = dep_rate_map[acc1_code]
-                else:
-                    rate_match = re.search(r'(\d+(?:\.\d+)?)%', acc1_name)
-                    default_rate = float(rate_match.group(1)) if rate_match else 15.0
-                
-                st.markdown("##### ⚙️ Asset Depreciation Calculator")
-                col_p1, col_p2 = st.columns(2)
-                dep_percentage = col_p1.number_input("Depreciation Percentage (%)", min_value=0.0, max_value=100.0, value=default_rate, step=0.5, key="jv_dep_rate")
-                base_amount = col_p2.number_input("Enter Asset Base Value (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_base_amt")
-                
-                calculated_dep = round(base_amount * (dep_percentage / 100.0), 2)
-                st.write(f"**Calculated Expense ({dep_percentage}% of ₹{base_amount:,.2f}):** **₹{calculated_dep:,.2f}**")
-                dr1 = calculated_dep
-            else:
-                dr1 = st.number_input("Debit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr1")
+            acc2 = col_acc.selectbox("Account Head 2 (Credit)", list(coa_dict.keys()), key="jv_acc2")
+            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
+            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
-            st.markdown("---")
-            st.markdown("#### **Credit Entry (Asset Account Reduction)**")
-            col_acc2, col_dummy2 = st.columns([2, 1])
-            acc2 = col_acc2.selectbox("Credit Asset Account (Reduces Net Value on Balance Sheet)", list(asset_dict.keys()), key="jv_acc2")
-            acc2_code = asset_dict[acc2]
-            
-            if is_depreciation:
-                st.write(f"**Credit Amount (Auto-balanced to reduce asset):** ₹{calculated_dep:,.2f}")
-                cr2 = calculated_dep
-            else:
-                cr2 = st.number_input("Credit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
-            
-            submitted = st.form_submit_button("Post Journal Voucher")
-            if submitted:
-                if dr1 == cr2 and dr1 > 0:
+            if st.form_submit_button("Save and Post JV"):
+                total_dr = dr1 + dr2
+                total_cr = cr1 + cr2
+                if total_dr == total_cr and total_dr > 0:
                     conn = get_connection()
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
                     jv_id = cursor.lastrowid
-                    # Debit entry increases P&L expense
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, acc1_code, dr1))
-                    # Credit entry reduces Balance Sheet asset value
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc2_code, cr2))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
                     conn.commit()
                     conn.close()
-                    st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully! Expense recorded and Asset reduced by ₹{dr1:,.2f}.")
+                    st.success("Balanced Journal Voucher posted successfully!")
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits and be greater than zero.")
+                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
@@ -2029,7 +1740,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         # Get specific bank balances
         cash_bal = asset_balance_dict.get('AST-101', 0)  # Cash in Hand
         union_bank_bal = asset_balance_dict.get('AST-102', 0)  # Union Bank
-        sbi_bal = asset_balance_dict.get('AST-103', 0)  # State Bank of India
+        sbi_bal = asset_balance_dict.get('AST-103', 0)  # SBI
         
         # Get SB, FD, RD liability balances from journal entries
         sb_liability = run_query("""
@@ -2087,12 +1798,11 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 asset_rows.append(["Cash in Hand", "", f"₹{cash_bal:,.2f}"])
                 total_assets += cash_bal
             
-            # Bank Accounts - Union Bank of India
+            # Bank Accounts
             if union_bank_bal != 0:
                 asset_rows.append(["Union Bank of India", "", f"₹{union_bank_bal:,.2f}"])
                 total_assets += union_bank_bal
             
-            # Bank Accounts - State Bank of India
             if sbi_bal != 0:
                 asset_rows.append(["State Bank of India", "", f"₹{sbi_bal:,.2f}"])
                 total_assets += sbi_bal
@@ -2373,3 +2083,4 @@ elif menu == "SB Interest Calculation":
                 st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
+

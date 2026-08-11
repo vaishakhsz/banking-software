@@ -1750,48 +1750,91 @@ elif menu == "Bank Book":
             st.info("No Bank Book vouchers available.")
 
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
-        st.info("💡 **Depreciation Heads Available:**")
-        st.info("• EXP-204: Depreciation 5%")
-        st.info("• EXP-205: Depreciation 10%")
-        st.info("• EXP-206: Depreciation 15%")
-        st.info("• EXP-207: Depreciation 40%")
+        st.subheader("Create Journal Voucher")
+        st.info("💡 **Depreciation Posting:** Selecting an expense head like EXP-204 to EXP-207 allows you to enter the asset base value. The system computes the depreciation, debits the P&L expense, and credits (reduces) the asset on the Balance Sheet.")
         
-        with st.form("jv_form"):
+        coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
+        coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+        coa_names = {c[0]: c[1] for c in coa_list}
+        
+        asset_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type LIKE '%Asset%'")
+        asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_list} if asset_list else coa_dict
+
+        # Explicit mapping for your specific depreciation heads
+        dep_rate_map = {
+            "EXP-204": 5.0,
+            "EXP-205": 10.0,
+            "EXP-206": 15.0,
+            "EXP-207": 40.0
+        }
+
+        with st.form("unified_jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
-            narration = st.text_input("Narration / Description")
+            narration = st.text_input("Narration / Description", value="Depreciation entry")
             
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
-            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+            st.markdown("---")
+            st.markdown("#### **Debit Entry (Expense Head)**")
+            col_acc1, col_dummy = st.columns([2, 1])
+            acc1 = col_acc1.selectbox("Debit Account Head", list(coa_dict.keys()), key="jv_acc1")
+            acc1_code = coa_dict[acc1]
+            acc1_name = coa_names.get(acc1_code, "")
+            acc1_name_lower = acc1_name.lower()
             
-            col_acc, col_dr, col_cr = st.columns(3)
-            acc1 = col_acc.selectbox("Account Head 1 (Debit)", list(coa_dict.keys()), key="jv_acc1")
-            dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
-            cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
+            is_depreciation = acc1_code in dep_rate_map or "depreciation" in acc1_name_lower
             
-            acc2 = col_acc.selectbox("Account Head 2 (Credit)", list(coa_dict.keys()), key="jv_acc2")
-            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
-            cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
+            if is_depreciation:
+                # Determine rate from map or fallback to regex extraction
+                if acc1_code in dep_rate_map:
+                    default_rate = dep_rate_map[acc1_code]
+                else:
+                    rate_match = re.search(r'(\d+(?:\.\d+)?)%', acc1_name)
+                    default_rate = float(rate_match.group(1)) if rate_match else 15.0
+                
+                st.markdown("##### ⚙️ Asset Depreciation Calculator")
+                col_p1, col_p2 = st.columns(2)
+                dep_percentage = col_p1.number_input("Depreciation Percentage (%)", min_value=0.0, max_value=100.0, value=default_rate, step=0.5, key="jv_dep_rate")
+                base_amount = col_p2.number_input("Enter Asset Base Value (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_base_amt")
+                
+                calculated_dep = round(base_amount * (dep_percentage / 100.0), 2)
+                st.write(f"**Calculated Expense ({dep_percentage}% of ₹{base_amount:,.2f}):** **₹{calculated_dep:,.2f}**")
+                dr1 = calculated_dep
+            else:
+                dr1 = st.number_input("Debit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr1")
             
-            if st.form_submit_button("Save and Post JV"):
-                total_dr = dr1 + dr2
-                total_cr = cr1 + cr2
-                if total_dr == total_cr and total_dr > 0:
+            st.markdown("---")
+            st.markdown("#### **Credit Entry (Asset Account Reduction)**")
+            col_acc2, col_dummy2 = st.columns([2, 1])
+            acc2 = col_acc2.selectbox("Credit Asset Account (Reduces Net Value on Balance Sheet)", list(asset_dict.keys()), key="jv_acc2")
+            acc2_code = asset_dict[acc2]
+            
+            if is_depreciation:
+                st.write(f"**Credit Amount (Auto-balanced to reduce asset):** ₹{calculated_dep:,.2f}")
+                cr2 = calculated_dep
+            else:
+                cr2 = st.number_input("Credit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
+            
+            submitted = st.form_submit_button("Post Journal Voucher")
+            if submitted:
+                if dr1 == cr2 and dr1 > 0:
                     conn = get_connection()
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
                     jv_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
+                    # Debit entry increases P&L expense
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, acc1_code, dr1))
+                    # Credit entry reduces Balance Sheet asset value
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc2_code, cr2))
                     conn.commit()
                     conn.close()
-                    st.success("Balanced Journal Voucher posted successfully!")
+                    st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully! Expense recorded and Asset reduced by ₹{dr1:,.2f}.")
                 else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits and be greater than zero.")
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")

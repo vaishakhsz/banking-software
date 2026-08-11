@@ -1095,7 +1095,7 @@ elif menu == "Fixed Deposits (FD)":
                 """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
                 # FD Deposits Control (LIA-102) -> SB Deposits Control (LIA-101)
-                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB Deposits Control", "LIA-102", "LIA-101", maturity_amount)
+                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to FD Deposits Control", "LIA-102", maturity_amount)
                 
                 # FD Interest Expense (EXP-102) -> FD Deposits Control (LIA-102)
                 if interest_earned > 0:

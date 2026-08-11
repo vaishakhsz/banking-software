@@ -1914,6 +1914,7 @@ elif menu == "Admin Record Editor":
 # --- FINANCIAL STATEMENTS ---
 
 elif menu == "Financial Statements (Trial/BS/PL)":
+    
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
     
@@ -1948,15 +1949,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("No entries recorded yet.")
             
-   with tab2:
-       
-       
-       
-       
+    with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # Get net balances from journal entries for all asset accounts 
-        # (Since depreciation entries credit the asset, the net_balance automatically drops)
+        # Get balances from journal entries for all asset accounts
         asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -2001,7 +1997,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_code = 'LIA-103'
         """)[0][0] or 0.0
         
-        # Get all other assets (Buildings, Equipment, etc.) - net balance already reflects depreciation credits
+        # Get other assets
         other_asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -2012,6 +2008,20 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_type = 'Asset' 
               AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103')
             GROUP BY CO.account_code, CO.account_name
+        """)
+
+        # Get depreciation / expense balances to show reduction on assets side
+        depreciation_balances = run_query("""
+            SELECT 
+                CO.account_code,
+                CO.account_name,
+                COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
+            FROM chart_of_accounts CO
+            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+            WHERE CO.account_type = 'Expense' 
+              AND (CO.account_code LIKE 'EXP-20%' OR LOWER(CO.account_name) LIKE '%depreciation%')
+            GROUP BY CO.account_code, CO.account_name
+            HAVING net_balance != 0
         """)
 
         # Get income and expense
@@ -2045,9 +2055,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 for row in other_asset_balances:
                     acc_code, acc_name, net_val = row
                     if net_val != 0:
-                        # Displays the exact depreciated net book value of the asset
                         asset_rows.append([f"{acc_code} - {acc_name}", f"₹{net_val:,.2f}"])
                         total_assets += net_val
+
+            # Append depreciation heads as negative values to show asset reduction
+            if depreciation_balances:
+                for row in depreciation_balances:
+                    acc_code, acc_name, dep_val = row
+                    if dep_val != 0:
+                      
+                        asset_rows.append([f"Less: {acc_code} - {acc_name}", f"₹{reduced_val:,.2f}"])
+                        
             
             if asset_rows:
                 df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Amount (₹)"])
@@ -2057,7 +2075,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.info("No assets recorded.")
 
         with col_bs2:
-            
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0

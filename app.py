@@ -2058,6 +2058,13 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                         total_assets += net_val
 
             # Append depreciation heads as negative values to show asset reduction
+            if depreciation_balances:
+                for row in depreciation_balances:
+                    acc_code, acc_name, dep_val = row
+                    if dep_val != 0:
+                        reduced_val =+ dep_val
+                        asset_rows.append([f"Less: {acc_code} - {acc_name}", f"₹{reduced_val:,.2f}"])
+                        total_assets += reduced_val
             
             
             if asset_rows:

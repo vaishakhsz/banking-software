@@ -1949,6 +1949,10 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             st.info("No entries recorded yet.")
             
    with tab2:
+       
+       
+       
+       
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
         # Get net balances from journal entries for all asset accounts 
@@ -2053,6 +2057,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 st.info("No assets recorded.")
 
         with col_bs2:
+            
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0

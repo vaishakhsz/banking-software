@@ -104,7 +104,6 @@ def init_db():
                 created_at TEXT,
                 payment_mode TEXT,
                 closed_date TEXT,
-                sb_account_no TEXT,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             )
         """)
@@ -122,7 +121,6 @@ def init_db():
                 created_at TEXT,
                 payment_mode TEXT,
                 closed_date TEXT,
-                sb_account_no TEXT,
                 maturity_amount REAL DEFAULT 0,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             )
@@ -140,22 +138,12 @@ def init_db():
             pass
 
         try:
-            cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN sb_account_no TEXT")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
             cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN payment_mode TEXT")
         except sqlite3.OperationalError:
             pass
 
         try:
             cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN closed_date TEXT")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN sb_account_no TEXT")
         except sqlite3.OperationalError:
             pass
 
@@ -225,7 +213,7 @@ def init_db():
             )
         """)
 
-        # Comprehensive default Chart of Accounts list (Removed Retrieval Account)
+        # Comprehensive default Chart of Accounts list with all Depreciation heads
         default_accounts = [
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
             ("INC-102", "Investment Income", "Income", "Primary Revenue"),
@@ -240,7 +228,10 @@ def init_db():
             ("EXP-201", "Salaries & Benefits", "Expense", "Operating Expenses"),
             ("EXP-202", "Rent & Utilities", "Expense", "Operating Expenses"),
             ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
-            ("EXP-204", "Depreciation", "Expense", "Operating Expenses"),
+            ("EXP-204", "Depreciation 5%", "Expense", "Operating Expenses"),
+            ("EXP-205", "Depreciation 10%", "Expense", "Operating Expenses"),
+            ("EXP-206", "Depreciation 15%", "Expense", "Operating Expenses"),
+            ("EXP-207", "Depreciation 40%", "Expense", "Operating Expenses"),
             ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
@@ -815,6 +806,7 @@ elif menu == "SB Accounts":
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    # SB Deposit goes to Liability
                     post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
 
                 st.success(f"SB Account created successfully! Account No: {acc_no}")
@@ -918,6 +910,7 @@ elif menu == "Fixed Deposits (FD)":
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
+                # FD goes to Liability
                 post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
                 st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
         else:
@@ -949,53 +942,26 @@ elif menu == "Fixed Deposits (FD)":
             selected_fd = fd_dict[selected_fd_str]
             fd_id, cust_name, principal, maturity_amount, interest_rate, tenure = selected_fd
             
-            # Get customer's SB account
-            sb_accounts = run_query("""
-                SELECT s.account_no, s.balance
-                FROM sb_accounts s
-                JOIN customers c ON s.customer_id = c.id
-                WHERE c.name = ?
-            """, (cust_name,))
+            interest_earned = maturity_amount - principal
+            st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
             
-            if sb_accounts:
-                sb_choices = {f"{a[0]} (Balance: ₹{a[1]:,.2f})": a[0] for a in sb_accounts}
-                selected_sb = st.selectbox("Select SB Account for Maturity Transfer", list(sb_choices.keys()))
-                sb_account_no = sb_choices[selected_sb]
+            if st.button("Close FD", type="primary"):
+                # Update FD status
+                run_query("""
+                    UPDATE fixed_deposits 
+                    SET status = 'CLOSED', closed_date = ?
+                    WHERE fd_id = ?
+                """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                interest_earned = maturity_amount - principal
-                st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
+                # Journal entry: Transfer from FD Liability to SB Liability
+                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB Liability", "LIA-102", "LIA-101", maturity_amount)
                 
-                if st.button("Close FD & Transfer to SB", type="primary"):
-                    # Update FD status
-                    run_query("""
-                        UPDATE fixed_deposits 
-                        SET status = 'CLOSED', closed_date = ?, sb_account_no = ?
-                        WHERE fd_id = ?
-                    """, (datetime.now().strftime("%Y-%m-%d"), sb_account_no, fd_id), fetch=False)
-                    
-                    # Credit SB account
-                    current_sb_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no = ?", (sb_account_no,))[0][0]
-                    new_sb_bal = current_sb_bal + maturity_amount
-                    run_query("UPDATE sb_accounts SET balance = ? WHERE account_no = ?", (new_sb_bal, sb_account_no), fetch=False)
-                    
-                    # Record transaction
-                    run_query("""
-                        INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
-                        VALUES (?, ?, 'CREDIT', ?, 'FD Maturity', ?, ?)
-                    """, (f"TX{datetime.now().strftime('%M%S%f')}", sb_account_no, maturity_amount, 
-                          f"FD Maturity - FD #{fd_id}", datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    
-                    # Journal entry: Debit FD Liability, Credit Asset (SB)
-                    post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB", "LIA-102", "LIA-101", maturity_amount)
-                    
-                    # Journal entry for interest expense (if any)
-                    if interest_earned > 0:
-                        post_automated_jv(f"FD #{fd_id} Interest Expense", "EXP-102", "LIA-102", interest_earned)
-                    
-                    st.success(f"FD #{fd_id} closed successfully! ₹{maturity_amount:,.2f} transferred to SB Account {sb_account_no}")
-                    st.rerun()
-            else:
-                st.warning("Customer has no SB account. Please open an SB account first.")
+                # Journal entry for interest expense (if any) - goes to P&L
+                if interest_earned > 0:
+                    post_automated_jv(f"FD #{fd_id} Interest Expense", "EXP-102", "LIA-102", interest_earned)
+                
+                st.success(f"FD #{fd_id} closed successfully! Amount transferred to SB Liability")
+                st.rerun()
         else:
             st.info("No active FDs available to close.")
 
@@ -1077,6 +1043,7 @@ elif menu == "Recurring Deposits (RD)":
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
                     run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
+                    # RD installment goes to Liability
                     post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
                     st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
                     st.rerun()
@@ -1120,52 +1087,26 @@ elif menu == "Recurring Deposits (RD)":
                 maturity_amount_to_pay = maturity_amt
                 st.success(f"✅ All installments paid. Full maturity amount: ₹{maturity_amt:,.2f}")
             
-            # Get customer's SB account
-            sb_accounts = run_query("""
-                SELECT s.account_no, s.balance
-                FROM sb_accounts s
-                JOIN customers c ON s.customer_id = c.id
-                WHERE c.name = ?
-            """, (cust_name,))
+            total_paid = monthly_amt * paid_inst
+            interest_earned = maturity_amount_to_pay - total_paid
             
-            if sb_accounts:
-                sb_choices = {f"{a[0]} (Balance: ₹{a[1]:,.2f})": a[0] for a in sb_accounts}
-                selected_sb = st.selectbox("Select SB Account for Maturity Transfer", list(sb_choices.keys()))
-                sb_account_no = sb_choices[selected_sb]
+            if st.button("Close RD", type="primary"):
+                # Update RD status
+                run_query("""
+                    UPDATE recurring_deposits 
+                    SET status = 'CLOSED', closed_date = ?
+                    WHERE rd_id = ?
+                """, (datetime.now().strftime("%Y-%m-%d"), rd_id), fetch=False)
                 
-                if st.button("Close RD & Transfer to SB", type="primary"):
-                    # Update RD status
-                    run_query("""
-                        UPDATE recurring_deposits 
-                        SET status = 'CLOSED', closed_date = ?, sb_account_no = ?
-                        WHERE rd_id = ?
-                    """, (datetime.now().strftime("%Y-%m-%d"), sb_account_no, rd_id), fetch=False)
-                    
-                    # Credit SB account
-                    current_sb_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no = ?", (sb_account_no,))[0][0]
-                    new_sb_bal = current_sb_bal + maturity_amount_to_pay
-                    run_query("UPDATE sb_accounts SET balance = ? WHERE account_no = ?", (new_sb_bal, sb_account_no), fetch=False)
-                    
-                    # Record transaction
-                    run_query("""
-                        INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
-                        VALUES (?, ?, 'CREDIT', ?, 'RD Maturity', ?, ?)
-                    """, (f"TX{datetime.now().strftime('%M%S%f')}", sb_account_no, maturity_amount_to_pay,
-                          f"RD Maturity - RD #{rd_id}", datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    
-                    # Journal entry: Debit RD Liability, Credit SB Liability
-                    post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB", "LIA-103", "LIA-101", maturity_amount_to_pay)
-                    
-                    # Calculate and post interest expense if any
-                    total_paid = monthly_amt * paid_inst
-                    interest_earned = maturity_amount_to_pay - total_paid
-                    if interest_earned > 0:
-                        post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned)
-                    
-                    st.success(f"RD #{rd_id} closed successfully! ₹{maturity_amount_to_pay:,.2f} transferred to SB Account {sb_account_no}")
-                    st.rerun()
-            else:
-                st.warning("Customer has no SB account. Please open an SB account first.")
+                # Journal entry: Transfer from RD Liability to SB Liability
+                post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB Liability", "LIA-103", "LIA-101", maturity_amount_to_pay)
+                
+                # Calculate and post interest expense if any - goes to P&L
+                if interest_earned > 0:
+                    post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned)
+                
+                st.success(f"RD #{rd_id} closed successfully! Amount transferred to SB Liability")
+                st.rerun()
         else:
             st.info("No active RDs available to close.")
 
@@ -1567,8 +1508,11 @@ elif menu == "Journal Vouchers":
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
-        st.info("💡 **Depreciation Entry:** Select **EXP-204 - Depreciation** as Account 1 (Debit) and the Asset account (e.g., AST-107 - Building) as Account 2 (Credit).")
-        st.info("💡 **Percentage Depreciation:** Enter the amount in Credit field, then enter the percentage in the Debit field - the system will calculate the depreciation amount automatically.")
+        st.info("💡 **Depreciation Heads Available:**")
+        st.info("• EXP-204: Depreciation 5%")
+        st.info("• EXP-205: Depreciation 10%")
+        st.info("• EXP-206: Depreciation 15%")
+        st.info("• EXP-207: Depreciation 40%")
         
         with st.form("jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
@@ -1579,65 +1523,28 @@ elif menu == "Journal Vouchers":
             
             col_acc, col_dr, col_cr = st.columns(3)
             acc1 = col_acc.selectbox("Account Head 1 (Debit)", list(coa_dict.keys()), key="jv_acc1")
-            dr1 = col_dr.number_input("Debit 1 (₹) or Percentage %", value=0.0, key="jv_dr1")
+            dr1 = col_dr.number_input("Debit 1 (₹)", value=0.0, key="jv_dr1")
             cr1 = col_cr.number_input("Credit 1 (₹)", value=0.0, key="jv_cr1")
             
             acc2 = col_acc.selectbox("Account Head 2 (Credit)", list(coa_dict.keys()), key="jv_acc2")
-            dr2 = col_dr.number_input("Debit 2 (₹) or Percentage %", value=0.0, key="jv_dr2")
+            dr2 = col_dr.number_input("Debit 2 (₹)", value=0.0, key="jv_dr2")
             cr2 = col_cr.number_input("Credit 2 (₹)", value=0.0, key="jv_cr2")
             
-            # Check if this is a depreciation entry
-            is_depreciation = (acc1.split(" - ")[0] == "EXP-204" and acc2.split(" - ")[0].startswith("AST-"))
-            
-            if is_depreciation:
-                st.info(f"🔍 **Depreciation Entry Detected!** If you enter a percentage in Debit field, it will be calculated on the Credit amount.")
-            
             if st.form_submit_button("Save and Post JV"):
-                # Handle depreciation calculation
-                if is_depreciation and dr1 > 0 and dr1 < 100 and cr1 > 0:
-                    # dr1 is percentage, cr1 is amount
-                    calculated_depreciation = (cr1 * dr1) / 100
-                    st.info(f"Calculated Depreciation: {dr1}% of ₹{cr1:,.2f} = ₹{calculated_depreciation:,.2f}")
-                    
-                    # Use calculated amount for debit
-                    actual_dr1 = calculated_depreciation
-                    actual_cr1 = cr1
-                    actual_dr2 = 0
-                    actual_cr2 = 0
-                    
-                    total_dr = actual_dr1 + actual_dr2
-                    total_cr = actual_cr1 + actual_cr2
-                    
-                    if total_dr == total_cr and total_dr > 0:
-                        conn = get_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", 
-                                     (str(v_date), f"{narration} - Depreciation {dr1}%"))
-                        jv_id = cursor.lastrowid
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", 
-                                     (jv_id, coa_dict[acc1], actual_dr1, actual_cr1))
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", 
-                                     (jv_id, coa_dict[acc2], actual_dr2, actual_cr2))
-                        conn.commit()
-                        conn.close()
-                        st.success(f"Balanced Journal Voucher posted successfully! Depreciation: ₹{actual_dr1:,.2f}")
-                    else:
-                        st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+                total_dr = dr1 + dr2
+                total_cr = cr1 + cr2
+                if total_dr == total_cr and total_dr > 0:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
+                    jv_id = cursor.lastrowid
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
+                    conn.commit()
+                    conn.close()
+                    st.success("Balanced Journal Voucher posted successfully!")
                 else:
-                    total_dr = dr1 + dr2
-                    total_cr = cr1 + cr2
-                    if total_dr == total_cr and total_dr > 0:
-                        conn = get_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
-                        jv_id = cursor.lastrowid
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc1], dr1, cr1))
-                        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, ?)", (jv_id, coa_dict[acc2], dr2, cr2))
-                        conn.commit()
-                        conn.close()
-                        st.success("Balanced Journal Voucher posted successfully!")
-                    else:
-                        st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits.")
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
@@ -1928,6 +1835,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             lia_data = []
             total_lia = 0
             
+            # All deposits are liabilities
             if sb_liability > 0:
                 lia_data.append(["SB Deposits Control", f"₹{sb_liability:,.2f}"])
                 total_lia += sb_liability
@@ -2147,33 +2055,27 @@ elif menu == "SB Interest Calculation":
             csv_data = preview_df.to_csv(index=False).encode('utf-8')
             st.download_button("Download CSV Interest Report", csv_data, "interest_report.csv", "text/csv")
             
-            col_credit1, col_credit2 = st.columns(2)
-            with col_credit1:
-                if st.button("✅ Credit Interest to All SB Accounts", type="primary"):
-                    for idx, row in preview_df.iterrows():
-                        acct = row["Account No"]
-                        interest_amt = row["Calculated Interest"]
-                        
-                        if interest_amt > 0:
-                            current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acct,))[0][0]
-                            new_bal = current_bal + interest_amt
-                            run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acct), fetch=False)
-                            
-                            run_query("""
-                                INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
-                                VALUES (?, ?, 'CREDIT', ?, 'Interest Credit', ?, ?)
-                            """, (f"INT{datetime.now().strftime('%M%S%f')}", acct, interest_amt, 
-                                  f"Interest for {calc_period} period", datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                            
-                            # Post interest expense
-                            post_automated_jv(f"SB Interest - Account {acct} ({calc_period})", "EXP-101", "LIA-101", interest_amt)
+            if st.button("✅ Credit Interest to All SB Accounts", type="primary"):
+                for idx, row in preview_df.iterrows():
+                    acct = row["Account No"]
+                    interest_amt = row["Calculated Interest"]
                     
-                    st.success(f"✅ Interest credited to all SB accounts successfully!")
-                    st.rerun()
-            with col_credit2:
-                if st.button("⚠️ Credit Interest with Journal Voucher", help="This will credit interest and also post separate journal entries"):
-                    # This is handled by the post_automated_jv in the loop above
-                    pass
+                    if interest_amt > 0:
+                        current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acct,))[0][0]
+                        new_bal = current_bal + interest_amt
+                        run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acct), fetch=False)
+                        
+                        run_query("""
+                            INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
+                            VALUES (?, ?, 'CREDIT', ?, 'Interest Credit', ?, ?)
+                        """, (f"INT{datetime.now().strftime('%M%S%f')}", acct, interest_amt, 
+                              f"Interest for {calc_period} period", datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                        
+                        # Post interest expense - goes to P&L
+                        post_automated_jv(f"SB Interest - Account {acct} ({calc_period})", "EXP-101", "LIA-101", interest_amt)
+                
+                st.success(f"✅ Interest credited to all SB accounts successfully!")
+                st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
 

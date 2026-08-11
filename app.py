@@ -796,6 +796,7 @@ elif menu == "KYC Verification":
         st.info("No pending KYC verification requests.")
 
 # --- SB ACCOUNTS ---
+# --- SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
     tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact", "View Accounts"])
@@ -825,18 +826,9 @@ elif menu == "SB Accounts":
                 mode = "CASH"
             
             if st.button("Create SB Account"):
-                # Validate balance for bank accounts
-                if chosen_asset_code in ['AST-102', 'AST-103']:
-                    available_balance = get_account_balance_from_jv(chosen_asset_code)
-                    if init_bal > available_balance:
-                        st.error(f"❌ Insufficient balance in {mode}! Available: ₹{available_balance:,.2f}, Required: ₹{init_bal:,.2f}")
-                        st.stop()
-                else:
-                    # For cash
-                    available_cash = get_cash_balance()
-                    if init_bal > available_cash:
-                        st.error(f"❌ Insufficient cash balance! Available: ₹{available_cash:,.2f}, Required: ₹{init_bal:,.2f}")
-                        st.stop()
+                # For SB opening with initial balance, the customer is depositing money
+                # So the asset account (cash/bank) should be DEBITED (increase)
+                # No balance check needed for deposit - money comes from customer
                 
                 acc_no = f"SB{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
@@ -845,29 +837,28 @@ elif menu == "SB Accounts":
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
                               (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    # SB Deposit goes to SB Deposits Control (LIA-101)
+                    
+                    # DEPOSIT: Debit Asset (Cash/Bank increases) -> Credit Liability (SB Deposits Control)
                     jv_result = post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
                     
-                    # Update cash/bank book only for tracking (secondary to JV)
+                    # Update cash/bank book
                     if jv_result:
                         today = datetime.now().strftime("%Y-%m-%d")
                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
                         
                         if chosen_asset_code == 'AST-101':
-                            # Cash book update
                             voucher_no = generate_cash_voucher_no()
                             run_query("""
                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Opening: {acc_no}", 0, init_bal, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {acc_no}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, 0, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {acc_no}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
                         elif chosen_asset_code in ['AST-102', 'AST-103']:
-                            # Bank book update
                             bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                             voucher_no = generate_bank_voucher_no()
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Opening: {acc_no}", 0, init_bal, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {acc_no}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, 0, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {acc_no}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
 
                 st.success(f"SB Account created successfully! Account No: {acc_no}")
         else:
@@ -882,7 +873,10 @@ elif menu == "SB Accounts":
             tx_type = st.selectbox("Transaction Type", ["DEPOSIT", "WITHDRAWAL"])
             amount = st.number_input("Amount (₹)", min_value=1.0, value=100.0)
             
-            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+            if not asset_accounts:
+                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
             if asset_dict:
@@ -902,65 +896,80 @@ elif menu == "SB Accounts":
             if st.button("Execute Transaction"):
                 current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acc_choice,))[0][0]
                 
-                if tx_type == "WITHDRAWAL":
-                    if current_bal < amount:
-                        st.error("Insufficient account balance!")
-                        st.stop()
-                    
-                    # Check if bank/cash has sufficient funds for withdrawal
-                    asset_balance = get_account_balance_from_jv(chosen_asset_code)
-                    if amount > asset_balance:
-                        st.error(f"❌ Insufficient funds in {pay_mode}! Available: ₹{asset_balance:,.2f}, Required: ₹{amount:,.2f}")
-                        st.stop()
-                
                 if tx_type == "DEPOSIT":
-                    # For deposit, check if the source has funds
-                    if chosen_asset_code not in ['AST-101', 'AST-102', 'AST-103']:
-                        st.error(f"❌ Cannot deposit from {pay_mode}. Please select Cash or Bank account.")
-                        st.stop()
+                    # DEPOSIT: Customer gives money to bank
+                    # Debit Asset (Cash/Bank increases) -> Credit Liability (SB Deposits Control)
+                    # NO balance check needed - money is coming FROM customer INTO bank
                     
-                    asset_balance = get_account_balance_from_jv(chosen_asset_code)
-                    if amount > asset_balance:
-                        st.error(f"❌ Insufficient funds in {pay_mode}! Available: ₹{asset_balance:,.2f}, Required: ₹{amount:,.2f}")
-                        st.stop()
-                
-                new_bal = current_bal + amount if tx_type == "DEPOSIT" else current_bal - amount
-                db_type = "CREDIT" if tx_type == "DEPOSIT" else "DEBIT"
-                run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
-                run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                          (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, db_type, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                
-                if tx_type == "DEPOSIT":
+                    new_bal = current_bal + amount
+                    run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
+                    run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)",
+                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    
                     jv_result = post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", chosen_asset_code, "LIA-101", amount)
-                else:
-                    jv_result = post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
-
-                # Update cash/bank book
-                if jv_result:
-                    today = datetime.now().strftime("%Y-%m-%d")
-                    new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
                     
-                    if chosen_asset_code == 'AST-101':
-                        voucher_no = generate_cash_voucher_no()
-                        dr_amt = amount if tx_type == "WITHDRAWAL" else 0
-                        cr_amt = amount if tx_type == "DEPOSIT" else 0
-                        run_query("""
-                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, f"SB {tx_type}: {acc_choice}", dr_amt, cr_amt, new_asset_balance, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    elif chosen_asset_code in ['AST-102', 'AST-103']:
-                        bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
-                        voucher_no = generate_bank_voucher_no()
-                        dr_amt = amount if tx_type == "WITHDRAWAL" else 0
-                        cr_amt = amount if tx_type == "DEPOSIT" else 0
-                        run_query("""
-                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, f"SB {tx_type}: {acc_choice}", dr_amt, cr_amt, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
-
-                st.success(f"Transaction successful! New Balance: ₹{new_bal:,.2f}")
-        else:
-            st.info("No active SB accounts found.")
+                    if jv_result:
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
+                        
+                        if chosen_asset_code == 'AST-101':
+                            voucher_no = generate_cash_voucher_no()
+                            run_query("""
+                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        elif chosen_asset_code in ['AST-102', 'AST-103']:
+                            bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
+                            voucher_no = generate_bank_voucher_no()
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    st.success(f"✅ Deposit successful! New Balance: ₹{new_bal:,.2f}")
+                    st.rerun()
+                    
+                elif tx_type == "WITHDRAWAL":
+                    # WITHDRAWAL: Bank gives money to customer
+                    # Check SB account has sufficient balance
+                    if current_bal < amount:
+                        st.error(f"❌ Insufficient SB account balance! Available: ₹{current_bal:,.2f}, Required: ₹{amount:,.2f}")
+                        st.stop()
+                    
+                    # Check bank/cash has sufficient funds to give to customer
+                    asset_balance = get_account_balance_from_jv(chosen_asset_code)
+                    if amount > asset_balance:
+                        st.error(f"❌ Insufficient funds in {pay_mode}! Available: ₹{asset_balance:,.2f}, Required: ₹{amount:,.2f}")
+                        st.stop()
+                    
+                    new_bal = current_bal - amount
+                    run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
+                    run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'DEBIT', ?, ?, ?, ?)",
+                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    
+                    # WITHDRAWAL: Debit Liability (SB Deposits Control) -> Credit Asset (Cash/Bank decreases)
+                    jv_result = post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
+                    
+                    if jv_result:
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
+                        
+                        if chosen_asset_code == 'AST-101':
+                            voucher_no = generate_cash_voucher_no()
+                            run_query("""
+                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        elif chosen_asset_code in ['AST-102', 'AST-103']:
+                            bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
+                            voucher_no = generate_bank_voucher_no()
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    
+                    st.success(f"✅ Withdrawal successful! New Balance: ₹{new_bal:,.2f}")
+                    st.rerun()
 
     with tab3:
         accounts = run_query("""

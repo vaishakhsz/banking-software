@@ -292,10 +292,9 @@ def get_cash_balance():
         return 0
 
 def get_bank_balance(bank_name=None):
-    """Get bank balance from bank_book table - FIXED to show correct balance"""
+    """Get bank balance from bank_book table"""
     try:
         if bank_name:
-            # Get the latest balance for specific bank from bank_book
             result = run_query("""
                 SELECT balance FROM bank_book 
                 WHERE bank_name = ? 
@@ -303,18 +302,14 @@ def get_bank_balance(bank_name=None):
                 LIMIT 1
             """, (bank_name,))
         else:
-            # Get the latest balance overall
             result = run_query("""
                 SELECT balance FROM bank_book 
                 ORDER BY id DESC 
                 LIMIT 1
             """)
         
-        # If no entries, try to get from journal entries (initial balance)
         if not result or result[0][0] is None:
-            # Fallback: calculate from journal entries
             if bank_name:
-                # Map bank name to account code
                 bank_code_map = {
                     "Union Bank of India": "AST-102",
                     "State Bank of India": "AST-103"
@@ -333,6 +328,30 @@ def get_bank_balance(bank_name=None):
     except Exception as e:
         print(f"Error getting bank balance: {e}")
         return 0
+
+def get_asset_balance(account_code):
+    """Get balance for any asset account from journal entries"""
+    try:
+        result = run_query("""
+            SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0)
+            FROM jv_entries
+            WHERE account_code = ?
+        """, (account_code,))
+        return result[0][0] if result else 0
+    except:
+        return 0
+
+def validate_funding_source(account_code, amount):
+    """Validate if the funding source has sufficient balance"""
+    if account_code == "AST-101":  # Cash in Hand
+        current_balance = get_cash_balance()
+    elif account_code in ["AST-102", "AST-103"]:  # Bank accounts
+        bank_name = "Union Bank of India" if account_code == "AST-102" else "State Bank of India"
+        current_balance = get_bank_balance(bank_name)
+    else:
+        current_balance = get_asset_balance(account_code)
+    
+    return current_balance >= amount, current_balance
 
 def generate_cash_voucher_no():
     today = datetime.now().strftime("%Y%m%d")
@@ -831,18 +850,30 @@ elif menu == "SB Accounts":
                 chosen_asset_code = "AST-101"
                 mode = "CASH"
             
-            if st.button("Create SB Account"):
-                acc_no = f"SB{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
-                          (acc_no, cust_id, init_bal, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                
+            # Check if funding source has sufficient balance
+            has_balance, current_balance = validate_funding_source(chosen_asset_code, init_bal)
+            
+            if not has_balance and init_bal > 0:
+                st.error(f"❌ Insufficient balance in {mode}! Available: ₹{current_balance:,.2f}")
+            else:
                 if init_bal > 0:
-                    run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
-                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    # SB Deposit goes to SB Deposits Control (LIA-101)
-                    post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
+                    st.success(f"✅ {mode} balance is sufficient: ₹{current_balance:,.2f}")
+            
+            if st.button("Create SB Account"):
+                if init_bal > 0 and not has_balance:
+                    st.error("Cannot create SB account due to insufficient funds!")
+                else:
+                    acc_no = f"SB{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
+                              (acc_no, cust_id, init_bal, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    
+                    if init_bal > 0:
+                        run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
+                                  (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                        # SB Deposit goes to SB Deposits Control (LIA-101)
+                        post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
 
-                st.success(f"SB Account created successfully! Account No: {acc_no}")
+                    st.success(f"SB Account created successfully! Account No: {acc_no}")
         else:
             st.warning("Please register a customer first.")
 
@@ -869,26 +900,39 @@ elif menu == "SB Accounts":
             else:
                 chosen_asset_code = "AST-101"
                 pay_mode = "CASH"
-                
+            
+            # Check if funding source has sufficient balance for deposit
+            if tx_type == "DEPOSIT":
+                has_balance, current_balance = validate_funding_source(chosen_asset_code, amount)
+                if not has_balance:
+                    st.error(f"❌ Insufficient balance in {pay_mode}! Available: ₹{current_balance:,.2f}")
+            
             narration = st.text_input("Narration / Remarks", value="Counter transaction")
             
             if st.button("Execute Transaction"):
                 current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acc_choice,))[0][0]
-                if tx_type == "WITHDRAWAL" and current_bal < amount:
-                    st.error("Insufficient account balance!")
-                else:
-                    new_bal = current_bal + amount if tx_type == "DEPOSIT" else current_bal - amount
-                    db_type = "CREDIT" if tx_type == "DEPOSIT" else "DEBIT"
-                    run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
-                    run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, db_type, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
-                    
-                    if tx_type == "DEPOSIT":
-                        post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", chosen_asset_code, "LIA-101", amount)
+                
+                if tx_type == "DEPOSIT":
+                    if not has_balance:
+                        st.error("Transaction failed! Insufficient funds in payment source.")
                     else:
+                        new_bal = current_bal + amount
+                        run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
+                        run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)",
+                                  (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                        post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", chosen_asset_code, "LIA-101", amount)
+                        st.success(f"Deposit successful! New Balance: ₹{new_bal:,.2f}")
+                        
+                elif tx_type == "WITHDRAWAL":
+                    if current_bal < amount:
+                        st.error("Insufficient SB account balance!")
+                    else:
+                        new_bal = current_bal - amount
+                        run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
+                        run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'DEBIT', ?, ?, ?, ?)",
+                                  (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
                         post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
-
-                    st.success(f"Transaction successful! New Balance: ₹{new_bal:,.2f}")
+                        st.success(f"Withdrawal successful! New Balance: ₹{new_bal:,.2f}")
         else:
             st.info("No active SB accounts found.")
 
@@ -934,18 +978,29 @@ elif menu == "Fixed Deposits (FD)":
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
+            # Check if funding source has sufficient balance
+            has_balance, current_balance = validate_funding_source(chosen_asset_code, principal)
+            
+            if not has_balance:
+                st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{current_balance:,.2f}")
+            else:
+                st.success(f"✅ {payment_mode} balance is sufficient: ₹{current_balance:,.2f}")
+            
             maturity_amount = principal + (principal * interest_rate * (tenure / 12) / 100)
             st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
             
             if st.button("Open FD Account"):
-                run_query("""
-                    INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
-                    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
-                """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
-                
-                # FD goes to FD Deposits Control (LIA-102)
-                post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
-                st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
+                if not has_balance:
+                    st.error("Cannot open FD due to insufficient funds!")
+                else:
+                    run_query("""
+                        INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
+                        VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+                    """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
+                    
+                    # FD goes to FD Deposits Control (LIA-102)
+                    post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
+                    st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
         else:
             st.warning("Register a customer first.")
 
@@ -1095,6 +1150,14 @@ elif menu == "Recurring Deposits (RD)":
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
+            # Check if funding source has sufficient balance
+            has_balance, current_balance = validate_funding_source(chosen_asset_code, monthly_amt)
+            
+            if not has_balance:
+                st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{current_balance:,.2f}")
+            else:
+                st.success(f"✅ {payment_mode} balance is sufficient: ₹{current_balance:,.2f}")
+            
             # Calculate approximate maturity
             total_deposits = monthly_amt * tenure
             approx_interest = total_deposits * (interest_rate / 100) * (tenure / 24)  # Simplified
@@ -1103,12 +1166,15 @@ elif menu == "Recurring Deposits (RD)":
             st.info(f"**Estimated Maturity:** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
             
             if st.button("Open RD Account"):
-                run_query("""
-                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount)
-                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?)
-                """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
-                      datetime.now().strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
-                st.success(f"Recurring Deposit opened successfully via {payment_mode}!")
+                if not has_balance:
+                    st.error("Cannot open RD due to insufficient funds!")
+                else:
+                    run_query("""
+                        INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount)
+                        VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?)
+                    """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
+                          datetime.now().strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
+                    st.success(f"Recurring Deposit opened successfully via {payment_mode}!")
         else:
             st.warning("Register customers first.")
 
@@ -1139,14 +1205,27 @@ elif menu == "Recurring Deposits (RD)":
                 chosen_asset_code = "AST-101"
                 payment_mode_pay = "Cash"
             
+            # Check if funding source has sufficient balance
+            has_balance, current_balance = validate_funding_source(chosen_asset_code, monthly_amt)
+            
+            if not has_balance:
+                st.error(f"❌ Insufficient balance in {payment_mode_pay}! Available: ₹{current_balance:,.2f}")
+            else:
+                st.success(f"✅ {payment_mode_pay} balance is sufficient: ₹{current_balance:,.2f}")
+            
             if st.button("Confirm & Pay Installment"):
                 if paid_inst < tenure_m:
-                    new_paid = paid_inst + 1
-                    run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
-                    # RD installment goes to RD Deposits Control (LIA-103)
-                    post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
-                    st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
-                    st.rerun()
+                    if not has_balance:
+                        st.error("Cannot pay installment due to insufficient funds!")
+                    else:
+                        new_paid = paid_inst + 1
+                        run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
+                        # RD installment goes to RD Deposits Control (LIA-103)
+                        post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
+                        st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
+                        st.rerun()
+                else:
+                    st.warning("All installments already paid!")
         else:
             st.info("No active recurring deposits found.")
 
@@ -1519,7 +1598,6 @@ elif menu == "Bank Book":
         bank_list = [b[0] for b in bank_accounts] if bank_accounts else ["Union Bank of India", "State Bank of India"]
         selected_bank = st.selectbox("Select Bank", bank_list, key="bank_select")
         
-        # FIXED: Using the improved get_bank_balance function
         current_balance = get_bank_balance(selected_bank)
         st.info(f"🏦 **{selected_bank} Current Balance:** ₹{current_balance:,.2f}")
         

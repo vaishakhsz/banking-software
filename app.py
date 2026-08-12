@@ -1916,7 +1916,6 @@ elif menu == "Admin Record Editor":
 # --- FINANCIAL STATEMENTS ---
 
 elif menu == "Financial Statements (Trial/BS/PL)":
-    
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
     
@@ -2035,6 +2034,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         net_profit_loss = tot_inc - tot_exp
 
         col_bs1, col_bs2 = st.columns(2)
+        
         with col_bs1:
             st.markdown("### Assets")
             
@@ -2060,14 +2060,12 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                         asset_rows.append([f"{acc_code} - {acc_name}", f"₹{net_val:,.2f}"])
                         total_assets += net_val
 
-            # Append depreciation heads as negative values to show asset reduction
+            # Append depreciation heads purely for reference display
             if depreciation_balances:
                 for row in depreciation_balances:
                     acc_code, acc_name, dep_val = row
                     if dep_val != 0:
-                      
                         asset_rows.append([f"Less: {acc_code} - {acc_name}", f"₹{dep_val:,.2f}"])
-                        
             
             if asset_rows:
                 df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Amount (₹)"])
@@ -2076,7 +2074,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             else:
                 st.info("No assets recorded.")
 
-      with col_bs2:
+        with col_bs2:
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0

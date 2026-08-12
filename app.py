@@ -324,7 +324,7 @@ def update_bank_book_balance(bank_name, balance):
               (balance, bank_name, bank_name), fetch=False)
 
 def generate_cash_voucher_no():
-    today = datetime.now().strftime("%Y%m%d")
+    today = datetime.now(IST).strftime("%Y%m%d")
     try:
         result = run_query("SELECT voucher_no FROM cash_book WHERE voucher_no LIKE ? ORDER BY id DESC LIMIT 1", (f"CB{today}%",))
         if result:
@@ -337,7 +337,7 @@ def generate_cash_voucher_no():
     return f"CB{today}{new_seq:04d}"
 
 def generate_bank_voucher_no():
-    today = datetime.now().strftime("%Y%m%d")
+    today = datetime.now(IST).strftime("%Y%m%d")
     try:
         result = run_query("SELECT voucher_no FROM bank_book WHERE voucher_no LIKE ? ORDER BY id DESC LIMIT 1", (f"BB{today}%",))
         if result:
@@ -654,7 +654,7 @@ if os.path.exists(DB_NAME):
     st.sidebar.download_button(
         label="Download Database Backup",
         data=db_bytes,
-        file_name=f"aasha_nidhi_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db",
+        file_name=f"aasha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
         mime="application/octet-stream",
         help="Download a complete copy of the SQLite database file for safety."
     )
@@ -753,7 +753,7 @@ elif menu == "Customer Management":
                         run_query("""
                             INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, pan_file, signature_file, kyc_status, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-                        """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adhar_path, pan_path, sig_path, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adhar_path, pan_path, sig_path, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         st.success(f"Customer {name} registered successfully!")
 
     with tab2:
@@ -896,20 +896,20 @@ elif menu == "SB Accounts":
                 # So the asset account (cash/bank) should be DEBITED (increase)
                 # No balance check needed for deposit - money comes from customer
                 
-                acc_no = f"SB{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
                 run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
-                          (acc_no, cust_id, init_bal, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                          (acc_no, cust_id, init_bal, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                 
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
-                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                              (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                     
                     # DEPOSIT: Debit Asset (Cash/Bank increases) -> Credit Liability (SB Deposits Control)
                     jv_result = post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
                     
                     # Update cash/bank book
                     if jv_result:
-                        today = datetime.now().strftime("%Y-%m-%d")
+                        today = datetime.now(IST).strftime("%Y-%m-%d")
                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
                         
                         if chosen_asset_code == 'AST-101':
@@ -917,14 +917,14 @@ elif menu == "SB Accounts":
                             run_query("""
                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, 0, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {acc_no}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, 0, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {acc_no}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         elif chosen_asset_code in ['AST-102', 'AST-103']:
                             bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                             voucher_no = generate_bank_voucher_no()
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, 0, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {acc_no}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, 0, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {acc_no}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
 
                 st.success(f"SB Account created successfully! Account No: {acc_no}")
         else:
@@ -970,12 +970,12 @@ elif menu == "SB Accounts":
                     new_bal = current_bal + amount
                     run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)",
-                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                              (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                     
                     jv_result = post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", chosen_asset_code, "LIA-101", amount)
                     
                     if jv_result:
-                        today = datetime.now().strftime("%Y-%m-%d")
+                        today = datetime.now(IST).strftime("%Y-%m-%d")
                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
                         
                         if chosen_asset_code == 'AST-101':
@@ -983,14 +983,14 @@ elif menu == "SB Accounts":
                             run_query("""
                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         elif chosen_asset_code in ['AST-102', 'AST-103']:
                             bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                             voucher_no = generate_bank_voucher_no()
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Deposit successful! New Balance: ₹{new_bal:,.2f}")
                     st.rerun()
@@ -1011,13 +1011,13 @@ elif menu == "SB Accounts":
                     new_bal = current_bal - amount
                     run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'DEBIT', ?, ?, ?, ?)",
-                              (f"TX{datetime.now().strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                              (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                     
                     # WITHDRAWAL: Debit Liability (SB Deposits Control) -> Credit Asset (Cash/Bank decreases)
                     jv_result = post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
                     
                     if jv_result:
-                        today = datetime.now().strftime("%Y-%m-%d")
+                        today = datetime.now(IST).strftime("%Y-%m-%d")
                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
                         
                         if chosen_asset_code == 'AST-101':
@@ -1025,14 +1025,14 @@ elif menu == "SB Accounts":
                             run_query("""
                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         elif chosen_asset_code in ['AST-102', 'AST-103']:
                             bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                             voucher_no = generate_bank_voucher_no()
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Withdrawal successful! New Balance: ₹{new_bal:,.2f}")
                     st.rerun()
@@ -1095,14 +1095,14 @@ elif menu == "Fixed Deposits (FD)":
                 run_query("""
                     INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
-                """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now().strftime("%Y-%m-%d"), payment_mode), fetch=False)
+                """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now(IST).strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
                 # FD goes to FD Deposits Control (LIA-102)
                 jv_result = post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
                 
                 # Update cash/bank book
                 if jv_result:
-                    today = datetime.now().strftime("%Y-%m-%d")
+                    today = datetime.now(IST).strftime("%Y-%m-%d")
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
                     
                     if chosen_asset_code == 'AST-101':
@@ -1110,14 +1110,14 @@ elif menu == "Fixed Deposits (FD)":
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     elif chosen_asset_code in ['AST-102', 'AST-103']:
                         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                         voucher_no = generate_bank_voucher_no()
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                 
                 st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
         else:
@@ -1160,7 +1160,7 @@ elif menu == "Fixed Deposits (FD)":
                     UPDATE fixed_deposits 
                     SET status = 'CLOSED', closed_date = ?
                     WHERE fd_id = ?
-                """, (datetime.now().strftime("%Y-%m-%d"), fd_id), fetch=False)
+                """, (datetime.now(IST).strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
                 # Step 1: Record Interest Expense -> This accumulates in FD Deposits Control (LIA-102)
                 # Debit: EXP-102 (FD Interest Paid) | Credit: LIA-102 (FD Deposits Control)
@@ -1229,7 +1229,7 @@ elif menu == "Recurring Deposits (RD)":
                     INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount)
                     VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?)
                 """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
-                      datetime.now().strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
+                      datetime.now(IST).strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
                 
                 # Post first installment
                 jv_result = post_automated_jv(f"RD Opening - First Installment via {payment_mode}", chosen_asset_code, "LIA-103", monthly_amt)
@@ -1240,7 +1240,7 @@ elif menu == "Recurring Deposits (RD)":
                     rd_id = rd_id_result[0][0]
                     run_query("UPDATE recurring_deposits SET installments_paid=1 WHERE rd_id=?", (rd_id,), fetch=False)
                     
-                    today = datetime.now().strftime("%Y-%m-%d")
+                    today = datetime.now(IST).strftime("%Y-%m-%d")
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
                     
                     if chosen_asset_code == 'AST-101':
@@ -1248,14 +1248,14 @@ elif menu == "Recurring Deposits (RD)":
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, chosen_asset_code, f"RD Opening via {payment_mode}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, chosen_asset_code, f"RD Opening via {payment_mode}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     elif chosen_asset_code in ['AST-102', 'AST-103']:
                         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                         voucher_no = generate_bank_voucher_no()
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Opening via {payment_mode}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Opening via {payment_mode}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                 
                 st.success(f"Recurring Deposit opened successfully via {payment_mode}! First installment paid.")
         else:
@@ -1305,7 +1305,7 @@ elif menu == "Recurring Deposits (RD)":
                     jv_result = post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
                     
                     if jv_result:
-                        today = datetime.now().strftime("%Y-%m-%d")
+                        today = datetime.now(IST).strftime("%Y-%m-%d")
                         new_balance = get_account_balance_from_jv(chosen_asset_code)
                         
                         if chosen_asset_code == 'AST-101':
@@ -1313,14 +1313,14 @@ elif menu == "Recurring Deposits (RD)":
                             run_query("""
                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"RD #{rd_id} - Inst #{new_paid}", 0, monthly_amt, new_balance, chosen_asset_code, f"RD Installment #{new_paid}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"RD #{rd_id} - Inst #{new_paid}", 0, monthly_amt, new_balance, chosen_asset_code, f"RD Installment #{new_paid}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         elif chosen_asset_code in ['AST-102', 'AST-103']:
                             bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                             voucher_no = generate_bank_voucher_no()
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"RD #{rd_id} - Inst #{new_paid}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Installment #{new_paid}", datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, voucher_no, f"RD #{rd_id} - Inst #{new_paid}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Installment #{new_paid}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
                     st.rerun()
@@ -1371,7 +1371,7 @@ elif menu == "Recurring Deposits (RD)":
                     UPDATE recurring_deposits 
                     SET status = 'CLOSED', closed_date = ?
                     WHERE rd_id = ?
-                """, (datetime.now().strftime("%Y-%m-%d"), rd_id), fetch=False)
+                """, (datetime.now(IST).strftime("%Y-%m-%d"), rd_id), fetch=False)
                 
                 post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB Deposits Control", "LIA-103", "LIA-101", maturity_amount_to_pay)
                 
@@ -1473,7 +1473,7 @@ elif menu == "Cash Book":
                     
                     if jv_result:
                         voucher_no = generate_cash_voucher_no()
-                        today = datetime.now().strftime("%Y-%m-%d")
+                        today = datetime.now(IST).strftime("%Y-%m-%d")
                         new_balance = get_cash_balance()
                         
                         dr_amt = amount if entry_type == "DEBIT (Receipt)" else 0
@@ -1482,7 +1482,7 @@ elif menu == "Cash Book":
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
                         # Handle bank transfers
                         if account_code == 'AST-102':
@@ -1493,7 +1493,7 @@ elif menu == "Cash Book":
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, bank_voucher_no, f"Cash Transfer: {particulars}", bank_dr, bank_cr, union_bal, "Union Bank of India", "AST-101", narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, bank_voucher_no, f"Cash Transfer: {particulars}", bank_dr, bank_cr, union_bal, "Union Bank of India", "AST-101", narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         elif account_code == 'AST-103':
                             bank_voucher_no = generate_bank_voucher_no()
                             sbi_bal = get_bank_balance("State Bank of India")
@@ -1502,7 +1502,7 @@ elif menu == "Cash Book":
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, bank_voucher_no, f"Cash Transfer: {particulars}", bank_dr, bank_cr, sbi_bal, "State Bank of India", "AST-101", narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, bank_voucher_no, f"Cash Transfer: {particulars}", bank_dr, bank_cr, sbi_bal, "State Bank of India", "AST-101", narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
                         st.success(f"✅ Cash entry recorded successfully! Voucher: {voucher_no}")
                         st.rerun()
@@ -1641,7 +1641,7 @@ elif menu == "Bank Book":
                     
                     if jv_result:
                         voucher_no = generate_bank_voucher_no()
-                        today = datetime.now().strftime("%Y-%m-%d")
+                        today = datetime.now(IST).strftime("%Y-%m-%d")
                         new_balance = get_account_balance_from_jv(bank_code)
                         
                         dr_amt = amount if entry_type == "DEBIT (Deposit)" else 0
@@ -1650,7 +1650,7 @@ elif menu == "Bank Book":
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, bank_name, account_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, bank_name, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
                         # If transferring to cash, also update cash book
                         if account_code == 'AST-101':
@@ -1661,7 +1661,7 @@ elif menu == "Bank Book":
                             run_query("""
                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, cash_voucher_no, f"Bank Transfer: {particulars}", cash_dr, cash_cr, cash_bal, bank_code, narration, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            """, (today, cash_voucher_no, f"Bank Transfer: {particulars}", cash_dr, cash_cr, cash_bal, bank_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
                         st.success(f"✅ Bank entry successfully recorded! Voucher: {voucher_no}")
                         st.rerun()
@@ -2348,8 +2348,8 @@ elif menu == "SB Interest Calculation":
                         run_query("""
                             INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
                             VALUES (?, ?, 'CREDIT', ?, 'Interest Credit', ?, ?)
-                        """, (f"INT{datetime.now().strftime('%M%S%f')}", acct, interest_amt, 
-                              f"Interest for {calc_period} period", datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                        """, (f"INT{datetime.now(IST).strftime('%M%S%f')}", acct, interest_amt, 
+                              f"Interest for {calc_period} period", datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                         
                         # SB Interest Expense (EXP-101) -> SB Deposits Control (LIA-101)
                         post_automated_jv(f"SB Interest - Account {acct} ({calc_period})", "EXP-101", "LIA-101", interest_amt)

@@ -710,11 +710,11 @@ elif menu == "Customer Management":
     
     with tab1:
         st.subheader("New Customer Registration")
-        st.info("ℹ️ All mandatory fields (*), phone number uniqueness, and file uploads (Aadhaar, PAN, Signature) are required.")
+        st.info("ℹ️ All mandatory fields (*), unique Phone and PAN, valid DOB (1900 to present), and mandatory file uploads are required.")
         with st.form("reg_form"):
             col1, col2 = st.columns(2)
             name = col1.text_input("Full Name *")
-            dob = col2.date_input("Date of Birth", value=date(1995, 1, 1))
+            dob = col2.date_input("Date of Birth *", value=date(1995, 1, 1), min_value=date(1900, 1, 1), max_value=date.today())
             gender = col1.selectbox("Gender", ["Male", "Female", "Other"])
             email = col2.text_input("Email Address")
             phone = col1.text_input("Phone Number *")
@@ -722,7 +722,7 @@ elif menu == "Customer Management":
             city = col1.text_input("City")
             state = col2.text_input("State")
             pincode = col2.text_input("Pincode")
-            pan = col1.text_input("PAN Number")
+            pan = col1.text_input("PAN Number *")
             
             st.markdown("---")
             adhar_upload = st.file_uploader("Upload Aadhaar Document *", type=["pdf", "png", "jpg", "jpeg"], key="reg_adhar")
@@ -731,15 +731,20 @@ elif menu == "Customer Management":
             
             submitted = st.form_submit_button("Register Customer")
             if submitted:
-                if not name or not phone:
-                    st.error("Please fill in mandatory fields: Name and Phone.")
+                if not name or not phone or not pan:
+                    st.error("Please fill in mandatory fields: Full Name, Phone Number, and PAN Number.")
                 elif not adhar_upload or not pan_upload or not sig_upload:
                     st.error("All document uploads (Aadhaar, PAN Card, and Signature) are mandatory before registering.")
                 else:
                     # Check duplication by phone number
-                    existing = run_query("SELECT COUNT(*) FROM customers WHERE phone = ?", (phone,))
-                    if existing and existing[0][0] > 0:
+                    existing_phone = run_query("SELECT COUNT(*) FROM customers WHERE phone = ?", (phone,))
+                    # Check duplication by PAN number
+                    existing_pan = run_query("SELECT COUNT(*) FROM customers WHERE pan = ?", (pan,))
+                    
+                    if existing_phone and existing_phone[0][0] > 0:
                         st.error(f"A customer with phone number {phone} already exists. Duplication is not allowed.")
+                    elif existing_pan and existing_pan[0][0] > 0:
+                        st.error(f"A customer with PAN number {pan} already exists. PAN ID must be unique.")
                     else:
                         adhar_path = save_uploaded_file(adhar_upload)
                         pan_path = save_uploaded_file(pan_upload)

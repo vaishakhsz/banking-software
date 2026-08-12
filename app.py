@@ -21,6 +21,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # --- DATABASE SETUP ---
 DB_NAME = "aasha_nidhi.db"
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
 def get_connection():
     """Get database connection with retry logic"""
     max_retries = 3

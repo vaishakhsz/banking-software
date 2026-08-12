@@ -2076,7 +2076,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             else:
                 st.info("No assets recorded.")
 
-        with col_bs2:
+      with col_bs2:
             st.markdown("### Liabilities & Equity")
             lia_data = []
             total_lia = 0
@@ -2093,16 +2093,27 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
             
-            equity_result = run_query("""
-                SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
+            # Fetch individual equity/capital entries broken down by their JV narration
+            equity_details = run_query("""
+                SELECT 
+                    CO.account_name,
+                    COALESCE(JV.narration, 'Capital') as narration_label,
+                    COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0) as net_balance
                 FROM jv_entries JE
                 JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+                LEFT JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
                 WHERE CO.account_type = 'Equity'
+                GROUP BY CO.account_code, CO.account_name, JV.narration
+                HAVING net_balance != 0
             """)
-            equity_balance = equity_result[0][0] if equity_result and equity_result[0][0] is not None else 0.0
-            if equity_balance != 0:
-                lia_data.append(["Equity", f"₹{equity_balance:,.2f}"])
-                total_lia += equity_balance
+            
+            if equity_details:
+                for row in equity_details:
+                    acc_name, narration_label, eq_val = row
+                    # Displays each person's contribution distinctly using their narration
+                    display_label = f"{acc_name} ({narration_label})" if narration_label else acc_name
+                    lia_data.append([display_label, f"₹{eq_val:,.2f}"])
+                    total_lia += eq_val
             
             if net_profit_loss != 0:
                 label_pnl = "Current Year Profit" if net_profit_loss > 0 else "Current Year Loss"

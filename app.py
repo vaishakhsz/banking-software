@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 import io
 import os
 import time
+import re
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -14,14 +15,15 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Define IST timezone
+IST = timezone(timedelta(hours=5, minutes=30))
+
 # --- UPLOAD FOLDER SETUP ---
 UPLOAD_DIR = "customer_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # --- DATABASE SETUP ---
 DB_NAME = "aasha_nidhi.db"
-
-IST = timezone(timedelta(hours=5, minutes=30))
 
 def get_connection():
     """Get database connection with retry logic"""

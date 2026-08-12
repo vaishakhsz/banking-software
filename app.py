@@ -1693,21 +1693,20 @@ elif menu == "Bank Book":
 
 # --- JOURNAL VOUCHERS ---
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL Vouchers ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
     
     with tab1:
         st.subheader("Create Journal Voucher")
-        st.info("💡 **Depreciation Posting:** Selecting an expense head like EXP-204 to EXP-207 allows you to enter the asset base value. The system computes the depreciation, debits the P&L expense, and credits (reduces) the asset on the Balance Sheet.")
+        st.info("💡 **Depreciation Posting:** Selecting an expense head like EXP-204 to EXP-207 allows you to enter the asset base value. The system computes the depreciation, debits the P&L expense, and credits the selected credit account.")
         
+        # Fetch ALL Chart of Accounts so everything appears on both sides
         coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
         coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
         coa_names = {c[0]: c[1] for c in coa_list}
         
-        asset_list = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type LIKE '%Asset%'")
-        asset_dict = {f"{c[0]} - {c[1]}": c[0] for c in asset_list} if asset_list else coa_dict
-
         # Explicit mapping for your specific depreciation heads
         dep_rate_map = {
             "EXP-204": 5.0,
@@ -1750,13 +1749,14 @@ elif menu == "Journal Vouchers":
                 dr1 = st.number_input("Debit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_dr1")
             
             st.markdown("---")
-            st.markdown("#### **Credit Entry (Asset Account Reduction)**")
+            st.markdown("#### **Credit Entry**")
             col_acc2, col_dummy2 = st.columns([2, 1])
-            acc2 = col_acc2.selectbox("Credit Asset Account (Reduces Net Value on Balance Sheet)", list(asset_dict.keys()), key="jv_acc2")
-            acc2_code = asset_dict[acc2]
+            # Using coa_dict here ensures ALL account heads appear on the credit side as well
+            acc2 = col_acc2.selectbox("Credit Account Head", list(coa_dict.keys()), key="jv_acc2")
+            acc2_code = coa_dict[acc2]
             
             if is_depreciation:
-                st.write(f"**Credit Amount (Auto-balanced to reduce asset):** ₹{calculated_dep:,.2f}")
+                st.write(f"**Credit Amount (Auto-balanced):** ₹{calculated_dep:,.2f}")
                 cr2 = calculated_dep
             else:
                 cr2 = st.number_input("Credit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
@@ -1770,11 +1770,11 @@ elif menu == "Journal Vouchers":
                     jv_id = cursor.lastrowid
                     # Debit entry increases P&L expense
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, acc1_code, dr1))
-                    # Credit entry reduces Balance Sheet asset value
+                    # Credit entry records the credit side
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc2_code, cr2))
                     conn.commit()
                     conn.close()
-                    st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully! Expense recorded and Asset reduced by ₹{dr1:,.2f}.")
+                    st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully! Amount recorded: ₹{dr1:,.2f}.")
                 else:
                     st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits and be greater than zero.")
 
@@ -1783,6 +1783,8 @@ elif menu == "Journal Vouchers":
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
+        else:
+            st.info("No journal vouchers found.")
 
     with tab3:
         st.subheader("🖨️ Journal Voucher (JV) Drill-Down Print")

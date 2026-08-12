@@ -763,7 +763,7 @@ elif menu == "Customer Management":
             col_pdf.download_button("Download PDF Report", create_pdf_report("Customer Directory Report", df_cust), "customers_report.pdf", "application/pdf")
             
             st.markdown("---")
-            st.subheader("🔍 View Uploaded Customer Documents")
+            st.subheader("🔍 View & Download Original Customer Documents")
             cust_ids = [row[0] for row in customers]
             selected_cust_id = st.selectbox("Select Customer ID to View Documents", cust_ids, key="view_docs_id")
             if selected_cust_id:
@@ -773,13 +773,16 @@ elif menu == "Customer Management":
                     st.write(f"**Documents for:** {c_name} (ID: {selected_cust_id})")
                     d_col1, d_col2, d_col3 = st.columns(3)
                     
+                    import os
+                    
                     with d_col1:
                         st.markdown("**Aadhaar Document**")
                         if a_file:
                             st.write(f"Path: `{a_file}`")
                             try:
+                                original_filename = os.path.basename(a_file)
                                 with open(a_file, "rb") as file_file:
-                                    st.download_button("Download Aadhaar", file_file, file_name=f"Aadhaar_{selected_cust_id}.ext", key=f"dl_adh_{selected_cust_id}")
+                                    st.download_button("Download Original Aadhaar", file_file, file_name=original_filename, key=f"dl_adh_{selected_cust_id}")
                             except Exception:
                                 st.info("File not found on disk.")
                         else:
@@ -790,8 +793,9 @@ elif menu == "Customer Management":
                         if p_file:
                             st.write(f"Path: `{p_file}`")
                             try:
+                                original_filename = os.path.basename(p_file)
                                 with open(p_file, "rb") as file_file:
-                                    st.download_button("Download PAN", file_file, file_name=f"PAN_{selected_cust_id}.ext", key=f"dl_pan_{selected_cust_id}")
+                                    st.download_button("Download Original PAN", file_file, file_name=original_filename, key=f"dl_pan_{selected_cust_id}")
                             except Exception:
                                 st.info("File not found on disk.")
                         else:
@@ -802,8 +806,9 @@ elif menu == "Customer Management":
                         if s_file:
                             st.write(f"Path: `{s_file}`")
                             try:
+                                original_filename = os.path.basename(s_file)
                                 with open(s_file, "rb") as file_file:
-                                    st.download_button("Download Signature", file_file, file_name=f"Signature_{selected_cust_id}.ext", key=f"dl_sig_{selected_cust_id}")
+                                    st.download_button("Download Original Signature", file_file, file_name=original_filename, key=f"dl_sig_{selected_cust_id}")
                             except Exception:
                                 st.info("File not found on disk.")
                         else:

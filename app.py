@@ -702,13 +702,15 @@ if menu == "Dashboard":
     else:
         st.info("No active Recurring Deposit accounts found.")
 
-# --- CUSTOMER MANAGEMENT ---
+#CUSTOMER MANAGEMENT
+
 elif menu == "Customer Management":
     st.title("👥 Customer Management Module")
     tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer"])
     
     with tab1:
         st.subheader("New Customer Registration")
+        st.info("ℹ️ All mandatory fields (*), phone number uniqueness, and file uploads (Aadhaar, PAN, Signature) are required.")
         with st.form("reg_form"):
             col1, col2 = st.columns(2)
             name = col1.text_input("Full Name *")
@@ -723,27 +725,34 @@ elif menu == "Customer Management":
             pan = col1.text_input("PAN Number")
             
             st.markdown("---")
-            adhar_upload = st.file_uploader("Upload Aadhaar Document", type=["pdf", "png", "jpg", "jpeg"])
-            pan_upload = st.file_uploader("Upload PAN Card Document", type=["pdf", "png", "jpg", "jpeg"])
-            sig_upload = st.file_uploader("Upload Signature", type=["png", "jpg", "jpeg"])
+            adhar_upload = st.file_uploader("Upload Aadhaar Document *", type=["pdf", "png", "jpg", "jpeg"], key="reg_adhar")
+            pan_upload = st.file_uploader("Upload PAN Card Document *", type=["pdf", "png", "jpg", "jpeg"], key="reg_pan")
+            sig_upload = st.file_uploader("Upload Signature *", type=["png", "jpg", "jpeg"], key="reg_sig")
             
             submitted = st.form_submit_button("Register Customer")
             if submitted:
-                if name and phone:
-                    adhar_path = save_uploaded_file(adhar_upload)
-                    pan_path = save_uploaded_file(pan_upload)
-                    sig_path = save_uploaded_file(sig_upload)
-                    
-                    run_query("""
-                        INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, pan_file, signature_file, kyc_status, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-                    """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adhar_path, pan_path, sig_path, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    st.success(f"Customer {name} registered successfully!")
-                else:
+                if not name or not phone:
                     st.error("Please fill in mandatory fields: Name and Phone.")
+                elif not adhar_upload or not pan_upload or not sig_upload:
+                    st.error("All document uploads (Aadhaar, PAN Card, and Signature) are mandatory before registering.")
+                else:
+                    # Check duplication by phone number
+                    existing = run_query("SELECT COUNT(*) FROM customers WHERE phone = ?", (phone,))
+                    if existing and existing[0][0] > 0:
+                        st.error(f"A customer with phone number {phone} already exists. Duplication is not allowed.")
+                    else:
+                        adhar_path = save_uploaded_file(adhar_upload)
+                        pan_path = save_uploaded_file(pan_upload)
+                        sig_path = save_uploaded_file(sig_upload)
+                        
+                        run_query("""
+                            INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, pan_file, signature_file, kyc_status, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+                        """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adhar_path, pan_path, sig_path, datetime.now().strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        st.success(f"Customer {name} registered successfully!")
 
     with tab2:
-        st.subheader("Customer Directory")
+        st.subheader("Customer Directory & Document Viewer")
         customers = run_query("SELECT id, name, phone, email, kyc_status, pan, created_at FROM customers")
         if customers:
             df_cust = pd.DataFrame(customers, columns=["ID", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
@@ -752,6 +761,53 @@ elif menu == "Customer Management":
             col_csv, col_pdf = st.columns(2)
             col_csv.download_button("Download CSV Report", df_cust.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv")
             col_pdf.download_button("Download PDF Report", create_pdf_report("Customer Directory Report", df_cust), "customers_report.pdf", "application/pdf")
+            
+            st.markdown("---")
+            st.subheader("🔍 View Uploaded Customer Documents")
+            cust_ids = [row[0] for row in customers]
+            selected_cust_id = st.selectbox("Select Customer ID to View Documents", cust_ids, key="view_docs_id")
+            if selected_cust_id:
+                doc_data = run_query("SELECT name, adhar_file, pan_file, signature_file FROM customers WHERE id = ?", (selected_cust_id,))
+                if doc_data:
+                    c_name, a_file, p_file, s_file = doc_data[0]
+                    st.write(f"**Documents for:** {c_name} (ID: {selected_cust_id})")
+                    d_col1, d_col2, d_col3 = st.columns(3)
+                    
+                    with d_col1:
+                        st.markdown("**Aadhaar Document**")
+                        if a_file:
+                            st.write(f"Path: `{a_file}`")
+                            try:
+                                with open(a_file, "rb") as file_file:
+                                    st.download_button("Download Aadhaar", file_file, file_name=f"Aadhaar_{selected_cust_id}.ext", key=f"dl_adh_{selected_cust_id}")
+                            except Exception:
+                                st.info("File not found on disk.")
+                        else:
+                            st.info("No file uploaded.")
+                            
+                    with d_col2:
+                        st.markdown("**PAN Card Document**")
+                        if p_file:
+                            st.write(f"Path: `{p_file}`")
+                            try:
+                                with open(p_file, "rb") as file_file:
+                                    st.download_button("Download PAN", file_file, file_name=f"PAN_{selected_cust_id}.ext", key=f"dl_pan_{selected_cust_id}")
+                            except Exception:
+                                st.info("File not found on disk.")
+                        else:
+                            st.info("No file uploaded.")
+                            
+                    with d_col3:
+                        st.markdown("**Signature**")
+                        if s_file:
+                            st.write(f"Path: `{s_file}`")
+                            try:
+                                with open(s_file, "rb") as file_file:
+                                    st.download_button("Download Signature", file_file, file_name=f"Signature_{selected_cust_id}.ext", key=f"dl_sig_{selected_cust_id}")
+                            except Exception:
+                                st.info("File not found on disk.")
+                        else:
+                            st.info("No file uploaded.")
         else:
             st.info("No customers found.")
 

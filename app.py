@@ -1027,6 +1027,7 @@ elif menu == "SB Accounts":
             st.info("No active SB accounts found.")
 
 # --- FIXED DEPOSITS ---
+# --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
     st.title("📈 Fixed Deposits Management")
     tab1, tab2, tab3, tab4 = st.tabs(["Open FD", "Active FDs", "Print Certificate / Ledger", "Close FD"])
@@ -1111,7 +1112,6 @@ elif menu == "Fixed Deposits (FD)":
 
     with tab3:
         st.subheader("🖨️ Printable FD Certificate & Ledger")
-        # Show ALL FDs - both active and closed
         all_fds = run_query("""
             SELECT f.fd_id, c.name, c.street, c.city, c.state, c.pincode, 
                    f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, 
@@ -1131,12 +1131,11 @@ elif menu == "Fixed Deposits (FD)":
             
             fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date = fd_data
             
-            # Build full address
             full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
-            
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#27ae60"
             
+            # Display HTML preview
             receipt_html = f"""
             <style>
               .fd-receipt {{
@@ -1230,7 +1229,148 @@ elif menu == "Fixed Deposits (FD)":
             """
             st.markdown(receipt_html, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
-            st.info("💡 Tip: Use your browser's print feature (`Ctrl + P` or `Cmd + P`) to print or save this receipt as a PDF.")
+            
+            # PDF Download Button for FD Certificate
+            def generate_fd_pdf(fd_data):
+                from reportlab.lib.pagesizes import A4
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib import colors
+                from reportlab.lib.units import mm
+                
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+                elements = []
+                
+                styles = getSampleStyleSheet()
+                title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#b94a00'), alignment=1, spaceAfter=10)
+                heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=12, alignment=1, spaceAfter=8)
+                normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=10, leading=14)
+                bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontSize=10, leading=14, fontName='Helvetica-Bold')
+                table_header_style = ParagraphStyle('TableHeader', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+                table_cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontSize=9, alignment=1)
+                
+                fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date = fd_data
+                full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
+                
+                # Header
+                elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
+                elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", normal_style))
+                elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", normal_style))
+                elements.append(Spacer(1, 5))
+                elements.append(Paragraph("FIXED DEPOSIT RECEIPT / LEDGER", heading_style))
+                elements.append(Spacer(1, 5))
+                
+                # Status badge
+                status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
+                status_color = colors.red if status == 'CLOSED' else colors.green
+                status_para = Paragraph(f"<font color='{status_color}'><b>Status: {status_text}</b></font>", normal_style)
+                elements.append(status_para)
+                elements.append(Spacer(1, 5))
+                
+                # Details grid
+                details_data = [
+                    [Paragraph("<b>FDR No.</b>", bold_style), Paragraph(f"FD-{fd_id:05d}", normal_style), 
+                     Paragraph("<b>Opening Date</b>", bold_style), Paragraph(created_at, normal_style)],
+                    [Paragraph("<b>Name</b>", bold_style), Paragraph(c_name, normal_style), 
+                     Paragraph("<b>Interest Rate</b>", bold_style), Paragraph(f"{rate}% p.a.", normal_style)],
+                    [Paragraph("<b>Address</b>", bold_style), Paragraph(full_address, normal_style), 
+                     Paragraph("<b>Status</b>", bold_style), Paragraph(status_text, normal_style)],
+                    [Paragraph("<b>Mode of Op.</b>", bold_style), Paragraph("Single", normal_style), 
+                     Paragraph("<b>Nominee</b>", bold_style), Paragraph(nominee if nominee else 'N/A', normal_style)],
+                    [Paragraph("<b>Tenure</b>", bold_style), Paragraph(f"{tenure} MONTHS", normal_style), 
+                     Paragraph("<b>Maturity Amount</b>", bold_style), Paragraph(f"₹{maturity:,.2f}", normal_style)],
+                ]
+                if status == 'CLOSED':
+                    details_data.append([Paragraph("<b>Closed Date</b>", bold_style), Paragraph(closed_date, normal_style), "", ""])
+                
+                detail_table = Table(details_data, colWidths=[60, 100, 60, 100])
+                detail_table.setStyle(TableStyle([
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('PADDING', (0, 0), (-1, -1), 4),
+                ]))
+                elements.append(detail_table)
+                elements.append(Spacer(1, 8))
+                
+                # Box
+                elements.append(Paragraph(f"<b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.", normal_style))
+                elements.append(Spacer(1, 8))
+                
+                # Ledger Table
+                ledger_data = [
+                    [Paragraph("<b>Date</b>", table_header_style),
+                     Paragraph("<b>Particulars</b>", table_header_style),
+                     Paragraph("<b>Payment/Debit</b>", table_header_style),
+                     Paragraph("<b>Receipt/Credit</b>", table_header_style),
+                     Paragraph("<b>Balance</b>", table_header_style),
+                     Paragraph("<b>Int Paid</b>", table_header_style),
+                     Paragraph("<b>TDS</b>", table_header_style)]
+                ]
+                
+                # Opening entry
+                ledger_data.append([
+                    Paragraph(created_at, table_cell_style),
+                    Paragraph("Opening Balance / Principal Deposit", table_cell_style),
+                    Paragraph("-", table_cell_style),
+                    Paragraph(f"₹{principal:,.2f}", table_cell_style),
+                    Paragraph(f"₹{principal:,.2f}", table_cell_style),
+                    Paragraph("0", table_cell_style),
+                    Paragraph("0", table_cell_style)
+                ])
+                
+                # Closing entry if closed
+                if status == 'CLOSED':
+                    ledger_data.append([
+                        Paragraph(closed_date, table_cell_style),
+                        Paragraph("FD Closed / Maturity Payment", table_cell_style),
+                        Paragraph(f"₹{maturity:,.2f}", table_cell_style),
+                        Paragraph("-", table_cell_style),
+                        Paragraph("₹0.00", table_cell_style),
+                        Paragraph(f"₹{maturity - principal:,.2f}", table_cell_style),
+                        Paragraph("0", table_cell_style)
+                    ])
+                
+                ledger_table = Table(ledger_data, colWidths=[60, 90, 70, 70, 70, 60, 50])
+                ledger_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e67e22')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ('PADDING', (0, 0), (-1, -1), 4),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ]))
+                elements.append(ledger_table)
+                elements.append(Spacer(1, 20))
+                
+                # Signatures
+                sig_data = [
+                    ["Manager", "Accountant", "Chairman / MD"]
+                ]
+                sig_table = Table(sig_data, colWidths=[150, 150, 150])
+                sig_table.setStyle(TableStyle([
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('PADDING', (0, 0), (-1, -1), 10),
+                ]))
+                elements.append(sig_table)
+                
+                if status == 'CLOSED':
+                    elements.append(Spacer(1, 5))
+                    elements.append(Paragraph("<font color='red'><b>⚠️ This Fixed Deposit has been CLOSED</b></font>", normal_style))
+                
+                doc.build(elements)
+                buffer.seek(0)
+                return buffer.getvalue()
+            
+            fd_pdf_data = generate_fd_pdf(fd_data)
+            st.download_button(
+                label=f"📥 Download FD Certificate FD-{fd_id:05d} (PDF)",
+                data=fd_pdf_data,
+                file_name=f"FD_Certificate_FD-{fd_id:05d}.pdf",
+                mime="application/pdf",
+                key=f"download_fd_pdf_{fd_id}"
+            )
         else:
             st.info("No Fixed Deposits available to print.")
 
@@ -1269,6 +1409,7 @@ elif menu == "Fixed Deposits (FD)":
                 st.rerun()
         else:
             st.info("No active FDs available to close.")
+
 
 # --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":
@@ -1428,7 +1569,6 @@ elif menu == "Recurring Deposits (RD)":
 
     with tab4:
         st.subheader("🖨️ Printable RD Certificate & Ledger")
-        # Show ALL RDs - both active and closed
         all_rds = run_query("""
             SELECT r.rd_id, c.name, c.street, c.city, c.state, c.pincode, 
                    r.monthly_amount, r.tenure_months, r.interest_rate, 
@@ -1449,13 +1589,12 @@ elif menu == "Recurring Deposits (RD)":
             
             rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date = rd_data
             
-            # Build full address
             full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
-            
             total_deposited = monthly_amt * paid_inst
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#2980b9"
             
+            # Display HTML preview
             rd_receipt_html = f"""
             <style>
               .rd-receipt {{
@@ -1547,7 +1686,146 @@ elif menu == "Recurring Deposits (RD)":
             """
             st.markdown(rd_receipt_html, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
-            st.info("💡 Tip: Use your browser's print feature (`Ctrl + P` or `Cmd + P`) to print or save this receipt as a PDF.")
+            
+            # PDF Download Button for RD Certificate
+            def generate_rd_pdf(rd_data):
+                from reportlab.lib.pagesizes import A4
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib import colors
+                from reportlab.lib.units import mm
+                
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+                elements = []
+                
+                styles = getSampleStyleSheet()
+                title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#1b4f72'), alignment=1, spaceAfter=10)
+                heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=12, alignment=1, spaceAfter=8)
+                normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=10, leading=14)
+                bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontSize=10, leading=14, fontName='Helvetica-Bold')
+                table_header_style = ParagraphStyle('TableHeader', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+                table_cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontSize=9, alignment=1)
+                
+                rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date = rd_data
+                full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
+                total_deposited = monthly_amt * paid_inst
+                
+                # Header
+                elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
+                elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", normal_style))
+                elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", normal_style))
+                elements.append(Spacer(1, 5))
+                elements.append(Paragraph("RECURRING DEPOSIT RECEIPT / LEDGER", heading_style))
+                elements.append(Spacer(1, 5))
+                
+                # Status badge
+                status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
+                status_color = colors.red if status == 'CLOSED' else colors.blue
+                status_para = Paragraph(f"<font color='{status_color}'><b>Status: {status_text}</b></font>", normal_style)
+                elements.append(status_para)
+                elements.append(Spacer(1, 5))
+                
+                # Details grid
+                details_data = [
+                    [Paragraph("<b>RDR No.</b>", bold_style), Paragraph(f"RD-{rd_id:05d}", normal_style), 
+                     Paragraph("<b>Opening Date</b>", bold_style), Paragraph(created_at, normal_style)],
+                    [Paragraph("<b>Name</b>", bold_style), Paragraph(c_name, normal_style), 
+                     Paragraph("<b>Interest Rate</b>", bold_style), Paragraph(f"{rate}% p.a.", normal_style)],
+                    [Paragraph("<b>Address</b>", bold_style), Paragraph(full_address, normal_style), 
+                     Paragraph("<b>Status</b>", bold_style), Paragraph(status_text, normal_style)],
+                    [Paragraph("<b>Monthly Installment</b>", bold_style), Paragraph(f"₹{monthly_amt:,.2f}", normal_style), 
+                     Paragraph("<b>Nominee</b>", bold_style), Paragraph(nominee if nominee else 'N/A', normal_style)],
+                    [Paragraph("<b>Tenure</b>", bold_style), Paragraph(f"{tenure} MONTHS", normal_style), 
+                     Paragraph("<b>Installments Paid</b>", bold_style), Paragraph(f"{paid_inst} / {tenure}", normal_style)],
+                ]
+                if status == 'CLOSED':
+                    details_data.append([Paragraph("<b>Closed Date</b>", bold_style), Paragraph(closed_date, normal_style), "", ""])
+                
+                detail_table = Table(details_data, colWidths=[60, 90, 60, 90])
+                detail_table.setStyle(TableStyle([
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('PADDING', (0, 0), (-1, -1), 4),
+                ]))
+                elements.append(detail_table)
+                elements.append(Spacer(1, 8))
+                
+                # Box
+                elements.append(Paragraph(f"<b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Estimated Maturity Amount: <b>₹{maturity:,.2f}</b>.", normal_style))
+                elements.append(Spacer(1, 8))
+                
+                # Ledger Table
+                ledger_data = [
+                    [Paragraph("<b>Date</b>", table_header_style),
+                     Paragraph("<b>Particulars</b>", table_header_style),
+                     Paragraph("<b>Payment/Debit</b>", table_header_style),
+                     Paragraph("<b>Receipt/Credit</b>", table_header_style),
+                     Paragraph("<b>Balance</b>", table_header_style),
+                     Paragraph("<b>Inst. Paid</b>", table_header_style)]
+                ]
+                
+                # Opening entry
+                ledger_data.append([
+                    Paragraph(created_at, table_cell_style),
+                    Paragraph("RD Account Opening & Installment 1", table_cell_style),
+                    Paragraph("-", table_cell_style),
+                    Paragraph(f"₹{monthly_amt:,.2f}", table_cell_style),
+                    Paragraph(f"₹{total_deposited:,.2f}", table_cell_style),
+                    Paragraph(str(paid_inst), table_cell_style)
+                ])
+                
+                # Closing entry if closed
+                if status == 'CLOSED':
+                    ledger_data.append([
+                        Paragraph(closed_date, table_cell_style),
+                        Paragraph("RD Closed / Maturity Payment", table_cell_style),
+                        Paragraph(f"₹{maturity:,.2f}", table_cell_style),
+                        Paragraph("-", table_cell_style),
+                        Paragraph("₹0.00", table_cell_style),
+                        Paragraph(str(paid_inst), table_cell_style)
+                    ])
+                
+                ledger_table = Table(ledger_data, colWidths=[60, 100, 70, 70, 70, 60])
+                ledger_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2980b9')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ('PADDING', (0, 0), (-1, -1), 4),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ]))
+                elements.append(ledger_table)
+                elements.append(Spacer(1, 20))
+                
+                # Signatures
+                sig_data = [
+                    ["Manager", "Accountant", "Chairman / MD"]
+                ]
+                sig_table = Table(sig_data, colWidths=[150, 150, 150])
+                sig_table.setStyle(TableStyle([
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('PADDING', (0, 0), (-1, -1), 10),
+                ]))
+                elements.append(sig_table)
+                
+                if status == 'CLOSED':
+                    elements.append(Spacer(1, 5))
+                    elements.append(Paragraph("<font color='red'><b>⚠️ This Recurring Deposit has been CLOSED</b></font>", normal_style))
+                
+                doc.build(elements)
+                buffer.seek(0)
+                return buffer.getvalue()
+            
+            rd_pdf_data = generate_rd_pdf(rd_data)
+            st.download_button(
+                label=f"📥 Download RD Certificate RD-{rd_id:05d} (PDF)",
+                data=rd_pdf_data,
+                file_name=f"RD_Certificate_RD-{rd_id:05d}.pdf",
+                mime="application/pdf",
+                key=f"download_rd_pdf_{rd_id}"
+            )
         else:
             st.info("No Recurring Deposits available to print.")
 

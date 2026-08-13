@@ -810,30 +810,56 @@ def check_login():
 # ==================== MAIN APP ====================
 
 # --- LOGIN PAGE ---
+# --- LOGIN SYSTEM ---
+def check_login():
+    """Simple login check"""
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if 'username' not in st.session_state:
+        st.session_state.username = ""
+    return st.session_state.logged_in
+
+# ==================== MAIN APP ====================
+
+# --- LOGIN PAGE ---
 if not check_login():
-    # Hide sidebar on login page
-    st.sidebar.empty()
+    # Hide sidebar completely on login page
+    st.markdown("""
+    <style>
+        [data-testid="stSidebar"] {
+            display: none;
+        }
+        [data-testid="stSidebarNav"] {
+            display: none;
+        }
+        section[data-testid="stSidebar"] {
+            display: none !important;
+        }
+        .st-emotion-cache-1wmy9hl {
+            display: none !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
     
     # Perfect centering using columns
     col1, col2, col3 = st.columns([1, 2.2, 1])
     with col2:
         # Company Header - Perfectly Centered
         st.markdown("""
-        <div style="text-align: center; padding: 30px 0 20px 0;">
-            <div style="font-size: 38px; margin-bottom: 5px;">🏦</div>
-            <h1 style="color: #1f4e78; font-size: 30px; margin: 5px 0; font-weight: 700; letter-spacing: 1px;">AARSHA NIDHI LIMITED</h1>
+        <div style="text-align: center; padding: 40px 0 20px 0;">
+            <div style="font-size: 42px; margin-bottom: 5px;">🏦</div>
+            <h1 style="color: #1f4e78; font-size: 32px; margin: 5px 0; font-weight: 700; letter-spacing: 1px;">AARSHA NIDHI LIMITED</h1>
             <p style="color: #444; font-size: 14px; margin: 5px 0;">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O</p>
             <p style="color: #444; font-size: 14px; margin: 3px 0;">Thiruvananthapuram - 695501</p>
             <p style="color: #666; font-size: 12px; margin: 5px 0;">CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
             <hr style="border: 2px solid #1f4e78; width: 40%; margin: 15px auto;">
-            <h2 style="color: #1f4e78; font-size: 20px; margin: 10px 0; font-weight: 600;">Banking Software Login</h2>
+            <h2 style="color: #1f4e78; font-size: 22px; margin: 10px 0; font-weight: 600;">🔐 Banking Software Login</h2>
         </div>
         """, unsafe_allow_html=True)
         
         # Login Form - Perfectly Centered
         with st.container():
-            # Center the form content with padding
-            st.markdown('<div style="display: flex; justify-content: center; padding: 0 30px;">', unsafe_allow_html=True)
+            st.markdown('<div style="display: flex; justify-content: center; padding: 0 20px;">', unsafe_allow_html=True)
             
             with st.form("login_form"):
                 username = st.text_input(
@@ -866,13 +892,13 @@ if not check_login():
                         time.sleep(0.5)
                         st.rerun()
                     else:
-                        st.error("❌ Invalid username or password.")
+                        st.error("❌ Invalid username or password. Please try again.")
             
             st.markdown('</div>', unsafe_allow_html=True)
         
         # Footer - Perfectly Centered
         st.markdown("""
-        <div style="text-align: center; color: #888; font-size: 11px; margin-top: 25px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
+        <div style="text-align: center; color: #888; font-size: 11px; margin-top: 30px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
             <p style="margin: 3px 0;">Default credentials: <b>admin</b> / <b>admin123</b></p>
             <p style="margin: 5px 0;">© 2024 AARSHA NIDHI LIMITED. All rights reserved.</p>
         </div>

@@ -370,22 +370,60 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
         return None
 
 def create_pdf_report(title, df):
-    from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.pagesizes import letter, A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
+    from reportlab.lib.units import mm, inch
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), 
+                           rightMargin=10*mm, leftMargin=10*mm, 
+                           topMargin=15*mm, bottomMargin=15*mm)
     elements = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#1f4e78'), spaceAfter=12)
     
+    # Company Header Style
+    header_style = ParagraphStyle(
+        'HeaderStyle',
+        parent=styles['Heading1'],
+        fontSize=14,
+        textColor=colors.HexColor('#1f4e78'),
+        alignment=1,
+        spaceAfter=4,
+        fontName='Helvetica-Bold'
+    )
+    
+    subheader_style = ParagraphStyle(
+        'SubheaderStyle',
+        parent=styles['Normal'],
+        fontSize=9,
+        alignment=1,
+        spaceAfter=2,
+        textColor=colors.HexColor('#333333')
+    )
+    
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading2'],
+        fontSize=12,
+        textColor=colors.HexColor('#1f4e78'),
+        alignment=1,
+        spaceAfter=8,
+        fontName='Helvetica-Bold'
+    )
+    
+    # Company Header
+    elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
+    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subheader_style))
+    elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", subheader_style))
+    elements.append(Spacer(1, 6))
     elements.append(Paragraph(title, title_style))
-    elements.append(Spacer(1, 10))
+    elements.append(Spacer(1, 8))
     
     if not df.empty:
+        # Clean data for PDF
         cleaned_data = []
         columns = list(df.columns)
         
@@ -393,27 +431,75 @@ def create_pdf_report(title, df):
             cleaned_row = []
             for val in row:
                 val_str = str(val) if val is not None else ""
-                val_str = val_str.replace('₹', 'Rs.')
+                val_str = val_str.replace('₹', 'Rs.').replace('₹', 'Rs.')
                 ascii_val = val_str.encode('ascii', 'ignore').decode('ascii')
                 cleaned_row.append(ascii_val)
             cleaned_data.append(cleaned_row)
+        
+        # Calculate column widths based on content
+        num_cols = len(columns)
+        available_width = 260  # mm
+        min_col_width = 15  # mm
+        max_col_width = 80  # mm
+        
+        # Distribute width intelligently
+        if num_cols <= 4:
+            col_widths = [available_width / num_cols] * num_cols
+        else:
+            # Give more width to text columns, less to numeric
+            col_widths = []
+            for i, col in enumerate(columns):
+                if col.lower() in ['name', 'particulars', 'narration', 'description', 'account name']:
+                    col_widths.append(min(80, available_width * 0.25))
+                elif col.lower() in ['account no', 'voucher no', 'tx id', 'id']:
+                    col_widths.append(min(45, available_width * 0.15))
+                else:
+                    col_widths.append(min(50, available_width * 0.12))
             
+            # Adjust to fit available width
+            total = sum(col_widths)
+            if total < available_width:
+                # Distribute remaining evenly
+                remainder = (available_width - total) / num_cols
+                col_widths = [w + remainder for w in col_widths]
+            elif total > available_width:
+                # Scale down proportionally
+                scale = available_width / total
+                col_widths = [w * scale for w in col_widths]
+        
+        # Convert to points
+        col_widths_pt = [w * mm for w in col_widths]
+        
         table_data = [columns] + cleaned_data
-        col_width = 550 / max(1, len(columns))
-        t = Table(table_data, colWidths=[col_width] * len(columns))
+        t = Table(table_data, colWidths=col_widths_pt, repeatRows=1)
+        
+        # Style the table
         t.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('FONTSIZE', (0, 0), (-1, 0), 8),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('TOPPADDING', (0, 0), (-1, 0), 6),
             ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f9f9f9')),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('FONTSIZE', (0, 1), (-1, -1), 7),
+            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 3),
+            # Wrap text for long entries
+            ('WORDWRAP', (0, 0), (-1, -1), 'LTR'),
         ]))
+        
         elements.append(t)
+        
+        # Add footer with timestamp
+        elements.append(Spacer(1, 10))
+        footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=7, alignment=1, textColor=colors.HexColor('#666666'))
+        elements.append(Paragraph(f"Generated on: {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}", footer_style))
+        
     else:
         elements.append(Paragraph("No records found for this report.", styles['Normal']))
         
@@ -430,37 +516,86 @@ def get_account_name(account_code):
         return ""
 
 def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
-    from reportlab.lib.pagesizes import A5
+    from reportlab.lib.pagesizes import A5, A4, landscape
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
     from reportlab.lib.units import mm
     
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=12*mm, leftMargin=12*mm, topMargin=12*mm, bottomMargin=12*mm)
+    doc = SimpleDocTemplate(buffer, pagesize=A5, 
+                           rightMargin=10*mm, leftMargin=10*mm, 
+                           topMargin=12*mm, bottomMargin=12*mm)
     elements = []
     
-    available_width = A5[0] - (24*mm)
+    available_width = A5[0] - (20*mm)
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('VoucherTitle', parent=styles['Heading1'], fontSize=13, textColor=colors.HexColor('#1f4e78'), alignment=1, spaceAfter=6)
-    normal_style = ParagraphStyle('VoucherNormal', parent=styles['Normal'], fontSize=9, leading=12)
-    bold_style = ParagraphStyle('VoucherBold', parent=styles['Normal'], fontSize=9, leading=12, fontName='Helvetica-Bold')
+    
+    # Company header for vouchers
+    header_style = ParagraphStyle(
+        'VoucherHeader',
+        parent=styles['Heading1'],
+        fontSize=11,
+        textColor=colors.HexColor('#1f4e78'),
+        alignment=1,
+        spaceAfter=2,
+        fontName='Helvetica-Bold'
+    )
+    
+    sub_header_style = ParagraphStyle(
+        'VoucherSubHeader',
+        parent=styles['Normal'],
+        fontSize=7,
+        alignment=1,
+        spaceAfter=2,
+        textColor=colors.HexColor('#555555')
+    )
+    
+    title_style = ParagraphStyle(
+        'VoucherTitle',
+        parent=styles['Heading2'],
+        fontSize=10,
+        textColor=colors.HexColor('#1f4e78'),
+        alignment=1,
+        spaceAfter=6,
+        fontName='Helvetica-Bold'
+    )
+    
+    normal_style = ParagraphStyle(
+        'VoucherNormal',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=11
+    )
+    
+    bold_style = ParagraphStyle(
+        'VoucherBold',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=11,
+        fontName='Helvetica-Bold'
+    )
+    
+    # Company header for all vouchers
+    elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
+    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_header_style))
+    elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", sub_header_style))
+    elements.append(Spacer(1, 4))
     
     if voucher_type == 'CB':
         date_val, v_num, part, dr, cr, acc_code, narr = voucher_data[0]
         acc_name = get_account_name(acc_code)
         account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
         
-        elements.append(Paragraph("AASHA NIDHI BANK", title_style))
-        elements.append(Paragraph("CASH VOUCHER (CB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=11, alignment=1, spaceAfter=8)))
-        elements.append(Spacer(1, 6))
+        elements.append(Paragraph("CASH VOUCHER (CB)", title_style))
+        elements.append(Spacer(1, 4))
         
         voucher_content = [
             ["Voucher No:", v_num, "Date:", date_val],
             ["Particulars:", part, "", ""],
             ["Account Head:", account_display, "", ""],
-            ["Amount:", f"Debit (Receipt): ₹{dr:,.2f}" if dr > 0 else f"Credit (Payment): ₹{cr:,.2f}", "", ""],
+            ["Amount:", f"Debit (Receipt): Rs.{dr:,.2f}" if dr > 0 else f"Credit (Payment): Rs.{cr:,.2f}", "", ""],
             ["Narration:", narr if narr else 'N/A', "", ""],
         ]
         
@@ -471,17 +606,18 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
                 if i == 0:
                     para_row.append(Paragraph(f"<b>{cell}</b>", bold_style))
                 else:
-                    para_row.append(Paragraph(cell, normal_style))
+                    para_row.append(Paragraph(str(cell), normal_style))
             table_data.append(para_row)
         
-        col_widths = [available_width * 0.25, available_width * 0.35, available_width * 0.15, available_width * 0.25]
+        col_widths = [available_width * 0.22, available_width * 0.38, available_width * 0.15, available_width * 0.25]
         
         t = Table(table_data, colWidths=col_widths)
         t.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('PADDING', (0, 0), (-1, -1), 5),
+            ('PADDING', (0, 0), (-1, -1), 4),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
             ('SPAN', (1, 1), (-1, 1)),
             ('SPAN', (1, 2), (-1, 2)),
             ('SPAN', (1, 3), (-1, 3)),
@@ -494,16 +630,15 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         acc_name = get_account_name(acc_code)
         account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
         
-        elements.append(Paragraph("AASHA NIDHI BANK", title_style))
-        elements.append(Paragraph("BANK VOUCHER (BB)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=11, alignment=1, spaceAfter=8)))
-        elements.append(Spacer(1, 6))
+        elements.append(Paragraph("BANK VOUCHER (BB)", title_style))
+        elements.append(Spacer(1, 4))
         
         voucher_content = [
             ["Voucher No:", v_num, "Date:", date_val],
             ["Bank:", bank_n, "", ""],
             ["Particulars:", part, "", ""],
             ["Account Head:", account_display, "", ""],
-            ["Amount:", f"Debit (Deposit): ₹{dr:,.2f}" if dr > 0 else f"Credit (Withdrawal): ₹{cr:,.2f}", "", ""],
+            ["Amount:", f"Debit (Deposit): Rs.{dr:,.2f}" if dr > 0 else f"Credit (Withdrawal): Rs.{cr:,.2f}", "", ""],
             ["Narration:", narr if narr else 'N/A', "", ""],
         ]
         
@@ -514,17 +649,18 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
                 if i == 0:
                     para_row.append(Paragraph(f"<b>{cell}</b>", bold_style))
                 else:
-                    para_row.append(Paragraph(cell, normal_style))
+                    para_row.append(Paragraph(str(cell), normal_style))
             table_data.append(para_row)
         
-        col_widths = [available_width * 0.22, available_width * 0.38, available_width * 0.15, available_width * 0.25]
+        col_widths = [available_width * 0.20, available_width * 0.40, available_width * 0.15, available_width * 0.25]
         
         t = Table(table_data, colWidths=col_widths)
         t.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('PADDING', (0, 0), (-1, -1), 5),
+            ('PADDING', (0, 0), (-1, -1), 4),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
             ('SPAN', (1, 1), (-1, 1)),
             ('SPAN', (1, 2), (-1, 2)),
             ('SPAN', (1, 3), (-1, 3)),
@@ -534,9 +670,8 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         elements.append(t)
         
     elif voucher_type == 'JV':
-        elements.append(Paragraph("AASHA NIDHI BANK", title_style))
-        elements.append(Paragraph("JOURNAL VOUCHER (JV)", ParagraphStyle('Sub', parent=styles['Heading2'], fontSize=11, alignment=1, spaceAfter=8)))
-        elements.append(Spacer(1, 6))
+        elements.append(Paragraph("JOURNAL VOUCHER (JV)", title_style))
+        elements.append(Spacer(1, 4))
         
         jv_date = voucher_data[0][0]
         narration_text = voucher_data[0][1]
@@ -549,17 +684,18 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         header_t.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('PADDING', (0, 0), (-1, -1), 4),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
         ]))
         elements.append(header_t)
-        elements.append(Spacer(1, 8))
+        elements.append(Spacer(1, 6))
         
         col1_width = available_width * 0.55
         col2_width = available_width * 0.225
         col3_width = available_width * 0.225
         
         table_data = [[Paragraph("<b>Account Head</b>", bold_style), 
-                      Paragraph("<b>Debit (₹)</b>", bold_style), 
-                      Paragraph("<b>Credit (₹)</b>", bold_style)]]
+                      Paragraph("<b>Debit (Rs.)</b>", bold_style), 
+                      Paragraph("<b>Credit (Rs.)</b>", bold_style)]]
         
         total_dr = 0
         total_cr = 0
@@ -588,16 +724,20 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
             ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f0f0f0')),
             ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('PADDING', (0, 0), (-1, -1), 5),
+            ('PADDING', (0, 0), (-1, -1), 4),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
         ]))
         elements.append(t)
-        elements.append(Spacer(1, 8))
+        elements.append(Spacer(1, 6))
         elements.append(Paragraph(f"<b>Narration:</b> {narration_text if narration_text else 'N/A'}", normal_style))
     
-    elements.append(Spacer(1, 25))
+    elements.append(Spacer(1, 15))
     sign_line = "_" * 60
-    elements.append(Paragraph(sign_line, ParagraphStyle('Line', alignment=1, fontSize=8)))
-    elements.append(Paragraph("Authorized Signature / Stamp", ParagraphStyle('Sign', alignment=1, fontSize=8)))
+    elements.append(Paragraph(sign_line, ParagraphStyle('Line', alignment=1, fontSize=7)))
+    elements.append(Paragraph("Authorized Signature / Stamp", ParagraphStyle('Sign', alignment=1, fontSize=7, textColor=colors.HexColor('#555555'))))
+    elements.append(Spacer(1, 3))
+    timestamp_style = ParagraphStyle('Timestamp', alignment=1, fontSize=6, textColor=colors.HexColor('#999999'))
+    elements.append(Paragraph(f"Printed: {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}", timestamp_style))
     
     doc.build(elements)
     buffer.seek(0)
@@ -625,8 +765,132 @@ def fetch_jv_voucher(jv_id):
     """
     return run_query(query, (jv_id,))
 
+# --- LOGIN SYSTEM ---
+def check_login():
+    """Simple login check"""
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if 'username' not in st.session_state:
+        st.session_state.username = ""
+    return st.session_state.logged_in
+
+# --- IST TIMER DISPLAY ---
+def display_ist_timer():
+    """Display live IST timer in sidebar"""
+    current_time = datetime.now(IST)
+    time_str = current_time.strftime("%I:%M:%S %p")
+    date_str = current_time.strftime("%d-%b-%Y")
+    st.sidebar.markdown(f"""
+    <div style="background: linear-gradient(135deg, #1f4e78, #2c6b9e); 
+                padding: 10px 15px; 
+                border-radius: 8px; 
+                margin: 5px 0 10px 0;
+                text-align: center;
+                color: white;
+                font-family: 'Segoe UI', sans-serif;">
+        <div style="font-size: 12px; opacity: 0.8;">🇮🇳 INDIAN STANDARD TIME</div>
+        <div style="font-size: 20px; font-weight: bold; letter-spacing: 1px;">{time_str}</div>
+        <div style="font-size: 11px; opacity: 0.9;">{date_str}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ==================== MAIN APP ====================
+
+# --- LOGIN PAGE ---
+if not check_login():
+    # Hide sidebar on login page
+    st.sidebar.empty()
+    
+    # Center login form
+    col1, col2, col3 = st.columns([1, 1.5, 1])
+    with col2:
+        # Company Logo/Header
+        st.markdown("""
+        <div style="text-align: center; padding: 20px 0 10px 0;">
+            <h1 style="color: #1f4e78; font-size: 28px; margin-bottom: 4px;">🏦 AARSHA NIDHI LIMITED</h1>
+            <p style="color: #444; font-size: 13px; margin: 2px 0;">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O</p>
+            <p style="color: #444; font-size: 13px; margin: 2px 0;">Thiruvananthapuram - 695501</p>
+            <p style="color: #666; font-size: 11px; margin: 2px 0;">CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
+            <hr style="border: 1px solid #1f4e78; width: 60%; margin: 10px auto;">
+            <h2 style="color: #1f4e78; font-size: 20px; margin: 5px 0;">Banking Software Login</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Live IST Timer on login page
+        st.markdown("""
+        <div style="text-align: center; margin: 5px 0 15px 0;">
+            <span style="background: #f0f2f6; padding: 6px 20px; border-radius: 20px; font-size: 14px; color: #1f4e78;">
+                🇮🇳 IST: <span id="ist-time">Loading...</span>
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # JavaScript for live timer
+        st.markdown("""
+        <script>
+            function updateIST() {
+                const now = new Date();
+                // IST is UTC +5:30
+                const istOffset = 5.5 * 60 * 60 * 1000;
+                const utc = now.getTime();
+                const istTime = new Date(utc + istOffset);
+                const timeStr = istTime.toLocaleTimeString('en-IN', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+                const dateStr = istTime.toLocaleDateString('en-IN', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric'
+                });
+                document.getElementById('ist-time').textContent = timeStr + ' | ' + dateStr;
+            }
+            updateIST();
+            setInterval(updateIST, 1000);
+        </script>
+        """, unsafe_allow_html=True)
+        
+        # Login Form
+        with st.form("login_form"):
+            username = st.text_input("Username", placeholder="Enter your username", key="login_user")
+            password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_pass")
+            login_btn = st.form_submit_button("🔐 Login", use_container_width=True)
+            
+            if login_btn:
+                if username == "admin" and password == "admin123":
+                    st.session_state.logged_in = True
+                    st.session_state.username = username
+                    st.success("✅ Login successful!")
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid username or password. Please try again.")
+        
+        st.markdown("""
+        <div style="text-align: center; color: #888; font-size: 11px; margin-top: 15px;">
+            <p>Default credentials: admin / admin123</p>
+            <p>© 2024 AARSHA NIDHI LIMITED. All rights reserved.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.stop()
+
+# --- MAIN APPLICATION (After Login) ---
+
 # --- SIDEBAR NAVIGATION & BACKUP ---
 st.sidebar.title("🏦 Aasha Nidhi Bank")
+
+# Display IST Timer in sidebar
+display_ist_timer()
+
+# User info
+st.sidebar.markdown(f"""
+<div style="background: #e8f0fe; padding: 8px 12px; border-radius: 6px; margin: 5px 0 10px 0;">
+    <span style="font-size: 13px;">👤 Logged in as: <b>{st.session_state.username}</b></span>
+</div>
+""", unsafe_allow_html=True)
+
 role = st.sidebar.selectbox("User Role", ["Admin/Staff", "Customer Portal"])
 
 if role == "Admin/Staff":
@@ -639,6 +903,12 @@ if role == "Admin/Staff":
 else:
     menu = "Customer Portal"
 
+# Logout button
+if st.sidebar.button("🚪 Logout", use_container_width=True):
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.rerun()
+
 # --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 System Backup & Recovery")
@@ -647,24 +917,28 @@ if os.path.exists(DB_NAME):
     with open(DB_NAME, "rb") as f:
         db_bytes = f.read()
     st.sidebar.download_button(
-        label="Download Database Backup",
+        label="📥 Download Database Backup",
         data=db_bytes,
         file_name=f"aasha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
         mime="application/octet-stream",
-        help="Download a complete copy of the SQLite database file for safety."
+        help="Download a complete copy of the SQLite database file for safety.",
+        use_container_width=True
     )
 
-uploaded_db = st.sidebar.file_uploader("Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
+uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
-    if st.sidebar.button("⚠️ Confirm Database Restore", type="primary"):
+    if st.sidebar.button("⚠️ Confirm Database Restore", type="primary", use_container_width=True):
         try:
             with open(DB_NAME, "wb") as f:
                 f.write(uploaded_db.getbuffer())
-            st.sidebar.success("Database restored successfully! Please refresh the page.")
+            st.sidebar.success("✅ Database restored successfully! Please refresh the page.")
             time.sleep(1)
             st.rerun()
         except Exception as e:
-            st.sidebar.error(f"Error restoring database: {str(e)}")
+            st.sidebar.error(f"❌ Error restoring database: {str(e)}")
+
+st.sidebar.markdown("---")
+st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
 # --- DASHBOARD MODULE ---
 if menu == "Dashboard":
@@ -677,10 +951,10 @@ if menu == "Dashboard":
     cash_bal = get_cash_balance()
     
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Customers", total_cust)
-    col2.metric("Active SB Accounts", total_sb)
-    col3.metric("Active FDs", total_fds)
-    col4.metric("Active RDs", rd_active)
+    col1.metric("👥 Total Customers", total_cust)
+    col2.metric("💰 Active SB Accounts", total_sb)
+    col3.metric("📈 Active FDs", total_fds)
+    col4.metric("🔄 Active RDs", rd_active)
     
     st.markdown("---")
     st.subheader("📋 Active Recurring Deposits (RD) Directory")
@@ -756,8 +1030,8 @@ elif menu == "Customer Management":
             st.dataframe(df_cust, use_container_width=True)
             
             col_csv, col_pdf = st.columns(2)
-            col_csv.download_button("Download CSV Report", df_cust.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv")
-            col_pdf.download_button("Download PDF Report", create_pdf_report("Customer Directory Report", df_cust), "customers_report.pdf", "application/pdf")
+            col_csv.download_button("📥 Download CSV Report", df_cust.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv", use_container_width=True)
+            col_pdf.download_button("📥 Download PDF Report", create_pdf_report("Customer Directory Report", df_cust), "customers_report.pdf", "application/pdf", use_container_width=True)
             
             st.markdown("---")
             st.subheader("🔍 View & Download Original Customer Documents")
@@ -779,7 +1053,7 @@ elif menu == "Customer Management":
                             try:
                                 original_filename = os.path.basename(a_file)
                                 with open(a_file, "rb") as file_file:
-                                    st.download_button("Download Original Aadhaar", file_file, file_name=original_filename, key=f"dl_adh_{selected_cust_id}")
+                                    st.download_button("📥 Download Aadhaar", file_file, file_name=original_filename, key=f"dl_adh_{selected_cust_id}", use_container_width=True)
                             except Exception:
                                 st.info("File not found on disk.")
                         else:
@@ -792,7 +1066,7 @@ elif menu == "Customer Management":
                             try:
                                 original_filename = os.path.basename(p_file)
                                 with open(p_file, "rb") as file_file:
-                                    st.download_button("Download Original PAN", file_file, file_name=original_filename, key=f"dl_pan_{selected_cust_id}")
+                                    st.download_button("📥 Download PAN", file_file, file_name=original_filename, key=f"dl_pan_{selected_cust_id}", use_container_width=True)
                             except Exception:
                                 st.info("File not found on disk.")
                         else:
@@ -805,7 +1079,7 @@ elif menu == "Customer Management":
                             try:
                                 original_filename = os.path.basename(s_file)
                                 with open(s_file, "rb") as file_file:
-                                    st.download_button("Download Original Signature", file_file, file_name=original_filename, key=f"dl_sig_{selected_cust_id}")
+                                    st.download_button("📥 Download Signature", file_file, file_name=original_filename, key=f"dl_sig_{selected_cust_id}", use_container_width=True)
                             except Exception:
                                 st.info("File not found on disk.")
                         else:
@@ -842,11 +1116,11 @@ elif menu == "KYC Verification":
         for p in pending:
             with st.expander(f"Customer: {p[1]} (ID: {p[0]}) - Phone: {p[2]}"):
                 col1, col2 = st.columns(2)
-                if col1.button(f"Approve KYC #{p[0]}", key=f"app_{p[0]}"):
+                if col1.button(f"✅ Approve KYC #{p[0]}", key=f"app_{p[0]}", use_container_width=True):
                     run_query("UPDATE customers SET kyc_status='APPROVED' WHERE id=?", (p[0],), fetch=False)
                     st.success(f"KYC Approved for ID {p[0]}")
                     st.rerun()
-                if col2.button(f"Reject KYC #{p[0]}", key=f"rej_{p[0]}"):
+                if col2.button(f"❌ Reject KYC #{p[0]}", key=f"rej_{p[0]}", use_container_width=True):
                     run_query("UPDATE customers SET kyc_status='REJECTED' WHERE id=?", (p[0],), fetch=False)
                     st.error(f"KYC Rejected for ID {p[0]}")
                     st.rerun()
@@ -882,7 +1156,7 @@ elif menu == "SB Accounts":
                 chosen_asset_code = "AST-101"
                 mode = "CASH"
             
-            if st.button("Create SB Account"):
+            if st.button("Create SB Account", use_container_width=True):
                 acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
                 run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
                           (acc_no, cust_id, init_bal, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
@@ -944,7 +1218,7 @@ elif menu == "SB Accounts":
                 
             narration = st.text_input("Narration / Remarks", value="Counter transaction")
             
-            if st.button("Execute Transaction"):
+            if st.button("Execute Transaction", use_container_width=True):
                 current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acc_choice,))[0][0]
                 
                 if tx_type == "DEPOSIT":
@@ -1022,13 +1296,10 @@ elif menu == "SB Accounts":
         if accounts:
             df_sb = pd.DataFrame(accounts, columns=["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created"])
             st.dataframe(df_sb, use_container_width=True)
-            st.download_button("Download SB Accounts PDF", create_pdf_report("Savings Bank Accounts Report", df_sb), "sb_accounts.pdf", "application/pdf")
+            st.download_button("📥 Download SB Accounts PDF", create_pdf_report("Savings Bank Accounts Report", df_sb), "sb_accounts.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("No active SB accounts found.")
 
-# --- FIXED DEPOSITS ---
-# --- FIXED DEPOSITS ---
-# --- FIXED DEPOSITS ---
 # --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
     st.title("📈 Fixed Deposits Management")
@@ -1065,7 +1336,7 @@ elif menu == "Fixed Deposits (FD)":
             maturity_amount = principal + (principal * interest_rate * (tenure / 12) / 100)
             st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
             
-            if st.button("Open FD Account"):
+            if st.button("Open FD Account", use_container_width=True):
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
                 if principal > available_balance:
                     st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{principal:,.2f}")
@@ -1506,7 +1777,8 @@ elif menu == "Fixed Deposits (FD)":
                 data=fd_pdf_data,
                 file_name=f"FD_Certificate_FD-{fd_id:05d}.pdf",
                 mime="application/pdf",
-                key=f"download_fd_pdf_{fd_id}"
+                key=f"download_fd_pdf_{fd_id}",
+                use_container_width=True
             )
         else:
             st.info("No Fixed Deposits available to print.")
@@ -1529,7 +1801,7 @@ elif menu == "Fixed Deposits (FD)":
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
             st.info(f"Total Maturity Amount (Principal + Interest): ₹{maturity_amount:,.2f}")
             
-            if st.button("Close FD", type="primary"):
+            if st.button("Close FD", type="primary", use_container_width=True):
                 run_query("""
                     UPDATE fixed_deposits 
                     SET status = 'CLOSED', closed_date = ?
@@ -1546,7 +1818,6 @@ elif menu == "Fixed Deposits (FD)":
                 st.rerun()
         else:
             st.info("No active FDs available to close.")
-
 
 # --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":
@@ -1587,7 +1858,7 @@ elif menu == "Recurring Deposits (RD)":
             
             st.info(f"**Estimated Maturity:** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
             
-            if st.button("Open RD Account"):
+            if st.button("Open RD Account", use_container_width=True):
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
                 if monthly_amt > available_balance:
                     st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{monthly_amt:,.2f}")
@@ -1657,7 +1928,7 @@ elif menu == "Recurring Deposits (RD)":
                 chosen_asset_code = "AST-101"
                 payment_mode_pay = "Cash"
             
-            if st.button("Confirm & Pay Installment"):
+            if st.button("Confirm & Pay Installment", use_container_width=True):
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
                 if monthly_amt > available_balance:
                     st.error(f"❌ Insufficient balance in {payment_mode_pay}! Available: ₹{available_balance:,.2f}, Required: ₹{monthly_amt:,.2f}")
@@ -2079,7 +2350,8 @@ elif menu == "Recurring Deposits (RD)":
                 data=rd_pdf_data,
                 file_name=f"RD_Certificate_RD-{rd_id:05d}.pdf",
                 mime="application/pdf",
-                key=f"download_rd_pdf_{rd_id}"
+                key=f"download_rd_pdf_{rd_id}",
+                use_container_width=True
             )
         else:
             st.info("No Recurring Deposits available to print.")
@@ -2113,7 +2385,7 @@ elif menu == "Recurring Deposits (RD)":
             interest_earned = maturity_amount_to_pay - total_paid
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
             
-            if st.button("Close RD", type="primary"):
+            if st.button("Close RD", type="primary", use_container_width=True):
                 run_query("""
                     UPDATE recurring_deposits 
                     SET status = 'CLOSED', closed_date = ?
@@ -2147,7 +2419,7 @@ elif menu == "Chart of Accounts":
             st.divider()
             st.subheader("🗑️ Delete Account Head")
             del_code = st.selectbox("Select Account Code to Delete", df_coa["Account Code"].tolist())
-            if st.button("Delete Account Head", type="primary"):
+            if st.button("Delete Account Head", type="primary", use_container_width=True):
                 try:
                     run_query("DELETE FROM chart_of_accounts WHERE account_code = ?", (del_code,), fetch=False)
                     st.success(f"Successfully deleted account code: {del_code}")
@@ -2168,7 +2440,7 @@ elif menu == "Chart of Accounts":
                 input_name = st.text_input("Account Name (e.g., Special Service Income)")
                 input_category = st.text_input("Category (e.g., Operating Expenses, Current Assets)")
             
-            submitted = st.form_submit_button("Save / Update Account Head")
+            submitted = st.form_submit_button("Save / Update Account Head", use_container_width=True)
             if submitted:
                 if not input_code or not input_name or not input_category:
                     st.warning("Please fill out all fields.")
@@ -2204,7 +2476,7 @@ elif menu == "Cash Book":
             account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
             narration = st.text_area("Narration", height=68)
             
-            if st.form_submit_button("Record Cash Entry"):
+            if st.form_submit_button("Record Cash Entry", use_container_width=True):
                 if amount > 0 and particulars and account_head:
                     account_code = coa_dict[account_head]
                     
@@ -2258,7 +2530,7 @@ elif menu == "Cash Book":
             st.dataframe(df_cash, use_container_width=True)
             
             del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
-            if st.button("Delete Cash Entry"):
+            if st.button("Delete Cash Entry", use_container_width=True):
                 run_query("DELETE FROM cash_book WHERE id=?", (del_id,), fetch=False)
                 st.warning(f"Cash Entry ID {del_id} deleted successfully.")
                 st.rerun()
@@ -2280,7 +2552,7 @@ elif menu == "Cash Book":
                 new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
                 new_narration = st.text_area("Narration", value=row[4] if row[4] else "")
                 
-                if st.form_submit_button("Update Cash Entry"):
+                if st.form_submit_button("Update Cash Entry", use_container_width=True):
                     d_amt = new_amt if "DEBIT" in new_type else 0.0
                     c_amt = new_amt if "CREDIT" in new_type else 0.0
                     run_query("""
@@ -2298,7 +2570,7 @@ elif menu == "Cash Book":
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
             st.dataframe(df_print, use_container_width=True)
-            st.download_button("Download Cash Book PDF", create_pdf_report("Cash Book Report", df_print), "cash_book.pdf", "application/pdf")
+            st.download_button("📥 Download Cash Book PDF", create_pdf_report("Cash Book Report", df_print), "cash_book.pdf", "application/pdf", use_container_width=True)
 
     with tab5:
         st.subheader("🖨️ Cash Book Voucher (CB) Drill-Down Print")
@@ -2336,7 +2608,8 @@ elif menu == "Cash Book":
                         data=pdf_data,
                         file_name=f"Cash_Voucher_{v_num}.pdf",
                         mime="application/pdf",
-                        key=f"download_cb_{v_num}"
+                        key=f"download_cb_{v_num}",
+                        use_container_width=True
                     )
         else:
             st.info("No Cash Book vouchers available.")
@@ -2369,7 +2642,7 @@ elif menu == "Bank Book":
             account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
             narration = st.text_area("Narration", height=68)
             
-            if st.form_submit_button("Record Bank Entry"):
+            if st.form_submit_button("Record Bank Entry", use_container_width=True):
                 if amount > 0 and particulars and account_head:
                     account_code = coa_dict[account_head]
                     
@@ -2414,7 +2687,7 @@ elif menu == "Bank Book":
             st.dataframe(df_bank, use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
-            if st.button("Delete Bank Entry"):
+            if st.button("Delete Bank Entry", use_container_width=True):
                 run_query("DELETE FROM bank_book WHERE id=?", (del_id,), fetch=False)
                 st.warning(f"Bank Entry ID {del_id} deleted successfully.")
                 st.rerun()
@@ -2436,7 +2709,7 @@ elif menu == "Bank Book":
                 new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
                 new_narration = st.text_area("Narration", value=row[5] if row[5] else "")
                 
-                if st.form_submit_button("Update Bank Entry"):
+                if st.form_submit_button("Update Bank Entry", use_container_width=True):
                     d_amt = new_amt if "DEBIT" in new_type else 0.0
                     c_amt = new_amt if "CREDIT" in new_type else 0.0
                     run_query("""
@@ -2454,7 +2727,7 @@ elif menu == "Bank Book":
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(df_print, use_container_width=True)
-            st.download_button("Download Bank Book PDF", create_pdf_report("Bank Book Report", df_print), "bank_book.pdf", "application/pdf")
+            st.download_button("📥 Download Bank Book PDF", create_pdf_report("Bank Book Report", df_print), "bank_book.pdf", "application/pdf", use_container_width=True)
 
     with tab5:
         st.subheader("🖨️ Bank Book Voucher (BB) Drill-Down Print")
@@ -2493,7 +2766,8 @@ elif menu == "Bank Book":
                         data=pdf_data,
                         file_name=f"Bank_Voucher_{v_num}.pdf",
                         mime="application/pdf",
-                        key=f"download_bb_{v_num}"
+                        key=f"download_bb_{v_num}",
+                        use_container_width=True
                     )
         else:
             st.info("No Bank Book vouchers available.")
@@ -2562,7 +2836,7 @@ elif menu == "Journal Vouchers":
             else:
                 cr2 = st.number_input("Credit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
             
-            submitted = st.form_submit_button("Post Journal Voucher")
+            submitted = st.form_submit_button("Post Journal Voucher", use_container_width=True)
             if submitted:
                 if dr1 == cr2 and dr1 > 0:
                     conn = get_connection()
@@ -2628,7 +2902,8 @@ elif menu == "Journal Vouchers":
                         data=pdf_data,
                         file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
                         mime="application/pdf",
-                        key=f"download_jv_{jv_id}"
+                        key=f"download_jv_{jv_id}",
+                        use_container_width=True
                     )
         else:
             st.info("No Journal Vouchers available.")
@@ -2664,7 +2939,7 @@ elif menu == "Admin Record Editor":
             
             if action == "Delete Record":
                 record_id_to_del = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to delete")
-                if st.button("Delete Record", type="primary"):
+                if st.button("Delete Record", type="primary", use_container_width=True):
                     if record_id_to_del:
                         try:
                             val = int(record_id_to_del)
@@ -2700,7 +2975,7 @@ elif menu == "Admin Record Editor":
                                     new_input = st.text_input(f"Field: {col_name}", value="" if current_val is None else str(current_val))
                                     updated_values.append(new_input)
                             
-                            if st.form_submit_button("Save Changes"):
+                            if st.form_submit_button("Save Changes", use_container_width=True):
                                 set_clauses = [f"{col_names[i]} = ?" for i in range(len(col_names)) if col_names[i] != pk_col]
                                 update_vals = [updated_values[i] for i in range(len(col_names)) if col_names[i] != pk_col] + [edit_val]
                                 update_sql = f"UPDATE {selected_table} SET {', '.join(set_clauses)} WHERE {pk_col} = ?"
@@ -2744,7 +3019,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             col1.metric("Total Debits", f"₹{total_debits:,.2f}")
             col2.metric("Total Credits", f"₹{total_credits:,.2f}")
             
-            st.download_button("Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf")
+            st.download_button("📥 Download Trial Balance PDF", create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("No entries recorded yet.")
             
@@ -2990,13 +3265,13 @@ elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
     report_type = st.selectbox("Select Report to Generate", ["Customer List Report", "Daily Transactions Report"])
     
-    if st.button("Generate Report"):
+    if st.button("Generate Report", use_container_width=True):
         if report_type == "Customer List Report":
             data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
             if data:
                 df_rep = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status", "Registered Date"])
                 st.dataframe(df_rep, use_container_width=True)
-                st.download_button("Download Customer List PDF", create_pdf_report("Customer List Report", df_rep), "customer_list.pdf", "application/pdf")
+                st.download_button("📥 Download Customer List PDF", create_pdf_report("Customer List Report", df_rep), "customer_list.pdf", "application/pdf", use_container_width=True)
             else:
                 st.info("No customer records found.")
         elif report_type == "Daily Transactions Report":
@@ -3004,7 +3279,7 @@ elif menu == "Reports":
             if data:
                 df_rep = pd.DataFrame(data, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
                 st.dataframe(df_rep, use_container_width=True)
-                st.download_button("Download Transactions PDF", create_pdf_report("Daily Transactions Report", df_rep), "transactions_report.pdf", "application/pdf")
+                st.download_button("📥 Download Transactions PDF", create_pdf_report("Daily Transactions Report", df_rep), "transactions_report.pdf", "application/pdf", use_container_width=True)
             else:
                 st.info("No transaction records found.")
 
@@ -3024,7 +3299,7 @@ elif menu == "SB Interest Calculation":
         with col_c2:
             interest_multiplier = {"Monthly": 1/12, "Quarterly": 3/12, "Half-Yearly": 6/12, "Annually": 1}[calc_period]
         
-        if st.button("Calculate Interest Preview", type="primary"):
+        if st.button("Calculate Interest Preview", type="primary", use_container_width=True):
             calculated_rows = []
             for idx, row in df_sb.iterrows():
                 acct = row["Account No"]
@@ -3053,9 +3328,9 @@ elif menu == "SB Interest Calculation":
             st.metric("Total Interest Payout Amount", f"₹ {total_interest_payout:,.2f}")
 
             csv_data = preview_df.to_csv(index=False).encode('utf-8')
-            st.download_button("Download CSV Interest Report", csv_data, "interest_report.csv", "text/csv")
+            st.download_button("📥 Download CSV Interest Report", csv_data, "interest_report.csv", "text/csv", use_container_width=True)
             
-            if st.button("✅ Credit Interest to All SB Accounts", type="primary"):
+            if st.button("✅ Credit Interest to All SB Accounts", type="primary", use_container_width=True):
                 for idx, row in preview_df.iterrows():
                     acct = row["Account No"]
                     interest_amt = row["Calculated Interest"]
@@ -3077,5 +3352,4 @@ elif menu == "SB Interest Calculation":
                 st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
-
 

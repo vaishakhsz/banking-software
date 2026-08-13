@@ -1055,18 +1055,19 @@ elif menu == "SB Accounts":
 
 # --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
-    st.title("📈 Fixed Deposits Management")
-    tab1, tab2, tab3 = st.tabs(["Open FD", "Active FDs", "Close FD"])
+    st.title("💰 Fixed Deposits Management")
+    tab1, tab2, tab3, tab4 = st.tabs(["Open FD", "Active FDs", "Close FD", "Deposit History & Reports"])
     
     with tab1:
+        st.subheader("Open New Fixed Deposit")
         customers = run_query("SELECT id, name FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
             selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
-            principal = st.number_input("Principal Amount (₹)", min_value=1000.0, value=10000.0, step=500.0)
-            tenure = st.slider("Tenure (Months)", 1, 60, 12)
-            interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5)
-            nominee = st.text_input("Nominee Name")
+            principal_amt = st.number_input("Principal Amount (₹)", min_value=1000.0, value=10000.0, step=1000.0)
+            tenure_months = st.slider("Tenure (Months)", 1, 120, 12, key="fd_tenure")
+            interest_rate = st.number_input("Interest Rate (% p.a.)", value=7.0, key="fd_rate")
+            nominee = st.text_input("Nominee Name", key="fd_nom")
             
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
@@ -1078,7 +1079,7 @@ elif menu == "Fixed Deposits (FD)":
                 selected_asset_code = st.selectbox(
                     "Mode of Transfer (Drill-down: Chart of Accounts)", 
                     list(asset_dict.keys()), 
-                    key="fd_asset_account"
+                    key="fd_open_asset_account"
                 )
                 chosen_asset_code = asset_dict[selected_asset_code]
                 payment_mode = selected_asset_code.split(" - ")[1]
@@ -1086,26 +1087,30 @@ elif menu == "Fixed Deposits (FD)":
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
-            maturity_amount = principal + (principal * interest_rate * (tenure / 12) / 100)
-            st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
+            # Simple Interest or Maturity calculation
+            interest_earned = principal_amt * (interest_rate / 100) * (tenure_months / 12)
+            maturity_amount = principal_amt + interest_earned
+            
+            st.info(f"**Estimated Maturity:** Principal ₹{principal_amt:,.2f} + Interest ₹{interest_earned:,.2f} = ₹{maturity_amount:,.2f}")
             
             if st.button("Open FD Account"):
-                # Validate available balance
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
-                if principal > available_balance:
-                    st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{principal:,.2f}")
+                if principal_amt > available_balance:
+                    st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{principal_amt:,.2f}")
                     st.stop()
                 
                 run_query("""
-                    INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
+                    INSERT INTO fixed_deposits (customer_id, principal_amount, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
-                """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now(IST).strftime("%Y-%m-%d"), payment_mode), fetch=False)
+                """, (cust_dict[selected_cust], principal_amt, tenure_months, interest_rate, maturity_amount, nominee, 
+                    datetime.now(IST).strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
-                # FD goes to FD Deposits Control (LIA-102)
-                jv_result = post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
+                # Post JV entry for FD Principal Deposit
+                jv_result = post_automated_jv(f"FD Opening - Principal Deposit via {payment_mode}", chosen_asset_code, "LIA-102", principal_amt)
                 
-                # Update cash/bank book
-                if jv_result:
+                fd_id_result = run_query("SELECT last_insert_rowid()")
+                if fd_id_result and jv_result:
+                    fd_id = fd_id_result[0][0]
                     today = datetime.now(IST).strftime("%Y-%m-%d")
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
                     
@@ -1114,101 +1119,115 @@ elif menu == "Fixed Deposits (FD)":
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, f"FD Opening - #{fd_id} - Customer {cust_dict[selected_cust]}", 0, principal_amt, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     elif chosen_asset_code in ['AST-102', 'AST-103']:
                         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                         voucher_no = generate_bank_voucher_no()
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, f"FD Opening - #{fd_id} - Customer {cust_dict[selected_cust]}", 0, principal_amt, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                 
-                st.success(f"Fixed Deposit opened & recorded successfully via {payment_mode}!")
+                st.success(f"Fixed Deposit opened successfully via {payment_mode}!")
         else:
-            st.warning("Register a customer first.")
+            st.warning("Register customers first.")
 
     with tab2:
-        st.subheader("Active Fixed Deposits & Reports")
+        st.subheader("Active Fixed Deposits (Vertical View)")
         fds = run_query("""
-            SELECT 
-                f.fd_id, 
-                c.name, 
-                c.phone, 
-                c.email, 
-                COALESCE(c.street || ', ' || c.city || ', ' || c.state || ' - ' || c.pincode, c.city, 'N/A') as address,
-                f.principal, 
-                f.tenure_months, 
-                f.interest_rate, 
-                f.maturity_amount, 
-                f.nominee,
-                f.status, 
-                f.payment_mode,
-                f.created_at
-            FROM fixed_deposits f 
-            JOIN customers c ON f.customer_id = c.id
+            SELECT f.fd_id, c.name, f.principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode, f.created_at
+            FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
         """)
         if fds:
-            df_fds = pd.DataFrame(fds, columns=[
-                "FD ID", "Customer Name", "Phone", "Email", "Address", 
-                "Principal (₹)", "Tenure (Months)", "Rate (%)", "Maturity (₹)", 
-                "Nominee", "Status", "Payment Mode", "Created Date"
-            ])
-            st.dataframe(df_fds, use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader("📥 Download FD Reports")
-            col_csv, col_pdf = st.columns(2)
-            col_csv.download_button("Download CSV Report", df_fds.to_csv(index=False).encode('utf-8'), "active_fds_report.csv", "text/csv")
-            col_pdf.download_button("Download PDF Report", create_pdf_report("Active Fixed Deposits Detailed Report", df_fds), "active_fds_report.pdf", "application/pdf")
+            for f in fds:
+                with st.container():
+                    st.markdown(f"### FD ID: #{f[0]} | {f[1]}")
+                    st.markdown(f"**Principal Amount:** ₹{f[2]:,.2f}")
+                    st.markdown(f"**Tenure:** {f[3]} Months | **Interest Rate:** {f[4]}% p.a.")
+                    st.markdown(f"**Est. Maturity Amount:** ₹{f[5]:,.2f}")
+                    st.markdown(f"**Payment Mode:** {f[7]} | **Created Date:** {f[8]}")
+                    st.markdown("---")
         else:
             st.info("No active fixed deposits found.")
 
     with tab3:
         st.subheader("Close Fixed Deposit")
-        active_fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months
+        active_fds_close = run_query("""
+            SELECT f.fd_id, c.name, f.principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.created_at
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
         """)
         
-        if active_fds:
-            fd_dict = {f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[2]:,.2f}, Maturity: ₹{r[3]:,.2f})": r for r in active_fds}
-            selected_fd_str = st.selectbox("Select FD to Close", list(fd_dict.keys()))
-            selected_fd = fd_dict[selected_fd_str]
-            fd_id, cust_name, principal, maturity_amount, interest_rate, tenure = selected_fd
+        if active_fds_close:
+            fd_close_dict = {f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[2]:,.2f})": r for r in active_fds_close}
+            selected_fd_str = st.selectbox("Select FD to Close", list(fd_close_dict.keys()))
+            selected_fd = fd_close_dict[selected_fd_str]
+            fd_id, cust_name, principal_amt, tenure_m, interest_rate, maturity_amt, created_at = selected_fd
             
-            interest_earned = maturity_amount - principal
-            st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
-            st.info(f"Total Maturity Amount (Principal + Interest): ₹{maturity_amount:,.2f}")
+            st.markdown("### Closure Summary")
+            st.markdown(f"**Customer:** {cust_name}")
+            st.markdown(f"**FD ID:** #{fd_id}")
+            st.markdown(f"**Principal:** ₹{principal_amt:,.2f}")
+            st.markdown(f"**Full Maturity Payout:** ₹{maturity_amt:,.2f}")
             
-            if st.button("Close FD", type="primary"):
-                # Update FD status
+            interest_payable = maturity_amt - principal_amt
+            st.markdown(f"**Total Interest Payable:** ₹{interest_payable:,.2f}")
+            st.markdown("---")
+            
+            if st.button("Close FD & Payout", type="primary"):
                 run_query("""
                     UPDATE fixed_deposits 
                     SET status = 'CLOSED', closed_date = ?
                     WHERE fd_id = ?
                 """, (datetime.now(IST).strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                # Step 1: Record Interest Expense -> This accumulates in FD Deposits Control (LIA-102)
-                if interest_earned > 0:
-                    post_automated_jv(f"FD #{fd_id} Interest Accrued", "EXP-102", "LIA-102", interest_earned)
+                # Reverse principal liability & record interest expense
+                post_automated_jv(f"FD #{fd_id} Maturity Payout - Principal", "LIA-102", "LIA-101", principal_amt)
+                if interest_payable > 0:
+                    post_automated_jv(f"FD #{fd_id} Maturity Payout - Interest Expense", "EXP-103", "LIA-101", interest_payable)
                 
-                # Step 2: Transfer full maturity from FD Deposits Control to SB Deposits Control
-                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB", "LIA-102", "LIA-101", maturity_amount)
-                
-                st.success(f"FD #{fd_id} closed successfully!")
-                st.info(f"₹{maturity_amount:,.2f} transferred from FD Deposits Control to SB Deposits Control")
+                st.success(f"FD #{fd_id} closed successfully! Full payout transferred.")
                 st.rerun()
         else:
             st.info("No active FDs available to close.")
 
+    with tab4:
+        st.subheader("📥 Deposit History, Closed Accounts & Reports")
+        all_fds = run_query("""
+            SELECT f.fd_id, c.name, f.principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode, f.created_at, f.closed_date
+            FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
+        """)
+        if all_fds:
+            df_all_fds = pd.DataFrame(all_fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity", "Status", "Payment Mode", "Created Date", "Closed Date"])
+            st.dataframe(df_all_fds, use_container_width=True)
+            
+            st.markdown("---")
+            st.markdown("### Download Reports (Includes Active & Closed)")
+            col_csv, col_pdf = st.columns(2)
+            
+            col_csv.download_button(
+                "Download Complete CSV Report", 
+                df_all_fds.to_csv(index=False).encode('utf-8'), 
+                "all_fixed_deposits_report.csv", 
+                "text/csv"
+            )
+            col_pdf.download_button(
+                "Download Complete PDF Report", 
+                create_pdf_report("Complete Fixed Deposits History Report", df_all_fds), 
+                "all_fixed_deposits_report.pdf", 
+                "application/pdf"
+            )
+        else:
+            st.info("No fixed deposit history found.")
+
 # --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":
     st.title("🔄 Recurring Deposits Management")
-    tab1, tab2, tab3, tab4 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Close RD"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Close RD", "Deposit History & Reports"])
     
     with tab1:
+        st.subheader("Open New Recurring Deposit")
         customers = run_query("SELECT id, name FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
@@ -1244,7 +1263,6 @@ elif menu == "Recurring Deposits (RD)":
             st.info(f"**Estimated Maturity:** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
             
             if st.button("Open RD Account"):
-                # Validate balance for first installment
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
                 if monthly_amt > available_balance:
                     st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{monthly_amt:,.2f}")
@@ -1256,10 +1274,8 @@ elif menu == "Recurring Deposits (RD)":
                 """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
                     datetime.now(IST).strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
                 
-                # Post first installment
                 jv_result = post_automated_jv(f"RD Opening - First Installment via {payment_mode}", chosen_asset_code, "LIA-103", monthly_amt)
                 
-                # Update installment count and books
                 rd_id_result = run_query("SELECT last_insert_rowid()")
                 if rd_id_result and jv_result:
                     rd_id = rd_id_result[0][0]
@@ -1287,6 +1303,7 @@ elif menu == "Recurring Deposits (RD)":
             st.warning("Register customers first.")
 
     with tab2:
+        st.subheader("Pay Installment (Vertical View)")
         active_rds = run_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.installments_paid, r.maturity_amount
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id 
@@ -1297,6 +1314,16 @@ elif menu == "Recurring Deposits (RD)":
             chosen_rd_str = st.selectbox("Select Active RD Account", list(rd_dict.keys()))
             selected_rd = rd_dict[chosen_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt = selected_rd
+            
+            # Vertical Down-by-Down Display Card
+            st.markdown("### Account Summary")
+            st.markdown(f"**Customer Name:** {cust_name}")
+            st.markdown(f"**RD ID:** #{rd_id}")
+            st.markdown(f"**Monthly Installment:** ₹{monthly_amt:,.2f}")
+            st.markdown(f"**Tenure:** {tenure_m} Months")
+            st.markdown(f"**Installments Paid:** {paid_inst} / {tenure_m}")
+            st.markdown(f"**Est. Maturity Amount:** ₹{maturity_amt:,.2f}")
+            st.markdown("---")
             
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
@@ -1317,7 +1344,6 @@ elif menu == "Recurring Deposits (RD)":
                 payment_mode_pay = "Cash"
             
             if st.button("Confirm & Pay Installment"):
-                # Validate balance
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
                 if monthly_amt > available_balance:
                     st.error(f"❌ Insufficient balance in {payment_mode_pay}! Available: ₹{available_balance:,.2f}, Required: ₹{monthly_amt:,.2f}")
@@ -1344,7 +1370,7 @@ elif menu == "Recurring Deposits (RD)":
                             voucher_no = generate_bank_voucher_no()
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (today, voucher_no, f"RD #{rd_id} - Inst #{new_paid}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Installment #{new_paid}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
@@ -1353,32 +1379,21 @@ elif menu == "Recurring Deposits (RD)":
             st.info("No active recurring deposits found.")
 
     with tab3:
-        st.subheader("Active Recurring Deposits & Reports")
+        st.subheader("Active Recurring Deposits (Vertical View)")
         rds = run_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.payment_mode, r.maturity_amount
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             WHERE r.status = 'ACTIVE'
         """)
         if rds:
-            df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status", "Payment Mode", "Est. Maturity"])
-            st.dataframe(df_rds, use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader("📥 Download RD Reports")
-            col_csv, col_pdf = st.columns(2)
-            
-            col_csv.download_button(
-                "Download CSV Report", 
-                df_rds.to_csv(index=False).encode('utf-8'), 
-                "active_rds_report.csv", 
-                "text/csv"
-            )
-            col_pdf.download_button(
-                "Download PDF Report", 
-                create_pdf_report("Active Recurring Deposits Detailed Report", df_rds), 
-                "active_rds_report.pdf", 
-                "application/pdf"
-            )
+            for r in rds:
+                with st.container():
+                    st.markdown(f"### RD ID: #{r[0]} | {r[1]}")
+                    st.markdown(f"**Monthly Amount:** ₹{r[2]:,.2f}")
+                    st.markdown(f"**Tenure:** {r[3]} Months | **Interest Rate:** {r[4]}% p.a.")
+                    st.markdown(f"**Installments Paid:** {r[5]} / {r[3]}")
+                    st.markdown(f"**Payment Mode:** {r[7]} | **Est. Maturity:** ₹{r[8]:,.2f}")
+                    st.markdown("---")
         else:
             st.info("No active recurring deposits found.")
 
@@ -1396,12 +1411,18 @@ elif menu == "Recurring Deposits (RD)":
             selected_rd = rd_close_dict[selected_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt, interest_rate = selected_rd
             
+            # Vertical card summary
+            st.markdown("### Closure Summary")
+            st.markdown(f"**Customer:** {cust_name}")
+            st.markdown(f"**RD ID:** #{rd_id}")
+            st.markdown(f"**Installments Paid:** {paid_inst} / {tenure_m}")
+            
             if paid_inst < tenure_m:
-                st.warning(f"⚠️ Only {paid_inst} out of {tenure_m} installments paid. Early closure will reduce maturity amount.")
+                st.warning(f"⚠️ Early closure warning: Only {paid_inst} out of {tenure_m} installments paid.")
                 total_paid = monthly_amt * paid_inst
                 prorated_interest = total_paid * (interest_rate / 100) * (paid_inst / 24)
                 prorated_maturity = total_paid + prorated_interest
-                st.info(f"**Prorated Maturity Amount:** ₹{prorated_maturity:,.2f}")
+                st.markdown(f"**Prorated Maturity Amount:** ₹{prorated_maturity:,.2f}")
                 maturity_amount_to_pay = prorated_maturity
             else:
                 maturity_amount_to_pay = maturity_amt
@@ -1409,7 +1430,8 @@ elif menu == "Recurring Deposits (RD)":
             
             total_paid = monthly_amt * paid_inst
             interest_earned = maturity_amount_to_pay - total_paid
-            st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
+            st.markdown(f"**Interest Earned:** ₹{interest_earned:,.2f}")
+            st.markdown("---")
             
             if st.button("Close RD", type="primary"):
                 run_query("""
@@ -1427,6 +1449,35 @@ elif menu == "Recurring Deposits (RD)":
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
+
+    with tab5:
+        st.subheader("📥 Deposit History, Closed Accounts & Reports")
+        all_rds = run_query("""
+            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.payment_mode, r.maturity_amount, r.created_at, r.closed_date
+            FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
+        """)
+        if all_rds:
+            df_all_rds = pd.DataFrame(all_rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Inst", "Status", "Payment Mode", "Maturity", "Created Date", "Closed Date"])
+            st.dataframe(df_all_rds, use_container_width=True)
+            
+            st.markdown("---")
+            st.markdown("### Download Reports (Includes Active & Closed)")
+            col_csv, col_pdf = st.columns(2)
+            
+            col_csv.download_button(
+                "Download Complete CSV Report", 
+                df_all_rds.to_csv(index=False).encode('utf-8'), 
+                "all_recurring_deposits_report.csv", 
+                "text/csv"
+            )
+            col_pdf.download_button(
+                "Download Complete PDF Report", 
+                create_pdf_report("Complete Recurring Deposits History Report", df_all_rds), 
+                "all_recurring_deposits_report.pdf", 
+                "application/pdf"
+            )
+        else:
+            st.info("No recurring deposit history found.")
 
 # --- CHART OF ACCOUNTS ---
 elif menu == "Chart of Accounts":

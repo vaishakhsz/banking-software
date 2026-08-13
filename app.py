@@ -794,120 +794,85 @@ def display_ist_timer():
     </div>
     """, unsafe_allow_html=True)
 
-# ==================== MAIN APP ====================
+
+
+# --- LOGIN PAGE ---
+# --- LOGIN SYSTEM ---
+def check_login():
+    """Simple login check"""
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if 'username' not in st.session_state:
+        st.session_state.username = ""
+    return st.session_state.logged_in
+
+
 
 # --- LOGIN PAGE ---
 if not check_login():
     # Hide sidebar on login page
     st.sidebar.empty()
     
-    # Center login form
-    col1, col2, col3 = st.columns([1, 1.5, 1])
+    # Center login form with improved centering
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        # Company Logo/Header
+        # Company Logo/Header - Centered
         st.markdown("""
-        <div style="text-align: center; padding: 20px 0 10px 0;">
-            <h1 style="color: #1f4e78; font-size: 28px; margin-bottom: 4px;">🏦 AARSHA NIDHI LIMITED</h1>
-            <p style="color: #444; font-size: 13px; margin: 2px 0;">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O</p>
-            <p style="color: #444; font-size: 13px; margin: 2px 0;">Thiruvananthapuram - 695501</p>
-            <p style="color: #666; font-size: 11px; margin: 2px 0;">CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
-            <hr style="border: 1px solid #1f4e78; width: 60%; margin: 10px auto;">
-            <h2 style="color: #1f4e78; font-size: 20px; margin: 5px 0;">Banking Software Login</h2>
+        <div style="text-align: center; padding: 30px 0 15px 0;">
+            <h1 style="color: #1f4e78; font-size: 32px; margin-bottom: 6px; font-weight: 700;">🏦 AARSHA NIDHI LIMITED</h1>
+            <p style="color: #444; font-size: 14px; margin: 3px 0;">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O</p>
+            <p style="color: #444; font-size: 14px; margin: 3px 0;">Thiruvananthapuram - 695501</p>
+            <p style="color: #666; font-size: 12px; margin: 3px 0;">CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
+            <hr style="border: 2px solid #1f4e78; width: 50%; margin: 12px auto;">
+            <h2 style="color: #1f4e78; font-size: 22px; margin: 8px 0; font-weight: 600;">🔐 Banking Software Login</h2>
         </div>
         """, unsafe_allow_html=True)
         
-        # Live IST Timer on login page
-        st.markdown("""
-        <div style="text-align: center; margin: 5px 0 15px 0;">
-            <span style="background: #f0f2f6; padding: 6px 20px; border-radius: 20px; font-size: 14px; color: #1f4e78;">
-                🇮🇳 IST: <span id="ist-time">Loading...</span>
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # JavaScript for live timer
-        st.markdown("""
-        <script>
-            function updateIST() {
-                const now = new Date();
-                // IST is UTC +5:30
-                const istOffset = 5.5 * 60 * 60 * 1000;
-                const utc = now.getTime();
-                const istTime = new Date(utc + istOffset);
-                const timeStr = istTime.toLocaleTimeString('en-IN', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: true
-                });
-                const dateStr = istTime.toLocaleDateString('en-IN', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric'
-                });
-                document.getElementById('ist-time').textContent = timeStr + ' | ' + dateStr;
-            }
-            updateIST();
-            setInterval(updateIST, 1000);
-        </script>
-        """, unsafe_allow_html=True)
-        
-        # Login Form
-        with st.form("login_form"):
-            username = st.text_input("Username", placeholder="Enter your username", key="login_user")
-            password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_pass")
-            login_btn = st.form_submit_button("🔐 Login", use_container_width=True)
+        # Login Form - Centered with better spacing
+        with st.container():
+            st.markdown("<div style='padding: 0 20px;'>", unsafe_allow_html=True)
             
-            if login_btn:
-                if username == "admin" and password == "admin123":
-                    st.session_state.logged_in = True
-                    st.session_state.username = username
-                    st.success("✅ Login successful!")
-                    st.rerun()
-                else:
-                    st.error("❌ Invalid username or password. Please try again.")
+            with st.form("login_form"):
+                username = st.text_input(
+                    "👤 Username", 
+                    placeholder="Enter your username", 
+                    key="login_user"
+                )
+                password = st.text_input(
+                    "🔑 Password", 
+                    type="password", 
+                    placeholder="Enter your password", 
+                    key="login_pass"
+                )
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                login_btn = st.form_submit_button(
+                    "🔐 Login", 
+                    use_container_width=True
+                )
+                
+                if login_btn:
+                    if username == "admin" and password == "admin123":
+                        st.session_state.logged_in = True
+                        st.session_state.username = username
+                        st.success("✅ Login successful! Redirecting...")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid username or password. Please try again.")
+            
+            st.markdown("</div>", unsafe_allow_html=True)
         
+        # Footer - Centered
         st.markdown("""
-        <div style="text-align: center; color: #888; font-size: 11px; margin-top: 15px;">
-            <p>Default credentials: admin / admin123</p>
-            <p>© 2024 AARSHA NIDHI LIMITED. All rights reserved.</p>
+        <div style="text-align: center; color: #888; font-size: 11px; margin-top: 20px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
+            <p style="margin: 3px 0;">Default credentials: <b>admin</b> / <b>admin123</b></p>
+            <p style="margin: 3px 0;">© 2024 AARSHA NIDHI LIMITED. All rights reserved.</p>
         </div>
         """, unsafe_allow_html=True)
     
     st.stop()
-
-# --- MAIN APPLICATION (After Login) ---
-
-# --- SIDEBAR NAVIGATION & BACKUP ---
-st.sidebar.title("🏦 Aasha Nidhi Bank")
-
-# Display IST Timer in sidebar
-display_ist_timer()
-
-# User info
-st.sidebar.markdown(f"""
-<div style="background: #e8f0fe; padding: 8px 12px; border-radius: 6px; margin: 5px 0 10px 0;">
-    <span style="font-size: 13px;">👤 Logged in as: <b>{st.session_state.username}</b></span>
-</div>
-""", unsafe_allow_html=True)
-
-role = st.sidebar.selectbox("User Role", ["Admin/Staff", "Customer Portal"])
-
-if role == "Admin/Staff":
-    menu = st.sidebar.selectbox("Navigation", [
-        "Dashboard", "Customer Management", "KYC Verification", "SB Accounts",
-        "Fixed Deposits (FD)", "Recurring Deposits (RD)", 
-        "Chart of Accounts", "Cash Book", "Bank Book", "Journal Vouchers",
-        "Admin Record Editor", "Financial Statements (Trial/BS/PL)", "Reports", "SB Interest Calculation"
-    ])
-else:
-    menu = "Customer Portal"
-
-# Logout button
-if st.sidebar.button("🚪 Logout", use_container_width=True):
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-    st.rerun()
 
 # --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("---")

@@ -796,20 +796,11 @@ def display_ist_timer():
 
 
 
-# --- LOGIN PAGE ---
-# --- LOGIN SYSTEM ---
-# --- LOGIN SYSTEM ---
-def check_login():
-    """Simple login check"""
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-    if 'username' not in st.session_state:
-        st.session_state.username = ""
-    return st.session_state.logged_in
+
 
 # ==================== MAIN APP ====================
 
-# --- LOGIN PAGE ---
+
 # --- LOGIN SYSTEM ---
 def check_login():
     """Simple login check"""
@@ -938,7 +929,9 @@ st.sidebar.markdown("---")
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
 # --- DASHBOARD MODULE ---
+
 if menu == "Dashboard":
+    
     st.title("📊 Executive Dashboard & Active Deposits")
     
     total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0]

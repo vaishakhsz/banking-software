@@ -1029,6 +1029,7 @@ elif menu == "SB Accounts":
 # --- FIXED DEPOSITS ---
 # --- FIXED DEPOSITS ---
 # --- FIXED DEPOSITS ---
+# --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
     st.title("📈 Fixed Deposits Management")
     tab1, tab2, tab3, tab4 = st.tabs(["Open FD", "Active FDs", "Print Certificate / Ledger", "Close FD"])
@@ -1247,23 +1248,32 @@ elif menu == "Fixed Deposits (FD)":
                 
                 styles = getSampleStyleSheet()
                 
-                # Define all styles with proper alignment
+                # Define all styles matching the image format
                 title_style = ParagraphStyle(
                     'TitleStyle', 
                     parent=styles['Heading1'], 
                     fontSize=16, 
                     textColor=colors.HexColor('#b94a00'), 
                     alignment=1,  # Center
-                    spaceAfter=10,
+                    spaceAfter=6,
                     fontName='Helvetica-Bold'
+                )
+                
+                subtitle_style = ParagraphStyle(
+                    'SubtitleStyle', 
+                    parent=styles['Normal'], 
+                    fontSize=9, 
+                    alignment=1,  # Center
+                    spaceAfter=2,
+                    fontName='Helvetica'
                 )
                 
                 heading_style = ParagraphStyle(
                     'HeadingStyle', 
                     parent=styles['Heading2'], 
-                    fontSize=12, 
+                    fontSize=13, 
                     alignment=1,  # Center
-                    spaceAfter=8,
+                    spaceAfter=4,
                     fontName='Helvetica-Bold'
                 )
                 
@@ -1275,6 +1285,14 @@ elif menu == "Fixed Deposits (FD)":
                     alignment=0  # Left
                 )
                 
+                normal_center = ParagraphStyle(
+                    'NormalCenter', 
+                    parent=styles['Normal'], 
+                    fontSize=10, 
+                    leading=14,
+                    alignment=1  # Center
+                )
+                
                 bold_style = ParagraphStyle(
                     'BoldStyle', 
                     parent=styles['Normal'], 
@@ -1284,21 +1302,28 @@ elif menu == "Fixed Deposits (FD)":
                     alignment=0  # Left
                 )
                 
-                center_bold = ParagraphStyle(
-                    'CenterBold', 
+                status_style = ParagraphStyle(
+                    'StatusStyle', 
                     parent=styles['Normal'], 
-                    fontSize=10, 
-                    leading=14, 
+                    fontSize=12, 
                     fontName='Helvetica-Bold',
-                    alignment=1  # Center
+                    alignment=1,  # Center
+                    spaceAfter=6
                 )
                 
-                right_style = ParagraphStyle(
-                    'RightStyle', 
+                detail_label = ParagraphStyle(
+                    'DetailLabel', 
                     parent=styles['Normal'], 
                     fontSize=10, 
-                    leading=14,
-                    alignment=2  # Right
+                    fontName='Helvetica-Bold',
+                    alignment=0
+                )
+                
+                detail_value = ParagraphStyle(
+                    'DetailValue', 
+                    parent=styles['Normal'], 
+                    fontSize=10, 
+                    alignment=0
                 )
                 
                 table_header_style = ParagraphStyle(
@@ -1306,12 +1331,13 @@ elif menu == "Fixed Deposits (FD)":
                     parent=styles['Normal'], 
                     fontSize=9, 
                     fontName='Helvetica-Bold', 
-                    textColor=colors.white, 
-                    alignment=1  # Center
+                    textColor=colors.black, 
+                    alignment=1,  # Center
+                    backColor=colors.HexColor('#f2f2f2')
                 )
                 
-                table_cell_style = ParagraphStyle(
-                    'TableCell', 
+                table_cell_center = ParagraphStyle(
+                    'TableCellCenter', 
                     parent=styles['Normal'], 
                     fontSize=9, 
                     alignment=1  # Center
@@ -1331,59 +1357,76 @@ elif menu == "Fixed Deposits (FD)":
                     alignment=2  # Right
                 )
                 
+                signature_style = ParagraphStyle(
+                    'SignatureStyle', 
+                    parent=styles['Normal'], 
+                    fontSize=10, 
+                    fontName='Helvetica-Bold',
+                    alignment=1,  # Center
+                    spaceAfter=2
+                )
+                
                 fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date = fd_data
                 full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
-                
-                # Header - Center aligned
-                elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
-                elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", normal_style))
-                elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", normal_style))
-                elements.append(Spacer(1, 5))
-                elements.append(Paragraph("FIXED DEPOSIT RECEIPT / LEDGER", heading_style))
-                elements.append(Spacer(1, 5))
-                
-                # Status badge - Center
                 status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
-                status_color = colors.red if status == 'CLOSED' else colors.green
-                status_para = Paragraph(f"<font color='{status_color}'><b>Status: {status_text}</b></font>", center_bold)
-                elements.append(status_para)
-                elements.append(Spacer(1, 8))
                 
-                # Details table with proper alignment
+                # === HEADER SECTION ===
+                elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
+                elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))
+                elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", subtitle_style))
+                elements.append(Spacer(1, 4))
+                
+                # === HEADING ===
+                elements.append(Paragraph("FIXED DEPOSIT RECEIPT / LEDGER", heading_style))
+                
+                # === STATUS ===
+                status_color = colors.red if status == 'CLOSED' else colors.green
+                status_para = Paragraph(f"<font color='{status_color}'><b>{status_text}</b></font>", status_style)
+                elements.append(status_para)
+                
+                # === DETAILS SECTION (2 columns) ===
                 detail_data = [
-                    [Paragraph("<b>FDR No.</b>", bold_style), Paragraph(f"FD-{fd_id:05d}", normal_style), 
-                     Paragraph("<b>Opening Date</b>", bold_style), Paragraph(created_at, normal_style)],
-                    [Paragraph("<b>Name</b>", bold_style), Paragraph(c_name, normal_style), 
-                     Paragraph("<b>Interest Rate</b>", bold_style), Paragraph(f"{rate}% p.a.", normal_style)],
-                    [Paragraph("<b>Address</b>", bold_style), Paragraph(full_address, normal_style), 
-                     Paragraph("<b>Status</b>", bold_style), Paragraph(status_text, normal_style)],
-                    [Paragraph("<b>Mode of Op.</b>", bold_style), Paragraph("Single", normal_style), 
-                     Paragraph("<b>Nominee</b>", bold_style), Paragraph(nominee if nominee else 'N/A', normal_style)],
-                    [Paragraph("<b>Tenure</b>", bold_style), Paragraph(f"{tenure} MONTHS", normal_style), 
-                     Paragraph("<b>Maturity Amount</b>", bold_style), Paragraph(f"₹{maturity:,.2f}", normal_style)],
+                    [Paragraph("<b>FDR No. / A/c No:</b>", detail_label), Paragraph(f"FD-{fd_id:05d}", detail_value),
+                     Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(created_at, detail_value)],
+                    [Paragraph("<b>Name:</b>", detail_label), Paragraph(c_name, detail_value),
+                     Paragraph("<b>Interest Rate:</b>", detail_label), Paragraph(f"{rate}% p.a.", detail_value)],
+                    [Paragraph("<b>Address:</b>", detail_label), Paragraph(full_address, detail_value),
+                     Paragraph("<b>Status:</b>", detail_label), Paragraph(status_text, detail_value)],
+                    [Paragraph("<b>Mode of Op.:</b>", detail_label), Paragraph("Single", detail_value),
+                     Paragraph("<b>Nominee:</b>", detail_label), Paragraph(nominee if nominee else 'N/A', detail_value)],
+                    [Paragraph("<b>Period / Tenure:</b>", detail_label), Paragraph(f"{tenure} MONTHS", detail_value),
+                     Paragraph("<b>Maturity Amount:</b>", detail_label), Paragraph(f"₹{maturity:,.2f}", detail_value)],
                 ]
                 if status == 'CLOSED':
-                    detail_data.append([Paragraph("<b>Closed Date</b>", bold_style), Paragraph(closed_date, normal_style), "", ""])
+                    detail_data.append([Paragraph("<b>Closed Date:</b>", detail_label), Paragraph(closed_date, detail_value), "", ""])
                 
-                detail_table = Table(detail_data, colWidths=[60*mm, 70*mm, 60*mm, 70*mm])
+                detail_table = Table(detail_data, colWidths=[35*mm, 50*mm, 35*mm, 50*mm])
                 detail_table.setStyle(TableStyle([
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('PADDING', (0, 0), (-1, -1), 4),
+                    ('PADDING', (0, 0), (-1, -1), 3),
                     ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
                 ]))
                 elements.append(detail_table)
+                elements.append(Spacer(1, 6))
+                
+                # === DEPOSIT REPAYABLE BOX ===
+                box_style = ParagraphStyle(
+                    'BoxStyle',
+                    parent=styles['Normal'],
+                    fontSize=10,
+                    leading=14,
+                    alignment=0,
+                    borderPadding=6,
+                )
+                elements.append(Paragraph(f"<b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.", box_style))
                 elements.append(Spacer(1, 8))
                 
-                # Box
-                elements.append(Paragraph(f"<b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.", normal_style))
-                elements.append(Spacer(1, 10))
-                
-                # Ledger Table with proper alignment
+                # === LEDGER TABLE ===
                 ledger_data = [
                     [Paragraph("<b>Date</b>", table_header_style),
                      Paragraph("<b>Particulars</b>", table_header_style),
-                     Paragraph("<b>Payment/Debit</b>", table_header_style),
-                     Paragraph("<b>Receipt/Credit</b>", table_header_style),
+                     Paragraph("<b>Payment / Debit</b>", table_header_style),
+                     Paragraph("<b>Receipt / Credit</b>", table_header_style),
                      Paragraph("<b>Balance</b>", table_header_style),
                      Paragraph("<b>Int Paid</b>", table_header_style),
                      Paragraph("<b>TDS</b>", table_header_style)]
@@ -1391,41 +1434,41 @@ elif menu == "Fixed Deposits (FD)":
                 
                 # Opening entry
                 ledger_data.append([
-                    Paragraph(created_at, table_cell_style),
+                    Paragraph(created_at, table_cell_center),
                     Paragraph("Opening Balance / Principal Deposit", table_cell_left),
-                    Paragraph("-", table_cell_style),
+                    Paragraph("-", table_cell_center),
                     Paragraph(f"₹{principal:,.2f}", table_cell_right),
                     Paragraph(f"₹{principal:,.2f}", table_cell_right),
-                    Paragraph("0", table_cell_style),
-                    Paragraph("0", table_cell_style)
+                    Paragraph("0", table_cell_center),
+                    Paragraph("0", table_cell_center)
                 ])
                 
                 # Closing entry if closed
                 if status == 'CLOSED':
                     ledger_data.append([
-                        Paragraph(closed_date, table_cell_style),
+                        Paragraph(closed_date, table_cell_center),
                         Paragraph("FD Closed / Maturity Payment", table_cell_left),
                         Paragraph(f"₹{maturity:,.2f}", table_cell_right),
-                        Paragraph("-", table_cell_style),
+                        Paragraph("-", table_cell_center),
                         Paragraph("₹0.00", table_cell_right),
                         Paragraph(f"₹{maturity - principal:,.2f}", table_cell_right),
-                        Paragraph("0", table_cell_style)
+                        Paragraph("0", table_cell_center)
                     ])
                 
-                ledger_table = Table(ledger_data, colWidths=[28*mm, 35*mm, 28*mm, 28*mm, 28*mm, 28*mm, 22*mm])
+                ledger_table = Table(ledger_data, colWidths=[28*mm, 38*mm, 26*mm, 26*mm, 26*mm, 22*mm, 20*mm])
                 ledger_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e67e22')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f2f2f2')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                     ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                     ('PADDING', (0, 0), (-1, -1), 4),
-                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
                 ]))
                 elements.append(ledger_table)
-                elements.append(Spacer(1, 20))
+                elements.append(Spacer(1, 16))
                 
-                # Signatures - Center aligned
+                # === SIGNATURES ===
                 sig_data = [
                     ["Manager", "Accountant", "Chairman / MD"]
                 ]
@@ -1433,21 +1476,23 @@ elif menu == "Fixed Deposits (FD)":
                 sig_table.setStyle(TableStyle([
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('PADDING', (0, 0), (-1, -1), 8),
+                    ('PADDING', (0, 0), (-1, -1), 6),
                     ('FONTSIZE', (0, 0), (-1, -1), 10),
                     ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
                 ]))
                 elements.append(sig_table)
                 
+                # === CLOSED WARNING ===
                 if status == 'CLOSED':
-                    elements.append(Spacer(1, 5))
+                    elements.append(Spacer(1, 6))
                     warning_style = ParagraphStyle(
                         'WarningStyle',
                         parent=styles['Normal'],
                         fontSize=10,
                         textColor=colors.red,
                         alignment=1,
-                        fontName='Helvetica-Bold'
+                        fontName='Helvetica-Bold',
+                        spaceAfter=4
                     )
                     elements.append(Paragraph("⚠️ This Fixed Deposit has been CLOSED", warning_style))
                 
@@ -1795,23 +1840,32 @@ elif menu == "Recurring Deposits (RD)":
                 
                 styles = getSampleStyleSheet()
                 
-                # Define all styles with proper alignment
+                # Define all styles matching the FD format
                 title_style = ParagraphStyle(
                     'TitleStyle', 
                     parent=styles['Heading1'], 
                     fontSize=16, 
                     textColor=colors.HexColor('#1b4f72'), 
                     alignment=1,  # Center
-                    spaceAfter=10,
+                    spaceAfter=6,
                     fontName='Helvetica-Bold'
+                )
+                
+                subtitle_style = ParagraphStyle(
+                    'SubtitleStyle', 
+                    parent=styles['Normal'], 
+                    fontSize=9, 
+                    alignment=1,  # Center
+                    spaceAfter=2,
+                    fontName='Helvetica'
                 )
                 
                 heading_style = ParagraphStyle(
                     'HeadingStyle', 
                     parent=styles['Heading2'], 
-                    fontSize=12, 
+                    fontSize=13, 
                     alignment=1,  # Center
-                    spaceAfter=8,
+                    spaceAfter=4,
                     fontName='Helvetica-Bold'
                 )
                 
@@ -1823,30 +1877,28 @@ elif menu == "Recurring Deposits (RD)":
                     alignment=0  # Left
                 )
                 
-                bold_style = ParagraphStyle(
-                    'BoldStyle', 
+                status_style = ParagraphStyle(
+                    'StatusStyle', 
                     parent=styles['Normal'], 
-                    fontSize=10, 
-                    leading=14, 
+                    fontSize=12, 
                     fontName='Helvetica-Bold',
-                    alignment=0  # Left
+                    alignment=1,  # Center
+                    spaceAfter=6
                 )
                 
-                center_bold = ParagraphStyle(
-                    'CenterBold', 
+                detail_label = ParagraphStyle(
+                    'DetailLabel', 
                     parent=styles['Normal'], 
                     fontSize=10, 
-                    leading=14, 
                     fontName='Helvetica-Bold',
-                    alignment=1  # Center
+                    alignment=0
                 )
                 
-                right_style = ParagraphStyle(
-                    'RightStyle', 
+                detail_value = ParagraphStyle(
+                    'DetailValue', 
                     parent=styles['Normal'], 
                     fontSize=10, 
-                    leading=14,
-                    alignment=2  # Right
+                    alignment=0
                 )
                 
                 table_header_style = ParagraphStyle(
@@ -1854,12 +1906,13 @@ elif menu == "Recurring Deposits (RD)":
                     parent=styles['Normal'], 
                     fontSize=9, 
                     fontName='Helvetica-Bold', 
-                    textColor=colors.white, 
-                    alignment=1  # Center
+                    textColor=colors.black, 
+                    alignment=1,  # Center
+                    backColor=colors.HexColor('#ebf5fb')
                 )
                 
-                table_cell_style = ParagraphStyle(
-                    'TableCell', 
+                table_cell_center = ParagraphStyle(
+                    'TableCellCenter', 
                     parent=styles['Normal'], 
                     fontSize=9, 
                     alignment=1  # Center
@@ -1879,99 +1932,116 @@ elif menu == "Recurring Deposits (RD)":
                     alignment=2  # Right
                 )
                 
+                signature_style = ParagraphStyle(
+                    'SignatureStyle', 
+                    parent=styles['Normal'], 
+                    fontSize=10, 
+                    fontName='Helvetica-Bold',
+                    alignment=1,  # Center
+                    spaceAfter=2
+                )
+                
                 rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date = rd_data
                 full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
                 total_deposited = monthly_amt * paid_inst
-                
-                # Header - Center aligned
-                elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
-                elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", normal_style))
-                elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", normal_style))
-                elements.append(Spacer(1, 5))
-                elements.append(Paragraph("RECURRING DEPOSIT RECEIPT / LEDGER", heading_style))
-                elements.append(Spacer(1, 5))
-                
-                # Status badge - Center
                 status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
-                status_color = colors.red if status == 'CLOSED' else colors.blue
-                status_para = Paragraph(f"<font color='{status_color}'><b>Status: {status_text}</b></font>", center_bold)
-                elements.append(status_para)
-                elements.append(Spacer(1, 8))
                 
-                # Details table with proper alignment
+                # === HEADER SECTION ===
+                elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
+                elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))
+                elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", subtitle_style))
+                elements.append(Spacer(1, 4))
+                
+                # === HEADING ===
+                elements.append(Paragraph("RECURRING DEPOSIT RECEIPT / LEDGER", heading_style))
+                
+                # === STATUS ===
+                status_color = colors.red if status == 'CLOSED' else colors.blue
+                status_para = Paragraph(f"<font color='{status_color}'><b>{status_text}</b></font>", status_style)
+                elements.append(status_para)
+                
+                # === DETAILS SECTION (2 columns) ===
                 detail_data = [
-                    [Paragraph("<b>RDR No.</b>", bold_style), Paragraph(f"RD-{rd_id:05d}", normal_style), 
-                     Paragraph("<b>Opening Date</b>", bold_style), Paragraph(created_at, normal_style)],
-                    [Paragraph("<b>Name</b>", bold_style), Paragraph(c_name, normal_style), 
-                     Paragraph("<b>Interest Rate</b>", bold_style), Paragraph(f"{rate}% p.a.", normal_style)],
-                    [Paragraph("<b>Address</b>", bold_style), Paragraph(full_address, normal_style), 
-                     Paragraph("<b>Status</b>", bold_style), Paragraph(status_text, normal_style)],
-                    [Paragraph("<b>Monthly Installment</b>", bold_style), Paragraph(f"₹{monthly_amt:,.2f}", normal_style), 
-                     Paragraph("<b>Nominee</b>", bold_style), Paragraph(nominee if nominee else 'N/A', normal_style)],
-                    [Paragraph("<b>Tenure</b>", bold_style), Paragraph(f"{tenure} MONTHS", normal_style), 
-                     Paragraph("<b>Installments Paid</b>", bold_style), Paragraph(f"{paid_inst} / {tenure}", normal_style)],
+                    [Paragraph("<b>RDR No. / A/c No:</b>", detail_label), Paragraph(f"RD-{rd_id:05d}", detail_value),
+                     Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(created_at, detail_value)],
+                    [Paragraph("<b>Name:</b>", detail_label), Paragraph(c_name, detail_value),
+                     Paragraph("<b>Interest Rate:</b>", detail_label), Paragraph(f"{rate}% p.a.", detail_value)],
+                    [Paragraph("<b>Address:</b>", detail_label), Paragraph(full_address, detail_value),
+                     Paragraph("<b>Status:</b>", detail_label), Paragraph(status_text, detail_value)],
+                    [Paragraph("<b>Monthly Installment:</b>", detail_label), Paragraph(f"₹{monthly_amt:,.2f}", detail_value),
+                     Paragraph("<b>Nominee:</b>", detail_label), Paragraph(nominee if nominee else 'N/A', detail_value)],
+                    [Paragraph("<b>Tenure:</b>", detail_label), Paragraph(f"{tenure} MONTHS", detail_value),
+                     Paragraph("<b>Installments Paid:</b>", detail_label), Paragraph(f"{paid_inst} / {tenure}", detail_value)],
                 ]
                 if status == 'CLOSED':
-                    detail_data.append([Paragraph("<b>Closed Date</b>", bold_style), Paragraph(closed_date, normal_style), "", ""])
+                    detail_data.append([Paragraph("<b>Closed Date:</b>", detail_label), Paragraph(closed_date, detail_value), "", ""])
                 
-                detail_table = Table(detail_data, colWidths=[60*mm, 65*mm, 60*mm, 65*mm])
+                detail_table = Table(detail_data, colWidths=[40*mm, 45*mm, 40*mm, 45*mm])
                 detail_table.setStyle(TableStyle([
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('PADDING', (0, 0), (-1, -1), 4),
+                    ('PADDING', (0, 0), (-1, -1), 3),
                     ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
                 ]))
                 elements.append(detail_table)
+                elements.append(Spacer(1, 6))
+                
+                # === DEPOSIT REPAYABLE BOX ===
+                box_style = ParagraphStyle(
+                    'BoxStyle',
+                    parent=styles['Normal'],
+                    fontSize=10,
+                    leading=14,
+                    alignment=0,
+                    borderPadding=6,
+                )
+                elements.append(Paragraph(f"<b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Estimated Maturity Amount: <b>₹{maturity:,.2f}</b>.", box_style))
                 elements.append(Spacer(1, 8))
                 
-                # Box
-                elements.append(Paragraph(f"<b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Estimated Maturity Amount: <b>₹{maturity:,.2f}</b>.", normal_style))
-                elements.append(Spacer(1, 10))
-                
-                # Ledger Table with proper alignment
+                # === LEDGER TABLE ===
                 ledger_data = [
                     [Paragraph("<b>Date</b>", table_header_style),
                      Paragraph("<b>Particulars</b>", table_header_style),
-                     Paragraph("<b>Payment/Debit</b>", table_header_style),
-                     Paragraph("<b>Receipt/Credit</b>", table_header_style),
+                     Paragraph("<b>Payment / Debit</b>", table_header_style),
+                     Paragraph("<b>Receipt / Credit</b>", table_header_style),
                      Paragraph("<b>Balance</b>", table_header_style),
                      Paragraph("<b>Inst. Paid</b>", table_header_style)]
                 ]
                 
                 # Opening entry
                 ledger_data.append([
-                    Paragraph(created_at, table_cell_style),
+                    Paragraph(created_at, table_cell_center),
                     Paragraph("RD Account Opening & Installment 1", table_cell_left),
-                    Paragraph("-", table_cell_style),
+                    Paragraph("-", table_cell_center),
                     Paragraph(f"₹{monthly_amt:,.2f}", table_cell_right),
                     Paragraph(f"₹{total_deposited:,.2f}", table_cell_right),
-                    Paragraph(str(paid_inst), table_cell_style)
+                    Paragraph(str(paid_inst), table_cell_center)
                 ])
                 
                 # Closing entry if closed
                 if status == 'CLOSED':
                     ledger_data.append([
-                        Paragraph(closed_date, table_cell_style),
+                        Paragraph(closed_date, table_cell_center),
                         Paragraph("RD Closed / Maturity Payment", table_cell_left),
                         Paragraph(f"₹{maturity:,.2f}", table_cell_right),
-                        Paragraph("-", table_cell_style),
+                        Paragraph("-", table_cell_center),
                         Paragraph("₹0.00", table_cell_right),
-                        Paragraph(str(paid_inst), table_cell_style)
+                        Paragraph(str(paid_inst), table_cell_center)
                     ])
                 
-                ledger_table = Table(ledger_data, colWidths=[30*mm, 40*mm, 30*mm, 30*mm, 30*mm, 30*mm])
+                ledger_table = Table(ledger_data, colWidths=[30*mm, 40*mm, 28*mm, 28*mm, 28*mm, 26*mm])
                 ledger_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2980b9')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ebf5fb')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                     ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                     ('PADDING', (0, 0), (-1, -1), 4),
-                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
                 ]))
                 elements.append(ledger_table)
-                elements.append(Spacer(1, 20))
+                elements.append(Spacer(1, 16))
                 
-                # Signatures - Center aligned
+                # === SIGNATURES ===
                 sig_data = [
                     ["Manager", "Accountant", "Chairman / MD"]
                 ]
@@ -1979,21 +2049,23 @@ elif menu == "Recurring Deposits (RD)":
                 sig_table.setStyle(TableStyle([
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('PADDING', (0, 0), (-1, -1), 8),
+                    ('PADDING', (0, 0), (-1, -1), 6),
                     ('FONTSIZE', (0, 0), (-1, -1), 10),
                     ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
                 ]))
                 elements.append(sig_table)
                 
+                # === CLOSED WARNING ===
                 if status == 'CLOSED':
-                    elements.append(Spacer(1, 5))
+                    elements.append(Spacer(1, 6))
                     warning_style = ParagraphStyle(
                         'WarningStyle',
                         parent=styles['Normal'],
                         fontSize=10,
                         textColor=colors.red,
                         alignment=1,
-                        fontName='Helvetica-Bold'
+                        fontName='Helvetica-Bold',
+                        spaceAfter=4
                     )
                     elements.append(Paragraph("⚠️ This Recurring Deposit has been CLOSED", warning_style))
                 

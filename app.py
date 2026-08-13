@@ -1054,6 +1054,10 @@ elif menu == "SB Accounts":
             st.info("No active SB accounts found.")
 
 # --- FIXED DEPOSITS ---
+### 💰 Corrected Fixed Deposits (FD) Module Code
+
+
+
 elif menu == "Fixed Deposits (FD)":
     st.title("💰 Fixed Deposits Management")
     tab1, tab2, tab3, tab4 = st.tabs(["Open FD", "Active FDs", "Close FD", "Deposit History & Reports"])
@@ -1087,7 +1091,6 @@ elif menu == "Fixed Deposits (FD)":
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
-            # Simple Interest or Maturity calculation
             interest_earned = principal_amt * (interest_rate / 100) * (tenure_months / 12)
             maturity_amount = principal_amt + interest_earned
             
@@ -1100,12 +1103,11 @@ elif menu == "Fixed Deposits (FD)":
                     st.stop()
                 
                 run_query("""
-                    INSERT INTO fixed_deposits (customer_id, principal_amount, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
+                    INSERT INTO fixed_deposits (customer_id, amount, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """, (cust_dict[selected_cust], principal_amt, tenure_months, interest_rate, maturity_amount, nominee, 
                     datetime.now(IST).strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
-                # Post JV entry for FD Principal Deposit
                 jv_result = post_automated_jv(f"FD Opening - Principal Deposit via {payment_mode}", chosen_asset_code, "LIA-102", principal_amt)
                 
                 fd_id_result = run_query("SELECT last_insert_rowid()")
@@ -1135,7 +1137,7 @@ elif menu == "Fixed Deposits (FD)":
     with tab2:
         st.subheader("Active Fixed Deposits (Vertical View)")
         fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode, f.created_at
+            SELECT f.fd_id, c.name, f.amount AS principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode, f.created_at
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
         """)
@@ -1154,14 +1156,14 @@ elif menu == "Fixed Deposits (FD)":
     with tab3:
         st.subheader("Close Fixed Deposit")
         active_fds_close = run_query("""
-            SELECT f.fd_id, c.name, f.principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.created_at
+            SELECT f.fd_id, c.name, f.amount AS principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.created_at
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
         """)
         
         if active_fds_close:
             fd_close_dict = {f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[2]:,.2f})": r for r in active_fds_close}
-            selected_fd_str = st.selectbox("Select FD to Close", list(fd_close_dict.keys()))
+            selected_fd_str = st.selectbox("Select FD to Close", list(fd_close_dict.keys()), key="fd_close_select")
             selected_fd = fd_close_dict[selected_fd_str]
             fd_id, cust_name, principal_amt, tenure_m, interest_rate, maturity_amt, created_at = selected_fd
             
@@ -1182,7 +1184,6 @@ elif menu == "Fixed Deposits (FD)":
                     WHERE fd_id = ?
                 """, (datetime.now(IST).strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
-                # Reverse principal liability & record interest expense
                 post_automated_jv(f"FD #{fd_id} Maturity Payout - Principal", "LIA-102", "LIA-101", principal_amt)
                 if interest_payable > 0:
                     post_automated_jv(f"FD #{fd_id} Maturity Payout - Interest Expense", "EXP-103", "LIA-101", interest_payable)
@@ -1195,7 +1196,7 @@ elif menu == "Fixed Deposits (FD)":
     with tab4:
         st.subheader("📥 Deposit History, Closed Accounts & Reports")
         all_fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode, f.created_at, f.closed_date
+            SELECT f.fd_id, c.name, f.amount AS principal_amount, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode, f.created_at, f.closed_date
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
         """)
         if all_fds:
@@ -1210,16 +1211,20 @@ elif menu == "Fixed Deposits (FD)":
                 "Download Complete CSV Report", 
                 df_all_fds.to_csv(index=False).encode('utf-8'), 
                 "all_fixed_deposits_report.csv", 
-                "text/csv"
+                "text/csv",
+                key="fd_csv_download"
             )
             col_pdf.download_button(
                 "Download Complete PDF Report", 
                 create_pdf_report("Complete Fixed Deposits History Report", df_all_fds), 
                 "all_fixed_deposits_report.pdf", 
-                "application/pdf"
+                "application/pdf",
+                key="fd_pdf_download"
             )
         else:
             st.info("No fixed deposit history found.")
+
+
 
 # --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":

@@ -1128,19 +1128,43 @@ elif menu == "Fixed Deposits (FD)":
             st.warning("Register a customer first.")
 
     with tab2:
+        st.subheader("Active Fixed Deposits & Reports")
         fds = run_query("""
-            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.payment_mode
-            FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
+            SELECT 
+                f.fd_id, 
+                c.name, 
+                c.phone, 
+                c.email, 
+                COALESCE(c.street || ', ' || c.city || ', ' || c.state || ' - ' || c.pincode, c.city, 'N/A') as address,
+                f.principal, 
+                f.tenure_months, 
+                f.interest_rate, 
+                f.maturity_amount, 
+                f.nominee,
+                f.status, 
+                f.payment_mode,
+                f.created_at
+            FROM fixed_deposits f 
+            JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
         """)
         if fds:
-            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Payment Mode"])
+            df_fds = pd.DataFrame(fds, columns=[
+                "FD ID", "Customer Name", "Phone", "Email", "Address", 
+                "Principal (₹)", "Tenure (Months)", "Rate (%)", "Maturity (₹)", 
+                "Nominee", "Status", "Payment Mode", "Created Date"
+            ])
             st.dataframe(df_fds, use_container_width=True)
+            
+            st.markdown("---")
+            st.subheader("📥 Download FD Reports")
+            col_csv, col_pdf = st.columns(2)
+            col_csv.download_button("Download CSV Report", df_fds.to_csv(index=False).encode('utf-8'), "active_fds_report.csv", "text/csv")
+            col_pdf.download_button("Download PDF Report", create_pdf_report("Active Fixed Deposits Detailed Report", df_fds), "active_fds_report.pdf", "application/pdf")
         else:
             st.info("No active fixed deposits found.")
 
     with tab3:
-        
         st.subheader("Close Fixed Deposit")
         active_fds = run_query("""
             SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months
@@ -1167,13 +1191,10 @@ elif menu == "Fixed Deposits (FD)":
                 """, (datetime.now(IST).strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
                 # Step 1: Record Interest Expense -> This accumulates in FD Deposits Control (LIA-102)
-                # Debit: EXP-102 (FD Interest Paid) | Credit: LIA-102 (FD Deposits Control)
                 if interest_earned > 0:
                     post_automated_jv(f"FD #{fd_id} Interest Accrued", "EXP-102", "LIA-102", interest_earned)
                 
-                # Step 2: Now FD Deposits Control (LIA-102) has Principal + Interest = Maturity Amount
-                # Transfer full maturity from FD Deposits Control to SB Deposits Control
-                # Debit: LIA-102 (FD Deposits Control) | Credit: LIA-101 (SB Deposits Control)
+                # Step 2: Transfer full maturity from FD Deposits Control to SB Deposits Control
                 post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB", "LIA-102", "LIA-101", maturity_amount)
                 
                 st.success(f"FD #{fd_id} closed successfully!")
@@ -1233,7 +1254,7 @@ elif menu == "Recurring Deposits (RD)":
                     INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount)
                     VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?)
                 """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
-                      datetime.now(IST).strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
+                    datetime.now(IST).strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
                 
                 # Post first installment
                 jv_result = post_automated_jv(f"RD Opening - First Installment via {payment_mode}", chosen_asset_code, "LIA-103", monthly_amt)
@@ -1332,6 +1353,7 @@ elif menu == "Recurring Deposits (RD)":
             st.info("No active recurring deposits found.")
 
     with tab3:
+        st.subheader("Active Recurring Deposits & Reports")
         rds = run_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.payment_mode, r.maturity_amount
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
@@ -1340,6 +1362,25 @@ elif menu == "Recurring Deposits (RD)":
         if rds:
             df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status", "Payment Mode", "Est. Maturity"])
             st.dataframe(df_rds, use_container_width=True)
+            
+            st.markdown("---")
+            st.subheader("📥 Download RD Reports")
+            col_csv, col_pdf = st.columns(2)
+            
+            col_csv.download_button(
+                "Download CSV Report", 
+                df_rds.to_csv(index=False).encode('utf-8'), 
+                "active_rds_report.csv", 
+                "text/csv"
+            )
+            col_pdf.download_button(
+                "Download PDF Report", 
+                create_pdf_report("Active Recurring Deposits Detailed Report", df_rds), 
+                "active_rds_report.pdf", 
+                "application/pdf"
+            )
+        else:
+            st.info("No active recurring deposits found.")
 
     with tab4:
         st.subheader("Close Recurring Deposit")

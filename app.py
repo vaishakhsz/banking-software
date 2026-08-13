@@ -1300,8 +1300,12 @@ if not asset_accounts:
     asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
 
 asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+
+
+
             
             if asset_dict:
+                
                 selected_asset_code = st.selectbox(
                     "Mode of Transfer (Drill-down: Chart of Accounts)", 
                     list(asset_dict.keys()), 

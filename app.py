@@ -706,8 +706,7 @@ if menu == "Dashboard":
     else:
         st.info("No active Recurring Deposit accounts found.")
 
-#CUSTOMER MANAGEMENT
-
+# --- CUSTOMER MANAGEMENT ---
 elif menu == "Customer Management":
     st.title("👥 Customer Management Module")
     tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer"])
@@ -866,7 +865,6 @@ elif menu == "KYC Verification":
         st.info("No pending KYC verification requests.")
 
 # --- SB ACCOUNTS ---
-# --- SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
     tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact", "View Accounts"])
@@ -896,10 +894,6 @@ elif menu == "SB Accounts":
                 mode = "CASH"
             
             if st.button("Create SB Account"):
-                # For SB opening with initial balance, the customer is depositing money
-                # So the asset account (cash/bank) should be DEBITED (increase)
-                # No balance check needed for deposit - money comes from customer
-                
                 acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
                 run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
                           (acc_no, cust_id, init_bal, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
@@ -908,10 +902,8 @@ elif menu == "SB Accounts":
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
                               (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                     
-                    # DEPOSIT: Debit Asset (Cash/Bank increases) -> Credit Liability (SB Deposits Control)
                     jv_result = post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
                     
-                    # Update cash/bank book
                     if jv_result:
                         today = datetime.now(IST).strftime("%Y-%m-%d")
                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -967,10 +959,6 @@ elif menu == "SB Accounts":
                 current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acc_choice,))[0][0]
                 
                 if tx_type == "DEPOSIT":
-                    # DEPOSIT: Customer gives money to bank
-                    # Debit Asset (Cash/Bank increases) -> Credit Liability (SB Deposits Control)
-                    # NO balance check needed - money is coming FROM customer INTO bank
-                    
                     new_bal = current_bal + amount
                     run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)",
@@ -1000,13 +988,10 @@ elif menu == "SB Accounts":
                     st.rerun()
                     
                 elif tx_type == "WITHDRAWAL":
-                    # WITHDRAWAL: Bank gives money to customer
-                    # Check SB account has sufficient balance
                     if current_bal < amount:
                         st.error(f"❌ Insufficient SB account balance! Available: ₹{current_bal:,.2f}, Required: ₹{amount:,.2f}")
                         st.stop()
                     
-                    # Check bank/cash has sufficient funds to give to customer
                     asset_balance = get_account_balance_from_jv(chosen_asset_code)
                     if amount > asset_balance:
                         st.error(f"❌ Insufficient funds in {pay_mode}! Available: ₹{asset_balance:,.2f}, Required: ₹{amount:,.2f}")
@@ -1017,7 +1002,6 @@ elif menu == "SB Accounts":
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'DEBIT', ?, ?, ?, ?)",
                               (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                     
-                    # WITHDRAWAL: Debit Liability (SB Deposits Control) -> Credit Asset (Cash/Bank decreases)
                     jv_result = post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
                     
                     if jv_result:
@@ -1052,7 +1036,6 @@ elif menu == "SB Accounts":
             st.download_button("Download SB Accounts PDF", create_pdf_report("Savings Bank Accounts Report", df_sb), "sb_accounts.pdf", "application/pdf")
         else:
             st.info("No active SB accounts found.")
-
 
 # --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
@@ -1150,7 +1133,6 @@ elif menu == "Fixed Deposits (FD)":
             
             fd_id, c_name, c_address, principal, tenure, rate, maturity, nominee, created_at, status = fd_data
             
-            # Printable Receipt HTML Layout
             receipt_html = f"""
             <style>
               .fd-receipt {{
@@ -1295,17 +1277,11 @@ elif menu == "Recurring Deposits (RD)":
             
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
-                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
-if not asset_accounts:
-    asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
-
-asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
-
-
-
+                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
             if asset_dict:
-                
                 selected_asset_code = st.selectbox(
                     "Mode of Transfer (Drill-down: Chart of Accounts)", 
                     list(asset_dict.keys()), 
@@ -1668,10 +1644,8 @@ elif menu == "Cash Book":
                     account_code = coa_dict[account_head]
                     
                     if entry_type == "DEBIT (Receipt)":
-                        # Cash IN - debit cash, credit other account
                         jv_result = post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
                     else:
-                        # Cash OUT - check balance
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_balance:,.2f}")
                             st.stop()
@@ -1690,7 +1664,6 @@ elif menu == "Cash Book":
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
-                        # Handle bank transfers
                         if account_code == 'AST-102':
                             bank_voucher_no = generate_bank_voucher_no()
                             union_bal = get_bank_balance("Union Bank of India")
@@ -1836,10 +1809,8 @@ elif menu == "Bank Book":
                     account_code = coa_dict[account_head]
                     
                     if entry_type == "DEBIT (Deposit)":
-                        # Bank IN - debit bank, credit other account
                         jv_result = post_automated_jv(f"Bank Deposit: {particulars} - {bank_name}", bank_code, account_code, amount)
                     else:
-                        # Bank OUT - check balance
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Bank Balance in {bank_name}! Available: ₹{current_balance:,.2f}")
                             st.stop()
@@ -1858,7 +1829,6 @@ elif menu == "Bank Book":
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, bank_name, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
-                        # If transferring to cash, also update cash book
                         if account_code == 'AST-101':
                             cash_voucher_no = generate_cash_voucher_no()
                             cash_bal = get_cash_balance()
@@ -1964,8 +1934,6 @@ elif menu == "Bank Book":
             st.info("No Bank Book vouchers available.")
 
 # --- JOURNAL VOUCHERS ---
-# --- JOURNAL VOUCHERS ---
-# --- JOURNAL Vouchers ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
@@ -1974,12 +1942,10 @@ elif menu == "Journal Vouchers":
         st.subheader("Create Journal Voucher")
         st.info("💡 **Depreciation Posting:** Selecting an expense head like EXP-204 to EXP-207 allows you to enter the asset base value. The system computes the depreciation, debits the P&L expense, and credits the selected credit account.")
         
-        # Fetch ALL Chart of Accounts so everything appears on both sides
         coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
         coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
         coa_names = {c[0]: c[1] for c in coa_list}
         
-        # Explicit mapping for your specific depreciation heads
         dep_rate_map = {
             "EXP-204": 5.0,
             "EXP-205": 10.0,
@@ -2002,7 +1968,6 @@ elif menu == "Journal Vouchers":
             is_depreciation = acc1_code in dep_rate_map or "depreciation" in acc1_name_lower
             
             if is_depreciation:
-                # Determine rate from map or fallback to regex extraction
                 if acc1_code in dep_rate_map:
                     default_rate = dep_rate_map[acc1_code]
                 else:
@@ -2023,7 +1988,6 @@ elif menu == "Journal Vouchers":
             st.markdown("---")
             st.markdown("#### **Credit Entry**")
             col_acc2, col_dummy2 = st.columns([2, 1])
-            # Using coa_dict here ensures ALL account heads appear on the credit side as well
             acc2 = col_acc2.selectbox("Credit Account Head", list(coa_dict.keys()), key="jv_acc2")
             acc2_code = coa_dict[acc2]
             
@@ -2040,9 +2004,7 @@ elif menu == "Journal Vouchers":
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
                     jv_id = cursor.lastrowid
-                    # Debit entry increases P&L expense
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, acc1_code, dr1))
-                    # Credit entry records the credit side
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc2_code, cr2))
                     conn.commit()
                     conn.close()
@@ -2186,7 +2148,6 @@ elif menu == "Admin Record Editor":
             st.info(f"Table `{selected_table}` is currently empty.")
 
 # --- FINANCIAL STATEMENTS ---
-
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -2225,7 +2186,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
-        # Get balances from journal entries for all asset accounts
         asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -2238,17 +2198,14 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING net_balance != 0
         """)
         
-        # Create a dictionary of asset balances
         asset_balance_dict = {}
         for row in asset_balances:
             asset_balance_dict[row[0]] = row[2]
         
-        # Get specific bank balances
         cash_bal = asset_balance_dict.get('AST-101', 0)
         union_bank_bal = asset_balance_dict.get('AST-102', 0)
         sbi_bal = asset_balance_dict.get('AST-103', 0)
         
-        # Get SB, FD, RD liability balances
         sb_liability = run_query("""
             SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
             FROM jv_entries JE
@@ -2270,7 +2227,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_code = 'LIA-103'
         """)[0][0] or 0.0
         
-        # Get other assets
         other_asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -2283,7 +2239,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             GROUP BY CO.account_code, CO.account_name
         """)
 
-        # Get depreciation / expense balances to show reduction on assets side
         depreciation_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -2297,7 +2252,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING net_balance != 0
         """)
 
-        # Get income and expense
         tot_inc_result = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         tot_exp_result = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
@@ -2332,7 +2286,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                         asset_rows.append([f"{acc_code} - {acc_name}", f"₹{net_val:,.2f}"])
                         total_assets += net_val
 
-            # Append depreciation heads purely for reference display
             if depreciation_balances:
                 for row in depreciation_balances:
                     acc_code, acc_name, dep_val = row
@@ -2363,7 +2316,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
             
-            # Fetch individual equity/capital entries broken down by their JV narration
             equity_details = run_query("""
                 SELECT 
                     CO.account_name,
@@ -2380,7 +2332,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             if equity_details:
                 for row in equity_details:
                     acc_name, narration_label, eq_val = row
-                    # Displays each person's contribution distinctly using their narration
                     display_label = f"{acc_name} ({narration_label})" if narration_label else acc_name
                     lia_data.append([display_label, f"₹{eq_val:,.2f}"])
                     total_lia += eq_val
@@ -2469,8 +2420,6 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("**Net Result:** Balanced (₹0.00)")
 
-
-
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
@@ -2557,12 +2506,9 @@ elif menu == "SB Interest Calculation":
                         """, (f"INT{datetime.now(IST).strftime('%M%S%f')}", acct, interest_amt, 
                               f"Interest for {calc_period} period", datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                         
-                        # SB Interest Expense (EXP-101) -> SB Deposits Control (LIA-101)
                         post_automated_jv(f"SB Interest - Account {acct} ({calc_period})", "EXP-101", "LIA-101", interest_amt)
                 
                 st.success(f"✅ Interest credited to all SB accounts successfully!")
                 st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
-
-

@@ -1295,10 +1295,11 @@ elif menu == "Recurring Deposits (RD)":
             
             asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
-                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
-            
-            asset_dict = {f"{a[0]} - {a[1]}: a[0] for a in asset_accounts} if asset_accounts else {}
-            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+if not asset_accounts:
+    asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+
+asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
             if asset_dict:
                 selected_asset_code = st.selectbox(

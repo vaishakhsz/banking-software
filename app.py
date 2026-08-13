@@ -706,7 +706,8 @@ if menu == "Dashboard":
     else:
         st.info("No active Recurring Deposit accounts found.")
 
-# --- CUSTOMER MANAGEMENT ---
+#CUSTOMER MANAGEMENT
+
 elif menu == "Customer Management":
     st.title("👥 Customer Management Module")
     tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer"])
@@ -865,6 +866,7 @@ elif menu == "KYC Verification":
         st.info("No pending KYC verification requests.")
 
 # --- SB ACCOUNTS ---
+# --- SB ACCOUNTS ---
 elif menu == "SB Accounts":
     st.title("💰 Savings Bank (SB) Management")
     tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact", "View Accounts"])
@@ -894,6 +896,10 @@ elif menu == "SB Accounts":
                 mode = "CASH"
             
             if st.button("Create SB Account"):
+                # For SB opening with initial balance, the customer is depositing money
+                # So the asset account (cash/bank) should be DEBITED (increase)
+                # No balance check needed for deposit - money comes from customer
+                
                 acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
                 run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
                           (acc_no, cust_id, init_bal, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
@@ -902,8 +908,10 @@ elif menu == "SB Accounts":
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
                               (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_no, init_bal, mode, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                     
+                    # DEPOSIT: Debit Asset (Cash/Bank increases) -> Credit Liability (SB Deposits Control)
                     jv_result = post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal)
                     
+                    # Update cash/bank book
                     if jv_result:
                         today = datetime.now(IST).strftime("%Y-%m-%d")
                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -959,6 +967,10 @@ elif menu == "SB Accounts":
                 current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acc_choice,))[0][0]
                 
                 if tx_type == "DEPOSIT":
+                    # DEPOSIT: Customer gives money to bank
+                    # Debit Asset (Cash/Bank increases) -> Credit Liability (SB Deposits Control)
+                    # NO balance check needed - money is coming FROM customer INTO bank
+                    
                     new_bal = current_bal + amount
                     run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)",
@@ -988,10 +1000,13 @@ elif menu == "SB Accounts":
                     st.rerun()
                     
                 elif tx_type == "WITHDRAWAL":
+                    # WITHDRAWAL: Bank gives money to customer
+                    # Check SB account has sufficient balance
                     if current_bal < amount:
                         st.error(f"❌ Insufficient SB account balance! Available: ₹{current_bal:,.2f}, Required: ₹{amount:,.2f}")
                         st.stop()
                     
+                    # Check bank/cash has sufficient funds to give to customer
                     asset_balance = get_account_balance_from_jv(chosen_asset_code)
                     if amount > asset_balance:
                         st.error(f"❌ Insufficient funds in {pay_mode}! Available: ₹{asset_balance:,.2f}, Required: ₹{amount:,.2f}")
@@ -1002,6 +1017,7 @@ elif menu == "SB Accounts":
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'DEBIT', ?, ?, ?, ?)",
                               (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                     
+                    # WITHDRAWAL: Debit Liability (SB Deposits Control) -> Credit Asset (Cash/Bank decreases)
                     jv_result = post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
                     
                     if jv_result:
@@ -1040,10 +1056,10 @@ elif menu == "SB Accounts":
 # --- FIXED DEPOSITS ---
 elif menu == "Fixed Deposits (FD)":
     st.title("📈 Fixed Deposits Management")
-    tab1, tab2, tab3, tab4 = st.tabs(["Open FD", "Active FDs", "Print Certificate / Ledger", "Close FD"])
+    tab1, tab2, tab3 = st.tabs(["Open FD", "Active FDs", "Close FD"])
     
     with tab1:
-        customers = run_query("SELECT id, name, address FROM customers")
+        customers = run_query("SELECT id, name FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
             selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
@@ -1074,6 +1090,7 @@ elif menu == "Fixed Deposits (FD)":
             st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
             
             if st.button("Open FD Account"):
+                # Validate available balance
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
                 if principal > available_balance:
                     st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{principal:,.2f}")
@@ -1084,8 +1101,10 @@ elif menu == "Fixed Deposits (FD)":
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, datetime.now(IST).strftime("%Y-%m-%d"), payment_mode), fetch=False)
                 
+                # FD goes to FD Deposits Control (LIA-102)
                 jv_result = post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal)
                 
+                # Update cash/bank book
                 if jv_result:
                     today = datetime.now(IST).strftime("%Y-%m-%d")
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -1121,110 +1140,7 @@ elif menu == "Fixed Deposits (FD)":
             st.info("No active fixed deposits found.")
 
     with tab3:
-        st.subheader("🖨️ Printable FD Certificate & Ledger")
-        all_fds = run_query("""
-            SELECT f.fd_id, c.name, c.address, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.nominee, f.created_at, f.status
-            FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
-        """)
-        if all_fds:
-            fd_print_dict = {f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[3]:,.2f})": r for r in all_fds}
-            selected_print_str = st.selectbox("Select FD Account for Printing/View", list(fd_print_dict.keys()), key="fd_print_select")
-            fd_data = fd_print_dict[selected_print_str]
-            
-            fd_id, c_name, c_address, principal, tenure, rate, maturity, nominee, created_at, status = fd_data
-            
-            receipt_html = f"""
-            <style>
-              .fd-receipt {{
-                border: 2px solid #e67e22;
-                padding: 25px;
-                background-color: #fffdf9;
-                font-family: Arial, sans-serif;
-                color: #000;
-                border-radius: 6px;
-              }}
-              .header {{ text-align: center; border-bottom: 2px solid #e67e22; padding-bottom: 10px; margin-bottom: 15px; }}
-              .header h2 {{ color: #b94a00; margin: 0; font-size: 22px; }}
-              .header p {{ margin: 2px; font-size: 11px; color: #555; }}
-              .badge {{ background: #e67e22; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; }}
-              .grid-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }}
-              .box {{ border: 1px solid #ccc; padding: 10px; margin-top: 15px; background: #fff; }}
-              table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }}
-              th, td {{ border: 1px solid #999; padding: 6px; text-align: center; }}
-              th {{ background-color: #f2f2f2; }}
-              .signatures {{ display: flex; justify-content: space-between; margin-top: 50px; font-size: 12px; font-weight: bold; text-align: center; }}
-            </style>
-            
-            <div class="fd-receipt">
-              <div class="header">
-                <h2>AARSHA NIDHI LIMITED</h2>
-                <p>6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
-                <p>CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
-              </div>
-              <div style="text-align:center;">
-                <span class="badge">FIXED DEPOSIT RECEIPT / LEDGER</span>
-              </div>
-              
-              <div class="grid-row">
-                <div><b>FDR No. / A/c No:</b> FD-{fd_id:05d}</div>
-                <div><b>A/c Opening Date:</b> {created_at}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Name:</b> {c_name}</div>
-                <div><b>Interest Rate:</b> {rate}% p.a.</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Address:</b> {c_address}</div>
-                <div><b>Status:</b> {status}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Mode of Op.:</b> Single</div>
-                <div><b>Nominee:</b> {nominee}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Period / Tenure:</b> {tenure} MONTHS</div>
-                <div><b>Maturity Amount:</b> ₹{maturity:,.2f}</div>
-              </div>
-              
-              <div class="box">
-                <b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.
-              </div>
-
-              <table>
-                <tr>
-                  <th>Date</th>
-                  <th>Particulars</th>
-                  <th>Payment / Debit</th>
-                  <th>Receipt / Credit</th>
-                  <th>Balance</th>
-                  <th>Int Paid</th>
-                  <th>TDS</th>
-                </tr>
-                <tr>
-                  <td>{created_at}</td>
-                  <td>Opening Balance / Principal Deposit</td>
-                  <td>-</td>
-                  <td>₹{principal:,.2f}</td>
-                  <td>₹{principal:,.2f}</td>
-                  <td>0</td>
-                  <td>0</td>
-                </tr>
-              </table>
-
-              <div class="signatures">
-                <div>Manager</div>
-                <div>Accountant</div>
-                <div>Chairman / MD</div>
-              </div>
-            </div>
-            """
-            st.markdown(receipt_html, unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.info("💡 Tip: Use your browser's print feature (`Ctrl + P` or `Cmd + P`) to print or save this receipt as a PDF.")
-        else:
-            st.info("No Fixed Deposits available to print.")
-
-    with tab4:
+        
         st.subheader("Close Fixed Deposit")
         active_fds = run_query("""
             SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months
@@ -1234,7 +1150,7 @@ elif menu == "Fixed Deposits (FD)":
         
         if active_fds:
             fd_dict = {f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[2]:,.2f}, Maturity: ₹{r[3]:,.2f})": r for r in active_fds}
-            selected_fd_str = st.selectbox("Select FD to Close", list(fd_dict.keys()), key="fd_close_select")
+            selected_fd_str = st.selectbox("Select FD to Close", list(fd_dict.keys()))
             selected_fd = fd_dict[selected_fd_str]
             fd_id, cust_name, principal, maturity_amount, interest_rate, tenure = selected_fd
             
@@ -1243,15 +1159,21 @@ elif menu == "Fixed Deposits (FD)":
             st.info(f"Total Maturity Amount (Principal + Interest): ₹{maturity_amount:,.2f}")
             
             if st.button("Close FD", type="primary"):
+                # Update FD status
                 run_query("""
                     UPDATE fixed_deposits 
                     SET status = 'CLOSED', closed_date = ?
                     WHERE fd_id = ?
                 """, (datetime.now(IST).strftime("%Y-%m-%d"), fd_id), fetch=False)
                 
+                # Step 1: Record Interest Expense -> This accumulates in FD Deposits Control (LIA-102)
+                # Debit: EXP-102 (FD Interest Paid) | Credit: LIA-102 (FD Deposits Control)
                 if interest_earned > 0:
                     post_automated_jv(f"FD #{fd_id} Interest Accrued", "EXP-102", "LIA-102", interest_earned)
                 
+                # Step 2: Now FD Deposits Control (LIA-102) has Principal + Interest = Maturity Amount
+                # Transfer full maturity from FD Deposits Control to SB Deposits Control
+                # Debit: LIA-102 (FD Deposits Control) | Credit: LIA-101 (SB Deposits Control)
                 post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB", "LIA-102", "LIA-101", maturity_amount)
                 
                 st.success(f"FD #{fd_id} closed successfully!")
@@ -1263,10 +1185,10 @@ elif menu == "Fixed Deposits (FD)":
 # --- RECURRING DEPOSITS ---
 elif menu == "Recurring Deposits (RD)":
     st.title("🔄 Recurring Deposits Management")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Print Certificate / Ledger", "Close RD"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Close RD"])
     
     with tab1:
-        customers = run_query("SELECT id, name, address FROM customers")
+        customers = run_query("SELECT id, name FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
             selected_cust = st.selectbox("Select Customer Name for RD", list(cust_dict.keys()), key="rd_cust")
@@ -1293,6 +1215,7 @@ elif menu == "Recurring Deposits (RD)":
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
+            # Calculate approximate maturity
             total_deposits = monthly_amt * tenure
             approx_interest = total_deposits * (interest_rate / 100) * (tenure / 24)
             approx_maturity = total_deposits + approx_interest
@@ -1300,6 +1223,7 @@ elif menu == "Recurring Deposits (RD)":
             st.info(f"**Estimated Maturity:** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
             
             if st.button("Open RD Account"):
+                # Validate balance for first installment
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
                 if monthly_amt > available_balance:
                     st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{monthly_amt:,.2f}")
@@ -1311,8 +1235,10 @@ elif menu == "Recurring Deposits (RD)":
                 """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
                       datetime.now(IST).strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
                 
+                # Post first installment
                 jv_result = post_automated_jv(f"RD Opening - First Installment via {payment_mode}", chosen_asset_code, "LIA-103", monthly_amt)
                 
+                # Update installment count and books
                 rd_id_result = run_query("SELECT last_insert_rowid()")
                 if rd_id_result and jv_result:
                     rd_id = rd_id_result[0][0]
@@ -1347,7 +1273,7 @@ elif menu == "Recurring Deposits (RD)":
         """)
         if active_rds:
             rd_dict = {f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[2]:,.2f}, Paid: {r[4]}/{r[3]})": r for r in active_rds}
-            chosen_rd_str = st.selectbox("Select Active RD Account", list(rd_dict.keys()), key="rd_pay_select")
+            chosen_rd_str = st.selectbox("Select Active RD Account", list(rd_dict.keys()))
             selected_rd = rd_dict[chosen_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt = selected_rd
             
@@ -1370,6 +1296,7 @@ elif menu == "Recurring Deposits (RD)":
                 payment_mode_pay = "Cash"
             
             if st.button("Confirm & Pay Installment"):
+                # Validate balance
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
                 if monthly_amt > available_balance:
                     st.error(f"❌ Insufficient balance in {payment_mode_pay}! Available: ₹{available_balance:,.2f}, Required: ₹{monthly_amt:,.2f}")
@@ -1413,113 +1340,8 @@ elif menu == "Recurring Deposits (RD)":
         if rds:
             df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status", "Payment Mode", "Est. Maturity"])
             st.dataframe(df_rds, use_container_width=True)
-        else:
-            st.info("No active recurring deposits found.")
 
     with tab4:
-        st.subheader("🖨️ Printable RD Certificate & Ledger")
-        all_rds = run_query("""
-            SELECT r.rd_id, c.name, c.address, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.maturity_amount, r.nominee, r.created_at, r.status
-            FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
-        """)
-        if all_rds:
-            rd_print_dict = {f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[3]:,.2f})": r for r in all_rds}
-            selected_rd_print = st.selectbox("Select RD Account for Printing/View", list(rd_print_dict.keys()), key="rd_print_select")
-            rd_data = rd_print_dict[selected_rd_print]
-            
-            rd_id, c_name, c_address, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status = rd_data
-            total_deposited = monthly_amt * paid_inst
-            
-            rd_receipt_html = f"""
-            <style>
-              .rd-receipt {{
-                border: 2px solid #2980b9;
-                padding: 25px;
-                background-color: #f4f9fd;
-                font-family: Arial, sans-serif;
-                color: #000;
-                border-radius: 6px;
-              }}
-              .header {{ text-align: center; border-bottom: 2px solid #2980b9; padding-bottom: 10px; margin-bottom: 15px; }}
-              .header h2 {{ color: #1b4f72; margin: 0; font-size: 22px; }}
-              .header p {{ margin: 2px; font-size: 11px; color: #555; }}
-              .badge {{ background: #2980b9; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; }}
-              .grid-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }}
-              .box {{ border: 1px solid #ccc; padding: 10px; margin-top: 15px; background: #fff; }}
-              table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }}
-              th, td {{ border: 1px solid #999; padding: 6px; text-align: center; }}
-              th {{ background-color: #ebf5fb; }}
-              .signatures {{ display: flex; justify-content: space-between; margin-top: 50px; font-size: 12px; font-weight: bold; text-align: center; }}
-            </style>
-            
-            <div class="rd-receipt">
-              <div class="header">
-                <h2>AARSHA NIDHI LIMITED</h2>
-                <p>6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
-                <p>CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
-              </div>
-              <div style="text-align:center;">
-                <span class="badge">RECURRING DEPOSIT RECEIPT / LEDGER</span>
-              </div>
-              
-              <div class="grid-row">
-                <div><b>RDR No. / A/c No:</b> RD-{rd_id:05d}</div>
-                <div><b>A/c Opening Date:</b> {created_at}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Name:</b> {c_name}</div>
-                <div><b>Interest Rate:</b> {rate}% p.a.</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Address:</b> {c_address}</div>
-                <div><b>Status:</b> {status}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Monthly Installment:</b> ₹{monthly_amt:,.2f}</div>
-                <div><b>Nominee:</b> {nominee}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Tenure:</b> {tenure} MONTHS</div>
-                <div><b>Installments Paid:</b> {paid_inst} / {tenure}</div>
-              </div>
-              
-              <div class="box">
-                <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Estimated Maturity Amount: <b>₹{maturity:,.2f}</b>.
-              </div>
-
-              <table>
-                <tr>
-                  <th>Date</th>
-                  <th>Particulars</th>
-                  <th>Payment / Debit</th>
-                  <th>Receipt / Credit</th>
-                  <th>Balance</th>
-                  <th>Installments Paid</th>
-                </tr>
-                <tr>
-                  <td>{created_at}</td>
-                  <td>RD Account Opening & Installment 1</td>
-                  <td>-</td>
-                  <td>₹{monthly_amt:,.2f}</td>
-                  <td>₹{total_deposited:,.2f}</td>
-                  <td>{paid_inst}</td>
-                </tr>
-              </table>
-
-              <div class="signatures">
-                <div>Manager</div>
-                <div>Accountant</div>
-                <div>Chairman / MD</div>
-              </div>
-            </div>
-            """
-            st.markdown(rd_receipt_html, unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.info("💡 Tip: Use your browser's print feature (`Ctrl + P` or `Cmd + P`) to print or save this receipt as a PDF.")
-        else:
-            st.info("No Recurring Deposits available to print.")
-
-    with tab5:
         st.subheader("Close Recurring Deposit")
         active_rds_close = run_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.installments_paid, r.maturity_amount, r.interest_rate
@@ -1529,7 +1351,7 @@ elif menu == "Recurring Deposits (RD)":
         
         if active_rds_close:
             rd_close_dict = {f"RD ID: {r[0]} - {r[1]} (Paid: {r[4]}/{r[3]}, Est. Maturity: ₹{r[5]:,.2f})": r for r in active_rds_close}
-            selected_rd_str = st.selectbox("Select RD to Close", list(rd_close_dict.keys()), key="rd_close_select")
+            selected_rd_str = st.selectbox("Select RD to Close", list(rd_close_dict.keys()))
             selected_rd = rd_close_dict[selected_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt, interest_rate = selected_rd
             
@@ -1644,8 +1466,10 @@ elif menu == "Cash Book":
                     account_code = coa_dict[account_head]
                     
                     if entry_type == "DEBIT (Receipt)":
+                        # Cash IN - debit cash, credit other account
                         jv_result = post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
                     else:
+                        # Cash OUT - check balance
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_balance:,.2f}")
                             st.stop()
@@ -1664,6 +1488,7 @@ elif menu == "Cash Book":
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
+                        # Handle bank transfers
                         if account_code == 'AST-102':
                             bank_voucher_no = generate_bank_voucher_no()
                             union_bal = get_bank_balance("Union Bank of India")
@@ -1809,8 +1634,10 @@ elif menu == "Bank Book":
                     account_code = coa_dict[account_head]
                     
                     if entry_type == "DEBIT (Deposit)":
+                        # Bank IN - debit bank, credit other account
                         jv_result = post_automated_jv(f"Bank Deposit: {particulars} - {bank_name}", bank_code, account_code, amount)
                     else:
+                        # Bank OUT - check balance
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Bank Balance in {bank_name}! Available: ₹{current_balance:,.2f}")
                             st.stop()
@@ -1829,6 +1656,7 @@ elif menu == "Bank Book":
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, bank_name, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
+                        # If transferring to cash, also update cash book
                         if account_code == 'AST-101':
                             cash_voucher_no = generate_cash_voucher_no()
                             cash_bal = get_cash_balance()
@@ -1934,6 +1762,8 @@ elif menu == "Bank Book":
             st.info("No Bank Book vouchers available.")
 
 # --- JOURNAL VOUCHERS ---
+# --- JOURNAL VOUCHERS ---
+# --- JOURNAL Vouchers ---
 elif menu == "Journal Vouchers":
     st.title("📝 Journal Vouchers Management")
     tab1, tab2, tab3 = st.tabs(["Create Journal Voucher", "View Vouchers", "🖨️ Print JV Vouchers"])
@@ -1942,10 +1772,12 @@ elif menu == "Journal Vouchers":
         st.subheader("Create Journal Voucher")
         st.info("💡 **Depreciation Posting:** Selecting an expense head like EXP-204 to EXP-207 allows you to enter the asset base value. The system computes the depreciation, debits the P&L expense, and credits the selected credit account.")
         
+        # Fetch ALL Chart of Accounts so everything appears on both sides
         coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
         coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
         coa_names = {c[0]: c[1] for c in coa_list}
         
+        # Explicit mapping for your specific depreciation heads
         dep_rate_map = {
             "EXP-204": 5.0,
             "EXP-205": 10.0,
@@ -1968,6 +1800,7 @@ elif menu == "Journal Vouchers":
             is_depreciation = acc1_code in dep_rate_map or "depreciation" in acc1_name_lower
             
             if is_depreciation:
+                # Determine rate from map or fallback to regex extraction
                 if acc1_code in dep_rate_map:
                     default_rate = dep_rate_map[acc1_code]
                 else:
@@ -1988,6 +1821,7 @@ elif menu == "Journal Vouchers":
             st.markdown("---")
             st.markdown("#### **Credit Entry**")
             col_acc2, col_dummy2 = st.columns([2, 1])
+            # Using coa_dict here ensures ALL account heads appear on the credit side as well
             acc2 = col_acc2.selectbox("Credit Account Head", list(coa_dict.keys()), key="jv_acc2")
             acc2_code = coa_dict[acc2]
             
@@ -2004,7 +1838,9 @@ elif menu == "Journal Vouchers":
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
                     jv_id = cursor.lastrowid
+                    # Debit entry increases P&L expense
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, acc1_code, dr1))
+                    # Credit entry records the credit side
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc2_code, cr2))
                     conn.commit()
                     conn.close()
@@ -2148,6 +1984,7 @@ elif menu == "Admin Record Editor":
             st.info(f"Table `{selected_table}` is currently empty.")
 
 # --- FINANCIAL STATEMENTS ---
+
 elif menu == "Financial Statements (Trial/BS/PL)":
     st.title("⚖️ Financial Statements & Reports")
     tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
@@ -2186,6 +2023,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         
+        # Get balances from journal entries for all asset accounts
         asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -2198,14 +2036,17 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING net_balance != 0
         """)
         
+        # Create a dictionary of asset balances
         asset_balance_dict = {}
         for row in asset_balances:
             asset_balance_dict[row[0]] = row[2]
         
+        # Get specific bank balances
         cash_bal = asset_balance_dict.get('AST-101', 0)
         union_bank_bal = asset_balance_dict.get('AST-102', 0)
         sbi_bal = asset_balance_dict.get('AST-103', 0)
         
+        # Get SB, FD, RD liability balances
         sb_liability = run_query("""
             SELECT COALESCE(SUM(JE.credit), 0) - COALESCE(SUM(JE.debit), 0)
             FROM jv_entries JE
@@ -2227,6 +2068,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             WHERE CO.account_code = 'LIA-103'
         """)[0][0] or 0.0
         
+        # Get other assets
         other_asset_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -2239,6 +2081,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             GROUP BY CO.account_code, CO.account_name
         """)
 
+        # Get depreciation / expense balances to show reduction on assets side
         depreciation_balances = run_query("""
             SELECT 
                 CO.account_code,
@@ -2252,6 +2095,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             HAVING net_balance != 0
         """)
 
+        # Get income and expense
         tot_inc_result = run_query("SELECT SUM(JE.credit - JE.debit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Income'")
         tot_exp_result = run_query("SELECT SUM(JE.debit - JE.credit) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code WHERE CO.account_type = 'Expense'")
         
@@ -2286,6 +2130,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                         asset_rows.append([f"{acc_code} - {acc_name}", f"₹{net_val:,.2f}"])
                         total_assets += net_val
 
+            # Append depreciation heads purely for reference display
             if depreciation_balances:
                 for row in depreciation_balances:
                     acc_code, acc_name, dep_val = row
@@ -2316,6 +2161,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
                 lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
             
+            # Fetch individual equity/capital entries broken down by their JV narration
             equity_details = run_query("""
                 SELECT 
                     CO.account_name,
@@ -2332,6 +2178,7 @@ elif menu == "Financial Statements (Trial/BS/PL)":
             if equity_details:
                 for row in equity_details:
                     acc_name, narration_label, eq_val = row
+                    # Displays each person's contribution distinctly using their narration
                     display_label = f"{acc_name} ({narration_label})" if narration_label else acc_name
                     lia_data.append([display_label, f"₹{eq_val:,.2f}"])
                     total_lia += eq_val
@@ -2420,6 +2267,8 @@ elif menu == "Financial Statements (Trial/BS/PL)":
         else:
             st.info("**Net Result:** Balanced (₹0.00)")
 
+
+
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
@@ -2506,9 +2355,12 @@ elif menu == "SB Interest Calculation":
                         """, (f"INT{datetime.now(IST).strftime('%M%S%f')}", acct, interest_amt, 
                               f"Interest for {calc_period} period", datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
                         
+                        # SB Interest Expense (EXP-101) -> SB Deposits Control (LIA-101)
                         post_automated_jv(f"SB Interest - Account {acct} ({calc_period})", "EXP-101", "LIA-101", interest_amt)
                 
                 st.success(f"✅ Interest credited to all SB accounts successfully!")
                 st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
+
+

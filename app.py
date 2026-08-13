@@ -318,15 +318,6 @@ def get_bank_balance(bank_name=None):
             return get_account_balance_from_jv(result[0][0])
         return 0.0
 
-def update_cash_book_balance(balance):
-    """Update the running balance in cash book - secondary to JV"""
-    run_query("UPDATE cash_book SET balance = ? WHERE id = (SELECT MAX(id) FROM cash_book)", (balance,), fetch=False)
-
-def update_bank_book_balance(bank_name, balance):
-    """Update the running balance in bank book - secondary to JV"""
-    run_query("UPDATE bank_book SET balance = ? WHERE bank_name = ? AND id = (SELECT MAX(id) FROM bank_book WHERE bank_name = ?)", 
-              (balance, bank_name, bank_name), fetch=False)
-
 def generate_cash_voucher_no():
     today = datetime.now(IST).strftime("%Y%m%d")
     try:
@@ -739,9 +730,7 @@ elif menu == "Customer Management":
                 elif not adhar_upload or not pan_upload or not sig_upload:
                     st.error("All document uploads (Aadhaar, PAN Card, and Signature) are mandatory before registering.")
                 else:
-                    # Check duplication by phone number
                     existing_phone = run_query("SELECT COUNT(*) FROM customers WHERE phone = ?", (phone,))
-                    # Check duplication by PAN number
                     existing_pan = run_query("SELECT COUNT(*) FROM customers WHERE pan = ?", (pan,))
                     
                     if existing_phone and existing_phone[0][0] > 0:
@@ -1043,7 +1032,7 @@ elif menu == "Fixed Deposits (FD)":
     tab1, tab2, tab3, tab4 = st.tabs(["Open FD", "Active FDs", "Print Certificate / Ledger", "Close FD"])
     
     with tab1:
-        customers = run_query("SELECT id, name, address FROM customers")
+        customers = run_query("SELECT id, name, street, city, state, pincode FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
             selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
@@ -1122,16 +1111,31 @@ elif menu == "Fixed Deposits (FD)":
 
     with tab3:
         st.subheader("🖨️ Printable FD Certificate & Ledger")
+        # Show ALL FDs - both active and closed
         all_fds = run_query("""
-            SELECT f.fd_id, c.name, c.address, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.nominee, f.created_at, f.status
+            SELECT f.fd_id, c.name, c.street, c.city, c.state, c.pincode, 
+                   f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, 
+                   f.nominee, f.created_at, f.status, f.closed_date
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
+            ORDER BY f.fd_id DESC
         """)
         if all_fds:
-            fd_print_dict = {f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[3]:,.2f})": r for r in all_fds}
+            fd_print_dict = {}
+            for r in all_fds:
+                status_display = "🔴 CLOSED" if r[12] == 'CLOSED' else "🟢 ACTIVE"
+                label = f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[6]:,.2f}) - {status_display}"
+                fd_print_dict[label] = r
+            
             selected_print_str = st.selectbox("Select FD Account for Printing/View", list(fd_print_dict.keys()), key="fd_print_select")
             fd_data = fd_print_dict[selected_print_str]
             
-            fd_id, c_name, c_address, principal, tenure, rate, maturity, nominee, created_at, status = fd_data
+            fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date = fd_data
+            
+            # Build full address
+            full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
+            
+            status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
+            status_color = "#e74c3c" if status == 'CLOSED' else "#27ae60"
             
             receipt_html = f"""
             <style>
@@ -1147,12 +1151,14 @@ elif menu == "Fixed Deposits (FD)":
               .header h2 {{ color: #b94a00; margin: 0; font-size: 22px; }}
               .header p {{ margin: 2px; font-size: 11px; color: #555; }}
               .badge {{ background: #e67e22; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; }}
+              .status-badge {{ background: {status_color}; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; margin-left: 10px; }}
               .grid-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }}
               .box {{ border: 1px solid #ccc; padding: 10px; margin-top: 15px; background: #fff; }}
               table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }}
               th, td {{ border: 1px solid #999; padding: 6px; text-align: center; }}
               th {{ background-color: #f2f2f2; }}
               .signatures {{ display: flex; justify-content: space-between; margin-top: 50px; font-size: 12px; font-weight: bold; text-align: center; }}
+              .closed-info {{ background: #fde8e8; padding: 10px; border-radius: 5px; margin-top: 10px; color: #c0392b; }}
             </style>
             
             <div class="fd-receipt">
@@ -1163,6 +1169,7 @@ elif menu == "Fixed Deposits (FD)":
               </div>
               <div style="text-align:center;">
                 <span class="badge">FIXED DEPOSIT RECEIPT / LEDGER</span>
+                <span class="status-badge">{status_text}</span>
               </div>
               
               <div class="grid-row">
@@ -1174,17 +1181,18 @@ elif menu == "Fixed Deposits (FD)":
                 <div><b>Interest Rate:</b> {rate}% p.a.</div>
               </div>
               <div class="grid-row">
-                <div><b>Address:</b> {c_address}</div>
-                <div><b>Status:</b> {status}</div>
+                <div><b>Address:</b> {full_address}</div>
+                <div><b>Status:</b> {status_text}</div>
               </div>
               <div class="grid-row">
                 <div><b>Mode of Op.:</b> Single</div>
-                <div><b>Nominee:</b> {nominee}</div>
+                <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
               </div>
               <div class="grid-row">
                 <div><b>Period / Tenure:</b> {tenure} MONTHS</div>
                 <div><b>Maturity Amount:</b> ₹{maturity:,.2f}</div>
               </div>
+              {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date}</div><div></div></div>' if status == 'CLOSED' else ''}
               
               <div class="box">
                 <b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.
@@ -1209,6 +1217,7 @@ elif menu == "Fixed Deposits (FD)":
                   <td>0</td>
                   <td>0</td>
                 </tr>
+                {f'<tr><td>{closed_date}</td><td>FD Closed / Maturity Payment</td><td>₹{maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>₹{maturity - principal:,.2f}</td><td>0</td></tr>' if status == 'CLOSED' else ''}
               </table>
 
               <div class="signatures">
@@ -1216,6 +1225,7 @@ elif menu == "Fixed Deposits (FD)":
                 <div>Accountant</div>
                 <div>Chairman / MD</div>
               </div>
+              {f'<div class="closed-info">⚠️ This Fixed Deposit has been CLOSED on {closed_date}</div>' if status == 'CLOSED' else ''}
             </div>
             """
             st.markdown(receipt_html, unsafe_allow_html=True)
@@ -1266,7 +1276,7 @@ elif menu == "Recurring Deposits (RD)":
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Print Certificate / Ledger", "Close RD"])
     
     with tab1:
-        customers = run_query("SELECT id, name, address FROM customers")
+        customers = run_query("SELECT id, name, street, city, state, pincode FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
             selected_cust = st.selectbox("Select Customer Name for RD", list(cust_dict.keys()), key="rd_cust")
@@ -1418,17 +1428,33 @@ elif menu == "Recurring Deposits (RD)":
 
     with tab4:
         st.subheader("🖨️ Printable RD Certificate & Ledger")
+        # Show ALL RDs - both active and closed
         all_rds = run_query("""
-            SELECT r.rd_id, c.name, c.address, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.maturity_amount, r.nominee, r.created_at, r.status
+            SELECT r.rd_id, c.name, c.street, c.city, c.state, c.pincode, 
+                   r.monthly_amount, r.tenure_months, r.interest_rate, 
+                   r.installments_paid, r.maturity_amount, r.nominee, 
+                   r.created_at, r.status, r.closed_date
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
+            ORDER BY r.rd_id DESC
         """)
         if all_rds:
-            rd_print_dict = {f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[3]:,.2f})": r for r in all_rds}
+            rd_print_dict = {}
+            for r in all_rds:
+                status_display = "🔴 CLOSED" if r[13] == 'CLOSED' else "🟢 ACTIVE"
+                label = f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[6]:,.2f}) - {status_display}"
+                rd_print_dict[label] = r
+            
             selected_rd_print = st.selectbox("Select RD Account for Printing/View", list(rd_print_dict.keys()), key="rd_print_select")
             rd_data = rd_print_dict[selected_rd_print]
             
-            rd_id, c_name, c_address, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status = rd_data
+            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date = rd_data
+            
+            # Build full address
+            full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
+            
             total_deposited = monthly_amt * paid_inst
+            status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
+            status_color = "#e74c3c" if status == 'CLOSED' else "#2980b9"
             
             rd_receipt_html = f"""
             <style>
@@ -1444,12 +1470,14 @@ elif menu == "Recurring Deposits (RD)":
               .header h2 {{ color: #1b4f72; margin: 0; font-size: 22px; }}
               .header p {{ margin: 2px; font-size: 11px; color: #555; }}
               .badge {{ background: #2980b9; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; }}
+              .status-badge {{ background: {status_color}; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; margin-left: 10px; }}
               .grid-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }}
               .box {{ border: 1px solid #ccc; padding: 10px; margin-top: 15px; background: #fff; }}
               table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }}
               th, td {{ border: 1px solid #999; padding: 6px; text-align: center; }}
               th {{ background-color: #ebf5fb; }}
               .signatures {{ display: flex; justify-content: space-between; margin-top: 50px; font-size: 12px; font-weight: bold; text-align: center; }}
+              .closed-info {{ background: #fde8e8; padding: 10px; border-radius: 5px; margin-top: 10px; color: #c0392b; }}
             </style>
             
             <div class="rd-receipt">
@@ -1460,6 +1488,7 @@ elif menu == "Recurring Deposits (RD)":
               </div>
               <div style="text-align:center;">
                 <span class="badge">RECURRING DEPOSIT RECEIPT / LEDGER</span>
+                <span class="status-badge">{status_text}</span>
               </div>
               
               <div class="grid-row">
@@ -1471,17 +1500,18 @@ elif menu == "Recurring Deposits (RD)":
                 <div><b>Interest Rate:</b> {rate}% p.a.</div>
               </div>
               <div class="grid-row">
-                <div><b>Address:</b> {c_address}</div>
-                <div><b>Status:</b> {status}</div>
+                <div><b>Address:</b> {full_address}</div>
+                <div><b>Status:</b> {status_text}</div>
               </div>
               <div class="grid-row">
                 <div><b>Monthly Installment:</b> ₹{monthly_amt:,.2f}</div>
-                <div><b>Nominee:</b> {nominee}</div>
+                <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
               </div>
               <div class="grid-row">
                 <div><b>Tenure:</b> {tenure} MONTHS</div>
                 <div><b>Installments Paid:</b> {paid_inst} / {tenure}</div>
               </div>
+              {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date}</div><div></div></div>' if status == 'CLOSED' else ''}
               
               <div class="box">
                 <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Estimated Maturity Amount: <b>₹{maturity:,.2f}</b>.
@@ -1504,6 +1534,7 @@ elif menu == "Recurring Deposits (RD)":
                   <td>₹{total_deposited:,.2f}</td>
                   <td>{paid_inst}</td>
                 </tr>
+                {f'<tr><td>{closed_date}</td><td>RD Closed / Maturity Payment</td><td>₹{maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>{paid_inst}</td></tr>' if status == 'CLOSED' else ''}
               </table>
 
               <div class="signatures">
@@ -1511,6 +1542,7 @@ elif menu == "Recurring Deposits (RD)":
                 <div>Accountant</div>
                 <div>Chairman / MD</div>
               </div>
+              {f'<div class="closed-info">⚠️ This Recurring Deposit has been CLOSED on {closed_date}</div>' if status == 'CLOSED' else ''}
             </div>
             """
             st.markdown(rd_receipt_html, unsafe_allow_html=True)

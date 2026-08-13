@@ -800,7 +800,6 @@ def display_ist_timer():
 
 # ==================== MAIN APP ====================
 
-
 # --- LOGIN SYSTEM ---
 def check_login():
     """Simple login check"""
@@ -897,6 +896,34 @@ if not check_login():
     
     st.stop()
 
+# ==================================================
+# ========== SIDEBAR MENU & NAVIGATION =============
+# ==================================================
+
+# Create sidebar menu
+st.sidebar.title("🏦 AARSHA NIDHI")
+display_ist_timer()  # Your IST timer function
+
+menu = st.sidebar.radio(
+    "Navigation",
+    [
+        "Dashboard",
+        "Customer Management",
+        "KYC Verification",
+        "SB Accounts",
+        "Fixed Deposits (FD)",
+        "Recurring Deposits (RD)",
+        "Chart of Accounts",
+        "Cash Book",
+        "Bank Book",
+        "Journal Vouchers",
+        "Admin Record Editor",
+        "Financial Statements (Trial/BS/PL)",
+        "Reports",
+        "SB Interest Calculation"
+    ]
+)
+
 # --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 System Backup & Recovery")
@@ -928,7 +955,9 @@ if uploaded_db is not None:
 st.sidebar.markdown("---")
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
-# --- DASHBOARD MODULE ---
+# ==================================================
+# ========== MAIN CONTENT BASED ON MENU ============
+# ==================================================
 
 if menu == "Dashboard":
     

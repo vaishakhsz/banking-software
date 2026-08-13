@@ -9,7 +9,7 @@ import re
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Aasha Nidhi Banking Software",
+    page_title="Aarsha Nidhi Banking Software",
     page_icon="🏦",
     layout="wide",
     initial_sidebar_state="expanded",

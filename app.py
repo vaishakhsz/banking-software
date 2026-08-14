@@ -891,33 +891,38 @@ if not check_login():
 # Create sidebar menu with enhanced styling
 st.sidebar.markdown("""
 <style>
-    /* Sidebar styling */
+    /* Sidebar background styling */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
     }
     
-    [data-testid="stSidebar"] .st-emotion-cache-1y4p8pa {
+    /* General text color fallback inside sidebar */
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p {
         color: white !important;
     }
     
-    [data-testid="stSidebar"] .st-emotion-cache-1wmy9hl {
+    /* Target the Radio Menu Title ("📋 MENU") */
+    [data-testid="stSidebar"] .stRadio > label {
         color: white !important;
+        font-weight: bold;
     }
     
-    /* Navigation items */
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g {
+    /* Target Radio Option Labels */
+    [data-testid="stSidebar"] div[role="radiogroup"] label {
         color: white !important;
+        background: transparent !important;
+        border-radius: 4px;
+        transition: background 0.2s ease;
     }
     
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g:hover {
-        color: white !important;
-        background: rgba(255,255,255,0.1) !important;
+    /* Hover effect for radio options */
+    [data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+        background: rgba(255, 255, 255, 0.1) !important;
     }
     
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
-        color: white !important;
+    /* Selected radio option styling */
+    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] input:checked + div {
         background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
-        border-left: 3px solid #f7c948 !important;
     }
     
     /* Company header in sidebar */
@@ -958,79 +963,6 @@ st.sidebar.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
-# Company header in sidebar
-st.sidebar.markdown("""
-<div class="sidebar-header">
-    <h2>🏦 AARSHA NIDHI</h2>
-    <p>Financial Banking Software</p>
-</div>
-""", unsafe_allow_html=True)
-
-# User info
-st.sidebar.markdown(f"""
-<div class="user-info">
-    👤 Logged in as: <b style="color:white;">{st.session_state.username}</b>
-</div>
-""", unsafe_allow_html=True)
-
-# Divider
-st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
-
-display_ist_timer()  # Your IST timer function
-
-# Divider
-st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
-
-# Custom CSS for sidebar background and menu styling
-st.markdown(
-    """
-    <style>
-    /* Sidebar background */
-    [data-testid="stSidebar"] {
-        background-color: #b8d4f0; /* pastel blue */
-    }
-
-    /* Radio button labels inside sidebar */
-    [data-testid="stSidebar"] .stRadio label {
-        color: #1a3d6e; /* deep navy for readability */
-        font-weight: 600; /* make text bolder */
-    }
-
-    /* Selected option highlight */
-    [data-testid="stSidebar"] .stRadio div[role='radiogroup'] > label[data-checked="true"] {
-        background-color: #ffffff; /* white highlight */
-        color: #000000; /* black text when selected */
-        border-radius: 5px;
-        padding: 4px 8px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# Navigation menu with custom styling
-menu = st.sidebar.radio(
-    "📋 MENU",
-    [
-        "Dashboard",
-        "Customer Management",
-        "KYC Verification",
-        "SB Accounts",
-        "Fixed Deposits (FD)",
-        "Recurring Deposits (RD)",
-        "Chart of Accounts",
-        "Cash Book",
-        "Bank Book",
-        "Journal Vouchers",
-        "Admin Record Editor",
-        "Financial Statements (Trial/BS/PL)",
-        "Reports",
-        "SB Interest Calculation"
-    ],
-    index=0,
-    key="main_menu"
-)
 
 # --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)

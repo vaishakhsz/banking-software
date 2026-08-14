@@ -889,6 +889,11 @@ if not check_login():
 # ==================================================
 
 # Create sidebar menu with enhanced styling
+
+# Your IST timer placeholder function (replace with your actual implementation)
+def display_ist_timer():
+    pass
+
 st.sidebar.markdown("""
 <style>
     /* Sidebar background styling */
@@ -963,6 +968,55 @@ st.sidebar.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# Company header in sidebar
+st.sidebar.markdown("""
+<div class="sidebar-header">
+    <h2>🏦 AARSHA NIDHI</h2>
+    <p>Financial Banking Software</p>
+</div>
+""", unsafe_allow_html=True)
+
+# User info
+st.sidebar.markdown(f"""
+<div class="user-info">
+    👤 Logged in as: <b style="color:white;">{st.session_state.get('username', 'Admin')}</b>
+</div>
+""", unsafe_allow_html=True)
+
+# Divider
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+
+display_ist_timer()  # Your IST timer function
+
+# Divider
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+
+# Navigation menu with custom styling and backup items added
+menu = st.sidebar.radio(
+    "📋 MENU",
+    [
+        "Dashboard",
+        "Customer Management",
+        "KYC Verification",
+        "SB Accounts",
+        "Fixed Deposits (FD)",
+        "Recurring Deposits (RD)",
+        "Chart of Accounts",
+        "Cash Book",
+        "Bank Book",
+        "Journal Vouchers",
+        "Admin Record Editor",
+        "Financial Statements (Trial/BS/PL)",
+        "Reports",
+        "SB Interest Calculation",
+        "System Backup",
+        "Restore Backup"
+    ],
+    index=0,
+    key="main_menu"
+)
+
 
 # --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)

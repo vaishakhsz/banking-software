@@ -17,6 +17,34 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- SIDEBAR COLOR FIX (ADDED HERE) ---
+st.markdown("""
+<style>
+    /* Force sidebar background to match the dark blue theme */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
+    }
+    
+    /* Make sidebar text white and readable */
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
+        color: white !important;
+    }
+    
+    /* Style the radio buttons to look clean on dark background */
+    .stRadio div[data-testid="stWidgetLabel"] {
+        color: #b8d4f0 !important;
+    }
+    
+    /* Hide footer to clean up UI */
+    footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
 # Define IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -798,17 +826,6 @@ def display_ist_timer():
 
 # ==================== MAIN APP ====================
 
-# --- LOGIN SYSTEM ---
-def check_login():
-    """Simple login check"""
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-    if 'username' not in st.session_state:
-        st.session_state.username = ""
-    return st.session_state.logged_in
-
-# ==================== MAIN APP ====================
-
 # --- LOGIN PAGE ---
 if not check_login():
     # Hide sidebar completely on login page
@@ -903,7 +920,7 @@ st.sidebar.markdown("""
 <style>
     /* Sidebar styling */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%);
+        background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
     }
     
     [data-testid="stSidebar"] .st-emotion-cache-1y4p8pa {
@@ -1113,7 +1130,7 @@ st.markdown("""
         <div class="highlight">📅 {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}</div>
     </div>
 </div>
-f"""{datetime}", unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 if menu == "Dashboard":
     

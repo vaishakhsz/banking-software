@@ -2476,13 +2476,19 @@ elif menu == "Chart of Accounts":
                         st.error(f"Error saving account entry: {e}")
 
 # --- CASH BOOK ---
+# --- FIXED CASH BOOK SECTION ---
 elif menu == "Cash Book":
     st.title("💰 Cash Book Entries")
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book", "🖨️ Print CB Vouchers"])
     
     with tab1:
-        current_balance = get_cash_balance()
-        st.info(f"💰 **Current Cash Balance (from JV):** ₹{current_balance:,.2f}")
+        current_cash_balance = get_cash_balance()
+        current_union_balance = get_bank_balance("Union Bank of India")
+        current_sbi_balance = get_bank_balance("State Bank of India")
+        
+        st.info(f"💰 **Current Cash Balance:** ₹{current_cash_balance:,.2f}")
+        st.info(f"🏦 **Union Bank of India Balance:** ₹{current_union_balance:,.2f}")
+        st.info(f"🏦 **State Bank of India Balance:** ₹{current_sbi_balance:,.2f}")
         
         with st.form("cash_entry_form"):
             col1, col2 = st.columns(2)
@@ -2499,44 +2505,72 @@ elif menu == "Cash Book":
                 if amount > 0 and particulars and account_head:
                     account_code = coa_dict[account_head]
                     
+                    # Check if the transaction is a payment (CREDIT)
+                    if entry_type == "CREDIT (Payment)":
+                        # Check if cash has sufficient balance
+                        if current_cash_balance < amount:
+                            st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_cash_balance:,.2f}, Required: ₹{amount:,.2f}")
+                            st.stop()
+                        
+                        # If transferring to bank, check if destination bank can receive
+                        if account_code == 'AST-102':
+                            # Union Bank - no check needed as it's receiving funds
+                            pass
+                        elif account_code == 'AST-103':
+                            # SBI - no check needed as it's receiving funds
+                            pass
+                        elif account_code == 'AST-101':
+                            # Transferring to cash itself - should not happen
+                            st.error("❌ Cannot transfer cash to itself!")
+                            st.stop()
+                    
+                    # If it's a DEBIT (Receipt), we're receiving money
+                    elif entry_type == "DEBIT (Receipt)":
+                        # If receiving from bank, check bank balance
+                        if account_code == 'AST-102':
+                            if current_union_balance < amount:
+                                st.error(f"❌ Insufficient Union Bank Balance! Available: ₹{current_union_balance:,.2f}, Required: ₹{amount:,.2f}")
+                                st.stop()
+                        elif account_code == 'AST-103':
+                            if current_sbi_balance < amount:
+                                st.error(f"❌ Insufficient SBI Balance! Available: ₹{current_sbi_balance:,.2f}, Required: ₹{amount:,.2f}")
+                                st.stop()
+                    
+                    # Post the journal voucher
                     if entry_type == "DEBIT (Receipt)":
                         jv_result = post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
                     else:
-                        # FIX: Check cash balance before allowing payment
-                        if current_balance < amount:
-                            st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_balance:,.2f}, Required: ₹{amount:,.2f}")
-                            st.stop()
                         jv_result = post_automated_jv(f"Cash Payment: {particulars}", account_code, "AST-101", amount)
                     
                     if jv_result:
                         voucher_no = generate_cash_voucher_no()
                         today = datetime.now(IST).strftime("%Y-%m-%d")
-                        new_balance = get_cash_balance()
+                        new_cash_balance = get_cash_balance()
                         
                         dr_amt = amount if entry_type == "DEBIT (Receipt)" else 0
                         cr_amt = amount if entry_type == "CREDIT (Payment)" else 0
                         
+                        # Record in cash book
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
+                        """, (today, voucher_no, particulars, dr_amt, cr_amt, new_cash_balance, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         
-                        if account_code == 'AST-102':
+                        # Also record in bank book if transferring between cash and bank
+                        if account_code == 'AST-102':  # Union Bank
                             bank_voucher_no = generate_bank_voucher_no()
                             union_bal = get_bank_balance("Union Bank of India")
-                            if union_bal < 0:
-                                print("Insuffient bank balance")
+                            # If cash payment (cash to bank): CREDIT cash, DEBIT bank
                             bank_dr = amount if entry_type == "CREDIT (Payment)" else 0
                             bank_cr = amount if entry_type == "DEBIT (Receipt)" else 0
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (today, bank_voucher_no, f"Cash Transfer: {particulars}", bank_dr, bank_cr, union_bal, "Union Bank of India", "AST-101", narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        elif account_code == 'AST-103':
+                            
+                        elif account_code == 'AST-103':  # SBI
                             bank_voucher_no = generate_bank_voucher_no()
                             sbi_bal = get_bank_balance("State Bank of India")
-                            if sbi_bal < 0:
-                                print("Insufficient bank balance")
                             bank_dr = amount if entry_type == "CREDIT (Payment)" else 0
                             bank_cr = amount if entry_type == "DEBIT (Receipt)" else 0
                             run_query("""
@@ -2577,6 +2611,12 @@ elif menu == "Cash Book":
                 new_narration = st.text_area("Narration", value=row[4] if row[4] else "")
                 
                 if st.form_submit_button("Update Cash Entry", use_container_width=True):
+                    # Validate balance before editing
+                    current_cash = get_cash_balance()
+                    if new_type == "CREDIT (Payment)" and current_cash < new_amt:
+                        st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_cash:,.2f}, Required: ₹{new_amt:,.2f}")
+                        st.stop()
+                    
                     d_amt = new_amt if "DEBIT" in new_type else 0.0
                     c_amt = new_amt if "CREDIT" in new_type else 0.0
                     run_query("""

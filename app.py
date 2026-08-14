@@ -990,7 +990,7 @@ st.markdown(
         background-color: #b8d4f0; /* Light pastel blue */
     }
     [data-testid="stSidebar"] .css-1d391kg { 
-        color: #000000; /* Menu text color (black for contrast) */
+        color: #b8d4f0; /* Menu text color (black for contrast) */
     }
     </style>
     """,

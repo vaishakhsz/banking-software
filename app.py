@@ -1088,9 +1088,13 @@ menu = st.sidebar.radio(
 
 # --- DATABASE BACKUP & RESTORE MODULE ---
 # --- DATABASE BACKUP & RESTORE MODULE ---
+# --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+
+# Wrap everything in a div with backup-restore-section class
+st.sidebar.markdown('<div class="backup-restore-section">', unsafe_allow_html=True)
 st.sidebar.markdown("""
-<div class="backup-restore-section" style="color: black !important; font-size: 13px; font-weight: 600; padding: 5px 0;">
+<div style="font-size: 13px; font-weight: 600; padding: 5px 0; color: white;">
     💾 System Backup
 </div>
 """, unsafe_allow_html=True)
@@ -1098,7 +1102,6 @@ st.sidebar.markdown("""
 if os.path.exists(DB_NAME):
     with open(DB_NAME, "rb") as f:
         db_bytes = f.read()
-    st.sidebar.markdown('<div class="backup-restore-section">', unsafe_allow_html=True)
     st.sidebar.download_button(
         label="📥 Download Backup",
         data=db_bytes,
@@ -1107,9 +1110,7 @@ if os.path.exists(DB_NAME):
         help="Download a complete copy of the SQLite database file for safety.",
         use_container_width=True
     )
-    st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
-st.sidebar.markdown('<div class="backup-restore-section">', unsafe_allow_html=True)
 uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
     if st.sidebar.button("⚠️ Confirm Restore", type="primary", use_container_width=True):
@@ -1123,6 +1124,8 @@ if uploaded_db is not None:
             st.sidebar.error(f"❌ Error restoring database: {str(e)}")
 st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 # ==================================================
 # ========== MAIN CONTENT BASED ON MENU ============
 # ==================================================

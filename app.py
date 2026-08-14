@@ -21,17 +21,17 @@ st.set_page_config(
 # --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
 # --- SIDEBAR & STYLING FIXES ---
 # --- SIDEBAR COLOR FIX (ADDED HERE) ---
-st.markdown("""
+st.markdown(
+    """
 <style>
     /* Force sidebar background */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
     }
     
-    /* FORCE ALL SIDEBAR TEXT TO BE WHITE - MOST AGGRESSIVE */
-    [data-testid="stSidebar"] *,
-    [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] .stMarkdown *,
+    /* FORCE ALL SIDEBAR TEXT TO BE WHITE (Except System Backup & Restore) */
+    [data-testid="stSidebar"] *:not(.backup-restore-section *):not(.backup-restore-section),
+    [data-testid="stSidebar"] .stMarkdown:not(:has(*)),
     [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] label *,
     [data-testid="stSidebar"] .stRadio label,
@@ -43,14 +43,14 @@ st.markdown("""
         color: white !important;
     }
     
-    /* Hover effect */
+    /* Hover effect for navigation */
     [data-testid="stSidebar"] .stRadio label:hover,
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g:hover {
         background: rgba(255,255,255,0.12) !important;
         border-radius: 4px !important;
     }
     
-    /* Selected item */
+    /* Selected item for navigation */
     [data-testid="stSidebar"] .stRadio label[data-selected="true"],
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
         background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
@@ -58,10 +58,21 @@ st.markdown("""
         color: white !important;
     }
     
+    /* MAKE SYSTEM BACKUP & RESTORE TEXT BLACK */
+    .backup-restore-section,
+    .backup-restore-section *,
+    [data-testid="stSidebar"] .backup-restore-section p,
+    [data-testid="stSidebar"] .backup-restore-section span,
+    [data-testid="stSidebar"] .backup-restore-section label {
+        color: black !important;
+    }
+    
     /* Hide footer */
     footer {visibility: hidden;}
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # Define IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))

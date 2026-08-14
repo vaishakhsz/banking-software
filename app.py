@@ -789,7 +789,7 @@ def display_ist_timer(IST):
                 border-radius: 8px; 
                 margin: 5px 0 10px 0;
                 text-align: center;
-                color: white;
+                color: #000000;
                 font-family: 'Segoe UI', sans-serif;">
         <div style="font-size: 12px; opacity: 0.8;">🇮🇳 INDIAN STANDARD TIME</div>
         <div style="font-size: 20px; font-weight: bold; letter-spacing: 1px;">{time_str}</div>

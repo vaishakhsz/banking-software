@@ -778,25 +778,28 @@ def check_login():
     return st.session_state.logged_in
 
 # --- IST TIMER DISPLAY -
-def display_ist_timer():                                                                                             
+def display_ist_timer():
     try:
+        from zoneinfo import ZoneInfo
         ist_tz = ZoneInfo('Asia/Kolkata')
         current_time = datetime.now(ist_tz)
     except Exception:
+        # Fallback if zoneinfo dataset isn't fully loaded in environment
         current_time = datetime.now()
         
     # Format the time and date cleanly
     time_str = current_time.strftime('%I:%M:%S %p')
     date_str = current_time.strftime('%d %b %Y')
     
-    # Render using sidebar markdown with a clean black card background and white/light text for contrast
+    # Render using sidebar markdown with HTML styling
     st.sidebar.markdown(f"""
-    <div style="background-color: #000000; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 8px; text-align: center; margin: 5px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
-        <div style="color: #b8d4f0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">IST Clock</div>
-        <div style="color: #ffffff; font-size: 16px; font-weight: 800; font-family: monospace; margin: 2px 0;">{time_str}</div>
-        <div style="color: #b8d4f0; font-size: 10px; font-weight: 600;">{date_str}</div>
+    <div style="background-color: #000000; text-align: center; padding: 8px; border-radius: 6px;">
+        <div style="color: #b8d4f0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">IST Clock</div>
+        <div style="color: white; font-size: 16px; font-weight: 700; font-family: monospace; margin: 2px 0;">{time_str}</div>
+        <div style="color: #b8d4f0; font-size: 10px;">{date_str}</div>
     </div>
     """, unsafe_allow_html=True)
+
 
 # ==================== MAIN APP ====================
 

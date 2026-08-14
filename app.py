@@ -19,39 +19,63 @@ st.set_page_config(
 
 
 # --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
-# --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
+# --- SIDEBAR & STYLING FIXES ---
 st.markdown("""
 <style>
-    /* 1. Force the entire sidebar container to your blue gradient */
+    /* 1. Force the entire sidebar container to blue gradient */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
         background-color: #0f2b4a !important;
     }
 
-    /* 2. Force the inner scrollable content area to be blue too */
+    /* 2. Make inner content background transparent */
     [data-testid="stSidebar"] .st-emotion-cache-1wmy9hl,
     [data-testid="stSidebar"] .st-emotion-cache-1y4p8pa {
         background: transparent !important;
     }
 
-    /* 3. Make all text in the sidebar white */
-    [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] h1,
-    [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3,
-    [data-testid="stSidebar"] label,
+    /* 3. Make MENU ITEMS (radio buttons) WHITE */
     [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
         color: white !important;
     }
 
-    /* 4. Fix radio button selected state colors */
+    /* 4. Make selected menu item stand out */
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
         background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
         border-left: 3px solid #f7c948 !important;
         color: white !important;
     }
 
-    /* 5. Hide Streamlit footer */
+    /* 5. Make sidebar headers and labels WHITE */
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] label {
+        color: white !important;
+    }
+
+    /* 6. BLACK BACKGROUND FOR SYSTEM BACKUP SECTION */
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) {
+        background-color: #000000 !important;
+        padding: 12px 15px !important;
+        border-radius: 8px !important;
+        margin-top: 5px !important;
+        margin-bottom: 5px !important;
+    }
+
+    /* 7. Make all text WHITE inside the black backup section */
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) .stMarkdown,
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) label,
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) .stDownloadButton,
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) .stFileUploader {
+        color: white !important;
+    }
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) .stFileUploader div {
+        color: white !important;
+    }
+
+    /* 8. Hide Streamlit footer */
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)

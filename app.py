@@ -19,7 +19,6 @@ st.set_page_config(
 
 
 # --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
-# --- SIDEBAR & STYLING FIXES (APPLIED GLOBALLY) ---
 # --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
 st.markdown("""
 <style>

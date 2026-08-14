@@ -42,99 +42,104 @@ st.markdown(
         color: white !important;
     }
     
-   /* MAKE SYSTEM BACKUP & RESTORE SECTION COMPLETELY BLACK */
-.backup-restore-section {
-    background: #000000 !important;
-    padding: 12px !important;
-    border-radius: 8px !important;
-    margin: 5px 0 !important;
-    border: 1px solid #333333 !important;
-}
+    /* MAKE SYSTEM BACKUP & RESTORE SECTION COMPLETELY BLACK */
+    .backup-restore-section {
+        background: #000000 !important;
+        padding: 12px !important;
+        border-radius: 8px !important;
+        margin: 5px 0 !important;
+        border: 1px solid #333333 !important;
+    }
 
-.backup-restore-section *,
-.backup-restore-section p,
-.backup-restore-section span,
-.backup-restore-section label,
-.backup-restore-section div,
-.backup-restore-section button,
-.backup-restore-section button *,
-.backup-restore-section .st-emotion-cache-1vzeuhh,
-.backup-restore-section .st-emotion-cache-1pbsqtx,
-[data-testid="stSidebar"] .backup-restore-section * {
-    color: #ffffff !important;
-}
+    .backup-restore-section *,
+    .backup-restore-section p,
+    .backup-restore-section span,
+    .backup-restore-section label,
+    .backup-restore-section div,
+    .backup-restore-section button,
+    .backup-restore-section button *,
+    .backup-restore-section .st-emotion-cache-1vzeuhh,
+    .backup-restore-section .st-emotion-cache-1pbsqtx,
+    [data-testid="stSidebar"] .backup-restore-section * {
+        color: #ffffff !important;
+    }
 
-/* Make the heading text white */
-.backup-restore-section .st-emotion-cache-1vzeuhh {
-    color: #ffffff !important;
-}
+    /* Make the heading text white */
+    .backup-restore-section .st-emotion-cache-1vzeuhh {
+        color: #ffffff !important;
+    }
 
-/* Style all buttons in backup section - DARK with WHITE text */
-.backup-restore-section button,
-.backup-restore-section [data-testid="stDownloadButton"] button {
-    background: #1a1a1a !important;
-    border: 1px solid #444444 !important;
-    color: #ffffff !important;
-    border-radius: 4px !important;
-}
+    /* Style all buttons in backup section - DARK with WHITE text */
+    .backup-restore-section button,
+    .backup-restore-section [data-testid="stDownloadButton"] button {
+        background: #1a1a1a !important;
+        border: 1px solid #444444 !important;
+        color: #ffffff !important;
+        border-radius: 4px !important;
+    }
 
-.backup-restore-section button:hover,
-.backup-restore-section [data-testid="stDownloadButton"] button:hover {
-    background: #2a2a2a !important;
-    border-color: #666666 !important;
-    color: #ffffff !important;
-}
+    .backup-restore-section button:hover,
+    .backup-restore-section [data-testid="stDownloadButton"] button:hover {
+        background: #2a2a2a !important;
+        border-color: #666666 !important;
+        color: #ffffff !important;
+    }
 
-/* Style file uploader */
-.backup-restore-section .stFileUploader {
-    background: #1a1a1a !important;
-    border: 1px solid #444444 !important;
-    border-radius: 4px !important;
-}
+    /* Style file uploader */
+    .backup-restore-section .stFileUploader {
+        background: #1a1a1a !important;
+        border: 1px solid #444444 !important;
+        border-radius: 4px !important;
+    }
 
-.backup-restore-section .stFileUploader * {
-    color: #ffffff !important;
-}
+    .backup-restore-section .stFileUploader * {
+        color: #ffffff !important;
+    }
 
-/* Style file uploader drag area */
-.backup-restore-section [data-testid="stFileUploadDropzone"] {
-    background: #0d0d0d !important;
-    border: 1px dashed #555555 !important;
-    color: #ffffff !important;
-}
+    /* Style file uploader drag area */
+    .backup-restore-section [data-testid="stFileUploadDropzone"] {
+        background: #0d0d0d !important;
+        border: 1px dashed #555555 !important;
+        color: #ffffff !important;
+    }
 
-.backup-restore-section [data-testid="stFileUploadDropzone"] * {
-    color: #ffffff !important;
-}
+    .backup-restore-section [data-testid="stFileUploadDropzone"] * {
+        color: #ffffff !important;
+    }
 
-/* Style the file uploader text */
-.backup-restore-section .st-emotion-cache-1r6slb0 {
-    color: #ffffff !important;
-}
+    /* Style the file uploader text */
+    .backup-restore-section .st-emotion-cache-1r6slb0 {
+        color: #ffffff !important;
+    }
 
-/* Success/error messages in backup section */
-.backup-restore-section .stAlert {
-    background: #1a1a1a !important;
-    border: 1px solid #333333 !important;
-}
+    /* Success/error messages in backup section */
+    .backup-restore-section .stAlert {
+        background: #1a1a1a !important;
+        border: 1px solid #333333 !important;
+    }
 
-.backup-restore-section .stAlert * {
-    color: #ffffff !important;
-}
+    .backup-restore-section .stAlert * {
+        color: #ffffff !important;
+    }
 
-/* Style download button specifically */
-.backup-restore-section [data-testid="stDownloadButton"] button {
-    background: #1a1a1a !important;
-    border: 1px solid #444444 !important;
-    color: #ffffff !important;
-    width: 100% !important;
-}
+    /* Style download button specifically */
+    .backup-restore-section [data-testid="stDownloadButton"] button {
+        background: #1a1a1a !important;
+        border: 1px solid #444444 !important;
+        color: #ffffff !important;
+        width: 100% !important;
+    }
 
-.backup-restore-section [data-testid="stDownloadButton"] button:hover {
-    background: #2a2a2a !important;
-    border-color: #666666 !important;
-    color: #ffffff !important;
-}
+    .backup-restore-section [data-testid="stDownloadButton"] button:hover {
+        background: #2a2a2a !important;
+        border-color: #666666 !important;
+        color: #ffffff !important;
+    }
+</style>
+""",
+    unsafe_allow_html=True
+)
+
 # Define IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -1225,6 +1230,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# --- MENU HANDLING ---
 if menu == "Dashboard":
     
     st.title("📊 Executive Dashboard & Active Deposits")
@@ -3952,5 +3958,4 @@ elif menu == "SB Interest Calculation":
                 st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
-
 

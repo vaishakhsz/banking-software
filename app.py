@@ -2524,6 +2524,8 @@ elif menu == "Cash Book":
                         if account_code == 'AST-102':
                             bank_voucher_no = generate_bank_voucher_no()
                             union_bal = get_bank_balance("Union Bank of India")
+                            if union_bal < 0:
+                                print("Insuffient bank balance")
                             bank_dr = amount if entry_type == "CREDIT (Payment)" else 0
                             bank_cr = amount if entry_type == "DEBIT (Receipt)" else 0
                             run_query("""
@@ -2533,6 +2535,8 @@ elif menu == "Cash Book":
                         elif account_code == 'AST-103':
                             bank_voucher_no = generate_bank_voucher_no()
                             sbi_bal = get_bank_balance("State Bank of India")
+                            if sbi_bal < 0:
+                                print("Insufficient bank balance")
                             bank_dr = amount if entry_type == "CREDIT (Payment)" else 0
                             bank_cr = amount if entry_type == "DEBIT (Receipt)" else 0
                             run_query("""

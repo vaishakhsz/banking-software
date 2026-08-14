@@ -42,6 +42,38 @@ st.markdown("""
     
     /* Hide footer to clean up UI */
     footer {visibility: hidden;}
+    
+    /* ===== MENU ITEMS STYLING ===== */
+    /* Make all radio menu items white */
+    .stRadio div[role="radiogroup"] label {
+        color: white !important;
+        font-weight: 500 !important;
+        padding: 6px 12px !important;
+        border-radius: 4px !important;
+        transition: all 0.2s ease !important;
+    }
+    
+    /* Hover effect for menu items */
+    .stRadio div[role="radiogroup"] label:hover {
+        background: rgba(255,255,255,0.12) !important;
+    }
+    
+    /* Selected/highlighted menu item */
+    .stRadio div[role="radiogroup"] label[data-selected="true"] {
+        background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
+        border-left: 3px solid #f7c948 !important;
+        color: white !important;
+    }
+    
+    /* Ensure text spans are white */
+    .stRadio div[role="radiogroup"] label span {
+        color: white !important;
+    }
+    
+    /* Selected state text color override */
+    .stRadio div[role="radiogroup"] label[data-selected="true"] span {
+        color: white !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 

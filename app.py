@@ -21,8 +21,6 @@ st.set_page_config(
 # --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
 # --- SIDEBAR & STYLING FIXES ---
 # --- SIDEBAR COLOR FIX (ADDED HERE) ---
-st.markdown(
-    """
 <style>
     /* Force sidebar background */
     [data-testid="stSidebar"] {
@@ -39,8 +37,22 @@ st.markdown(
     [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label,
     [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label *,
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g,
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g * {
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g *,
+    [data-testid="stSidebar"] .st-emotion-cache-1y4p8pa,
+    [data-testid="stSidebar"] .st-emotion-cache-1wmy9hl {
         color: white !important;
+    }
+    
+    /* MAKE SYSTEM BACKUP & RESTORE TEXT BLACK */
+    .backup-restore-section,
+    .backup-restore-section *,
+    [data-testid="stSidebar"] .backup-restore-section p,
+    [data-testid="stSidebar"] .backup-restore-section span,
+    [data-testid="stSidebar"] .backup-restore-section label,
+    [data-testid="stSidebar"] .backup-restore-section div,
+    [data-testid="stSidebar"] .backup-restore-section button *,
+    [data-testid="stSidebar"] .backup-restore-section .st-emotion-cache-1vzeuhh {
+        color: black !important;
     }
     
     /* Hover effect for navigation */
@@ -58,21 +70,9 @@ st.markdown(
         color: black !important;
     }
     
-    /* MAKE SYSTEM BACKUP & RESTORE TEXT BLACK */
-    .backup-restore-section,
-    .backup-restore-section *,
-    [data-testid="stSidebar"] .backup-restore-section p,
-    [data-testid="stSidebar"] .backup-restore-section span,
-    [data-testid="stSidebar"] .backup-restore-section label {
-        color: black !important;
-    }
-    
     /* Hide footer */
     footer {visibility: hidden;}
 </style>
-""",
-    unsafe_allow_html=True,
-)
 
 # Define IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -1062,9 +1062,10 @@ menu = st.sidebar.radio(
 )
 
 # --- DATABASE BACKUP & RESTORE MODULE ---
+# --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.markdown("""
-<div style="color: #b8d4f0; font-size: 13px; font-weight: 600; padding: 5px 0;">
+<div class="backup-restore-section" style="color: black !important; font-size: 13px; font-weight: 600; padding: 5px 0;">
     💾 System Backup
 </div>
 """, unsafe_allow_html=True)
@@ -1072,6 +1073,7 @@ st.sidebar.markdown("""
 if os.path.exists(DB_NAME):
     with open(DB_NAME, "rb") as f:
         db_bytes = f.read()
+    st.sidebar.markdown('<div class="backup-restore-section">', unsafe_allow_html=True)
     st.sidebar.download_button(
         label="📥 Download Backup",
         data=db_bytes,
@@ -1080,7 +1082,9 @@ if os.path.exists(DB_NAME):
         help="Download a complete copy of the SQLite database file for safety.",
         use_container_width=True
     )
+    st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
+st.sidebar.markdown('<div class="backup-restore-section">', unsafe_allow_html=True)
 uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
     if st.sidebar.button("⚠️ Confirm Restore", type="primary", use_container_width=True):
@@ -1092,9 +1096,7 @@ if uploaded_db is not None:
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"❌ Error restoring database: {str(e)}")
-
-st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
-st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
+st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
 # ========== MAIN CONTENT BASED ON MENU ============

@@ -933,7 +933,7 @@ st.sidebar.markdown("""
     
     /* Navigation items */
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g {
-        color: #b8d4f0 !important;
+        color: #white !important;
     }
     
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g:hover {
@@ -1127,7 +1127,7 @@ st.markdown("""
     <div class="contact">
         <div>CIN: U65990KL22021PLN069978</div>
         <div>📞 0471-2994535</div>
-        <div class="highlight">📅 {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}</div>
+        
     </div>
 </div>
 """, unsafe_allow_html=True)

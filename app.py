@@ -1113,7 +1113,7 @@ st.markdown("""
         <div class="highlight">📅 {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}</div>
     </div>
 </div>
-""".format(datetime=datetime), unsafe_allow_html=True)
+f"""{datetime}", unsafe_allow_html=True)
 
 if menu == "Dashboard":
     

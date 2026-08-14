@@ -1027,9 +1027,29 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+
+
 if os.path.exists(DB_NAME):
     with open(DB_NAME, "rb") as f:
         db_bytes = f.read()
+
+    
+
+    st.markdown(
+    """
+    <style>
+    /* Target all download buttons */
+    div[data-testid="stDownloadButton"] button {
+        color: black !important;   /* make label text black */
+        font-weight: 600;          /* bold for emphasis */
+        background-color: #b8d4f0; /* optional: pastel blue background */
+        border-radius: 6px;
+        padding: 6px 12px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
     st.sidebar.download_button(
         label="📥 Download Backup",
         data=db_bytes,

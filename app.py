@@ -1060,7 +1060,20 @@ menu = st.sidebar.radio(
     index=0,
     key="main_menu"
 )
+with st.sidebar:
+    # Your navigation radio buttons remain white
+    nav = st.radio("Navigation", ["Bank Book", "Journal Vouchers", ...])
 
+    # Wrap backup & restore widgets so their text turns black
+    st.markdown('<div class="backup-restore-section">', unsafe_allow_html=True)
+
+    st.markdown("### 💾 System Backup")
+    st.download_button("Download Backup", data, file_name="backup.db")
+
+    st.markdown("### 📥 Restore Database (.db)")
+    st.file_uploader("Upload", type=["db"])
+
+    st.markdown("</div>", unsafe_allow_html=True)
 # --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.markdown("""

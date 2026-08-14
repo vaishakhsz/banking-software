@@ -1111,28 +1111,20 @@ if os.path.exists(DB_NAME):
 
 # Custom CSS to style the file uploader dropzone and its hover state to black
 # Custom CSS to force the file uploader and its dropzone to stay black under all states
+# Custom CSS to style the file uploader dropzone and its hover state to black
 st.sidebar.markdown("""
 <style>
-    /* Force main uploader container and dropzone to stay black */
-    [data-testid="stFileUploader"], 
-    [data-testid="stFileUploader"] section,
-    [data-testid="stFileUploaderDropzone"] {
+    /* Default and hover/drag state for the file uploader box */
+    [data-testid="stFileUploader"] section {
         background-color: #000000 !important;
         border: 1px solid #333333 !important;
     }
-    
-    /* Override hover, focus, and active/drag states so it never highlights white */
     [data-testid="stFileUploader"] section:hover, 
-    [data-testid="stFileUploader"] section:focus-within,
-    [data-testid="stFileUploader"] section[data-baseweb],
-    [data-testid="stFileUploaderDropzone"]:hover {
-        background-color: #000000 !important;
+    [data-testid="stFileUploader"] section:focus-within {
+        background-color: #111111 !important;
         border: 1px solid #555555 !important;
     }
-    
-    /* Ensure all text inside remains legible */
-    [data-testid="stFileUploader"] section *,
-    [data-testid="stFileUploaderDropzone"] * {
+    [data-testid="stFileUploader"] section * {
         color: #ffffff !important;
     }
 </style>

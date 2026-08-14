@@ -19,6 +19,7 @@ st.set_page_config(
 
 
 # --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
+# --- SIDEBAR & STYLING FIXES (APPLIED GLOBALLY) ---
 st.markdown("""
 <style>
     /* 1. Force the entire sidebar container to your blue gradient */
@@ -50,7 +51,27 @@ st.markdown("""
         color: white !important;
     }
 
-    /* 5. Hide Streamlit footer */
+    /* 5. BLACK BACKGROUND FOR SYSTEM BACKUP SECTION */
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) {
+        background-color: #000000 !important;
+        padding: 10px 15px !important;
+        border-radius: 8px !important;
+        margin-top: 5px !important;
+        margin-bottom: 5px !important;
+    }
+
+    /* Make text, labels, buttons white inside the black backup section */
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) .stMarkdown,
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) label,
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) .stDownloadButton,
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) .stFileUploader {
+        color: white !important;
+    }
+    div[data-testid="stSidebar"] .stVerticalBlock > div:has(div:contains("💾 System Backup")) .stFileUploader div {
+        color: white !important;
+    }
+
+    /* 6. Hide Streamlit footer */
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)

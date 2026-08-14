@@ -55,7 +55,7 @@ st.markdown(
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
         background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
         border-left: 3px solid #f7c948 !important;
-        color: white !important;
+        color: black !important;
     }
     
     /* MAKE SYSTEM BACKUP & RESTORE TEXT BLACK */

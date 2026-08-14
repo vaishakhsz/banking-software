@@ -1042,7 +1042,7 @@ if os.path.exists(DB_NAME):
     div[data-testid="stDownloadButton"] button {
         color: black !important;   /* make label text black */
         font-weight: 600;          /* bold for emphasis */
-        background-color: #black; /* optional: black background */
+        background-color: #00000; /* optional: black background */
         border-radius: 6px;
         padding: 6px 12px;
     }
@@ -1067,7 +1067,7 @@ if os.path.exists(DB_NAME):
     div[data-testid="stSidebar"] button {
         color: black !important;   /* make text black */
         font-weight: 600;          /* bold for emphasis */
-        background-color: #black; /* optional pastel blue background */
+        background-color: #00000; /* optional pastel blue background */
         border-radius: 6px;
         padding: 6px 12px;
     }

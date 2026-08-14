@@ -32,7 +32,7 @@ st.markdown("""
     [data-testid="stSidebar"] h3,
     [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
-        color: white !important;
+        color: #white !important;
     }
     
     /* Style the radio buttons to look clean on dark background */

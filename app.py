@@ -901,7 +901,7 @@ if not check_login():
 # ==================================================
 
 # Create sidebar menu
-st.sidebar.title("🏦 AARSHA NIDHI")
+st.sidebar.title("🏦 AARSHA NIDHI LTD")
 display_ist_timer()  # Your IST timer function
 
 menu = st.sidebar.radio(

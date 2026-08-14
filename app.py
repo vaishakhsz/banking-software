@@ -777,7 +777,7 @@ def check_login():
         st.session_state.username = ""
     return st.session_state.logged_in
 
-# --- IST TIMER DISPLAY -
+# --- IST TIMER DISPLAY 
 def display_ist_timer():
     try:
         from zoneinfo import ZoneInfo
@@ -799,6 +799,7 @@ def display_ist_timer():
         <div style="color: #b8d4f0; font-size: 10px;">{date_str}</div>
     </div>
     """, unsafe_allow_html=True)
+
 
 
 # ==================== MAIN APP ====================

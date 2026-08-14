@@ -6,6 +6,8 @@ import io
 import os
 import time
 import re
+import plotly.express as px
+import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -794,10 +796,6 @@ def display_ist_timer():
     </div>
     """, unsafe_allow_html=True)
 
-
-
-
-
 # ==================== MAIN APP ====================
 
 # --- LOGIN SYSTEM ---
@@ -900,12 +898,103 @@ if not check_login():
 # ========== SIDEBAR MENU & NAVIGATION =============
 # ==================================================
 
-# Create sidebar menu
-st.sidebar.title("🏦 AARSHA NIDHI LTD")
+# Create sidebar menu with enhanced styling
+st.sidebar.markdown("""
+<style>
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%);
+    }
+    
+    [data-testid="stSidebar"] .st-emotion-cache-1y4p8pa {
+        color: white !important;
+    }
+    
+    [data-testid="stSidebar"] .st-emotion-cache-1wmy9hl {
+        color: white !important;
+    }
+    
+    /* Navigation items */
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g {
+        color: #b8d4f0 !important;
+    }
+    
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g:hover {
+        color: white !important;
+        background: rgba(255,255,255,0.1) !important;
+    }
+    
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
+        color: white !important;
+        background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
+        border-left: 3px solid #f7c948 !important;
+    }
+    
+    /* Company header in sidebar */
+    .sidebar-header {
+        text-align: center;
+        padding: 10px 0 5px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+        margin-bottom: 10px;
+    }
+    
+    .sidebar-header h2 {
+        color: white;
+        font-size: 18px;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: 0.5px;
+    }
+    
+    .sidebar-header p {
+        color: #b8d4f0;
+        font-size: 10px;
+        margin: 3px 0 0 0;
+    }
+    
+    /* Divider styling */
+    .sidebar-divider {
+        border: none;
+        border-top: 1px solid rgba(255,255,255,0.1);
+        margin: 8px 0;
+    }
+    
+    /* User info */
+    .user-info {
+        color: #b8d4f0;
+        font-size: 12px;
+        padding: 5px 0;
+        text-align: center;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Company header in sidebar
+st.sidebar.markdown("""
+<div class="sidebar-header">
+    <h2>🏦 AARSHA NIDHI</h2>
+    <p>Financial Banking Software</p>
+</div>
+""", unsafe_allow_html=True)
+
+# User info
+st.sidebar.markdown(f"""
+<div class="user-info">
+    👤 Logged in as: <b style="color:white;">{st.session_state.username}</b>
+</div>
+""", unsafe_allow_html=True)
+
+# Divider
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+
 display_ist_timer()  # Your IST timer function
 
+# Divider
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+
+# Navigation menu with custom styling
 menu = st.sidebar.radio(
-    "Navigation",
+    "📋 MENU",
     [
         "Dashboard",
         "Customer Management",
@@ -921,18 +1010,24 @@ menu = st.sidebar.radio(
         "Financial Statements (Trial/BS/PL)",
         "Reports",
         "SB Interest Calculation"
-    ]
+    ],
+    index=0,
+    key="main_menu"
 )
 
 # --- DATABASE BACKUP & RESTORE MODULE ---
-st.sidebar.markdown("---")
-st.sidebar.subheader("💾 System Backup & Recovery")
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+st.sidebar.markdown("""
+<div style="color: #b8d4f0; font-size: 13px; font-weight: 600; padding: 5px 0;">
+    💾 System Backup
+</div>
+""", unsafe_allow_html=True)
 
 if os.path.exists(DB_NAME):
     with open(DB_NAME, "rb") as f:
         db_bytes = f.read()
     st.sidebar.download_button(
-        label="📥 Download Database Backup",
+        label="📥 Download Backup",
         data=db_bytes,
         file_name=f"aasha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
         mime="application/octet-stream",
@@ -942,7 +1037,7 @@ if os.path.exists(DB_NAME):
 
 uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
-    if st.sidebar.button("⚠️ Confirm Database Restore", type="primary", use_container_width=True):
+    if st.sidebar.button("⚠️ Confirm Restore", type="primary", use_container_width=True):
         try:
             with open(DB_NAME, "wb") as f:
                 f.write(uploaded_db.getbuffer())
@@ -952,28 +1047,142 @@ if uploaded_db is not None:
         except Exception as e:
             st.sidebar.error(f"❌ Error restoring database: {str(e)}")
 
-st.sidebar.markdown("---")
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
 # ==================================================
 # ========== MAIN CONTENT BASED ON MENU ============
 # ==================================================
 
+# --- COMPANY HEADER (visible after login) ---
+st.markdown("""
+<style>
+    .company-header {
+        background: linear-gradient(135deg, #1f4e78 0%, #2c6b9e 100%);
+        padding: 15px 25px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        color: white;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .company-header .brand {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    .company-header .brand h1 {
+        font-size: 22px;
+        margin: 0;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }
+    .company-header .brand .sub {
+        font-size: 11px;
+        opacity: 0.85;
+        margin-top: 2px;
+    }
+    .company-header .contact {
+        text-align: right;
+        font-size: 12px;
+        opacity: 0.9;
+        line-height: 1.6;
+    }
+    .company-header .contact .highlight {
+        background: rgba(255,255,255,0.15);
+        padding: 2px 10px;
+        border-radius: 4px;
+        display: inline-block;
+        margin-top: 3px;
+    }
+</style>
+<div class="company-header">
+    <div class="brand">
+        <div style="font-size: 32px;">🏦</div>
+        <div>
+            <h1>AARSHA NIDHI LIMITED</h1>
+            <div class="sub">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
+        </div>
+    </div>
+    <div class="contact">
+        <div>CIN: U65990KL22021PLN069978</div>
+        <div>📞 0471-2994535</div>
+        <div class="highlight">📅 {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}</div>
+    </div>
+</div>
+""".format(datetime=datetime), unsafe_allow_html=True)
+
 if menu == "Dashboard":
     
     st.title("📊 Executive Dashboard & Active Deposits")
     
+    # Get metrics
     total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0]
     total_sb = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0]
     total_fds = run_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")[0][0]
     rd_active = run_query("SELECT COUNT(*) FROM recurring_deposits WHERE status = 'ACTIVE'")[0][0]
     cash_bal = get_cash_balance()
+    union_bal = get_bank_balance("Union Bank of India")
+    sbi_bal = get_bank_balance("State Bank of India")
     
+    # Metrics row
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("👥 Total Customers", total_cust)
-    col2.metric("💰 Active SB Accounts", total_sb)
-    col3.metric("📈 Active FDs", total_fds)
-    col4.metric("🔄 Active RDs", rd_active)
+    col1.metric("👥 Total Customers", total_cust, delta=None)
+    col2.metric("💰 Active SB Accounts", total_sb, delta=None)
+    col3.metric("📈 Active FDs", total_fds, delta=None)
+    col4.metric("🔄 Active RDs", rd_active, delta=None)
+    
+    # Second metrics row
+    col5, col6, col7 = st.columns(3)
+    col5.metric("💵 Cash Balance", f"₹{cash_bal:,.2f}")
+    col6.metric("🏦 Union Bank Balance", f"₹{union_bal:,.2f}")
+    col7.metric("🏦 SBI Balance", f"₹{sbi_bal:,.2f}")
+    
+    st.markdown("---")
+    
+    # Charts
+    col_chart1, col_chart2 = st.columns(2)
+    
+    with col_chart1:
+        st.subheader("📊 Account Distribution")
+        account_data = {
+            "Account Type": ["SB Accounts", "Fixed Deposits", "Recurring Deposits"],
+            "Count": [total_sb, total_fds, rd_active]
+        }
+        df_chart = pd.DataFrame(account_data)
+        fig = px.pie(df_chart, values='Count', names='Account Type', 
+                     title="Active Accounts Distribution",
+                     color_discrete_sequence=px.colors.sequential.Blues_r,
+                     hole=0.4)
+        fig.update_traces(textposition='inside', textinfo='percent+label')
+        fig.update_layout(height=350, margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col_chart2:
+        st.subheader("📊 Balance Overview")
+        balance_data = {
+            "Category": ["Cash", "Union Bank", "SBI", "SB Deposits", "FD Deposits", "RD Deposits"],
+            "Amount": [
+                cash_bal, 
+                union_bal, 
+                sbi_bal,
+                get_account_balance_from_jv('LIA-101'),
+                get_account_balance_from_jv('LIA-102'),
+                get_account_balance_from_jv('LIA-103')
+            ]
+        }
+        df_balance = pd.DataFrame(balance_data)
+        colors = ['#2ecc71', '#3498db', '#2980b9', '#f39c12', '#e67e22', '#e74c3c']
+        fig = px.bar(df_balance, x='Category', y='Amount', 
+                     title="Balance Overview",
+                     color='Category',
+                     color_discrete_sequence=colors)
+        fig.update_layout(height=350, xaxis_tickangle=-45, margin=dict(l=20, r=20, t=40, b=20))
+        fig.update_traces(texttemplate='₹%{value:,.0f}', textposition='outside')
+        st.plotly_chart(fig, use_container_width=True)
     
     st.markdown("---")
     st.subheader("📋 Active Recurring Deposits (RD) Directory")
@@ -3347,25 +3556,223 @@ elif menu == "Financial Statements (Trial/BS/PL)":
 # --- REPORTS ---
 elif menu == "Reports":
     st.title("📄 Comprehensive Bank Reports Center")
-    report_type = st.selectbox("Select Report to Generate", ["Customer List Report", "Daily Transactions Report"])
     
-    if st.button("Generate Report", use_container_width=True):
-        if report_type == "Customer List Report":
-            data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
+    report_tabs = st.tabs(["📋 Reports", "📊 Charts"])
+    
+    with report_tabs[0]:
+        report_type = st.selectbox("Select Report to Generate", [
+            "Customer List Report", 
+            "Daily Transactions Report",
+            "SB Accounts Report",
+            "FD Accounts Report",
+            "RD Accounts Report",
+            "Cash Book Report",
+            "Bank Book Report",
+            "Trial Balance Report",
+            "Journal Vouchers Report"
+        ])
+        
+        col_rep1, col_rep2 = st.columns([1, 4])
+        with col_rep1:
+            generate_btn = st.button("📄 Generate Report", use_container_width=True, type="primary")
+        
+        if generate_btn:
+            if report_type == "Customer List Report":
+                data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
+                if data:
+                    df_rep = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status", "Registered Date"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download Customer List PDF", create_pdf_report("Customer List Report", df_rep), "customer_list.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No customer records found.")
+            
+            elif report_type == "Daily Transactions Report":
+                data = run_query("SELECT tx_id, account_no, type, amount, mode, narration, date FROM transactions ORDER BY date DESC")
+                if data:
+                    df_rep = pd.DataFrame(data, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download Transactions PDF", create_pdf_report("Daily Transactions Report", df_rep), "transactions_report.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No transaction records found.")
+            
+            elif report_type == "SB Accounts Report":
+                data = run_query("""
+                    SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at 
+                    FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
+                """)
+                if data:
+                    df_rep = pd.DataFrame(data, columns=["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created Date"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download SB Accounts PDF", create_pdf_report("SB Accounts Report", df_rep), "sb_accounts_report.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No SB accounts found.")
+            
+            elif report_type == "FD Accounts Report":
+                data = run_query("""
+                    SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, 
+                           f.maturity_amount, f.status, f.created_at 
+                    FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
+                """)
+                if data:
+                    df_rep = pd.DataFrame(data, columns=["FD ID", "Customer Name", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Created Date"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download FD Accounts PDF", create_pdf_report("FD Accounts Report", df_rep), "fd_accounts_report.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No FD accounts found.")
+            
+            elif report_type == "RD Accounts Report":
+                data = run_query("""
+                    SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, 
+                           r.installments_paid, r.status, r.created_at 
+                    FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
+                """)
+                if data:
+                    df_rep = pd.DataFrame(data, columns=["RD ID", "Customer Name", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Inst. Paid", "Status", "Created Date"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download RD Accounts PDF", create_pdf_report("RD Accounts Report", df_rep), "rd_accounts_report.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No RD accounts found.")
+            
+            elif report_type == "Cash Book Report":
+                data = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration FROM cash_book ORDER BY date DESC")
+                if data:
+                    df_rep = pd.DataFrame(data, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download Cash Book PDF", create_pdf_report("Cash Book Report", df_rep), "cash_book_report.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No cash book entries found.")
+            
+            elif report_type == "Bank Book Report":
+                data = run_query("SELECT date, voucher_no, bank_name, particulars, debit_amount, credit_amount, balance, narration FROM bank_book ORDER BY date DESC")
+                if data:
+                    df_rep = pd.DataFrame(data, columns=["Date", "Voucher No", "Bank", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download Bank Book PDF", create_pdf_report("Bank Book Report", df_rep), "bank_book_report.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No bank book entries found.")
+            
+            elif report_type == "Trial Balance Report":
+                entries = run_query("""
+                    SELECT 
+                        CO.account_code, 
+                        CO.account_name, 
+                        CO.account_type, 
+                        COALESCE(SUM(JE.debit), 0) as total_debit, 
+                        COALESCE(SUM(JE.credit), 0) as total_credit
+                    FROM chart_of_accounts CO
+                    LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                    GROUP BY CO.account_code
+                    HAVING total_debit > 0 OR total_credit > 0
+                    ORDER BY CO.account_type, CO.account_code
+                """)
+                if entries:
+                    df_rep = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Account Type", "Total Debit (₹)", "Total Credit (₹)"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download Trial Balance PDF", create_pdf_report("Trial Balance Report", df_rep), "trial_balance_report.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No trial balance entries found.")
+            
+            elif report_type == "Journal Vouchers Report":
+                data = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY voucher_date DESC")
+                if data:
+                    df_rep = pd.DataFrame(data, columns=["JV ID", "Date", "Narration", "Status"])
+                    st.dataframe(df_rep, use_container_width=True)
+                    st.download_button("📥 Download Journal Vouchers PDF", create_pdf_report("Journal Vouchers Report", df_rep), "journal_vouchers_report.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No journal vouchers found.")
+    
+    with report_tabs[1]:
+        st.subheader("📊 Report Charts")
+        chart_type = st.selectbox("Select Chart Type", [
+            "Customer Registration Trend",
+            "Account Distribution",
+            "SB Account Balances",
+            "FD Maturity Distribution",
+            "RD Installment Progress"
+        ])
+        
+        if chart_type == "Customer Registration Trend":
+            data = run_query("SELECT created_at FROM customers")
             if data:
-                df_rep = pd.DataFrame(data, columns=["ID", "Name", "Phone", "Email", "KYC Status", "Registered Date"])
-                st.dataframe(df_rep, use_container_width=True)
-                st.download_button("📥 Download Customer List PDF", create_pdf_report("Customer List Report", df_rep), "customer_list.pdf", "application/pdf", use_container_width=True)
+                df = pd.DataFrame(data, columns=["Created Date"])
+                df["Date"] = pd.to_datetime(df["Created Date"]).dt.date
+                trend = df.groupby("Date").size().reset_index(name="Count")
+                
+                fig = px.line(trend, x="Date", y="Count", 
+                              title="Customer Registration Trend",
+                              markers=True,
+                              color_discrete_sequence=["#1f4e78"])
+                fig.update_layout(height=400, xaxis_title="Date", yaxis_title="New Customers")
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("No customer records found.")
-        elif report_type == "Daily Transactions Report":
-            data = run_query("SELECT tx_id, account_no, type, amount, mode, narration, date FROM transactions")
+                st.info("No customer data available.")
+        
+        elif chart_type == "Account Distribution":
+            sb_count = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0]
+            fd_count = run_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")[0][0]
+            rd_count = run_query("SELECT COUNT(*) FROM recurring_deposits WHERE status='ACTIVE'")[0][0]
+            
+            data = {
+                "Account Type": ["SB Accounts", "Fixed Deposits", "Recurring Deposits"],
+                "Count": [sb_count, fd_count, rd_count]
+            }
+            df = pd.DataFrame(data)
+            fig = px.pie(df, values='Count', names='Account Type', 
+                        title="Account Distribution",
+                        color_discrete_sequence=px.colors.sequential.Blues_r,
+                        hole=0.4)
+            fig.update_traces(textposition='inside', textinfo='percent+label')
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        elif chart_type == "SB Account Balances":
+            data = run_query("""
+                SELECT c.name, s.balance 
+                FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
+                ORDER BY s.balance DESC
+                LIMIT 20
+            """)
             if data:
-                df_rep = pd.DataFrame(data, columns=["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"])
-                st.dataframe(df_rep, use_container_width=True)
-                st.download_button("📥 Download Transactions PDF", create_pdf_report("Daily Transactions Report", df_rep), "transactions_report.pdf", "application/pdf", use_container_width=True)
+                df = pd.DataFrame(data, columns=["Customer Name", "Balance (₹)"])
+                fig = px.bar(df, x="Customer Name", y="Balance (₹)",
+                            title="Top 20 SB Account Balances",
+                            color="Balance (₹)",
+                            color_continuous_scale="Blues")
+                fig.update_layout(height=400, xaxis_tickangle=-45)
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("No transaction records found.")
+                st.info("No SB account data available.")
+        
+        elif chart_type == "FD Maturity Distribution":
+            data = run_query("SELECT maturity_amount FROM fixed_deposits WHERE status='ACTIVE'")
+            if data:
+                df = pd.DataFrame(data, columns=["Maturity Amount (₹)"])
+                fig = px.histogram(df, x="Maturity Amount (₹)",
+                                  title="FD Maturity Distribution",
+                                  nbins=20,
+                                  color_discrete_sequence=["#1f4e78"])
+                fig.update_layout(height=400, xaxis_title="Maturity Amount (₹)", yaxis_title="Number of FDs")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No FD data available.")
+        
+        elif chart_type == "RD Installment Progress":
+            data = run_query("""
+                SELECT c.name, r.installments_paid, r.tenure_months 
+                FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
+                WHERE r.status='ACTIVE'
+            """)
+            if data:
+                df = pd.DataFrame(data, columns=["Customer Name", "Installments Paid", "Tenure (Months)"])
+                df["Progress %"] = (df["Installments Paid"] / df["Tenure (Months)"] * 100).round(1)
+                fig = px.bar(df, x="Customer Name", y="Progress %",
+                            title="RD Installment Progress",
+                            color="Progress %",
+                            color_continuous_scale="Viridis")
+                fig.update_layout(height=400, xaxis_tickangle=-45)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No RD data available.")
 
 # --- SB INTEREST CALCULATION & CREDIT ---
 elif menu == "SB Interest Calculation":

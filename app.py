@@ -796,7 +796,7 @@ def display_ist_timer():
         <div style="color: #ffffff; font-size: 16px; font-weight: 800; font-family: monospace; margin: 2px 0;">{time_str}</div>
         <div style="color: #b8d4f0; font-size: 10px; font-weight: 600;">{date_str}</div>
     </div>
-    """, unsafe_allow_html=True
+    """, unsafe_allow_html=True)
 
 # ==================== MAIN APP ====================
 

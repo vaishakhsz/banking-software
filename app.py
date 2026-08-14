@@ -42,94 +42,99 @@ st.markdown(
         color: white !important;
     }
     
-    /* MAKE SYSTEM BACKUP & RESTORE SECTION BACKGROUND BLACK, TEXT WHITE */
-    .backup-restore-section {
-        background: #000000 !important;
-        padding: 10px !important;
-        border-radius: 8px !important;
-        margin: 5px 0 !important;
-    }
-    
-    .backup-restore-section *,
-    .backup-restore-section p,
-    .backup-restore-section span,
-    .backup-restore-section label,
-    .backup-restore-section div,
-    .backup-restore-section button,
-    .backup-restore-section button *,
-    .backup-restore-section .st-emotion-cache-1vzeuhh,
-    .backup-restore-section .st-emotion-cache-1pbsqtx,
-    [data-testid="stSidebar"] .backup-restore-section * {
-        color: white !important;
-    }
-    
-    /* Make button backgrounds dark but keep text white */
-    .backup-restore-section button {
-        background: #1a1a1a !important;
-        border: 1px solid #444 !important;
-        color: white !important;
-    }
-    
-    .backup-restore-section button:hover {
-        background: #2a2a2a !important;
-        border-color: #666 !important;
-    }
-    
-    /* Make file uploader background dark */
-    .backup-restore-section .stFileUploader {
-        background: #1a1a1a !important;
-        border: 1px solid #444 !important;
-        border-radius: 4px !important;
-    }
-    
-    .backup-restore-section .stFileUploader * {
-        color: white !important;
-    }
-    
-    /* Override for the heading specifically */
-    .backup-restore-section .st-emotion-cache-1vzeuhh {
-        color: white !important;
-    }
-    
-    /* Make sure download button text is visible */
-    .backup-restore-section [data-testid="stDownloadButton"] button {
-        background: #1a1a1a !important;
-        border: 1px solid #444 !important;
-        color: white !important;
-    }
-    
-    .backup-restore-section [data-testid="stDownloadButton"] button:hover {
-        background: #2a2a2a !important;
-        border-color: #666 !important;
-    }
-    
-    /* Hover effect for navigation */
-    [data-testid="stSidebar"] .stRadio label:hover,
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g:hover {
-        background: rgba(255,255,255,0.12) !important;
-        border-radius: 4px !important;
-    }
-    
-    /* Selected item for navigation */
-    [data-testid="stSidebar"] .stRadio label[data-selected="true"],
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
-        background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
-        border-left: 3px solid #f7c948 !important;
-        color: white !important;
-    }
-    
-    [data-testid="stSidebar"] .stRadio label[data-selected="true"] *,
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] * {
-        color: white !important;
-    }
-    
-    /* Hide footer */
-    footer {visibility: hidden;}
-</style>
-""",
-    unsafe_allow_html=True,
-)
+   /* MAKE SYSTEM BACKUP & RESTORE SECTION COMPLETELY BLACK */
+.backup-restore-section {
+    background: #000000 !important;
+    padding: 12px !important;
+    border-radius: 8px !important;
+    margin: 5px 0 !important;
+    border: 1px solid #333333 !important;
+}
 
+.backup-restore-section *,
+.backup-restore-section p,
+.backup-restore-section span,
+.backup-restore-section label,
+.backup-restore-section div,
+.backup-restore-section button,
+.backup-restore-section button *,
+.backup-restore-section .st-emotion-cache-1vzeuhh,
+.backup-restore-section .st-emotion-cache-1pbsqtx,
+[data-testid="stSidebar"] .backup-restore-section * {
+    color: #ffffff !important;
+}
+
+/* Make the heading text white */
+.backup-restore-section .st-emotion-cache-1vzeuhh {
+    color: #ffffff !important;
+}
+
+/* Style all buttons in backup section - DARK with WHITE text */
+.backup-restore-section button,
+.backup-restore-section [data-testid="stDownloadButton"] button {
+    background: #1a1a1a !important;
+    border: 1px solid #444444 !important;
+    color: #ffffff !important;
+    border-radius: 4px !important;
+}
+
+.backup-restore-section button:hover,
+.backup-restore-section [data-testid="stDownloadButton"] button:hover {
+    background: #2a2a2a !important;
+    border-color: #666666 !important;
+    color: #ffffff !important;
+}
+
+/* Style file uploader */
+.backup-restore-section .stFileUploader {
+    background: #1a1a1a !important;
+    border: 1px solid #444444 !important;
+    border-radius: 4px !important;
+}
+
+.backup-restore-section .stFileUploader * {
+    color: #ffffff !important;
+}
+
+/* Style file uploader drag area */
+.backup-restore-section [data-testid="stFileUploadDropzone"] {
+    background: #0d0d0d !important;
+    border: 1px dashed #555555 !important;
+    color: #ffffff !important;
+}
+
+.backup-restore-section [data-testid="stFileUploadDropzone"] * {
+    color: #ffffff !important;
+}
+
+/* Style the file uploader text */
+.backup-restore-section .st-emotion-cache-1r6slb0 {
+    color: #ffffff !important;
+}
+
+/* Success/error messages in backup section */
+.backup-restore-section .stAlert {
+    background: #1a1a1a !important;
+    border: 1px solid #333333 !important;
+}
+
+.backup-restore-section .stAlert * {
+    color: #ffffff !important;
+}
+
+/* Style download button specifically */
+.backup-restore-section [data-testid="stDownloadButton"] button {
+    background: #1a1a1a !important;
+    border: 1px solid #444444 !important;
+    color: #ffffff !important;
+    width: 100% !important;
+}
+
+.backup-restore-section [data-testid="stDownloadButton"] button:hover {
+    background: #2a2a2a !important;
+    border-color: #666666 !important;
+    color: #ffffff !important;
+}
 # Define IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))
 

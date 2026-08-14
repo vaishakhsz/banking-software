@@ -892,7 +892,22 @@ if not check_login():
 
 # Your IST timer placeholder function (replace with your actual implementation)
 def display_ist_timer():
-    pass
+    # Define IST timezone
+    ist_tz = pytz.timezone('Asia/Kolkata')
+    current_time = datetime.now(ist_tz)
+    
+    # Format the time and date cleanly
+    time_str = current_time.strftime('%I:%M:%S %p')
+    date_str = current_time.strftime('%d %b %Y')
+    
+    # Render using sidebar markdown with HTML styling
+    st.sidebar.markdown(f"""
+    <div style="text-align: center; padding: 5px 0;">
+        <div style="color: #b8d4f0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">IST Clock</div>
+        <div style="color: white; font-size: 16px; font-weight: 700; font-family: monospace; margin: 2px 0;">{time_str}</div>
+        <div style="color: #b8d4f0; font-size: 10px;">{date_str}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.sidebar.markdown("""
 <style>

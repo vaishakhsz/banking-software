@@ -1105,39 +1105,15 @@ if os.path.exists(DB_NAME):
 
 
 # Custom CSS for file uploader
-st.markdown(
-    """
-    <style>
-    /* Sidebar file uploader */
-    div[data-testid="stSidebar"] div[data-testid="stFileUploader"] {
-        background-color: #b8d4f0;   /* pastel blue background */
-        border-radius: 6px;
-        padding: 8px;
-    }
-
-    /* Label text */
-    div[data-testid="stSidebar"] div[data-testid="stFileUploader"] label {
-        color: #000000 !important;   /* pure black text */
-        font-weight: 600;
-    }
-
-    /* Uploaded file name text */
-    div[data-testid="stSidebar"] div[data-testid="stFileUploader"] div {
-        color: #000000 !important;   /* black for file name */
-    }
-
-    /* Optional: hover effect */
-    div[data-testid="stSidebar"] div[data-testid="stFileUploader"]:hover {
-        background-color: #a0c4e0;   /* darker blue on hover */
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
 
 
 
-uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
+st.sidebar.markdown("""
+<div style="background-color: #000000; padding: 12px; border-radius: 8px; border: 1px solid #333333; margin-bottom: 10px;">
+    <div style="color: #b8d4f0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Database Restore</div>
+""", unsafe_allow_html=True)
+
+uploaded_db = st.sidebar.file_uploader("📤 Choose Database File (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
     if st.sidebar.button("⚠️ Confirm Restore", type="primary", use_container_width=True):
         try:
@@ -1148,6 +1124,7 @@ if uploaded_db is not None:
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"❌ Error restoring database: {str(e)}")
+
 st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)

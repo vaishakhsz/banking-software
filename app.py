@@ -1108,12 +1108,21 @@ if os.path.exists(DB_NAME):
 
 
 
+# Custom CSS to style the file uploader dropzone container to black
 st.sidebar.markdown("""
-<div style="background-color: #000000; padding: 12px; border-radius: 8px; border: 1px solid #333333; margin-bottom: 10px;">
-    <div style="color: #b8d4f0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Database Restore</div>
+<style>
+    /* Target the file uploader box inside the sidebar */
+    [data-testid="stFileUploader"] section {
+        background-color: #000000 !important;
+        border: 1px solid #333333 !important;
+    }
+    [data-testid="stFileUploader"] section * {
+        color: #ffffff !important;
+    }
+</style>
 """, unsafe_allow_html=True)
 
-uploaded_db = st.sidebar.file_uploader("📤 Choose Database File (.db)", type=["db", "sqlite", "sqlite3"])
+uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
     if st.sidebar.button("⚠️ Confirm Restore", type="primary", use_container_width=True):
         try:
@@ -1124,8 +1133,6 @@ if uploaded_db is not None:
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"❌ Error restoring database: {str(e)}")
-
-st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")

@@ -18,62 +18,46 @@ st.set_page_config(
 )
 
 # --- SIDEBAR COLOR FIX (ADDED HERE) ---
+# --- SIDEBAR COLOR FIX (ADDED HERE) ---
 st.markdown("""
 <style>
-    /* Force sidebar background to match the dark blue theme */
+    /* Force sidebar background */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
     }
     
-    /* Make sidebar text white and readable */
+    /* FORCE ALL SIDEBAR TEXT TO BE WHITE - MOST AGGRESSIVE */
+    [data-testid="stSidebar"] *,
     [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] h1,
-    [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] .stMarkdown *,
     [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
-        color: #white !important;
-    }
-    
-    /* Style the radio buttons to look clean on dark background */
-    .stRadio div[data-testid="stWidgetLabel"] {
-        color: #b8d4f0 !important;
-    }
-    
-    /* Hide footer to clean up UI */
-    footer {visibility: hidden;}
-    
-    /* ===== MENU ITEMS STYLING ===== */
-    /* Make all radio menu items white */
-    .stRadio div[role="radiogroup"] label {
+    [data-testid="stSidebar"] label *,
+    [data-testid="stSidebar"] .stRadio label,
+    [data-testid="stSidebar"] .stRadio label *,
+    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label,
+    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label *,
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g,
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g * {
         color: white !important;
-        font-weight: 500 !important;
-        padding: 6px 12px !important;
-        border-radius: 4px !important;
-        transition: all 0.2s ease !important;
     }
     
-    /* Hover effect for menu items */
-    .stRadio div[role="radiogroup"] label:hover {
+    /* Hover effect */
+    [data-testid="stSidebar"] .stRadio label:hover,
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g:hover {
         background: rgba(255,255,255,0.12) !important;
+        border-radius: 4px !important;
     }
     
-    /* Selected/highlighted menu item */
-    .stRadio div[role="radiogroup"] label[data-selected="true"] {
+    /* Selected item */
+    [data-testid="stSidebar"] .stRadio label[data-selected="true"],
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
         background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
         border-left: 3px solid #f7c948 !important;
         color: white !important;
     }
     
-    /* Ensure text spans are white */
-    .stRadio div[role="radiogroup"] label span {
-        color: white !important;
-    }
-    
-    /* Selected state text color override */
-    .stRadio div[role="radiogroup"] label[data-selected="true"] span {
-        color: white !important;
-    }
+    /* Hide footer */
+    footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 

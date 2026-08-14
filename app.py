@@ -17,10 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-
 # --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
-# --- SIDEBAR & STYLING FIXES ---
-# --- SIDEBAR COLOR FIX (ADDED HERE) ---
 st.markdown(
     r"""
 <style>
@@ -64,12 +61,46 @@ st.markdown(
     .backup-restore-section .st-emotion-cache-1pbsqtx,
     [data-testid="stSidebar"] .backup-restore-section * {
         color: white !important;
-        background: transparent !important;
+    }
+    
+    /* Make button backgrounds dark but keep text white */
+    .backup-restore-section button {
+        background: #1a1a1a !important;
+        border: 1px solid #444 !important;
+        color: white !important;
+    }
+    
+    .backup-restore-section button:hover {
+        background: #2a2a2a !important;
+        border-color: #666 !important;
+    }
+    
+    /* Make file uploader background dark */
+    .backup-restore-section .stFileUploader {
+        background: #1a1a1a !important;
+        border: 1px solid #444 !important;
+        border-radius: 4px !important;
+    }
+    
+    .backup-restore-section .stFileUploader * {
+        color: white !important;
     }
     
     /* Override for the heading specifically */
     .backup-restore-section .st-emotion-cache-1vzeuhh {
         color: white !important;
+    }
+    
+    /* Make sure download button text is visible */
+    .backup-restore-section [data-testid="stDownloadButton"] button {
+        background: #1a1a1a !important;
+        border: 1px solid #444 !important;
+        color: white !important;
+    }
+    
+    .backup-restore-section [data-testid="stDownloadButton"] button:hover {
+        background: #2a2a2a !important;
+        border-color: #666 !important;
     }
     
     /* Hover effect for navigation */
@@ -987,7 +1018,7 @@ st.sidebar.markdown("""
     
     /* Navigation items */
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g {
-        color: #white !important;
+        color: white !important;
     }
     
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g:hover {
@@ -1087,8 +1118,6 @@ menu = st.sidebar.radio(
 )
 
 # --- DATABASE BACKUP & RESTORE MODULE ---
-# --- DATABASE BACKUP & RESTORE MODULE ---
-# --- DATABASE BACKUP & RESTORE MODULE ---
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 
 # Wrap everything in a div with backup-restore-section class
@@ -1126,6 +1155,7 @@ st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
+
 # ==================================================
 # ========== MAIN CONTENT BASED ON MENU ============
 # ==================================================
@@ -1186,8 +1216,7 @@ st.markdown("""
     <div class="contact">
         <div>CIN: U65990KL22021PLN069978</div>
         <div>📞 0471-2994535</div>
-        
-    
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -2761,7 +2790,6 @@ elif menu == "Chart of Accounts":
                         st.error(f"Error saving account entry: {e}")
 
 # --- CASH BOOK ---
-# --- FIXED CASH BOOK SECTION ---
 elif menu == "Cash Book":
     st.title("💰 Cash Book Entries")
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book", "🖨️ Print CB Vouchers"])
@@ -3919,6 +3947,5 @@ elif menu == "SB Interest Calculation":
                 st.rerun()
     else:
         st.info("No SB accounts found to calculate interest.")
-
 
 

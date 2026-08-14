@@ -21,6 +21,8 @@ st.set_page_config(
 # --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
 # --- SIDEBAR & STYLING FIXES ---
 # --- SIDEBAR COLOR FIX (ADDED HERE) ---
+st.markdown(
+    r"""
 <style>
     /* Force sidebar background */
     [data-testid="stSidebar"] {
@@ -73,6 +75,9 @@ st.set_page_config(
     /* Hide footer */
     footer {visibility: hidden;}
 </style>
+""",
+    unsafe_allow_html=True,
+)
 
 # Define IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))

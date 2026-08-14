@@ -1042,7 +1042,7 @@ if os.path.exists(DB_NAME):
     div[data-testid="stDownloadButton"] button {
         color: black !important;   /* make label text black */
         font-weight: 600;          /* bold for emphasis */
-        background-color: #b8d4f0; /* optional: pastel blue background */
+        background-color: #black; /* optional: black background */
         border-radius: 6px;
         padding: 6px 12px;
     }
@@ -1058,7 +1058,29 @@ if os.path.exists(DB_NAME):
         help="Download a complete copy of the SQLite database file for safety.",
         use_container_width=True
     )
+    st.markdown(
+        
+        
+        """
+    <style>
+    /* Target all sidebar buttons */
+    div[data-testid="stSidebar"] button {
+        color: black !important;   /* make text black */
+        font-weight: 600;          /* bold for emphasis */
+        background-color: #black; /* optional pastel blue background */
+        border-radius: 6px;
+        padding: 6px 12px;
+    }
 
+    /* Hover effect */
+    div[data-testid="stSidebar"] button:hover {
+        background-color: #a0c4e0; /* darker blue on hover */
+        color: black !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
     if st.sidebar.button("⚠️ Confirm Restore", type="primary", use_container_width=True):

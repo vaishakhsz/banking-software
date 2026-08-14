@@ -1128,7 +1128,7 @@ st.markdown("""
         <div>CIN: U65990KL22021PLN069978</div>
         <div>📞 0471-2994535</div>
         
-    </div>
+    
 </div>
 """, unsafe_allow_html=True)
 

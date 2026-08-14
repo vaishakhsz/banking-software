@@ -1081,6 +1081,42 @@ if os.path.exists(DB_NAME):
     """,
     unsafe_allow_html=True
 )
+
+
+
+# Custom CSS for file uploader
+st.markdown(
+    """
+    <style>
+    /* Sidebar file uploader */
+    div[data-testid="stSidebar"] div[data-testid="stFileUploader"] {
+        background-color: #b8d4f0;   /* pastel blue background */
+        border-radius: 6px;
+        padding: 8px;
+    }
+
+    /* Label text */
+    div[data-testid="stSidebar"] div[data-testid="stFileUploader"] label {
+        color: #000000 !important;   /* pure black text */
+        font-weight: 600;
+    }
+
+    /* Uploaded file name text */
+    div[data-testid="stSidebar"] div[data-testid="stFileUploader"] div {
+        color: #000000 !important;   /* black for file name */
+    }
+
+    /* Optional: hover effect */
+    div[data-testid="stSidebar"] div[data-testid="stFileUploader"]:hover {
+        background-color: #a0c4e0;   /* darker blue on hover */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+
 uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
 if uploaded_db is not None:
     if st.sidebar.button("⚠️ Confirm Restore", type="primary", use_container_width=True):

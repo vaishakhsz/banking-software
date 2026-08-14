@@ -17,46 +17,40 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- SIDEBAR COLOR FIX (ADDED HERE) ---
-# --- SIDEBAR COLOR FIX (ADDED HERE) ---
+
+# --- SIDEBAR COLOR FIX (HARD OVERRIDE) ---
 st.markdown("""
 <style>
-    /* Force sidebar background */
+    /* 1. Force the entire sidebar container to your blue gradient */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
+        background-color: #0f2b4a !important;
     }
-    
-    /* FORCE ALL SIDEBAR TEXT TO BE WHITE - MOST AGGRESSIVE */
-    [data-testid="stSidebar"] *,
+
+    /* 2. Force the inner scrollable content area to be blue too */
+    [data-testid="stSidebar"] .st-emotion-cache-1wmy9hl,
+    [data-testid="stSidebar"] .st-emotion-cache-1y4p8pa {
+        background: transparent !important;
+    }
+
+    /* 3. Make all text in the sidebar white */
     [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] .stMarkdown *,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
     [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] label *,
-    [data-testid="stSidebar"] .stRadio label,
-    [data-testid="stSidebar"] .stRadio label *,
-    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label,
-    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label *,
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g,
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g * {
+    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
         color: white !important;
     }
-    
-    /* Hover effect */
-    [data-testid="stSidebar"] .stRadio label:hover,
-    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g:hover {
-        background: rgba(255,255,255,0.12) !important;
-        border-radius: 4px !important;
-    }
-    
-    /* Selected item */
-    [data-testid="stSidebar"] .stRadio label[data-selected="true"],
+
+    /* 4. Fix radio button selected state colors */
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
         background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
         border-left: 3px solid #f7c948 !important;
         color: white !important;
     }
-    
-    /* Hide footer */
+
+    /* 5. Hide Streamlit footer */
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)

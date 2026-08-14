@@ -986,11 +986,23 @@ st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.markdown(
     """
     <style>
+    /* Sidebar background */
     [data-testid="stSidebar"] {
-        background-color: #b8d4f0; /* Light pastel blue */
+        background-color: #b8d4f0; /* pastel blue */
     }
-    [data-testid="stSidebar"] .css-1d391kg { 
-        color: #b8d4f0; /* Menu text color (black for contrast) */
+
+    /* Radio button labels inside sidebar */
+    [data-testid="stSidebar"] .stRadio label {
+        color: #1a3d6e; /* deep navy for readability */
+        font-weight: 600; /* make text bolder */
+    }
+
+    /* Selected option highlight */
+    [data-testid="stSidebar"] .stRadio div[role='radiogroup'] > label[data-checked="true"] {
+        background-color: #ffffff; /* white highlight */
+        color: #000000; /* black text when selected */
+        border-radius: 5px;
+        padding: 4px 8px;
     }
     </style>
     """,

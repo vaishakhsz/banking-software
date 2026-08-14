@@ -905,11 +905,11 @@ def display_ist_timer():
     time_str = current_time.strftime('%I:%M:%S %p')
     date_str = current_time.strftime('%d %b %Y')
     
-    # Render using sidebar markdown with HTML styling
+    # Render using sidebar markdown with HTML styling (added black box background and styling)
     st.sidebar.markdown(f"""
-    <div style="text-align: center; padding: 5px 0;">
+    <div style="text-align: center; background-color: #000000; padding: 10px; border-radius: 8px; border: 1px solid #333333;">
         <div style="color: #b8d4f0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">IST Clock</div>
-        <div style="color: white; font-size: 16px; font-weight: 700; font-family: monospace; margin: 2px 0;">{time_str}</div>
+        <div style="color: white; font-size: 16px; font-weight: 700; font-family: monospace; margin: 4px 0;">{time_str}</div>
         <div style="color: #b8d4f0; font-size: 10px;">{date_str}</div>
     </div>
     """, unsafe_allow_html=True)

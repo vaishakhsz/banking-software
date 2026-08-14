@@ -2502,8 +2502,9 @@ elif menu == "Cash Book":
                     if entry_type == "DEBIT (Receipt)":
                         jv_result = post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
                     else:
+                        # FIX: Check cash balance before allowing payment
                         if current_balance < amount:
-                            st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_balance:,.2f}")
+                            st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_balance:,.2f}, Required: ₹{amount:,.2f}")
                             st.stop()
                         jv_result = post_automated_jv(f"Cash Payment: {particulars}", account_code, "AST-101", amount)
                     
@@ -2813,7 +2814,7 @@ elif menu == "Journal Vouchers":
 
         with st.form("unified_jv_form"):
             v_date = st.date_input("Voucher Date", value=date.today())
-            narration = st.text_input("Narration / Description", value="Depreciation entry")
+            narration = st.text_input("Narration / Description", value="Journal entry")
             
             st.markdown("---")
             st.markdown("#### **Debit Entry (Expense Head)**")
@@ -2855,9 +2856,31 @@ elif menu == "Journal Vouchers":
             else:
                 cr2 = st.number_input("Credit Amount (₹)", min_value=0.0, value=0.0, step=100.0, key="jv_cr2")
             
-            submitted = st.form_submit_button("Post Journal Voucher", use_container_width=True)
-            if submitted:
-                if dr1 == cr2 and dr1 > 0:
+            # FIX: Validate that amounts are positive and balanced
+            if st.form_submit_button("Post Journal Voucher", use_container_width=True):
+                if dr1 <= 0:
+                    st.error("❌ Debit amount must be greater than zero!")
+                elif cr2 <= 0:
+                    st.error("❌ Credit amount must be greater than zero!")
+                elif dr1 != cr2:
+                    st.error("❌ Journal Voucher unbalanced! Total Debits must equal Total Credits.")
+                else:
+                    # FIX: Check if credit account is an asset and has sufficient balance
+                    credit_account_type = run_query("SELECT account_type FROM chart_of_accounts WHERE account_code = ?", (acc2_code,))
+                    if credit_account_type and credit_account_type[0][0] == 'Asset':
+                        current_asset_balance = get_account_balance_from_jv(acc2_code)
+                        if current_asset_balance < cr2:
+                            st.error(f"❌ Insufficient balance in credit account! Available: ₹{current_asset_balance:,.2f}, Required: ₹{cr2:,.2f}")
+                            st.stop()
+                    
+                    # Also check if debit account is an asset (for negative balances)
+                    debit_account_type = run_query("SELECT account_type FROM chart_of_accounts WHERE account_code = ?", (acc1_code,))
+                    if debit_account_type and debit_account_type[0][0] == 'Asset':
+                        current_asset_balance = get_account_balance_from_jv(acc1_code)
+                        if current_asset_balance < dr1:
+                            st.error(f"❌ Insufficient balance in debit account! Available: ₹{current_asset_balance:,.2f}, Required: ₹{dr1:,.2f}")
+                            st.stop()
+                    
                     conn = get_connection()
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(v_date), narration))
@@ -2867,8 +2890,6 @@ elif menu == "Journal Vouchers":
                     conn.commit()
                     conn.close()
                     st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully! Amount recorded: ₹{dr1:,.2f}.")
-                else:
-                    st.error("Journal Voucher unbalanced! Total Debits must equal Total Credits and be greater than zero.")
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")

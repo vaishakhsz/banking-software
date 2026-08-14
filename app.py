@@ -982,6 +982,21 @@ display_ist_timer()  # Your IST timer function
 # Divider
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 
+# Custom CSS for sidebar background and menu styling
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] {
+        background-color: #b8d4f0; /* Light pastel blue */
+    }
+    [data-testid="stSidebar"] .css-1d391kg { 
+        color: #000000; /* Menu text color (black for contrast) */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # Navigation menu with custom styling
 menu = st.sidebar.radio(
     "📋 MENU",

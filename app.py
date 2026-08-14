@@ -778,7 +778,7 @@ def check_login():
     return st.session_state.logged_in
 
 # --- IST TIMER DISPLAY ---
-def display_ist_timer():
+def display_ist_timer(IST):
     """Display live IST timer in sidebar"""
     current_time = datetime.now(IST)
     time_str = current_time.strftime("%I:%M:%S %p")

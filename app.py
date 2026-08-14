@@ -1010,8 +1010,6 @@ menu = st.sidebar.radio(
         "Financial Statements (Trial/BS/PL)",
         "Reports",
         "SB Interest Calculation",
-        "System Backup",
-        "Restore Backup"
     ],
     index=0,
     key="main_menu"

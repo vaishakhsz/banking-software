@@ -45,16 +45,31 @@ st.markdown(
         color: white !important;
     }
     
-    /* MAKE SYSTEM BACKUP & RESTORE TEXT BLACK */
-    .backup-restore-section,
+    /* MAKE SYSTEM BACKUP & RESTORE SECTION BACKGROUND BLACK, TEXT WHITE */
+    .backup-restore-section {
+        background: #000000 !important;
+        padding: 10px !important;
+        border-radius: 8px !important;
+        margin: 5px 0 !important;
+    }
+    
     .backup-restore-section *,
-    [data-testid="stSidebar"] .backup-restore-section p,
-    [data-testid="stSidebar"] .backup-restore-section span,
-    [data-testid="stSidebar"] .backup-restore-section label,
-    [data-testid="stSidebar"] .backup-restore-section div,
-    [data-testid="stSidebar"] .backup-restore-section button *,
-    [data-testid="stSidebar"] .backup-restore-section .st-emotion-cache-1vzeuhh {
-        color: black !important;
+    .backup-restore-section p,
+    .backup-restore-section span,
+    .backup-restore-section label,
+    .backup-restore-section div,
+    .backup-restore-section button,
+    .backup-restore-section button *,
+    .backup-restore-section .st-emotion-cache-1vzeuhh,
+    .backup-restore-section .st-emotion-cache-1pbsqtx,
+    [data-testid="stSidebar"] .backup-restore-section * {
+        color: white !important;
+        background: transparent !important;
+    }
+    
+    /* Override for the heading specifically */
+    .backup-restore-section .st-emotion-cache-1vzeuhh {
+        color: white !important;
     }
     
     /* Hover effect for navigation */
@@ -69,7 +84,12 @@ st.markdown(
     [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] {
         background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
         border-left: 3px solid #f7c948 !important;
-        color: black !important;
+        color: white !important;
+    }
+    
+    [data-testid="stSidebar"] .stRadio label[data-selected="true"] *,
+    [data-testid="stSidebar"] .st-emotion-cache-1in2z2g[aria-selected="true"] * {
+        color: white !important;
     }
     
     /* Hide footer */

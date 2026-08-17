@@ -1984,6 +1984,19 @@ st.sidebar.markdown("""
     [data-testid="stSidebar"] [data-testid="stFileUploader"] div {
         color: #ffffff !important;
     }
+
+    /* Lock sidebar download button to black background and white text */
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button,
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:hover,
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:active,
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:focus {
+        background-color: #000000 !important;
+        background: #000000 !important;
+        color: #ffffff !important;
+        border: 1px solid #333333 !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 

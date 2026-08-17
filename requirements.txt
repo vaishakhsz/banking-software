@@ -1,9 +1,6 @@
 streamlit
 pandas
 plotly
-fpdf2
-Pillow
-python-dateutil
-pytz
-fpdf
 reportlab
+pytz
+

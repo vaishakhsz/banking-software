@@ -18,21 +18,41 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Parse Supabase configuration (supporting both Streamlit secrets and local .env)
 supabase_url = None
+supabase_proj_url = None
+supabase_anon_key = None
+
 try:
     import streamlit as st
     if "SUPABASE_URL" in st.secrets:
         supabase_url = st.secrets["SUPABASE_URL"]
+    if "SUPABASE_PROJECT_URL" in st.secrets:
+        supabase_proj_url = st.secrets["SUPABASE_PROJECT_URL"]
+    if "SUPABASE_ANON_KEY" in st.secrets:
+        supabase_anon_key = st.secrets["SUPABASE_ANON_KEY"]
 except:
     pass
 
 if not supabase_url:
     supabase_url = os.getenv("SUPABASE_URL")
+if not supabase_proj_url:
+    supabase_proj_url = os.getenv("SUPABASE_PROJECT_URL")
+if not supabase_anon_key:
+    supabase_anon_key = os.getenv("SUPABASE_ANON_KEY")
 
 USING_SUPABASE = False
 SUPABASE_URL = ""
 if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url and (supabase_url.startswith("postgresql") or supabase_url.startswith("postgres")):
     USING_SUPABASE = True
     SUPABASE_URL = supabase_url
+
+# Initialize Supabase storage client if credentials are provided
+supabase_client = None
+if supabase_proj_url and supabase_anon_key and "REPLACE_WITH_YOUR_ANON_PUBLIC_KEY" not in supabase_anon_key:
+    try:
+        from supabase import create_client
+        supabase_client = create_client(supabase_proj_url, supabase_anon_key)
+    except Exception as e:
+        print(f"⚠️ Failed to initialize Supabase storage client: {str(e)}")
 
 def get_connection():
     """Get database connection (Supabase PostgreSQL or local SQLite) with retry logic"""
@@ -322,6 +342,31 @@ def run_query(query, params=(), fetch=True):
 
 def save_uploaded_file(uploaded_file):
     if uploaded_file is not None:
+        # Check if Supabase Storage is configured and initialized
+        if supabase_client is not None:
+            try:
+                # Read file binary content
+                data = uploaded_file.getvalue()
+                # Sanitize filename (remove characters that might break URLs)
+                safe_name = "".join(c for c in uploaded_file.name if c.isalnum() or c in "._-")
+                # Prefix with timestamp to prevent name collisions
+                unique_name = f"{int(time.time())}_{safe_name}"
+                
+                # Upload to Supabase Storage bucket 'customer-docs'
+                supabase_client.storage.from_("customer-docs").upload(
+                    path=unique_name,
+                    file=data,
+                    file_options={"content-type": uploaded_file.type}
+                )
+                
+                # Retrieve the public URL for the uploaded document
+                public_url = supabase_client.storage.from_("customer-docs").get_public_url(unique_name)
+                return public_url
+            except Exception as e:
+                import streamlit as st
+                st.warning(f"⚠️ Failed to upload to Supabase Storage: {str(e)}. Saving to local server disk instead.")
+        
+        # Fallback to local file system
         file_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())

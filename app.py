@@ -1090,6 +1090,11 @@ def render_cash_book():
                 if amount > 0 and particulars and account_head:
                     account_code = coa_dict[account_head]
                     
+                    # Determine full JV narration including text-area narration
+                    full_narration = particulars
+                    if narration.strip():
+                        full_narration += f" ({narration.strip()})"
+
                     if entry_type == "CREDIT (Payment)":
                         if current_cash_balance < amount:
                             st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_cash_balance:,.2f}")
@@ -1100,16 +1105,19 @@ def render_cash_book():
                     
                     elif entry_type == "DEBIT (Receipt)":
                         if account_code == 'AST-102' and current_union_balance < amount:
-                            st.error(f"❌ Insufficient Union Bank Balance!")
+                            st.error(f"❌ Insufficient Union Bank Balance! Available: ₹{current_union_balance:,.2f}")
                             st.stop()
                         elif account_code == 'AST-103' and current_sbi_balance < amount:
-                            st.error(f"❌ Insufficient SBI Balance!")
+                            st.error(f"❌ Insufficient SBI Balance! Available: ₹{current_sbi_balance:,.2f}")
+                            st.stop()
+                        elif account_code == 'AST-101':
+                            st.error("❌ Cannot receipt cash from itself!")
                             st.stop()
                     
                     if entry_type == "DEBIT (Receipt)":
-                        jv_result = post_automated_jv(f"Cash Receipt: {particulars}", "AST-101", account_code, amount)
+                        jv_result = post_automated_jv(f"Cash Receipt: {full_narration}", "AST-101", account_code, amount)
                     else:
-                        jv_result = post_automated_jv(f"Cash Payment: {particulars}", account_code, "AST-101", amount)
+                        jv_result = post_automated_jv(f"Cash Payment: {full_narration}", account_code, "AST-101", amount)
                     
                     if jv_result:
                         voucher_no = generate_cash_voucher_no()
@@ -1264,13 +1272,40 @@ def render_bank_book():
                 if amount > 0 and particulars and account_head:
                     account_code = coa_dict[account_head]
                     
+                    if account_code == bank_code:
+                        st.error("❌ Source and destination bank accounts cannot be the same!")
+                        st.stop()
+                    
+                    # Determine full JV narration including text-area narration
+                    full_narration = particulars
+                    if narration.strip():
+                        full_narration += f" ({narration.strip()})"
+                    
                     if entry_type == "DEBIT (Deposit)":
-                        jv_result = post_automated_jv(f"Bank Deposit: {particulars} - {bank_name}", bank_code, account_code, amount)
+                        # This increases selected bank, but we must check if the funding source has enough balance
+                        if account_code == 'AST-101':
+                            current_cash = get_cash_balance()
+                            if current_cash < amount:
+                                st.error(f"❌ Insufficient Cash Balance to deposit! Available: ₹{current_cash:,.2f}")
+                                st.stop()
+                        elif account_code == 'AST-102':
+                            current_union = get_bank_balance("Union Bank of India")
+                            if current_union < amount:
+                                st.error(f"❌ Insufficient Union Bank Balance to transfer! Available: ₹{current_union:,.2f}")
+                                st.stop()
+                        elif account_code == 'AST-103':
+                            current_sbi = get_bank_balance("State Bank of India")
+                            if current_sbi < amount:
+                                st.error(f"❌ Insufficient SBI Balance to transfer! Available: ₹{current_sbi:,.2f}")
+                                st.stop()
+                                
+                        jv_result = post_automated_jv(f"Bank Deposit: {full_narration} - {bank_name}", bank_code, account_code, amount)
                     else:
+                        # Withdrawal: decreases selected bank
                         if current_balance < amount:
-                            st.error(f"❌ Insufficient Bank Balance in {bank_name}!")
+                            st.error(f"❌ Insufficient Bank Balance in {bank_name}! Available: ₹{current_balance:,.2f}")
                             st.stop()
-                        jv_result = post_automated_jv(f"Bank Withdrawal: {particulars} - {bank_name}", account_code, bank_code, amount)
+                        jv_result = post_automated_jv(f"Bank Withdrawal: {full_narration} - {bank_name}", account_code, bank_code, amount)
                     
                     if jv_result:
                         voucher_no = generate_bank_voucher_no()
@@ -1661,14 +1696,35 @@ def render_financial_statements():
                 total_lia += rd_liability
                 
             equity_details = run_query("""
-                SELECT CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as net_balance
-                FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-                WHERE CO.account_type = 'Equity' GROUP BY CO.account_code HAVING net_balance != 0
+                SELECT 
+                    CO.account_name, 
+                    COALESCE(JV.narration, CO.account_name) as narration_label,
+                    COALESCE(SUM(JE.credit - JE.debit), 0) as net_balance
+                FROM jv_entries JE 
+                JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+                JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+                WHERE CO.account_type = 'Equity'
+                GROUP BY CO.account_code, JV.narration
+                HAVING net_balance != 0
             """)
             if equity_details:
                 for row in equity_details:
-                    lia_data.append([row[0], f"₹{row[1]:,.2f}"])
-                    total_lia += row[1]
+                    acc_name, narration_label, net_balance = row
+                    
+                    # Clean up technical prefixes from narration for a professional statement look
+                    display_label = narration_label
+                    for prefix in ["Bank Deposit: ", "Cash Receipt: ", "Bank Withdrawal: ", "Cash Payment: "]:
+                        if display_label.startswith(prefix):
+                            display_label = display_label[len(prefix):]
+                    
+                    # If it's a generic auto-posted entry or same as account name, show account name, else include name detail
+                    if display_label == acc_name or not display_label:
+                        label = acc_name
+                    else:
+                        label = f"{acc_name} ({display_label})"
+                        
+                    lia_data.append([label, f"₹{net_balance:,.2f}"])
+                    total_lia += net_balance
             
             if net_profit_loss != 0:
                 label_pnl = "Profit / Loss (Current Year)"
@@ -2129,6 +2185,3 @@ elif menu == "Reports":
     render_reports()
 elif menu == "SB Interest Calculation":
     render_sb_interest_calculation()
-
-    
-

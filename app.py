@@ -1635,15 +1635,26 @@ def render_financial_statements():
     
     with tab1:
         st.subheader("Trial Balance Summary")
-        entries = run_query("""
-            SELECT CO.account_code, CO.account_name, CO.account_type, 
-                   COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
-            FROM chart_of_accounts CO
-            LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-            GROUP BY CO.account_code
-            HAVING total_debit > 0 OR total_credit > 0
-            ORDER BY CO.account_type, CO.account_code
-        """)
+        if USING_SUPABASE:
+            entries = run_query("""
+                SELECT CO.account_code, CO.account_name, CO.account_type, 
+                       COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
+                FROM chart_of_accounts CO
+                LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                GROUP BY CO.account_code, CO.account_name, CO.account_type
+                HAVING COALESCE(SUM(JE.debit), 0) > 0 OR COALESCE(SUM(JE.credit), 0) > 0
+                ORDER BY CO.account_type, CO.account_code
+            """)
+        else:
+            entries = run_query("""
+                SELECT CO.account_code, CO.account_name, CO.account_type, 
+                       COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
+                FROM chart_of_accounts CO
+                LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                GROUP BY CO.account_code
+                HAVING total_debit > 0 OR total_credit > 0
+                ORDER BY CO.account_type, CO.account_code
+            """)
         if entries:
             df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Account Type", "Total Debit", "Total Credit"])
             st.dataframe(df_tb, use_container_width=True)
@@ -1669,17 +1680,34 @@ def render_financial_statements():
         fd_liability = run_query("SELECT COALESCE(SUM(credit - debit), 0) FROM jv_entries WHERE account_code='LIA-102'")[0][0]
         rd_liability = run_query("SELECT COALESCE(SUM(credit - debit), 0) FROM jv_entries WHERE account_code='LIA-103'")[0][0]
         
-        other_asset_balances = run_query("""
-            SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
-            FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-            WHERE CO.account_type = 'Asset' AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103') GROUP BY CO.account_code
-        """)
+        if USING_SUPABASE:
+            other_asset_balances = run_query("""
+                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
+                FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                WHERE CO.account_type = 'Asset' AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103') 
+                GROUP BY CO.account_code, CO.account_name
+            """)
+        else:
+            other_asset_balances = run_query("""
+                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
+                FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                WHERE CO.account_type = 'Asset' AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103') GROUP BY CO.account_code
+            """)
         
-        depreciation_balances = run_query("""
-            SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
-            FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-            WHERE CO.account_type = 'Expense' AND (CO.account_code LIKE 'EXP-20%' OR LOWER(CO.account_name) LIKE '%depreciation%') GROUP BY CO.account_code HAVING net_balance != 0
-        """)
+        if USING_SUPABASE:
+            depreciation_balances = run_query("""
+                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
+                FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                WHERE CO.account_type = 'Expense' AND (CO.account_code LIKE 'EXP-20%' OR LOWER(CO.account_name) LIKE '%depreciation%') 
+                GROUP BY CO.account_code, CO.account_name 
+                HAVING COALESCE(SUM(JE.debit - JE.credit), 0) != 0
+            """)
+        else:
+            depreciation_balances = run_query("""
+                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
+                FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                WHERE CO.account_type = 'Expense' AND (CO.account_code LIKE 'EXP-20%' OR LOWER(CO.account_name) LIKE '%depreciation%') GROUP BY CO.account_code HAVING net_balance != 0
+            """)
         
         tot_inc = run_query("SELECT COALESCE(SUM(JE.credit - JE.debit), 0) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code=CO.account_code WHERE CO.account_type='Income'")[0][0]
         tot_exp = run_query("SELECT COALESCE(SUM(JE.debit - JE.credit), 0) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code=CO.account_code WHERE CO.account_type='Expense'")[0][0]
@@ -1733,18 +1761,32 @@ def render_financial_statements():
                 lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
                 
-            equity_details = run_query("""
-                SELECT 
-                    CO.account_name, 
-                    COALESCE(JV.narration, CO.account_name) as narration_label,
-                    COALESCE(SUM(JE.credit - JE.debit), 0) as net_balance
-                FROM jv_entries JE 
-                JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-                JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
-                WHERE CO.account_type = 'Equity'
-                GROUP BY CO.account_code, JV.narration
-                HAVING net_balance != 0
-            """)
+            if USING_SUPABASE:
+                equity_details = run_query("""
+                    SELECT 
+                        CO.account_name, 
+                        COALESCE(JV.narration, CO.account_name) as narration_label,
+                        COALESCE(SUM(JE.credit - JE.debit), 0) as net_balance
+                    FROM jv_entries JE 
+                    JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+                    JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+                    WHERE CO.account_type = 'Equity'
+                    GROUP BY CO.account_code, CO.account_name, JV.narration
+                    HAVING COALESCE(SUM(JE.credit - JE.debit), 0) != 0
+                """)
+            else:
+                equity_details = run_query("""
+                    SELECT 
+                        CO.account_name, 
+                        COALESCE(JV.narration, CO.account_name) as narration_label,
+                        COALESCE(SUM(JE.credit - JE.debit), 0) as net_balance
+                    FROM jv_entries JE 
+                    JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+                    JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+                    WHERE CO.account_type = 'Equity'
+                    GROUP BY CO.account_code, JV.narration
+                    HAVING net_balance != 0
+                """)
             if equity_details:
                 for row in equity_details:
                     acc_name, narration_label, net_balance = row
@@ -1776,16 +1818,32 @@ def render_financial_statements():
 
     with tab3:
         st.subheader("Profit and Loss Account")
-        income_details = run_query("""
-            SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as balance
-            FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
-            WHERE CO.account_type = 'Income' GROUP BY CO.account_code HAVING balance != 0
-        """)
-        expense_details = run_query("""
-            SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as balance
-            FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
-            WHERE CO.account_type = 'Expense' GROUP BY CO.account_code HAVING balance != 0
-        """)
+        if USING_SUPABASE:
+            income_details = run_query("""
+                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as balance
+                FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
+                WHERE CO.account_type = 'Income' 
+                GROUP BY CO.account_code, CO.account_name 
+                HAVING COALESCE(SUM(JE.credit - JE.debit), 0) != 0
+            """)
+            expense_details = run_query("""
+                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as balance
+                FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
+                WHERE CO.account_type = 'Expense' 
+                GROUP BY CO.account_code, CO.account_name 
+                HAVING COALESCE(SUM(JE.debit - JE.credit), 0) != 0
+            """)
+        else:
+            income_details = run_query("""
+                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as balance
+                FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
+                WHERE CO.account_type = 'Income' GROUP BY CO.account_code HAVING balance != 0
+            """)
+            expense_details = run_query("""
+                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as balance
+                FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
+                WHERE CO.account_type = 'Expense' GROUP BY CO.account_code HAVING balance != 0
+            """)
         
         col_pl1, col_pl2 = st.columns(2)
         with col_pl1:
@@ -1848,10 +1906,20 @@ def render_reports():
                 data = run_query("SELECT date, voucher_no, bank_name, particulars, debit_amount, credit_amount, balance, narration FROM bank_book ORDER BY date DESC")
                 columns = ["Date", "Voucher No", "Bank", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"]
             elif report_type == "Trial Balance Report":
-                data = run_query("""
-                    SELECT CO.account_code, CO.account_name, CO.account_type, COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
-                    FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code GROUP BY CO.account_code HAVING total_debit > 0 OR total_credit > 0
-                """)
+                if USING_SUPABASE:
+                    data = run_query("""
+                        SELECT CO.account_code, CO.account_name, CO.account_type, 
+                               COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
+                        FROM chart_of_accounts CO 
+                        LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code 
+                        GROUP BY CO.account_code, CO.account_name, CO.account_type 
+                        HAVING COALESCE(SUM(JE.debit), 0) > 0 OR COALESCE(SUM(JE.credit), 0) > 0
+                    """)
+                else:
+                    data = run_query("""
+                        SELECT CO.account_code, CO.account_name, CO.account_type, COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
+                        FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code GROUP BY CO.account_code HAVING total_debit > 0 OR total_credit > 0
+                    """)
                 columns = ["Account Code", "Account Name", "Account Type", "Total Debit (₹)", "Total Credit (₹)"]
             elif report_type == "Journal Vouchers Report":
                 data = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY voucher_date DESC")

@@ -324,6 +324,8 @@ def run_query(query, params=(), fetch=True):
         cursor = conn.cursor()
         
         if USING_SUPABASE:
+            # Escape literal '%' characters to prevent psycopg2 string formatting errors
+            query = query.replace("%", "%%")
             # Dynamically map query parameters for Postgres
             query = query.replace("?", "%s")
             # Map SQLite case-insensitive LIKE to Postgres ILIKE

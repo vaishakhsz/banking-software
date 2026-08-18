@@ -5,3 +5,4 @@ __pycache__/
 customer_uploads/
 *.pyc
 .DS_Store
+.env

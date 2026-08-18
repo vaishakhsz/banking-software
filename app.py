@@ -11,7 +11,7 @@ import pytz
 
 # Import database layer
 from database import (
-    IST, DB_NAME, run_query, save_uploaded_file, 
+    IST, DB_NAME, USING_SUPABASE, run_query, save_uploaded_file, 
     get_account_balance_from_jv, get_cash_balance, get_bank_balance,
     generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
     get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher
@@ -729,7 +729,10 @@ def render_recurring_deposits():
                 
                 jv_result = post_automated_jv(f"RD Opening - First Installment via {payment_mode}", chosen_asset_code, "LIA-103", monthly_amt)
                 
-                rd_id_result = run_query("SELECT last_insert_rowid()")
+                if USING_SUPABASE:
+                    rd_id_result = run_query("SELECT LASTVAL()")
+                else:
+                    rd_id_result = run_query("SELECT last_insert_rowid()")
                 if rd_id_result and jv_result:
                     rd_id = rd_id_result[0][0]
                     run_query("UPDATE recurring_deposits SET installments_paid=1 WHERE rd_id=?", (rd_id,), fetch=False)
@@ -1052,11 +1055,23 @@ def render_chart_of_accounts():
                     st.warning("Please fill out all fields.")
                 else:
                     try:
-                        run_query(
-                            "INSERT OR REPLACE INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)",
-                            (input_code, input_name, input_type, input_category),
-                            fetch=False
-                        )
+                        if USING_SUPABASE:
+                            run_query(
+                                """
+                                INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                                VALUES (?, ?, ?, ?)
+                                ON CONFLICT (account_code) DO UPDATE 
+                                SET account_name = EXCLUDED.account_name, account_type = EXCLUDED.account_type, category = EXCLUDED.category
+                                """,
+                                (input_code, input_name, input_type, input_category),
+                                fetch=False
+                            )
+                        else:
+                            run_query(
+                                "INSERT OR REPLACE INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES (?, ?, ?, ?)",
+                                (input_code, input_name, input_type, input_category),
+                                fetch=False
+                            )
                         st.success(f"Account head '{input_code} - {input_name}' saved successfully!")
                         time.sleep(0.5)
                         st.rerun()
@@ -1543,15 +1558,31 @@ def render_journal_vouchers():
 
 def render_admin_editor():
     st.title("🛠️ Universal Database Record Editor")
-    tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-    table_list = [t[0] for t in tables_res]
+    if USING_SUPABASE:
+        tables_res = run_query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name NOT LIKE 'pg_%'")
+    else:
+        tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    
+    table_list = [t[0] for t in tables_res] if tables_res else []
     selected_table = st.selectbox("Select Database Table to Manage", table_list)
     
     if selected_table:
-        pk_info = run_query(f"PRAGMA table_info({selected_table})")
-        pk_col = next((col[1] for col in pk_info if col[5] == 1), pk_info[0][1] if pk_info else None)
+        if USING_SUPABASE:
+            cols = run_query("SELECT column_name FROM information_schema.columns WHERE table_name = ?", (selected_table,))
+            col_names = [c[0] for c in cols] if cols else []
+            pk_res = run_query("""
+                SELECT kcu.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+                WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = ?
+            """, (selected_table,))
+            pk_col = pk_res[0][0] if pk_res else (col_names[0] if col_names else None)
+        else:
+            pk_info = run_query(f"PRAGMA table_info({selected_table})")
+            pk_col = next((col[1] for col in pk_info if col[5] == 1), pk_info[0][1] if pk_info else None)
+            col_names = [col[1] for col in pk_info] if pk_info else []
+        
         rows = run_query(f"SELECT * FROM {selected_table}")
-        col_names = [col[1] for col in pk_info]
         
         if rows:
             df_table = pd.DataFrame(rows, columns=col_names)

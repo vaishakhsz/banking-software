@@ -3,6 +3,11 @@ import sqlite3
 import time
 from datetime import datetime, date, timezone, timedelta
 import pytz
+import psycopg2
+from dotenv import load_dotenv
+
+# Load local environment variables
+load_dotenv()
 
 # Define IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -11,19 +16,39 @@ DB_NAME = "aasha_nidhi.db"
 UPLOAD_DIR = "customer_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Parse Supabase configuration
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+USING_SUPABASE = False
+if SUPABASE_URL and "REPLACE_WITH_YOUR_DB_PASSWORD" not in SUPABASE_URL and (SUPABASE_URL.startswith("postgresql") or SUPABASE_URL.startswith("postgres")):
+    USING_SUPABASE = True
+
 def get_connection():
-    """Get database connection with retry logic"""
+    """Get database connection (Supabase PostgreSQL or local SQLite) with retry logic"""
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            db_dir = os.path.dirname(DB_NAME)
-            if db_dir and not os.path.exists(db_dir):
-                os.makedirs(db_dir, exist_ok=True)
-            return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
-        except sqlite3.OperationalError as e:
+            if USING_SUPABASE:
+                return psycopg2.connect(SUPABASE_URL)
+            else:
+                db_dir = os.path.dirname(DB_NAME)
+                if db_dir and not os.path.exists(db_dir):
+                    os.makedirs(db_dir, exist_ok=True)
+                return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
+        except Exception as e:
             if attempt == max_retries - 1:
                 raise e
             time.sleep(1)
+
+def translate_sqlite_schema_to_postgres(sql):
+    sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    sql = sql.replace("INTEGER PRIMARY KEY", "SERIAL PRIMARY KEY")
+    sql = sql.replace("REAL", "DOUBLE PRECISION")
+    return sql
+
+def execute_create(cursor, sql):
+    if USING_SUPABASE:
+        sql = translate_sqlite_schema_to_postgres(sql)
+    cursor.execute(sql)
 
 def init_db():
     """Initialize database and ensure missing columns are added dynamically"""
@@ -31,11 +56,12 @@ def init_db():
         conn = get_connection()
         cursor = conn.cursor()
         
-        # Enable foreign keys
-        cursor.execute("PRAGMA foreign_keys = ON")
+        # Enable foreign keys (SQLite specific)
+        if not USING_SUPABASE:
+            cursor.execute("PRAGMA foreign_keys = ON")
         
         # Create all base tables if they don't exist
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS customers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -57,7 +83,7 @@ def init_db():
             )
         """)
         
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS sb_accounts (
                 account_no TEXT PRIMARY KEY,
                 customer_id INTEGER,
@@ -68,7 +94,7 @@ def init_db():
             )
         """)
         
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tx_id TEXT,
@@ -81,7 +107,7 @@ def init_db():
             )
         """)
 
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS fixed_deposits (
                 fd_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
@@ -98,7 +124,7 @@ def init_db():
             )
         """)
 
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS recurring_deposits (
                 rd_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
@@ -116,33 +142,34 @@ def init_db():
             )
         """)
 
-        # Safe migration for missing columns
-        try:
-            cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN payment_mode TEXT")
-        except sqlite3.OperationalError:
-            pass
+        # Safe migration for missing columns (Skip for Supabase as fresh DB already has them)
+        if not USING_SUPABASE:
+            try:
+                cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN payment_mode TEXT")
+            except sqlite3.OperationalError:
+                pass
 
-        try:
-            cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date TEXT")
-        except sqlite3.OperationalError:
-            pass
+            try:
+                cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date TEXT")
+            except sqlite3.OperationalError:
+                pass
 
-        try:
-            cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN payment_mode TEXT")
-        except sqlite3.OperationalError:
-            pass
+            try:
+                cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN payment_mode TEXT")
+            except sqlite3.OperationalError:
+                pass
 
-        try:
-            cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN closed_date TEXT")
-        except sqlite3.OperationalError:
-            pass
+            try:
+                cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN closed_date TEXT")
+            except sqlite3.OperationalError:
+                pass
 
-        try:
-            cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN maturity_amount REAL DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
+            try:
+                cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN maturity_amount REAL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
 
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS chart_of_accounts (
                 account_code TEXT PRIMARY KEY,
                 account_name TEXT,
@@ -151,7 +178,7 @@ def init_db():
             )
         """)
 
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS journal_vouchers (
                 jv_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 voucher_date TEXT,
@@ -160,7 +187,7 @@ def init_db():
             )
         """)
 
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS jv_entries (
                 entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 jv_id INTEGER,
@@ -172,7 +199,7 @@ def init_db():
             )
         """)
 
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS cash_book (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
@@ -187,7 +214,7 @@ def init_db():
             )
         """)
 
-        cursor.execute("""
+        execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS bank_book (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
@@ -239,7 +266,14 @@ def init_db():
             ("EQT-103", "Income Summary", "Equity", "Temporary")
         ]
         
-        cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
+        if USING_SUPABASE:
+            cursor.executemany("""
+                INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) 
+                VALUES (%s, %s, %s, %s) 
+                ON CONFLICT (account_code) DO NOTHING
+            """, default_accounts)
+        else:
+            cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
 
         conn.commit()
         conn.close()
@@ -256,12 +290,20 @@ def run_query(query, params=(), fetch=True):
     try:
         conn = get_connection()
         cursor = conn.cursor()
+        
+        if USING_SUPABASE:
+            # Dynamically map query parameters for Postgres
+            query = query.replace("?", "%s")
+            # Map SQLite case-insensitive LIKE to Postgres ILIKE
+            query = query.replace("LIKE %s", "ILIKE %s")
+            query = query.replace("LIKE  %s", "ILIKE %s")
+            
         cursor.execute(query, params)
         res = cursor.fetchall() if fetch else None
         conn.commit()
         conn.close()
         return res
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         import streamlit as st
         st.error(f"Database error: {str(e)}")
         return None
@@ -345,10 +387,21 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
         
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(date.today()), narration))
-        jv_id = cursor.lastrowid
-        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, debit_acc, amount))
-        cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
+        
+        if USING_SUPABASE:
+            cursor.execute("""
+                INSERT INTO journal_vouchers (voucher_date, narration, status) 
+                VALUES (%s, %s, 'POSTED') RETURNING jv_id
+            """, (str(date.today()), narration))
+            jv_id = cursor.fetchone()[0]
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, debit_acc, amount))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, credit_acc, amount))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(date.today()), narration))
+            jv_id = cursor.lastrowid
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, debit_acc, amount))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
+        
         conn.commit()
         conn.close()
         return jv_id

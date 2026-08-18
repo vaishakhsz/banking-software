@@ -3,3 +3,5 @@ pandas
 plotly
 reportlab
 pytz
+python-dotenv
+psycopg2-binary

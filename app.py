@@ -1479,10 +1479,17 @@ def render_journal_vouchers():
                     st.error("❌ Amounts must be greater than zero!")
                 elif dr1 != cr2:
                     st.error("❌ Journal Voucher unbalanced! Total Debits must equal Credits.")
+                elif acc1_code == acc2_code:
+                    st.error("❌ Debit and Credit accounts cannot be the same!")
+                elif acc2_code in ['AST-101', 'AST-102', 'AST-103'] and get_account_balance_from_jv(acc2_code) < dr1:
+                    avail_bal = get_account_balance_from_jv(acc2_code)
+                    st.error(f"❌ Insufficient balance in credit account {acc2_code}! Available: ₹{avail_bal:,.2f}, Required: ₹{dr1:,.2f}")
                 else:
                     jv_id = post_automated_jv(narration, acc1_code, acc2_code, dr1)
                     if jv_id:
                         st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully!")
+                        time.sleep(0.5)
+                        st.rerun()
 
     with tab2:
         jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")

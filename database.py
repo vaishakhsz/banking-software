@@ -16,11 +16,23 @@ DB_NAME = "aasha_nidhi.db"
 UPLOAD_DIR = "customer_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Parse Supabase configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+# Parse Supabase configuration (supporting both Streamlit secrets and local .env)
+supabase_url = None
+try:
+    import streamlit as st
+    if "SUPABASE_URL" in st.secrets:
+        supabase_url = st.secrets["SUPABASE_URL"]
+except:
+    pass
+
+if not supabase_url:
+    supabase_url = os.getenv("SUPABASE_URL")
+
 USING_SUPABASE = False
-if SUPABASE_URL and "REPLACE_WITH_YOUR_DB_PASSWORD" not in SUPABASE_URL and (SUPABASE_URL.startswith("postgresql") or SUPABASE_URL.startswith("postgres")):
+SUPABASE_URL = ""
+if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url and (supabase_url.startswith("postgresql") or supabase_url.startswith("postgres")):
     USING_SUPABASE = True
+    SUPABASE_URL = supabase_url
 
 def get_connection():
     """Get database connection (Supabase PostgreSQL or local SQLite) with retry logic"""

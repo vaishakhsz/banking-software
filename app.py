@@ -1015,13 +1015,45 @@ def render_recurring_deposits():
             st.info("No active RDs available to close.")
 
 
+def get_next_account_code(account_type):
+    prefix_map = {
+        "Asset": "AST",
+        "Liability": "LIA",
+        "Income": "INC",
+        "Expense": "EXP",
+        "Equity": "EQT"
+    }
+    prefix = prefix_map.get(account_type, "ACC")
+    
+    # Query all account codes starting with prefix
+    result = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code LIKE ? ORDER BY account_code DESC", (f"{prefix}-%",))
+    
+    if not result:
+        return f"{prefix}-101"
+        
+    # We find the highest numeric suffix
+    max_num = 100
+    for row in result:
+        code = row[0]
+        try:
+            parts = code.split("-")
+            if len(parts) == 2:
+                num = int(parts[1])
+                if num > max_num:
+                    max_num = num
+        except ValueError:
+            continue
+            
+    return f"{prefix}-{max_num + 1}"
+
+
 def render_chart_of_accounts():
     st.title("🗂️ Chart of Accounts Management")
     tab_coa1, tab_coa2 = st.tabs(["📋 View & Delete Accounts", "➕ Add / Edit Account Head"])
 
     with tab_coa1:
         st.subheader("Existing Accounts Directory")
-        accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
+        accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts ORDER BY account_code")
         if accounts:
             df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
             st.dataframe(df_coa, use_container_width=True)
@@ -1042,10 +1074,14 @@ def render_chart_of_accounts():
 
     with tab_coa2:
         st.subheader("Create or Update Account Head")
+        
+        # Render Account Type selection outside the form to compute next suggested code dynamically
+        input_type = st.selectbox("Account Type", ["Income", "Expense", "Asset", "Liability", "Equity"], key="coa_input_type")
+        suggested_code = get_next_account_code(input_type)
+        
         with st.form("coa_upsert_form"):
             col1, col2 = st.columns(2)
-            input_code = col1.text_input("Account Code (e.g., INC-302, EXP-402)").upper().strip()
-            input_type = col1.selectbox("Account Type", ["Income", "Expense", "Asset", "Liability", "Equity"])
+            input_code = col1.text_input("Account Code (Suggested/Custom)", value=suggested_code, help="Auto-assigned based on selection. You can override if needed.").upper().strip()
             input_name = col2.text_input("Account Name (e.g., Special Service Income)")
             input_category = col2.text_input("Category (e.g., Operating Expenses, Current Assets)")
             
@@ -1103,7 +1139,7 @@ def render_cash_book():
                 entry_type = col1.selectbox("Transaction Type", ["DEBIT (Receipt)", "CREDIT (Payment)"])
                 particulars = st.text_input("Particulars / Description")
                 
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
             if is_opening:
@@ -1298,7 +1334,7 @@ def render_bank_book():
                 entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
                 particulars = st.text_input("Particulars / Description")
                 
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
             if is_opening:
@@ -1472,7 +1508,7 @@ def render_journal_vouchers():
         st.subheader("Create Journal Voucher")
         st.info("💡 **Asset Depreciation Calculator:** Expense accounts like EXP-204 to EXP-207 will automatically compute depreciation values based on a selected Asset Base Value.")
         
-        coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts")
+        coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts ORDER BY account_code")
         coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
         coa_names = {c[0]: c[1] for c in coa_list}
         

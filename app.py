@@ -2533,14 +2533,14 @@ if not get_login_status():
     col1, col2, col3 = st.columns([1, 2.2, 1])
     with col2:
         st.markdown("""
-        <div style="text-align: center; background: linear-gradient(135deg, #4169E1 0%, #1e3a8a 100%); padding: 30px 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin-bottom: 20px; color: white;">
+        <div style="text-align: center; background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); padding: 30px 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin-bottom: 20px; color: white;">
             <div style="font-size: 46px; margin-bottom: 5px;">🏦</div>
             <h1 style="color: white !important; font-size: 26px; margin: 5px 0; font-weight: 800; letter-spacing: 0.8px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">AARSHA NIDHI LIMITED</h1>
             <p style="color: #cbd5e1 !important; font-size: 11px; margin: 5px 0; font-weight: 500; opacity: 0.9;">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
             <p style="color: #cbd5e1 !important; font-size: 10px; margin: 5px 0; opacity: 0.8;">CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
         </div>
         <div style="text-align: center; margin-bottom: 15px;">
-            <h2 style="color: #4169E1; font-size: 20px; margin: 5px 0; font-weight: 700;">🔐 Banking Software Login</h2>
+            <h2 style="color: #3b82f6; font-size: 20px; margin: 5px 0; font-weight: 700;">🔐 Banking Software Login</h2>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2565,7 +2565,7 @@ st.sidebar.markdown("""
 <style>
     /* Premium Midnight Blue Gradient Sidebar background */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #4169E1 0%, #0a1931 100%) !important;
+        background: linear-gradient(180deg, #1e3a8a 0%, #0f172a 100%) !important;
         border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
     }
     
@@ -2976,7 +2976,7 @@ st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strfti
 st.markdown("""
 <style>
     .company-header {
-        background: linear-gradient(135deg, #4169E1 0%, #1e3a8a 100%) !important;
+        background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%) !important;
         padding: 20px 25px;
         border-radius: 12px;
         margin-bottom: 25px;

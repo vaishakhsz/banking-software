@@ -45,13 +45,37 @@ def format_df_dates(df):
 def render_dashboard():
     st.title("📊 Executive Dashboard & Active Deposits")
     
-    total_cust = run_query("SELECT COUNT(*) FROM customers")[0][0]
-    total_sb = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0]
-    total_fds = run_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")[0][0]
-    rd_active = run_query("SELECT COUNT(*) FROM recurring_deposits WHERE status = 'ACTIVE'")[0][0]
-    cash_bal = get_cash_balance()
-    union_bal = get_bank_balance("Union Bank of India")
-    sbi_bal = get_bank_balance("State Bank of India")
+    # Combined query to fetch all dashboard metrics in a single network roundtrip
+    dashboard_metrics = run_query("""
+        SELECT 
+            (SELECT COUNT(*) FROM customers) as total_cust,
+            (SELECT COUNT(*) FROM sb_accounts) as total_sb,
+            (SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE') as total_fds,
+            (SELECT COUNT(*) FROM recurring_deposits WHERE status='ACTIVE') as total_rds,
+            (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-101') as cash_bal,
+            (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-102') as union_bal,
+            (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-103') as sbi_bal,
+            (SELECT COALESCE(SUM(credit), 0) - COALESCE(SUM(debit), 0) FROM jv_entries WHERE account_code='LIA-101') as sb_dep_bal,
+            (SELECT COALESCE(SUM(credit), 0) - COALESCE(SUM(debit), 0) FROM jv_entries WHERE account_code='LIA-102') as fd_dep_bal,
+            (SELECT COALESCE(SUM(credit), 0) - COALESCE(SUM(debit), 0) FROM jv_entries WHERE account_code='LIA-103') as rd_dep_bal
+    """)
+    
+    if dashboard_metrics and len(dashboard_metrics) > 0:
+        row = dashboard_metrics[0]
+        total_cust = row[0] or 0
+        total_sb = row[1] or 0
+        total_fds = row[2] or 0
+        rd_active = row[3] or 0
+        cash_bal = float(row[4] or 0.0)
+        union_bal = float(row[5] or 0.0)
+        sbi_bal = float(row[6] or 0.0)
+        sb_dep_bal = float(row[7] or 0.0)
+        fd_dep_bal = float(row[8] or 0.0)
+        rd_dep_bal = float(row[9] or 0.0)
+    else:
+        total_cust, total_sb, total_fds, rd_active = 0, 0, 0, 0
+        cash_bal, union_bal, sbi_bal = 0.0, 0.0, 0.0
+        sb_dep_bal, fd_dep_bal, rd_dep_bal = 0.0, 0.0, 0.0
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("👥 Total Customers", total_cust, delta=None)
@@ -88,9 +112,9 @@ def render_dashboard():
             "Category": ["Cash", "Union Bank", "SBI", "SB Deposits", "FD Deposits", "RD Deposits"],
             "Amount": [
                 cash_bal, union_bal, sbi_bal,
-                get_account_balance_from_jv('LIA-101'),
-                get_account_balance_from_jv('LIA-102'),
-                get_account_balance_from_jv('LIA-103')
+                sb_dep_bal,
+                fd_dep_bal,
+                rd_dep_bal
             ]
         }
         df_balance = pd.DataFrame(balance_data)
@@ -1967,52 +1991,76 @@ def render_financial_statements():
             
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
-        asset_balances = run_query("""
-            SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
-            FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-            WHERE CO.account_type = 'Asset' GROUP BY CO.account_code
-        """)
-        asset_balance_dict = {row[0]: row[2] for row in asset_balances} if asset_balances else {}
-        
-        cash_bal = asset_balance_dict.get('AST-101', 0.0)
-        union_bank_bal = asset_balance_dict.get('AST-102', 0.0)
-        sbi_bal = asset_balance_dict.get('AST-103', 0.0)
-        
-        sb_liability = run_query("SELECT COALESCE(SUM(credit - debit), 0) FROM jv_entries WHERE account_code='LIA-101'")[0][0]
-        fd_liability = run_query("SELECT COALESCE(SUM(credit - debit), 0) FROM jv_entries WHERE account_code='LIA-102'")[0][0]
-        rd_liability = run_query("SELECT COALESCE(SUM(credit - debit), 0) FROM jv_entries WHERE account_code='LIA-103'")[0][0]
-        
+        # Fetch all account balances in a single database roundtrip
         if USING_SUPABASE:
-            other_asset_balances = run_query("""
-                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
-                FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Asset' AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103') 
-                GROUP BY CO.account_code, CO.account_name
+            raw_balances = run_query("""
+                SELECT 
+                    CO.account_code, 
+                    CO.account_name, 
+                    CO.account_type, 
+                    CO.category,
+                    COALESCE(SUM(JE.debit), 0) as total_debit,
+                    COALESCE(SUM(JE.credit), 0) as total_credit
+                FROM chart_of_accounts CO 
+                LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                GROUP BY CO.account_code, CO.account_name, CO.account_type, CO.category
             """)
         else:
-            other_asset_balances = run_query("""
-                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
-                FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Asset' AND CO.account_code NOT IN ('AST-101', 'AST-102', 'AST-103') GROUP BY CO.account_code
+            raw_balances = run_query("""
+                SELECT 
+                    CO.account_code, 
+                    CO.account_name, 
+                    CO.account_type, 
+                    CO.category,
+                    COALESCE(SUM(JE.debit), 0) as total_debit,
+                    COALESCE(SUM(JE.credit), 0) as total_credit
+                FROM chart_of_accounts CO 
+                LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
+                GROUP BY CO.account_code
             """)
+
+        # Process balances locally in Python memory
+        balance_dict = {}
+        if raw_balances:
+            for row in raw_balances:
+                code = row[0]
+                name = row[1]
+                acc_type = row[2]
+                cat = row[3]
+                dr = float(row[4] or 0.0)
+                cr = float(row[5] or 0.0)
+                balance_dict[code] = {
+                    "name": name,
+                    "type": acc_type,
+                    "category": cat,
+                    "debit": dr,
+                    "credit": cr,
+                    "net_asset_exp": dr - cr,
+                    "net_lia_eq_inc": cr - dr
+                }
         
-        if USING_SUPABASE:
-            depreciation_balances = run_query("""
-                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
-                FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Expense' AND (CO.account_code IN ('EXP-107', 'EXP-108', 'EXP-109', 'EXP-110') OR LOWER(CO.account_name) LIKE '%depreciation%') 
-                GROUP BY CO.account_code, CO.account_name 
-                HAVING COALESCE(SUM(JE.debit - JE.credit), 0) != 0
-            """)
-        else:
-            depreciation_balances = run_query("""
-                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
-                FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Expense' AND (CO.account_code IN ('EXP-107', 'EXP-108', 'EXP-109', 'EXP-110') OR LOWER(CO.account_name) LIKE '%depreciation%') GROUP BY CO.account_code HAVING net_balance != 0
-            """)
+        cash_bal = balance_dict.get('AST-101', {}).get('net_asset_exp', 0.0)
+        union_bank_bal = balance_dict.get('AST-102', {}).get('net_asset_exp', 0.0)
+        sbi_bal = balance_dict.get('AST-103', {}).get('net_asset_exp', 0.0)
         
-        tot_inc = run_query("SELECT COALESCE(SUM(JE.credit - JE.debit), 0) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code=CO.account_code WHERE CO.account_type='Income'")[0][0]
-        tot_exp = run_query("SELECT COALESCE(SUM(JE.debit - JE.credit), 0) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code=CO.account_code WHERE CO.account_type='Expense'")[0][0]
+        sb_liability = balance_dict.get('LIA-101', {}).get('net_lia_eq_inc', 0.0)
+        fd_liability = balance_dict.get('LIA-102', {}).get('net_lia_eq_inc', 0.0)
+        rd_liability = balance_dict.get('LIA-103', {}).get('net_lia_eq_inc', 0.0)
+        
+        other_asset_balances = []
+        for code, info in balance_dict.items():
+            if info.get("type") == "Asset" and code not in ('AST-101', 'AST-102', 'AST-103'):
+                other_asset_balances.append([code, info.get("name"), info.get("net_asset_exp")])
+                
+        depreciation_balances = []
+        for code, info in balance_dict.items():
+            if info.get("type") == "Expense" and (code in ('EXP-107', 'EXP-108', 'EXP-109', 'EXP-110') or 'depreciation' in info.get("name", "").lower()):
+                net = info.get("net_asset_exp", 0.0)
+                if net != 0:
+                    depreciation_balances.append([code, info.get("name"), net])
+                    
+        tot_inc = sum(info.get("net_lia_eq_inc", 0.0) for code, info in balance_dict.items() if info.get("type") == "Income")
+        tot_exp = sum(info.get("net_asset_exp", 0.0) for code, info in balance_dict.items() if info.get("type") == "Expense")
         net_profit_loss = tot_inc - tot_exp
  
         col_bs1, col_bs2 = st.columns(2)

@@ -4,6 +4,7 @@ import time
 from datetime import datetime, date, timezone, timedelta
 import pytz
 import psycopg2
+import psycopg2.pool
 from dotenv import load_dotenv
 
 # Load local environment variables
@@ -54,13 +55,20 @@ if supabase_proj_url and supabase_anon_key and "REPLACE_WITH_YOUR_ANON_PUBLIC_KE
     except Exception as e:
         print(f"⚠️ Failed to initialize Supabase storage client: {str(e)}")
 
+# Global database connection pool for Supabase
+_connection_pool = None
+
 def get_connection():
-    """Get database connection (Supabase PostgreSQL or local SQLite) with retry logic"""
+    """Get database connection (Supabase PostgreSQL pool or local SQLite) with retry logic"""
+    global _connection_pool
     max_retries = 3
     for attempt in range(max_retries):
         try:
             if USING_SUPABASE:
-                return psycopg2.connect(SUPABASE_URL)
+                if _connection_pool is None:
+                    # Initialize pool with min 2 and max 20 active connections
+                    _connection_pool = psycopg2.pool.ThreadedConnectionPool(2, 20, dsn=SUPABASE_URL)
+                return _connection_pool.getconn()
             else:
                 db_dir = os.path.dirname(DB_NAME)
                 if db_dir and not os.path.exists(db_dir):
@@ -68,6 +76,9 @@ def get_connection():
                 return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
         except Exception as e:
             if attempt == max_retries - 1:
+                # Fallback to direct connection if pool fails or is exhausted
+                if USING_SUPABASE:
+                    return psycopg2.connect(SUPABASE_URL)
                 raise e
             time.sleep(1)
 
@@ -318,7 +329,8 @@ def init_db():
 init_db()
 
 def run_query(query, params=(), fetch=True):
-    """Execute a database query with error handling"""
+    """Execute a database query with error handling and connection pool reuse"""
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -335,12 +347,19 @@ def run_query(query, params=(), fetch=True):
         cursor.execute(query, params)
         res = cursor.fetchall() if fetch else None
         conn.commit()
-        conn.close()
         return res
     except Exception as e:
         import streamlit as st
         st.error(f"Database error: {str(e)}")
+        if conn is not None and USING_SUPABASE:
+            conn.rollback()
         return None
+    finally:
+        if conn is not None:
+            if USING_SUPABASE and _connection_pool is not None:
+                _connection_pool.putconn(conn)
+            else:
+                conn.close()
 
 def save_uploaded_file(uploaded_file):
     if uploaded_file is not None:
@@ -442,6 +461,7 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
     else:
         target_date = str(voucher_date)
         
+    conn = None
     try:
         debit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (debit_acc,))
         credit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (credit_acc,))
@@ -469,12 +489,19 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
             cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
         
         conn.commit()
-        conn.close()
         return jv_id
     except Exception as e:
         import streamlit as st
         st.error(f"Error posting journal voucher: {str(e)}")
+        if conn is not None and USING_SUPABASE:
+            conn.rollback()
         return None
+    finally:
+        if conn is not None:
+            if USING_SUPABASE and _connection_pool is not None:
+                _connection_pool.putconn(conn)
+            else:
+                conn.close()
 
 def get_account_name(account_code):
     """Get account name from chart_of_accounts"""

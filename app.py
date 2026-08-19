@@ -2779,6 +2779,23 @@ st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strfti
 # Header banner
 st.markdown("""
 <style>
+    /* Make sidebar buttons solid black with white text */
+    div[data-testid="stSidebar"] button {
+        background-color: #000000 !important;
+        color: #ffffff !important;
+        border: 1px solid #000000 !important;
+    }
+    div[data-testid="stSidebar"] button:hover {
+        background-color: #333333 !important;
+        color: #ffffff !important;
+        border: 1px solid #333333 !important;
+    }
+    div[data-testid="stSidebar"] button:active {
+        background-color: #000000 !important;
+        color: #ffffff !important;
+        border: 1px solid #000000 !important;
+    }
+    
     .company-header {
         background: linear-gradient(135deg, #1f4e78 0%, #2c6b9e 100%);
         padding: 15px 25px;

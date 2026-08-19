@@ -2765,6 +2765,14 @@ if uploaded_dbs:
                 except Exception as e:
                     st.sidebar.error(f"❌ Restore error: {str(e)}")
 
+if st.sidebar.button("🛠️ Force Resequence COA", use_container_width=True):
+    from database import resequence_all_accounts, reconcile_books
+    resequence_all_accounts()
+    reconcile_books()
+    st.sidebar.success("✅ Resequenced and reconciled COA successfully!")
+    time.sleep(1)
+    st.rerun()
+
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 

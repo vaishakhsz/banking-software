@@ -149,33 +149,52 @@ def resequence_all_accounts():
             conn.close()
             return
             
-        # Perform updates in a transaction
-        for old_code, new_code, name, acc_type, cat in updates_to_make:
-            # A. Update references in other tables
-            cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
-            cursor.execute(f"UPDATE cash_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
-            cursor.execute(f"UPDATE bank_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
-            
-            # B. Manage chart_of_accounts updates to avoid primary key conflict
-            # First, check if the new_code row already exists
-            cursor.execute(f"SELECT account_name FROM chart_of_accounts WHERE account_code = {placeholder}", (new_code,))
-            new_row = cursor.fetchone()
-            
-            if new_row:
-                # If it already exists, update its name/category to match the old one
-                cursor.execute(f"UPDATE chart_of_accounts SET account_name = {placeholder}, category = {placeholder} WHERE account_code = {placeholder}", (name, cat, new_code))
-                # Delete the old code
-                cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
+        # Perform updates in a transaction with foreign keys disabled
+        try:
+            if USING_SUPABASE:
+                cursor.execute("SET session_replication_role = 'replica';")
             else:
-                # If it doesn't exist, we can just insert the new code and delete the old one
-                cursor.execute(f"INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})", (new_code, name, acc_type, cat))
-                cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
+                cursor.execute("PRAGMA foreign_keys = OFF;")
                 
-        conn.commit()
+            for old_code, new_code, name, acc_type, cat in updates_to_make:
+                # A. Update references in other tables
+                cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
+                cursor.execute(f"UPDATE cash_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
+                cursor.execute(f"UPDATE bank_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
+                
+                # B. Manage chart_of_accounts updates to avoid primary key conflict
+                # First, check if the new_code row already exists
+                cursor.execute(f"SELECT account_name FROM chart_of_accounts WHERE account_code = {placeholder}", (new_code,))
+                new_row = cursor.fetchone()
+                
+                if new_row:
+                    # If it already exists, update its name/category to match the old one
+                    cursor.execute(f"UPDATE chart_of_accounts SET account_name = {placeholder}, category = {placeholder} WHERE account_code = {placeholder}", (name, cat, new_code))
+                    # Delete the old code
+                    cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
+                else:
+                    # If it doesn't exist, we can just insert the new code and delete the old one
+                    cursor.execute(f"INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})", (new_code, name, acc_type, cat))
+                    cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
+                    
+            conn.commit()
+            print("✅ Resequenced all accounts successfully!")
+        finally:
+            try:
+                # Always restore foreign key enforcement
+                if USING_SUPABASE:
+                    cursor.execute("SET session_replication_role = 'origin';")
+                else:
+                    cursor.execute("PRAGMA foreign_keys = ON;")
+                conn.commit()
+            except Exception as ex:
+                print(f"Error restoring foreign keys: {str(ex)}")
+                
         conn.close()
-        print("✅ Resequenced all accounts successfully!")
     except Exception as e:
+        import traceback
         print(f"Error during re-sequencing: {str(e)}")
+        traceback.print_exc()
 
 
 def reconcile_books():

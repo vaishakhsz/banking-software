@@ -1795,7 +1795,7 @@ def render_admin_editor():
 
 def render_financial_statements():
     st.title("⚖️ Financial Statements")
-    tab1, tab2, tab3 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Trial Balance", "Balance Sheet", "Profit & Loss Statement", "Ledger Print"])
     
     with tab1:
         st.subheader("Trial Balance Summary")
@@ -1876,7 +1876,7 @@ def render_financial_statements():
         tot_inc = run_query("SELECT COALESCE(SUM(JE.credit - JE.debit), 0) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code=CO.account_code WHERE CO.account_type='Income'")[0][0]
         tot_exp = run_query("SELECT COALESCE(SUM(JE.debit - JE.credit), 0) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code=CO.account_code WHERE CO.account_type='Expense'")[0][0]
         net_profit_loss = tot_inc - tot_exp
-
+ 
         col_bs1, col_bs2 = st.columns(2)
         with col_bs1:
             st.markdown("### Assets")
@@ -1909,7 +1909,7 @@ def render_financial_statements():
                 df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Amount (₹)"])
                 st.dataframe(df_assets, use_container_width=True, hide_index=True)
                 st.metric("Total Assets", f"₹{total_assets:,.2f}")
-
+ 
         with col_bs2:
             st.markdown("### Liabilities & Equity")
             lia_data = []
@@ -1979,7 +1979,7 @@ def render_financial_statements():
                 df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
                 st.dataframe(df_lia, use_container_width=True, hide_index=True)
                 st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
-
+ 
     with tab3:
         st.subheader("Profit and Loss Account")
         if USING_SUPABASE:
@@ -2032,6 +2032,129 @@ def render_financial_statements():
             st.success(f"**Net Profit for the Period:** ₹{net_result:,.2f}")
         elif net_result < 0:
             st.error(f"**Net Loss for the Period:** ₹{abs(net_result):,.2f}")
+
+    with tab4:
+        st.subheader("🖨️ General Ledger Statement Print")
+        
+        # Date filter selection
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30))
+        to_date = col_date2.date_input("To Date", value=date.today())
+        
+        # Load account heads for select box
+        coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts ORDER BY account_code")
+        coa_dict = {f"{c[0]} - {c[1]} ({c[2]})": (c[0], c[1], c[2]) for c in coa_list}
+        
+        selected_head = st.selectbox("Select Account Head for Ledger", list(coa_dict.keys()))
+        
+        if selected_head:
+            acc_code, acc_name, acc_type = coa_dict[selected_head]
+            
+            # 1. Calculate Opening Balance before from_date
+            if acc_type in ['Asset', 'Expense']:
+                # Balance = Debit - Credit
+                op_bal_row = run_query("""
+                    SELECT COALESCE(SUM(JE.debit - JE.credit), 0)
+                    FROM jv_entries JE 
+                    JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+                    WHERE JE.account_code = ? AND JV.voucher_date < ?
+                """, (acc_code, str(from_date)))
+            else:
+                # Balance = Credit - Debit (Liability, Equity, Income)
+                op_bal_row = run_query("""
+                    SELECT COALESCE(SUM(JE.credit - JE.debit), 0)
+                    FROM jv_entries JE 
+                    JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+                    WHERE JE.account_code = ? AND JV.voucher_date < ?
+                """, (acc_code, str(from_date)))
+                
+            opening_bal = op_bal_row[0][0] if op_bal_row else 0.0
+            
+            # Display Opening Balance label (Dr / Cr)
+            if acc_type in ['Asset', 'Expense']:
+                op_label = "Dr" if opening_bal >= 0 else "Cr"
+            else:
+                op_label = "Cr" if opening_bal >= 0 else "Dr"
+            abs_op_bal = abs(opening_bal)
+            
+            # 2. Fetch JV entries within date range
+            ledger_rows = run_query("""
+                SELECT JV.voucher_date, JV.jv_id, JV.narration, JE.debit, JE.credit
+                FROM jv_entries JE 
+                JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+                WHERE JE.account_code = ? AND JV.voucher_date BETWEEN ? AND ?
+                ORDER BY JV.voucher_date ASC, JV.jv_id ASC
+            """, (acc_code, str(from_date), str(to_date)))
+            
+            # 3. Calculate running balance and compile table rows
+            display_rows = []
+            
+            # Add opening balance row
+            display_rows.append([
+                str(from_date), 
+                "-", 
+                "Opening Balance B/F", 
+                0.0, 
+                0.0, 
+                abs_op_bal, 
+                op_label
+            ])
+            
+            running_bal = opening_bal
+            for entry in ledger_rows:
+                v_date, jv_id, narration, debit, credit = entry
+                
+                # Update running balance
+                if acc_type in ['Asset', 'Expense']:
+                    running_bal += (debit - credit)
+                    bal_label = "Dr" if running_bal >= 0 else "Cr"
+                else:
+                    running_bal += (credit - debit)
+                    bal_label = "Cr" if running_bal >= 0 else "Dr"
+                    
+                display_rows.append([
+                    v_date,
+                    f"JV-{jv_id}",
+                    narration,
+                    debit,
+                    credit,
+                    abs(running_bal),
+                    bal_label
+                ])
+                
+            # Compile into DataFrame
+            df_ledger = pd.DataFrame(
+                display_rows, 
+                columns=["Date", "Voucher ID", "Particulars/Narration", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Type"]
+            )
+            
+            # Format display data
+            df_display = df_ledger.copy()
+            df_display["Debit (₹)"] = df_display["Debit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
+            df_display["Credit (₹)"] = df_display["Credit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
+            df_display["Balance (₹)"] = df_display["Balance (₹)"].apply(lambda x: f"₹{x:,.2f}")
+            df_display["Balance (₹)"] = df_display["Balance (₹)"] + " (" + df_display["Type"] + ")"
+            df_display.drop(columns=["Type"], inplace=True)
+            
+            # Show table
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            
+            # Export to PDF
+            df_pdf = df_ledger.copy()
+            df_pdf["Debit (₹)"] = df_pdf["Debit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
+            df_pdf["Credit (₹)"] = df_pdf["Credit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
+            df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"].apply(lambda x: f"₹{x:,.2f}")
+            df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"] + " (" + df_pdf["Type"] + ")"
+            df_pdf.drop(columns=["Type"], inplace=True)
+            
+            pdf_data = pdf_generator.create_pdf_report(f"General Ledger: {acc_code} - {acc_name}", df_pdf)
+            st.download_button(
+                label=f"📥 Download Ledger Statement for {acc_code} (PDF)",
+                data=pdf_data,
+                file_name=f"Ledger_Statement_{acc_code}_{from_date}_to_{to_date}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
 
 def render_reports():
     st.title("📄 Comprehensive Bank Reports Center")

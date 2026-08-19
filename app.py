@@ -2696,11 +2696,16 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown(f"""
-<div class="user-info">
-    👤 Logged in as: <b style="color:white;">{st.session_state.get('username', 'Admin')}</b>
+col_user, col_logout = st.sidebar.columns([1.7, 1.3])
+col_user.markdown(f"""
+<div class="user-info" style="text-align: left; padding: 6px 0 0 5px;">
+    👤 Active: <b style="color:white;">{st.session_state.get('username', 'Admin').upper()}</b>
 </div>
 """, unsafe_allow_html=True)
+if col_logout.button("🚪 Log Out", key="logout_btn", use_container_width=True):
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.rerun()
 
 st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
 current_time_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
@@ -2718,10 +2723,20 @@ st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=Tru
 menu = st.sidebar.radio(
     "📋 MENU",
     [
-        "Dashboard", "Customer Management", "KYC Verification", "SB Accounts",
-        "Fixed Deposits (FD)", "Recurring Deposits (RD)", "Chart of Accounts",
-        "Cash Book", "Bank Book", "Journal Vouchers", "Admin Record Editor",
-        "Financial Statements (Trial/BS/PL)", "Reports", "SB Interest Calculation",
+        "📊 Dashboard",
+        "👥 Customer Management",
+        "🔍 KYC Verification",
+        "💰 SB Accounts",
+        "📈 Fixed Deposits (FD)",
+        "⏳ Recurring Deposits (RD)",
+        "🗂️ Chart of Accounts",
+        "💵 Cash Book",
+        "🏦 Bank Book",
+        "📝 Journal Vouchers",
+        "⚙️ Admin Record Editor",
+        "📊 Financial Statements",
+        "📋 Reports",
+        "🧮 SB Interest Calculation",
     ],
     index=0,
     key="main_menu"
@@ -3004,31 +3019,31 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Navigation routing
-if menu == "Dashboard":
+if menu == "📊 Dashboard":
     render_dashboard()
-elif menu == "Customer Management":
+elif menu == "👥 Customer Management":
     render_customer_management()
-elif menu == "KYC Verification":
+elif menu == "🔍 KYC Verification":
     render_kyc()
-elif menu == "SB Accounts":
+elif menu == "💰 SB Accounts":
     render_sb_accounts()
-elif menu == "Fixed Deposits (FD)":
+elif menu == "📈 Fixed Deposits (FD)":
     render_fixed_deposits()
-elif menu == "Recurring Deposits (RD)":
+elif menu == "⏳ Recurring Deposits (RD)":
     render_recurring_deposits()
-elif menu == "Chart of Accounts":
+elif menu == "🗂️ Chart of Accounts":
     render_chart_of_accounts()
-elif menu == "Cash Book":
+elif menu == "💵 Cash Book":
     render_cash_book()
-elif menu == "Bank Book":
+elif menu == "🏦 Bank Book":
     render_bank_book()
-elif menu == "Journal Vouchers":
+elif menu == "📝 Journal Vouchers":
     render_journal_vouchers()
-elif menu == "Admin Record Editor":
+elif menu == "⚙️ Admin Record Editor":
     render_admin_editor()
-elif menu == "Financial Statements (Trial/BS/PL)":
+elif menu == "📊 Financial Statements":
     render_financial_statements()
-elif menu == "Reports":
+elif menu == "📋 Reports":
     render_reports()
-elif menu == "SB Interest Calculation":
+elif menu == "🧮 SB Interest Calculation":
     render_sb_interest_calculation()

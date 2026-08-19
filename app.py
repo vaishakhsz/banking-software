@@ -1760,7 +1760,7 @@ def render_financial_statements():
             depreciation_balances = run_query("""
                 SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
                 FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Expense' AND (CO.account_code LIKE 'EXP-20%' OR LOWER(CO.account_name) LIKE '%depreciation%') 
+                WHERE CO.account_type = 'Expense' AND (CO.account_code IN ('EXP-204', 'EXP-205', 'EXP-206', 'EXP-207') OR LOWER(CO.account_name) LIKE '%depreciation%') 
                 GROUP BY CO.account_code, CO.account_name 
                 HAVING COALESCE(SUM(JE.debit - JE.credit), 0) != 0
             """)
@@ -1768,7 +1768,7 @@ def render_financial_statements():
             depreciation_balances = run_query("""
                 SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
                 FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Expense' AND (CO.account_code LIKE 'EXP-20%' OR LOWER(CO.account_name) LIKE '%depreciation%') GROUP BY CO.account_code HAVING net_balance != 0
+                WHERE CO.account_type = 'Expense' AND (CO.account_code IN ('EXP-204', 'EXP-205', 'EXP-206', 'EXP-207') OR LOWER(CO.account_name) LIKE '%depreciation%') GROUP BY CO.account_code HAVING net_balance != 0
             """)
         
         tot_inc = run_query("SELECT COALESCE(SUM(JE.credit - JE.debit), 0) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code=CO.account_code WHERE CO.account_type='Income'")[0][0]

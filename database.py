@@ -431,10 +431,17 @@ def generate_bank_voucher_no():
         new_seq = 1
     return f"BB{today}{new_seq:04d}"
 
-def post_automated_jv(narration, debit_acc, credit_acc, amount):
+def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=None):
     """Post a journal voucher - this is the single source of truth"""
     if amount <= 0:
         return None
+    
+    # Determine the transaction/voucher date
+    if voucher_date is None:
+        target_date = str(date.today())
+    else:
+        target_date = str(voucher_date)
+        
     try:
         debit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (debit_acc,))
         credit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (credit_acc,))
@@ -451,12 +458,12 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount):
             cursor.execute("""
                 INSERT INTO journal_vouchers (voucher_date, narration, status) 
                 VALUES (%s, %s, 'POSTED') RETURNING jv_id
-            """, (str(date.today()), narration))
+            """, (target_date, narration))
             jv_id = cursor.fetchone()[0]
             cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, debit_acc, amount))
             cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, credit_acc, amount))
         else:
-            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(date.today()), narration))
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (target_date, narration))
             jv_id = cursor.lastrowid
             cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, debit_acc, amount))
             cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))

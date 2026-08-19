@@ -1092,7 +1092,10 @@ def render_cash_book():
         
         is_opening = st.checkbox("Is this an Opening Balance?")
         with st.form("cash_entry_form"):
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
+            tx_date = col2.date_input("Transaction Date", date.today())
+            amount = col3.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
+            
             if is_opening:
                 entry_type = col1.selectbox("Transaction Type", ["DEBIT (Receipt)"], index=0, disabled=True)
                 particulars = st.text_input("Particulars / Description", value="Opening Balance")
@@ -1100,8 +1103,6 @@ def render_cash_book():
                 entry_type = col1.selectbox("Transaction Type", ["DEBIT (Receipt)", "CREDIT (Payment)"])
                 particulars = st.text_input("Particulars / Description")
                 
-            amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
@@ -1142,13 +1143,13 @@ def render_cash_book():
                             st.stop()
                     
                     if entry_type == "DEBIT (Receipt)":
-                        jv_result = post_automated_jv(f"Cash Receipt: {full_narration}", "AST-101", account_code, amount)
+                        jv_result = post_automated_jv(f"Cash Receipt: {full_narration}", "AST-101", account_code, amount, voucher_date=str(tx_date))
                     else:
-                        jv_result = post_automated_jv(f"Cash Payment: {full_narration}", account_code, "AST-101", amount)
+                        jv_result = post_automated_jv(f"Cash Payment: {full_narration}", account_code, "AST-101", amount, voucher_date=str(tx_date))
                     
                     if jv_result:
                         voucher_no = generate_cash_voucher_no()
-                        today = datetime.now(IST).strftime("%Y-%m-%d")
+                        today = str(tx_date)
                         new_cash_balance = get_cash_balance()
                         dr_amt = amount if entry_type == "DEBIT (Receipt)" else 0
                         cr_amt = amount if entry_type == "CREDIT (Payment)" else 0
@@ -1286,7 +1287,10 @@ def render_bank_book():
         
         is_opening = st.checkbox("Is this an Opening Balance?", key="bank_is_opening")
         with st.form("bank_entry_form"):
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
+            tx_date = col2.date_input("Transaction Date", date.today())
+            amount = col3.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
+            
             if is_opening:
                 entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)"], index=0, disabled=True)
                 particulars = st.text_input("Particulars / Description", value="Opening Balance")
@@ -1294,8 +1298,6 @@ def render_bank_book():
                 entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
                 particulars = st.text_input("Particulars / Description")
                 
-            amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
@@ -1338,17 +1340,17 @@ def render_bank_book():
                                 st.error(f"❌ Insufficient SBI Balance to transfer! Available: ₹{current_sbi:,.2f}")
                                 st.stop()
                                 
-                        jv_result = post_automated_jv(f"Bank Deposit: {full_narration} - {bank_name}", bank_code, account_code, amount)
+                        jv_result = post_automated_jv(f"Bank Deposit: {full_narration} - {bank_name}", bank_code, account_code, amount, voucher_date=str(tx_date))
                     else:
                         # Withdrawal: decreases selected bank
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Bank Balance in {bank_name}! Available: ₹{current_balance:,.2f}")
                             st.stop()
-                        jv_result = post_automated_jv(f"Bank Withdrawal: {full_narration} - {bank_name}", account_code, bank_code, amount)
+                        jv_result = post_automated_jv(f"Bank Withdrawal: {full_narration} - {bank_name}", account_code, bank_code, amount, voucher_date=str(tx_date))
                     
                     if jv_result:
                         voucher_no = generate_bank_voucher_no()
-                        today = datetime.now(IST).strftime("%Y-%m-%d")
+                        today = str(tx_date)
                         new_balance = get_account_balance_from_jv(bank_code)
                         dr_amt = amount if entry_type == "DEBIT (Deposit)" else 0
                         cr_amt = amount if entry_type == "CREDIT (Withdrawal)" else 0

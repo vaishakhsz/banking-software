@@ -128,7 +128,7 @@ def render_customer_management():
         with st.form("reg_form"):
             col1, col2 = st.columns(2)
             name = col1.text_input("Full Name *")
-            dob = col2.date_input("Date of Birth *", value=date(1995, 1, 1), min_value=date(1900, 1, 1), max_value=date.today())
+            dob = col2.date_input("Date of Birth *", value=date(1995, 1, 1), min_value=date(1900, 1, 1), max_value=date.today(), format="DD-MM-YYYY")
             gender = col1.selectbox("Gender", ["Male", "Female", "Other"])
             email = col2.text_input("Email Address")
             phone = col1.text_input("Phone Number *")
@@ -1160,7 +1160,7 @@ def render_cash_book():
         is_opening = st.checkbox("Is this an Opening Balance?")
         with st.form("cash_entry_form"):
             col1, col2, col3 = st.columns(3)
-            tx_date = col2.date_input("Transaction Date", date.today())
+            tx_date = col2.date_input("Transaction Date", date.today(), format="DD-MM-YYYY")
             amount = col3.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
             
             if is_opening:
@@ -1252,8 +1252,8 @@ def render_cash_book():
 
     with tab2:
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_view_from")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_view_to")
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_view_from", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_view_to", format="DD-MM-YYYY")
         
         entries = run_query("""
             SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration 
@@ -1352,8 +1352,8 @@ def render_cash_book():
 
     with tab4:
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_print_from")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_print_to")
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_print_from", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_print_to", format="DD-MM-YYYY")
         
         entries = run_query("""
             SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration 
@@ -1372,8 +1372,8 @@ def render_cash_book():
     with tab5:
         st.subheader("🖨️ Cash Book Voucher (CB) Print")
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_v_from")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_v_to")
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_v_from", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_v_to", format="DD-MM-YYYY")
         
         cb_records = run_query("""
             SELECT voucher_no, particulars, date 
@@ -1439,7 +1439,7 @@ def render_bank_book():
         is_opening = st.checkbox("Is this an Opening Balance?", key="bank_is_opening")
         with st.form("bank_entry_form"):
             col1, col2, col3 = st.columns(3)
-            tx_date = col2.date_input("Transaction Date", date.today())
+            tx_date = col2.date_input("Transaction Date", date.today(), format="DD-MM-YYYY")
             amount = col3.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
             
             if is_opening:
@@ -1527,8 +1527,8 @@ def render_bank_book():
 
     with tab2:
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_view_from")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to")
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_view_from", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to", format="DD-MM-YYYY")
         
         entries = run_query("""
             SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration 
@@ -1631,8 +1631,8 @@ def render_bank_book():
 
     with tab4:
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_print_from")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to")
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_print_from", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to", format="DD-MM-YYYY")
         
         entries = run_query("""
             SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration 
@@ -1651,8 +1651,8 @@ def render_bank_book():
     with tab5:
         st.subheader("🖨️ Bank Book Voucher (BB) Print")
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_v_from")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_v_to")
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_v_from", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_v_to", format="DD-MM-YYYY")
         
         bb_records = run_query("""
             SELECT voucher_no, bank_name, particulars, date 
@@ -1720,7 +1720,7 @@ def render_journal_vouchers():
         }
 
         with st.form("unified_jv_form"):
-            v_date = st.date_input("Voucher Date", value=date.today())
+            v_date = st.date_input("Voucher Date", value=date.today(), format="DD-MM-YYYY")
             narration = st.text_input("Narration", value="Journal entry")
             
             st.markdown("#### **Debit Entry (Expense / Asset)**")
@@ -1773,8 +1773,8 @@ def render_journal_vouchers():
 
     with tab2:
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="jv_view_from")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="jv_view_to")
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="jv_view_from", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="jv_view_to", format="DD-MM-YYYY")
         
         jvs = run_query("""
             SELECT jv_id, voucher_date, narration, status 
@@ -1791,8 +1791,8 @@ def render_journal_vouchers():
     with tab3:
         st.subheader("🖨️ Journal Voucher (JV) Drill-Down Print")
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="jv_print_from")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="jv_print_to")
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="jv_print_from", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="jv_print_to", format="DD-MM-YYYY")
         
         jv_records = run_query("""
             SELECT jv_id, voucher_date, narration 
@@ -2162,8 +2162,8 @@ def render_financial_statements():
         
         # Date filter selection
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30))
-        to_date = col_date2.date_input("To Date", value=date.today())
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=date.today(), format="DD-MM-YYYY")
         
         # Load account heads for select box
         coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts ORDER BY account_code")
@@ -2402,7 +2402,7 @@ def render_sb_interest_calculation():
         col1, col2 = st.columns(2)
         calc_period = col1.selectbox("Calculation Period", ["Quarterly (90 Days)", "Half-Yearly (182 Days)", "Annually (365 Days)", "Custom Days"])
         days = col2.number_input("Period in Days", min_value=1, max_value=365, value=90 if "Quarterly" in calc_period else (182 if "Half-Yearly" in calc_period else 365))
-        calc_date = st.date_input("Interest Posting Date", value=date.today())
+        calc_date = st.date_input("Interest Posting Date", value=date.today(), format="DD-MM-YYYY")
         
         preview_rows = []
         total_interest_to_post = 0.0

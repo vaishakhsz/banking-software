@@ -62,11 +62,24 @@ def create_pdf_report(title, df):
         
         for row in df.values:
             cleaned_row = []
-            for val in row:
+            for col_idx, val in enumerate(row):
+                col_name = columns[col_idx].lower()
                 val_str = str(val) if val is not None else ""
                 val_str = val_str.replace('₹', 'Rs.')
                 ascii_val = val_str.encode('ascii', 'ignore').decode('ascii')
-                cleaned_row.append(ascii_val)
+                
+                # Wrap long text columns in Paragraph to enable auto line-wrapping in ReportLab
+                if col_name in ['particulars/narration', 'particulars', 'narration', 'description', 'name', 'account name']:
+                    cell_text_style = ParagraphStyle(
+                        f'CellText_{col_idx}',
+                        parent=styles['Normal'],
+                        fontSize=7,
+                        fontName='Helvetica',
+                        leading=9
+                    )
+                    cleaned_row.append(Paragraph(ascii_val, cell_text_style))
+                else:
+                    cleaned_row.append(ascii_val)
             cleaned_data.append(cleaned_row)
         
         # Calculate column widths based on content
@@ -80,9 +93,10 @@ def create_pdf_report(title, df):
         else:
             col_widths = []
             for i, col in enumerate(columns):
-                if col.lower() in ['name', 'particulars', 'narration', 'description', 'account name']:
+                col_lower = col.lower()
+                if col_lower in ['name', 'particulars', 'narration', 'description', 'account name', 'particulars/narration']:
                     col_widths.append(min(80, available_width * 0.25))
-                elif col.lower() in ['account no', 'voucher no', 'tx id', 'id']:
+                elif col_lower in ['account no', 'voucher no', 'tx id', 'id', 'voucher id']:
                     col_widths.append(min(45, available_width * 0.15))
                 else:
                     col_widths.append(min(50, available_width * 0.12))

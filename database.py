@@ -93,6 +93,77 @@ def execute_create(cursor, sql):
         sql = translate_sqlite_schema_to_postgres(sql)
     cursor.execute(sql)
 
+def reconcile_books():
+    """One-time database reconciliation to align old cash/bank entries with ledger JVs"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Reconcile Cash Book entries
+        cursor.execute("SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, account_code, narration FROM cash_book")
+        cash_rows = cursor.fetchall()
+        for row in cash_rows:
+            c_id, c_date, v_no, part, dr, cr, acc_code, narr = row
+            amt = dr if dr > 0 else cr
+            is_dr = dr > 0
+            
+            # Find matching JV by voucher_no in narration or matching particulars + amount
+            cursor.execute(f"SELECT jv_id, narration FROM journal_vouchers WHERE narration LIKE {placeholder} OR (narration LIKE {placeholder} AND jv_id IN (SELECT jv_id FROM jv_entries WHERE debit = {placeholder} OR credit = {placeholder}))", (f"%{v_no}%", f"%{part}%", amt, amt))
+            jv_row = cursor.fetchone()
+            if jv_row:
+                jv_id, jv_narr = jv_row
+                jv_prefix = "Cash Receipt" if is_dr else "Cash Payment"
+                full_narr = part
+                if narr and narr.strip():
+                    full_narr += f" ({narr.strip()})"
+                new_narr = f"{jv_prefix} [{v_no}]: {full_narr}"
+                cursor.execute(f"UPDATE journal_vouchers SET narration = {placeholder} WHERE jv_id = {placeholder}", (new_narr, jv_id))
+                
+                # Update jv_entries
+                cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (jv_id,))
+                if is_dr:
+                    cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, 'AST-101', {placeholder}, 0)", (jv_id, amt))
+                    cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, 0, {placeholder})", (jv_id, acc_code, amt))
+                else:
+                    cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, {placeholder}, 0)", (jv_id, acc_code, amt))
+                    cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, 'AST-101', 0, {placeholder})", (jv_id, amt))
+                    
+        # 2. Reconcile Bank Book entries
+        cursor.execute("SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, bank_name, account_code, narration FROM bank_book")
+        bank_rows = cursor.fetchall()
+        for row in bank_rows:
+            b_id, b_date, v_no, part, dr, cr, b_name, acc_code, narr = row
+            amt = dr if dr > 0 else cr
+            is_dr = dr > 0
+            bank_code = "AST-102" if "Union" in b_name else "AST-103"
+            
+            cursor.execute(f"SELECT jv_id, narration FROM journal_vouchers WHERE narration LIKE {placeholder} OR (narration LIKE {placeholder} AND jv_id IN (SELECT jv_id FROM jv_entries WHERE debit = {placeholder} OR credit = {placeholder}))", (f"%{v_no}%", f"%{part}%", amt, amt))
+            jv_row = cursor.fetchone()
+            if jv_row:
+                jv_id, jv_narr = jv_row
+                jv_prefix = "Bank Deposit" if is_dr else "Bank Withdrawal"
+                full_narr = part
+                if narr and narr.strip():
+                    full_narr += f" ({narr.strip()})"
+                new_narr = f"{jv_prefix} [{v_no}]: {full_narr} - {b_name}"
+                cursor.execute(f"UPDATE journal_vouchers SET narration = {placeholder} WHERE jv_id = {placeholder}", (new_narr, jv_id))
+                
+                # Update jv_entries
+                cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (jv_id,))
+                if is_dr:
+                    cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, {placeholder}, 0)", (jv_id, bank_code, amt))
+                    cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, 0, {placeholder})", (jv_id, acc_code, amt))
+                else:
+                    cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, {placeholder}, 0)", (jv_id, acc_code, amt))
+                    cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, 0, {placeholder})", (jv_id, bank_code, amt))
+                    
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error during reconciliation: {str(e)}")
+
+
 def init_db():
     """Initialize database and ensure missing columns are added dynamically"""
     try:
@@ -320,6 +391,10 @@ def init_db():
 
         conn.commit()
         conn.close()
+        try:
+            reconcile_books()
+        except Exception as e:
+            print(f"⚠️ Failed to run one-time reconciliation: {str(e)}")
         return True
     except Exception as e:
         print(f"❌ Database initialization error: {str(e)}")

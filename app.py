@@ -2704,6 +2704,13 @@ if uploaded_dbs:
             try:
                 with open(DB_NAME, "wb") as f:
                     f.write(db_file.getbuffer())
+                
+                # Import and trigger resequencing & reconciliation dynamically
+                from database import init_db, resequence_all_accounts, reconcile_books
+                init_db()
+                resequence_all_accounts()
+                reconcile_books()
+                
                 st.sidebar.success("✅ Database restored! Please refresh.")
                 time.sleep(1)
                 st.rerun()
@@ -2740,6 +2747,17 @@ if uploaded_dbs:
                     
                     conn.commit()
                     conn.close()
+                    
+                    # Force resequence and reconcile
+                    from database import resequence_all_accounts, reconcile_books
+                    try:
+                        resequence_all_accounts()
+                    except Exception as ex:
+                        print(f"Resequence error: {str(ex)}")
+                    try:
+                        reconcile_books()
+                    except Exception as ex:
+                        print(f"Reconcile error: {str(ex)}")
                     
                     st.sidebar.success(f"✅ Successfully restored from {len(sql_files)} SQL files! Please refresh.")
                     time.sleep(1)

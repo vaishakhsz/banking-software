@@ -94,57 +94,88 @@ def execute_create(cursor, sql):
         sql = translate_sqlite_schema_to_postgres(sql)
     cursor.execute(sql)
 
-def migrate_account_codes():
-    """Migrate old account codes to sequential codes (101-112) in database"""
+def resequence_all_accounts():
+    """Resequence all account codes in chart_of_accounts to be strictly sequential (101, 102, 103...)"""
     try:
         conn = get_connection()
         cursor = conn.cursor()
         placeholder = "%s" if USING_SUPABASE else "?"
         
-        code_map = {
-            'EXP-201': 'EXP-104',
-            'EXP-202': 'EXP-105',
-            'EXP-203': 'EXP-106',
-            'EXP-204': 'EXP-107',
-            'EXP-205': 'EXP-108',
-            'EXP-206': 'EXP-109',
-            'EXP-207': 'EXP-110',
-            'EXP-301': 'EXP-111',
-            'EXP-401': 'EXP-112',
-            'INC-201': 'INC-103',
-            'INC-202': 'INC-104',
-            'INC-203': 'INC-105',
-            'INC-204': 'INC-106',
-            'INC-301': 'INC-107',
+        # 1. Fetch all accounts
+        cursor.execute("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
+        rows = cursor.fetchall()
+        if not rows:
+            conn.close()
+            return
+            
+        # Group by account_type
+        by_type = {}
+        for row in rows:
+            code, name, acc_type, cat = row
+            by_type.setdefault(acc_type, []).append((code, name, cat))
+            
+        prefix_map = {
+            "Asset": "AST",
+            "Liability": "LIA",
+            "Income": "INC",
+            "Expense": "EXP",
+            "Equity": "EQT"
         }
         
-        for old_c, new_c in code_map.items():
-            # Check if old code exists in chart_of_accounts
-            cursor.execute(f"SELECT account_name, account_type, category FROM chart_of_accounts WHERE account_code = {placeholder}", (old_c,))
-            old_row = cursor.fetchone()
-            if old_row:
-                name, acc_type, cat = old_row
+        # 2. Determine sequential mapping
+        updates_to_make = []
+        for acc_type, acc_list in by_type.items():
+            prefix = prefix_map.get(acc_type, "ACC")
+            
+            # Sort the accounts by their suffix number, then name
+            def get_sort_key(item):
+                code = item[0]
+                try:
+                    parts = code.split("-")
+                    suffix = int(parts[1]) if len(parts) > 1 else 9999
+                except Exception:
+                    suffix = 9999
+                return (suffix, item[1])
                 
-                # Check if new code exists
-                cursor.execute(f"SELECT account_code FROM chart_of_accounts WHERE account_code = {placeholder}", (new_c,))
-                new_exists = cursor.fetchone() is not None
-                
-                if not new_exists:
-                    # Safely create new code first
-                    cursor.execute(f"INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})", (new_c, name, acc_type, cat))
-                
-                # Update references in all other tables
-                cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_c, old_c))
-                cursor.execute(f"UPDATE cash_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_c, old_c))
-                cursor.execute(f"UPDATE bank_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_c, old_c))
-                
-                # Delete old code from chart_of_accounts
-                cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_c,))
+            acc_list.sort(key=get_sort_key)
+            
+            # Generate sequential codes starting at 101
+            for index, (old_code, name, cat) in enumerate(acc_list):
+                new_code = f"{prefix}-{101 + index}"
+                if old_code != new_code:
+                    updates_to_make.append((old_code, new_code, name, acc_type, cat))
+                    
+        if not updates_to_make:
+            conn.close()
+            return
+            
+        # Perform updates in a transaction
+        for old_code, new_code, name, acc_type, cat in updates_to_make:
+            # A. Update references in other tables
+            cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
+            cursor.execute(f"UPDATE cash_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
+            cursor.execute(f"UPDATE bank_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
+            
+            # B. Manage chart_of_accounts updates to avoid primary key conflict
+            # First, check if the new_code row already exists
+            cursor.execute(f"SELECT account_name FROM chart_of_accounts WHERE account_code = {placeholder}", (new_code,))
+            new_row = cursor.fetchone()
+            
+            if new_row:
+                # If it already exists, update its name/category to match the old one
+                cursor.execute(f"UPDATE chart_of_accounts SET account_name = {placeholder}, category = {placeholder} WHERE account_code = {placeholder}", (name, cat, new_code))
+                # Delete the old code
+                cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
+            else:
+                # If it doesn't exist, we can just insert the new code and delete the old one
+                cursor.execute(f"INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})", (new_code, name, acc_type, cat))
+                cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
                 
         conn.commit()
         conn.close()
+        print("✅ Resequenced all accounts successfully!")
     except Exception as e:
-        print(f"Error migrating account codes: {str(e)}")
+        print(f"Error during re-sequencing: {str(e)}")
 
 
 def reconcile_books():
@@ -449,9 +480,9 @@ def init_db():
         conn.commit()
         conn.close()
         try:
-            migrate_account_codes()
+            resequence_all_accounts()
         except Exception as e:
-            print(f"⚠️ Failed to run account migration: {str(e)}")
+            print(f"⚠️ Failed to run account resequencing: {str(e)}")
         try:
             reconcile_books()
         except Exception as e:

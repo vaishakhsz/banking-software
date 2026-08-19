@@ -2376,41 +2376,57 @@ if os.path.exists(DB_NAME):
         use_container_width=True
     )
 
-uploaded_db = st.sidebar.file_uploader("📤 Restore Database", type=["db", "sqlite", "sqlite3", "sql"])
-if uploaded_db is not None:
-    file_ext = uploaded_db.name.split(".")[-1].lower()
-    
-    if file_ext == "sql":
-        if st.sidebar.button("⚠️ Confirm Restore (.sql)", type="primary", use_container_width=True):
-            try:
-                # Read the SQL statements from the uploaded script file
-                sql_script = uploaded_db.read().decode("utf-8")
-                
-                # Execute the queries directly against the database
-                conn = get_connection()
-                cursor = conn.cursor()
-                if USING_SUPABASE:
-                    cursor.execute(sql_script)
-                else:
-                    cursor.executescript(sql_script)
-                conn.commit()
-                conn.close()
-                
-                st.sidebar.success("✅ Database restored from SQL script! Please refresh.")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"❌ Restore error: {str(e)}")
-    else:
+uploaded_dbs = st.sidebar.file_uploader("📤 Restore Database", type=["db", "sqlite", "sqlite3", "sql"], accept_multiple_files=True)
+if uploaded_dbs:
+    # If there's only one file and it's a local .db file
+    if len(uploaded_dbs) == 1 and uploaded_dbs[0].name.split(".")[-1].lower() in ["db", "sqlite", "sqlite3"]:
+        db_file = uploaded_dbs[0]
         if st.sidebar.button("⚠️ Confirm Restore (.db)", type="primary", use_container_width=True):
             try:
                 with open(DB_NAME, "wb") as f:
-                    f.write(uploaded_db.getbuffer())
+                    f.write(db_file.getbuffer())
                 st.sidebar.success("✅ Database restored! Please refresh.")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
                 st.sidebar.error(f"❌ Error: {str(e)}")
+    else:
+        # Filter for SQL script files
+        sql_files = [f for f in uploaded_dbs if f.name.split(".")[-1].lower() == "sql"]
+        if sql_files:
+            if st.sidebar.button(f"⚠️ Confirm Restore ({len(sql_files)} SQL files)", type="primary", use_container_width=True):
+                try:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    
+                    # Temporarily disable foreign key constraints to allow executing inserts in any order
+                    if USING_SUPABASE:
+                        cursor.execute("SET session_replication_role = 'replica';")
+                    else:
+                        cursor.execute("PRAGMA foreign_keys = OFF;")
+                    
+                    # Execute each SQL script sequentially
+                    for sql_file in sql_files:
+                        sql_script = sql_file.read().decode("utf-8")
+                        if USING_SUPABASE:
+                            cursor.execute(sql_script)
+                        else:
+                            cursor.executescript(sql_script)
+                    
+                    # Re-enable foreign key constraints
+                    if USING_SUPABASE:
+                        cursor.execute("SET session_replication_role = 'origin';")
+                    else:
+                        cursor.execute("PRAGMA foreign_keys = ON;")
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    st.sidebar.success(f"✅ Successfully restored from {len(sql_files)} SQL files! Please refresh.")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"❌ Restore error: {str(e)}")
 
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")

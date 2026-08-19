@@ -1220,7 +1220,16 @@ def render_cash_book():
                         st.rerun()
 
     with tab2:
-        entries = run_query("SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration FROM cash_book ORDER BY id DESC")
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_view_from")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_view_to")
+        
+        entries = run_query("""
+            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration 
+            FROM cash_book 
+            WHERE date BETWEEN ? AND ? 
+            ORDER BY id DESC
+        """, (str(from_date), str(to_date)))
         if entries:
             df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Account Code", "Narration"])
             st.dataframe(df_cash, use_container_width=True)
@@ -1241,7 +1250,7 @@ def render_cash_book():
                 time.sleep(0.5)
                 st.rerun()
         else:
-            st.info("No cash book entries found.")
+            st.info("No cash book entries found in this date range.")
 
     with tab3:
         st.subheader("Edit Existing Cash Entry")
@@ -1311,15 +1320,35 @@ def render_cash_book():
                     st.rerun()
 
     with tab4:
-        entries = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration FROM cash_book ORDER BY id ASC")
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_print_from")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_print_to")
+        
+        entries = run_query("""
+            SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration 
+            FROM cash_book 
+            WHERE date BETWEEN ? AND ? 
+            ORDER BY id ASC
+        """, (str(from_date), str(to_date)))
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
             st.dataframe(df_print, use_container_width=True)
             st.download_button("📥 Download Cash Book PDF", pdf_generator.create_pdf_report("Cash Book Report", df_print), "cash_book.pdf", "application/pdf", use_container_width=True)
+        else:
+            st.info("No cash book entries found in this date range.")
 
     with tab5:
         st.subheader("🖨️ Cash Book Voucher (CB) Print")
-        cb_records = run_query("SELECT voucher_no, particulars, date FROM cash_book ORDER BY id DESC")
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_v_from")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_v_to")
+        
+        cb_records = run_query("""
+            SELECT voucher_no, particulars, date 
+            FROM cash_book 
+            WHERE date BETWEEN ? AND ? 
+            ORDER BY id DESC
+        """, (str(from_date), str(to_date)))
         if cb_records:
             cb_dict = {f"{r[0]} - {r[1]} ({r[2]})": r[0] for r in cb_records}
             selected_cb = st.selectbox("Select Cash Voucher to Print", list(cb_dict.keys()), key="cb_drilldown")
@@ -1460,7 +1489,16 @@ def render_bank_book():
                         st.rerun()
 
     with tab2:
-        entries = run_query("SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration FROM bank_book ORDER BY id DESC")
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_view_from")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to")
+        
+        entries = run_query("""
+            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration 
+            FROM bank_book 
+            WHERE date BETWEEN ? AND ? 
+            ORDER BY id DESC
+        """, (str(from_date), str(to_date)))
         if entries:
             df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
             st.dataframe(df_bank, use_container_width=True)
@@ -1481,7 +1519,7 @@ def render_bank_book():
                 time.sleep(0.5)
                 st.rerun()
         else:
-            st.info("No bank entries found.")
+            st.info("No bank entries found in this date range.")
 
     with tab3:
         st.subheader("Edit Existing Bank Entry")
@@ -1555,15 +1593,35 @@ def render_bank_book():
                     st.rerun()
 
     with tab4:
-        entries = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration FROM bank_book ORDER BY id ASC")
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_print_from")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to")
+        
+        entries = run_query("""
+            SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration 
+            FROM bank_book 
+            WHERE date BETWEEN ? AND ? 
+            ORDER BY id ASC
+        """, (str(from_date), str(to_date)))
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(df_print, use_container_width=True)
             st.download_button("📥 Download Bank Book PDF", pdf_generator.create_pdf_report("Bank Book Report", df_print), "bank_book.pdf", "application/pdf", use_container_width=True)
+        else:
+            st.info("No bank entries found in this date range.")
 
     with tab5:
         st.subheader("🖨️ Bank Book Voucher (BB) Print")
-        bb_records = run_query("SELECT voucher_no, bank_name, particulars, date FROM bank_book ORDER BY id DESC")
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_v_from")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_v_to")
+        
+        bb_records = run_query("""
+            SELECT voucher_no, bank_name, particulars, date 
+            FROM bank_book 
+            WHERE date BETWEEN ? AND ? 
+            ORDER BY id DESC
+        """, (str(from_date), str(to_date)))
         if bb_records:
             bb_dict = {f"{r[0]} - {r[1]} - {r[2]} ({r[3]})": r[0] for r in bb_records}
             selected_bb = st.selectbox("Select Bank Voucher to Print", list(bb_dict.keys()), key="bb_drilldown")
@@ -1671,16 +1729,34 @@ def render_journal_vouchers():
                         st.rerun()
 
     with tab2:
-        jvs = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers")
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="jv_view_from")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="jv_view_to")
+        
+        jvs = run_query("""
+            SELECT jv_id, voucher_date, narration, status 
+            FROM journal_vouchers 
+            WHERE voucher_date BETWEEN ? AND ? 
+            ORDER BY jv_id DESC
+        """, (str(from_date), str(to_date)))
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(df_jvs, use_container_width=True)
         else:
-            st.info("No journal vouchers found.")
+            st.info("No journal vouchers found in this date range.")
 
     with tab3:
         st.subheader("🖨️ Journal Voucher (JV) Drill-Down Print")
-        jv_records = run_query("SELECT jv_id, voucher_date, narration FROM journal_vouchers ORDER BY jv_id DESC")
+        col_date1, col_date2 = st.columns(2)
+        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="jv_print_from")
+        to_date = col_date2.date_input("To Date", value=date.today(), key="jv_print_to")
+        
+        jv_records = run_query("""
+            SELECT jv_id, voucher_date, narration 
+            FROM journal_vouchers 
+            WHERE voucher_date BETWEEN ? AND ? 
+            ORDER BY jv_id DESC
+        """, (str(from_date), str(to_date)))
         if jv_records:
             jv_dict = {f"JV-{r[0]} - {r[2]} ({r[1]})": r[0] for r in jv_records}
             selected_jv = st.selectbox("Select Journal Voucher to Print", list(jv_dict.keys()), key="jv_drilldown")

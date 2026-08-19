@@ -1178,13 +1178,13 @@ def render_cash_book():
                             st.error("❌ Cannot receipt cash from itself!")
                             st.stop()
                     
+                    voucher_no = generate_cash_voucher_no()
                     if entry_type == "DEBIT (Receipt)":
-                        jv_result = post_automated_jv(f"Cash Receipt: {full_narration}", "AST-101", account_code, amount, voucher_date=str(tx_date))
+                        jv_result = post_automated_jv(f"Cash Receipt [{voucher_no}]: {full_narration}", "AST-101", account_code, amount, voucher_date=str(tx_date))
                     else:
-                        jv_result = post_automated_jv(f"Cash Payment: {full_narration}", account_code, "AST-101", amount, voucher_date=str(tx_date))
+                        jv_result = post_automated_jv(f"Cash Payment [{voucher_no}]: {full_narration}", account_code, "AST-101", amount, voucher_date=str(tx_date))
                     
                     if jv_result:
-                        voucher_no = generate_cash_voucher_no()
                         today = str(tx_date)
                         new_cash_balance = get_cash_balance()
                         dr_amt = amount if entry_type == "DEBIT (Receipt)" else 0
@@ -1227,8 +1227,17 @@ def render_cash_book():
             
             del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
             if st.button("Delete Cash Entry", use_container_width=True):
+                # Fetch voucher no before deleting
+                c_row = run_query("SELECT voucher_no FROM cash_book WHERE id=?", (del_id,))
+                if c_row:
+                    voucher_no = c_row[0][0]
+                    # Delete the related JV (cascades to jv_entries automatically!)
+                    jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+                    if jv_row:
+                        run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
+                
                 run_query("DELETE FROM cash_book WHERE id=?", (del_id,), fetch=False)
-                st.warning(f"Cash Entry ID {del_id} deleted successfully.")
+                st.warning(f"Cash Entry ID {del_id} and related ledger entries deleted successfully.")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -1237,27 +1246,67 @@ def render_cash_book():
     with tab3:
         st.subheader("Edit Existing Cash Entry")
         edit_id = st.number_input("Enter Cash Entry ID to Edit", min_value=1, step=1, key="edit_cash_id_input")
-        entry_to_edit = run_query("SELECT id, particulars, debit_amount, credit_amount, narration FROM cash_book WHERE id=?", (edit_id,))
+        entry_to_edit = run_query("SELECT id, particulars, debit_amount, credit_amount, narration, account_code, voucher_no, date FROM cash_book WHERE id=?", (edit_id,))
         
         if entry_to_edit:
             row = entry_to_edit[0]
+            # row = (id, particulars, debit_amount, credit_amount, narration, account_code, voucher_no, date)
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
+            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+            coa_keys = list(coa_dict.keys())
+            
+            curr_acc = row[5]
+            default_index = 0
+            for idx, k in enumerate(coa_keys):
+                if coa_dict[k] == curr_acc:
+                    default_index = idx
+                    break
+                    
             with st.form("edit_cash_form"):
                 new_part = st.text_input("Particulars", value=row[1])
                 curr_dr = row[2] if row[2] > 0 else row[3]
                 is_debit = row[2] > 0
                 new_type = st.selectbox("Type", ["DEBIT (Receipt)", "CREDIT (Payment)"], index=0 if is_debit else 1)
                 new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
+                new_acc_head = st.selectbox("Corresponding Account Head", coa_keys, index=default_index)
                 new_narration = st.text_area("Narration", value=row[4] if row[4] else "")
                 
                 if st.form_submit_button("Update Cash Entry", use_container_width=True):
                     d_amt = new_amt if "DEBIT" in new_type else 0.0
                     c_amt = new_amt if "CREDIT" in new_type else 0.0
+                    new_acc_code = coa_dict[new_acc_head]
+                    voucher_no = row[6]
+                    entry_date = row[7]
+                    
+                    # 1. Update the cash_book entry
                     run_query("""
                         UPDATE cash_book 
-                        SET particulars = ?, debit_amount = ?, credit_amount = ?, narration = ? 
+                        SET particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
                         WHERE id = ?
-                    """, (new_part, d_amt, c_amt, new_narration, edit_id), fetch=False)
-                    st.success("Cash Entry updated successfully!")
+                    """, (new_part, d_amt, c_amt, new_acc_code, new_narration, edit_id), fetch=False)
+                    
+                    # 2. Locate and update the related Journal Voucher
+                    jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+                    if jv_row:
+                        jv_id = jv_row[0][0]
+                        full_narration = new_part
+                        if new_narration.strip():
+                            full_narration += f" ({new_narration.strip()})"
+                        
+                        # Update JV header
+                        jv_prefix = "Cash Receipt" if "DEBIT" in new_type else "Cash Payment"
+                        run_query("UPDATE journal_vouchers SET narration = ? WHERE jv_id = ?", (f"{jv_prefix} [{voucher_no}]: {full_narration}", jv_id), fetch=False)
+                        
+                        # Update JV entries (delete old ones and recreate to ensure perfect balance and account mapping)
+                        run_query("DELETE FROM jv_entries WHERE jv_id = ?", (jv_id,), fetch=False)
+                        if "DEBIT" in new_type:
+                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (jv_id, new_amt), fetch=False)
+                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, new_acc_code, new_amt), fetch=False)
+                        else:
+                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, new_acc_code, new_amt), fetch=False)
+                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, new_amt), fetch=False)
+                            
+                    st.success("Cash Entry and Ledger updated successfully!")
                     time.sleep(0.5)
                     st.rerun()
 
@@ -1358,6 +1407,7 @@ def render_bank_book():
                     if narration.strip():
                         full_narration += f" ({narration.strip()})"
                     
+                    voucher_no = generate_bank_voucher_no()
                     if entry_type == "DEBIT (Deposit)":
                         # This increases selected bank, but we must check if the funding source has enough balance
                         if account_code == 'AST-101':
@@ -1376,16 +1426,15 @@ def render_bank_book():
                                 st.error(f"❌ Insufficient SBI Balance to transfer! Available: ₹{current_sbi:,.2f}")
                                 st.stop()
                                 
-                        jv_result = post_automated_jv(f"Bank Deposit: {full_narration} - {bank_name}", bank_code, account_code, amount, voucher_date=str(tx_date))
+                        jv_result = post_automated_jv(f"Bank Deposit [{voucher_no}]: {full_narration} - {bank_name}", bank_code, account_code, amount, voucher_date=str(tx_date))
                     else:
                         # Withdrawal: decreases selected bank
                         if current_balance < amount:
                             st.error(f"❌ Insufficient Bank Balance in {bank_name}! Available: ₹{current_balance:,.2f}")
                             st.stop()
-                        jv_result = post_automated_jv(f"Bank Withdrawal: {full_narration} - {bank_name}", account_code, bank_code, amount, voucher_date=str(tx_date))
+                        jv_result = post_automated_jv(f"Bank Withdrawal [{voucher_no}]: {full_narration} - {bank_name}", account_code, bank_code, amount, voucher_date=str(tx_date))
                     
                     if jv_result:
-                        voucher_no = generate_bank_voucher_no()
                         today = str(tx_date)
                         new_balance = get_account_balance_from_jv(bank_code)
                         dr_amt = amount if entry_type == "DEBIT (Deposit)" else 0
@@ -1418,8 +1467,17 @@ def render_bank_book():
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
             if st.button("Delete Bank Entry", use_container_width=True):
+                # Fetch voucher no before deleting
+                b_row = run_query("SELECT voucher_no FROM bank_book WHERE id=?", (del_id,))
+                if b_row:
+                    voucher_no = b_row[0][0]
+                    # Delete the related JV (cascades to jv_entries automatically!)
+                    jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+                    if jv_row:
+                        run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
+                
                 run_query("DELETE FROM bank_book WHERE id=?", (del_id,), fetch=False)
-                st.warning(f"Bank Entry ID {del_id} deleted successfully.")
+                st.warning(f"Bank Entry ID {del_id} and related ledger entries deleted successfully.")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -1428,27 +1486,71 @@ def render_bank_book():
     with tab3:
         st.subheader("Edit Existing Bank Entry")
         edit_bank_id = st.number_input("Enter Bank Entry ID to Edit", min_value=1, step=1, key="edit_bank_id_input")
-        bank_row = run_query("SELECT id, particulars, debit_amount, credit_amount, bank_name, narration FROM bank_book WHERE id=?", (edit_bank_id,))
+        bank_row = run_query("SELECT id, particulars, debit_amount, credit_amount, bank_name, narration, account_code, voucher_no, date FROM bank_book WHERE id=?", (edit_bank_id,))
         
         if bank_row:
             row = bank_row[0]
+            # row = (id, particulars, debit_amount, credit_amount, bank_name, narration, account_code, voucher_no, date)
+            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
+            coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
+            coa_keys = list(coa_dict.keys())
+            
+            curr_acc = row[6]
+            default_index = 0
+            for idx, k in enumerate(coa_keys):
+                if coa_dict[k] == curr_acc:
+                    default_index = idx
+                    break
+                    
             with st.form("edit_bank_form"):
                 new_part = st.text_input("Particulars", value=row[1])
                 curr_dr = row[2] if row[2] > 0 else row[3]
                 is_debit = row[2] > 0
                 new_type = st.selectbox("Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"], index=0 if is_debit else 1)
                 new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
+                new_acc_head = st.selectbox("Corresponding Account Head", coa_keys, index=default_index)
                 new_narration = st.text_area("Narration", value=row[5] if row[5] else "")
                 
                 if st.form_submit_button("Update Bank Entry", use_container_width=True):
                     d_amt = new_amt if "DEBIT" in new_type else 0.0
                     c_amt = new_amt if "CREDIT" in new_type else 0.0
+                    new_acc_code = coa_dict[new_acc_head]
+                    bank_name = row[4]
+                    voucher_no = row[7]
+                    entry_date = row[8]
+                    
+                    # 1. Find Bank Code based on name
+                    bank_code = "AST-102" if "Union" in bank_name else "AST-103"
+                    
+                    # 2. Update the bank_book entry
                     run_query("""
                         UPDATE bank_book 
-                        SET particulars = ?, debit_amount = ?, credit_amount = ?, narration = ? 
+                        SET particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
                         WHERE id = ?
-                    """, (new_part, d_amt, c_amt, new_narration, edit_bank_id), fetch=False)
-                    st.success("Bank Entry updated successfully!")
+                    """, (new_part, d_amt, c_amt, new_acc_code, new_narration, edit_bank_id), fetch=False)
+                    
+                    # 3. Locate and update the related Journal Voucher
+                    jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+                    if jv_row:
+                        jv_id = jv_row[0][0]
+                        full_narration = new_part
+                        if new_narration.strip():
+                            full_narration += f" ({new_narration.strip()})"
+                        
+                        # Update JV header
+                        jv_prefix = "Bank Deposit" if "DEBIT" in new_type else "Bank Withdrawal"
+                        run_query("UPDATE journal_vouchers SET narration = ? WHERE jv_id = ?", (f"{jv_prefix} [{voucher_no}]: {full_narration} - {bank_name}", jv_id), fetch=False)
+                        
+                        # Update JV entries (delete old ones and recreate to ensure perfect balance and account mapping)
+                        run_query("DELETE FROM jv_entries WHERE jv_id = ?", (jv_id,), fetch=False)
+                        if "DEBIT" in new_type:
+                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, bank_code, new_amt), fetch=False)
+                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, new_acc_code, new_amt), fetch=False)
+                        else:
+                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, new_acc_code, new_amt), fetch=False)
+                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, bank_code, new_amt), fetch=False)
+                            
+                    st.success("Bank Entry and Ledger updated successfully!")
                     time.sleep(0.5)
                     st.rerun()
 

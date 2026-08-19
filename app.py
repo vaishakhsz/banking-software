@@ -2365,16 +2365,87 @@ menu = st.sidebar.radio(
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.markdown('<div style="font-size: 13px; font-weight: 600; padding: 5px 0; color: white;">💾 System Backup</div>', unsafe_allow_html=True)
 
-if os.path.exists(DB_NAME):
-    with open(DB_NAME, "rb") as f:
-        db_bytes = f.read()
-    st.sidebar.download_button(
-        label="📥 Download Backup",
-        data=db_bytes,
-        file_name=f"aasha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
-        mime="application/octet-stream",
-        use_container_width=True
-    )
+def generate_sql_backup():
+    """Generate a single SQL script containing all database tables and rows"""
+    tables = [
+        'customers', 'sb_accounts', 'fixed_deposits', 'recurring_deposits', 
+        'chart_of_accounts', 'journal_vouchers', 'jv_entries', 'cash_book', 
+        'bank_book', 'transactions'
+    ]
+    sql_lines = []
+    
+    # Disable foreign key checks for clean insertions
+    if USING_SUPABASE:
+        sql_lines.append("SET session_replication_role = 'replica';\n")
+    else:
+        sql_lines.append("PRAGMA foreign_keys = OFF;\n")
+        
+    for table in tables:
+        # Get column names
+        if USING_SUPABASE:
+            col_rows = run_query(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}' ORDER BY ordinal_position")
+            columns = [r[0] for r in col_rows] if col_rows else []
+        else:
+            col_rows = run_query(f"PRAGMA table_info({table})")
+            columns = [r[1] for r in col_rows] if col_rows else []
+            
+        if not columns:
+            continue
+            
+        # Get rows
+        rows = run_query(f"SELECT * FROM {table}")
+        
+        # Clear existing rows first (safeguard)
+        sql_lines.append(f"TRUNCATE TABLE {table} CASCADE;" if USING_SUPABASE else f"DELETE FROM {table};")
+        
+        if rows:
+            col_list_str = ", ".join(columns)
+            for row in rows:
+                val_list = []
+                for val in row:
+                    if val is None:
+                        val_list.append("NULL")
+                    elif isinstance(val, (int, float)):
+                        val_list.append(str(val))
+                    else:
+                        # Escape single quotes for SQL insertion
+                        escaped_val = str(val).replace("'", "''")
+                        val_list.append(f"'{escaped_val}'")
+                val_list_str = ", ".join(val_list)
+                sql_lines.append(f"INSERT INTO {table} ({col_list_str}) VALUES ({val_list_str});")
+        sql_lines.append("\n")
+        
+    # Re-enable foreign keys
+    if USING_SUPABASE:
+        sql_lines.append("SET session_replication_role = 'origin';\n")
+    else:
+        sql_lines.append("PRAGMA foreign_keys = ON;\n")
+        
+    return "\n".join(sql_lines).encode("utf-8")
+
+if USING_SUPABASE:
+    try:
+        sql_backup_bytes = generate_sql_backup()
+        st.sidebar.download_button(
+            label="📥 Download Backup (.sql)",
+            data=sql_backup_bytes,
+            file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.sql",
+            mime="text/plain",
+            use_container_width=True
+        )
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Failed to generate backup: {str(e)}")
+else:
+    if os.path.exists(DB_NAME):
+        with open(DB_NAME, "rb") as f:
+            db_bytes = f.read()
+        st.sidebar.download_button(
+            label="📥 Download Backup (.db)",
+            data=db_bytes,
+            file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
+            mime="application/octet-stream",
+            use_container_width=True
+        )
 
 uploaded_dbs = st.sidebar.file_uploader("📤 Restore Database", type=["db", "sqlite", "sqlite3", "sql"], accept_multiple_files=True)
 if uploaded_dbs:

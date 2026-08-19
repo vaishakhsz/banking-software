@@ -2773,29 +2773,34 @@ if st.sidebar.button("🛠️ Force Resequence COA", use_container_width=True):
     time.sleep(1)
     st.rerun()
 
+# Styling specifically targeting all buttons inside the sidebar
+st.sidebar.markdown("""
+<style>
+    section[data-testid="stSidebar"] button,
+    div[data-testid="stSidebar"] button,
+    .stSidebar button,
+    [data-testid="stSidebar"] [data-testid^="stBaseButton"] {
+        background-color: #000000 !important;
+        color: #ffffff !important;
+        border: 1px solid #000000 !important;
+    }
+    section[data-testid="stSidebar"] button:hover,
+    div[data-testid="stSidebar"] button:hover,
+    .stSidebar button:hover,
+    [data-testid="stSidebar"] [data-testid^="stBaseButton"]:hover {
+        background-color: #333333 !important;
+        color: #ffffff !important;
+        border: 1px solid #333333 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
 # Header banner
 st.markdown("""
 <style>
-    /* Make sidebar buttons solid black with white text */
-    div[data-testid="stSidebar"] button {
-        background-color: #000000 !important;
-        color: #ffffff !important;
-        border: 1px solid #000000 !important;
-    }
-    div[data-testid="stSidebar"] button:hover {
-        background-color: #333333 !important;
-        color: #ffffff !important;
-        border: 1px solid #333333 !important;
-    }
-    div[data-testid="stSidebar"] button:active {
-        background-color: #000000 !important;
-        color: #ffffff !important;
-        border: 1px solid #000000 !important;
-    }
-    
     .company-header {
         background: linear-gradient(135deg, #1f4e78 0%, #2c6b9e 100%);
         padding: 15px 25px;

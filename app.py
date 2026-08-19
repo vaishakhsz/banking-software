@@ -21,6 +21,25 @@ import pdf_generator
 # Define IST timezone
 IST = pytz.timezone('Asia/Kolkata')
 
+def format_df_dates(df):
+    """Automatically formats any date-like columns in a DataFrame to DD-MM-YYYY format for display"""
+    if df is None or df.empty:
+        return df
+    df_copy = df.copy()
+    date_cols = ["Date", "Created Date", "Registered Date", "date", "created_date", "registered_date", "Joined", "Registered", "Created"]
+    for col in df_copy.columns:
+        if col in date_cols:
+            try:
+                # Convert to datetime and then format
+                series_dt = pd.to_datetime(df_copy[col], errors='coerce')
+                # Only format rows that were successfully parsed
+                formatted = series_dt.dt.strftime('%d-%m-%Y')
+                # Fallback to original string if parsing failed
+                df_copy[col] = formatted.fillna(df_copy[col])
+            except Exception:
+                pass
+    return df_copy
+
 # --- CORE VIEWS ---
 
 def render_dashboard():
@@ -95,7 +114,7 @@ def render_dashboard():
     rd_data = run_query(rd_query)
     if rd_data:
         df_rd = pd.DataFrame(rd_data, columns=["RD ID", "Customer Name", "Monthly Amount", "Tenure (Months)", "Interest Rate (%)", "Installments Paid", "Status", "Created Date"])
-        st.dataframe(df_rd, use_container_width=True)
+        st.dataframe(format_df_dates(df_rd), use_container_width=True)
     else:
         st.info("No active Recurring Deposit accounts found.")
 
@@ -154,11 +173,12 @@ def render_customer_management():
         customers = run_query("SELECT id, name, phone, email, kyc_status, pan, created_at FROM customers")
         if customers:
             df_cust = pd.DataFrame(customers, columns=["ID", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
-            st.dataframe(df_cust, use_container_width=True)
+            df_cust_formatted = format_df_dates(df_cust)
+            st.dataframe(df_cust_formatted, use_container_width=True)
             
             col_csv, col_pdf = st.columns(2)
-            col_csv.download_button("📥 Download CSV Report", df_cust.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv", use_container_width=True)
-            col_pdf.download_button("📥 Download PDF Report", pdf_generator.create_pdf_report("Customer Directory Report", df_cust), "customers_report.pdf", "application/pdf", use_container_width=True)
+            col_csv.download_button("📥 Download CSV Report", df_cust_formatted.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv", use_container_width=True)
+            col_pdf.download_button("📥 Download PDF Report", pdf_generator.create_pdf_report("Customer Directory Report", df_cust_formatted), "customers_report.pdf", "application/pdf", use_container_width=True)
             
             st.markdown("---")
             st.subheader("🔍 View & Download Original Customer Documents")
@@ -422,8 +442,9 @@ def render_sb_accounts():
         """)
         if accounts:
             df_sb = pd.DataFrame(accounts, columns=["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created"])
-            st.dataframe(df_sb, use_container_width=True)
-            st.download_button("📥 Download SB Accounts PDF", pdf_generator.create_pdf_report("Savings Bank Accounts Report", df_sb), "sb_accounts.pdf", "application/pdf", use_container_width=True)
+            df_sb_formatted = format_df_dates(df_sb)
+            st.dataframe(df_sb_formatted, use_container_width=True)
+            st.download_button("📥 Download SB Accounts PDF", pdf_generator.create_pdf_report("Savings Bank Accounts Report", df_sb_formatted), "sb_accounts.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("No active SB accounts found.")
 
@@ -530,6 +551,16 @@ def render_fixed_deposits():
             
             fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date = fd_data
             
+            try:
+                created_at_dt = pd.to_datetime(created_at).strftime('%d-%m-%Y')
+            except Exception:
+                created_at_dt = created_at
+                
+            try:
+                closed_date_dt = pd.to_datetime(closed_date).strftime('%d-%m-%Y') if closed_date else ""
+            except Exception:
+                closed_date_dt = closed_date
+            
             full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#27ae60"
@@ -571,7 +602,7 @@ def render_fixed_deposits():
               
               <div class="grid-row">
                 <div><b>FDR No. / A/c No:</b> FD-{fd_id:05d}</div>
-                <div><b>A/c Opening Date:</b> {created_at}</div>
+                <div><b>A/c Opening Date:</b> {created_at_dt}</div>
               </div>
               <div class="grid-row">
                 <div><b>Name:</b> {c_name}</div>
@@ -589,7 +620,7 @@ def render_fixed_deposits():
                 <div><b>Period / Tenure:</b> {tenure} MONTHS</div>
                 <div><b>Maturity Amount:</b> ₹{maturity:,.2f}</div>
               </div>
-              {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date}</div><div></div></div>' if status == 'CLOSED' else ''}
+              {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date_dt}</div><div></div></div>' if status == 'CLOSED' else ''}
               
               <div class="box">
                 <b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.
@@ -1232,7 +1263,7 @@ def render_cash_book():
         """, (str(from_date), str(to_date)))
         if entries:
             df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Account Code", "Narration"])
-            st.dataframe(df_cash, use_container_width=True)
+            st.dataframe(format_df_dates(df_cash), use_container_width=True)
             
             del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
             if st.button("Delete Cash Entry", use_container_width=True):
@@ -1332,8 +1363,9 @@ def render_cash_book():
         """, (str(from_date), str(to_date)))
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
-            st.dataframe(df_print, use_container_width=True)
-            st.download_button("📥 Download Cash Book PDF", pdf_generator.create_pdf_report("Cash Book Report", df_print), "cash_book.pdf", "application/pdf", use_container_width=True)
+            df_print_formatted = format_df_dates(df_print)
+            st.dataframe(df_print_formatted, use_container_width=True)
+            st.download_button("📥 Download Cash Book PDF", pdf_generator.create_pdf_report("Cash Book Report", df_print_formatted), "cash_book.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("No cash book entries found in this date range.")
 
@@ -1360,11 +1392,16 @@ def render_cash_book():
                     acc_name = get_account_name(acc_code)
                     account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
                     
+                    try:
+                        date_display = pd.to_datetime(date_val).strftime('%d-%m-%Y')
+                    except Exception:
+                        date_display = date_val
+                        
                     with st.container(border=True):
                         col1, col2 = st.columns(2)
                         col1.markdown("### **CASH VOUCHER (CB)**")
                         col1.write(f"**Voucher No:** {v_num}")
-                        col2.write(f"**Date:** {date_val}")
+                        col2.write(f"**Date:** {date_display}")
                         st.divider()
                         st.write(f"**Particulars:** {part}")
                         st.write(f"**Account Head:** {account_display}")
@@ -1501,7 +1538,7 @@ def render_bank_book():
         """, (str(from_date), str(to_date)))
         if entries:
             df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
-            st.dataframe(df_bank, use_container_width=True)
+            st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
             if st.button("Delete Bank Entry", use_container_width=True):
@@ -1605,8 +1642,9 @@ def render_bank_book():
         """, (str(from_date), str(to_date)))
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
-            st.dataframe(df_print, use_container_width=True)
-            st.download_button("📥 Download Bank Book PDF", pdf_generator.create_pdf_report("Bank Book Report", df_print), "bank_book.pdf", "application/pdf", use_container_width=True)
+            df_print_formatted = format_df_dates(df_print)
+            st.dataframe(df_print_formatted, use_container_width=True)
+            st.download_button("📥 Download Bank Book PDF", pdf_generator.create_pdf_report("Bank Book Report", df_print_formatted), "bank_book.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("No bank entries found in this date range.")
 
@@ -1633,12 +1671,17 @@ def render_bank_book():
                     acc_name = get_account_name(acc_code)
                     account_display = f"{acc_code} - {acc_name}" if acc_name else acc_code
                     
+                    try:
+                        date_display = pd.to_datetime(date_val).strftime('%d-%m-%Y')
+                    except Exception:
+                        date_display = date_val
+                        
                     with st.container(border=True):
                         col1, col2 = st.columns(2)
                         col1.markdown("### **BANK VOUCHER (BB)**")
                         col1.write(f"**Voucher No:** {v_num}")
                         col1.write(f"**Bank:** {bank_n}")
-                        col2.write(f"**Date:** {date_val}")
+                        col2.write(f"**Date:** {date_display}")
                         st.divider()
                         st.write(f"**Particulars:** {part}")
                         st.write(f"**Account:** {account_display}")
@@ -1666,14 +1709,14 @@ def render_journal_vouchers():
     
     with tab1:
         st.subheader("Create Journal Voucher")
-        st.info("💡 **Asset Depreciation Calculator:** Expense accounts like EXP-204 to EXP-207 will automatically compute depreciation values based on a selected Asset Base Value.")
+        st.info("💡 **Asset Depreciation Calculator:** Expense accounts like EXP-107 to EXP-110 will automatically compute depreciation values based on a selected Asset Base Value.")
         
         coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts ORDER BY account_code")
         coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
         coa_names = {c[0]: c[1] for c in coa_list}
         
         dep_rate_map = {
-            "EXP-204": 5.0, "EXP-205": 10.0, "EXP-206": 15.0, "EXP-207": 40.0
+            "EXP-107": 5.0, "EXP-108": 10.0, "EXP-109": 15.0, "EXP-110": 40.0
         }
 
         with st.form("unified_jv_form"):
@@ -1741,7 +1784,7 @@ def render_journal_vouchers():
         """, (str(from_date), str(to_date)))
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
-            st.dataframe(df_jvs, use_container_width=True)
+            st.dataframe(format_df_dates(df_jvs), use_container_width=True)
         else:
             st.info("No journal vouchers found in this date range.")
 
@@ -1764,11 +1807,16 @@ def render_journal_vouchers():
                 jv_id = jv_dict[selected_jv]
                 v_data = fetch_jv_voucher(jv_id)
                 if v_data:
+                    try:
+                        date_display = pd.to_datetime(v_data[0][0]).strftime('%d-%m-%Y')
+                    except Exception:
+                        date_display = v_data[0][0]
+                        
                     with st.container(border=True):
                         col1, col2 = st.columns(2)
                         col1.markdown("### **JOURNAL VOUCHER (JV)**")
                         col1.write(f"**Voucher ID:** JV-{jv_id}")
-                        col2.write(f"**Date:** {v_data[0][0]}")
+                        col2.write(f"**Date:** {date_display}")
                         st.divider()
                         
                         rows_list = []
@@ -1938,7 +1986,7 @@ def render_financial_statements():
             depreciation_balances = run_query("""
                 SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
                 FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Expense' AND (CO.account_code IN ('EXP-204', 'EXP-205', 'EXP-206', 'EXP-207') OR LOWER(CO.account_name) LIKE '%depreciation%') 
+                WHERE CO.account_type = 'Expense' AND (CO.account_code IN ('EXP-107', 'EXP-108', 'EXP-109', 'EXP-110') OR LOWER(CO.account_name) LIKE '%depreciation%') 
                 GROUP BY CO.account_code, CO.account_name 
                 HAVING COALESCE(SUM(JE.debit - JE.credit), 0) != 0
             """)
@@ -1946,7 +1994,7 @@ def render_financial_statements():
             depreciation_balances = run_query("""
                 SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as net_balance
                 FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Expense' AND (CO.account_code IN ('EXP-204', 'EXP-205', 'EXP-206', 'EXP-207') OR LOWER(CO.account_name) LIKE '%depreciation%') GROUP BY CO.account_code HAVING net_balance != 0
+                WHERE CO.account_type = 'Expense' AND (CO.account_code IN ('EXP-107', 'EXP-108', 'EXP-109', 'EXP-110') OR LOWER(CO.account_name) LIKE '%depreciation%') GROUP BY CO.account_code HAVING net_balance != 0
             """)
         
         tot_inc = run_query("SELECT COALESCE(SUM(JE.credit - JE.debit), 0) FROM jv_entries JE JOIN chart_of_accounts CO ON JE.account_code=CO.account_code WHERE CO.account_type='Income'")[0][0]
@@ -2205,7 +2253,7 @@ def render_financial_statements():
             )
             
             # Format display data
-            df_display = df_ledger.copy()
+            df_display = format_df_dates(df_ledger.copy())
             df_display["Debit (₹)"] = df_display["Debit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
             df_display["Credit (₹)"] = df_display["Credit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
             df_display["Balance (₹)"] = df_display["Balance (₹)"].apply(lambda x: f"₹{x:,.2f}")
@@ -2216,7 +2264,7 @@ def render_financial_statements():
             st.dataframe(df_display, use_container_width=True, hide_index=True)
             
             # Export to PDF
-            df_pdf = df_ledger.copy()
+            df_pdf = format_df_dates(df_ledger.copy())
             df_pdf["Debit (₹)"] = df_pdf["Debit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
             df_pdf["Credit (₹)"] = df_pdf["Credit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
             df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"].apply(lambda x: f"₹{x:,.2f}")
@@ -2290,8 +2338,9 @@ def render_reports():
                 
             if data:
                 df_rep = pd.DataFrame(data, columns=columns)
-                st.dataframe(df_rep, use_container_width=True)
-                st.download_button("📥 Download PDF Report", pdf_generator.create_pdf_report(report_type, df_rep), f"{report_type.replace(' ', '_').lower()}.pdf", "application/pdf", use_container_width=True)
+                df_rep_formatted = format_df_dates(df_rep)
+                st.dataframe(df_rep_formatted, use_container_width=True)
+                st.download_button("📥 Download PDF Report", pdf_generator.create_pdf_report(report_type, df_rep_formatted), f"{report_type.replace(' ', '_').lower()}.pdf", "application/pdf", use_container_width=True)
             else:
                 st.info("No records found.")
     

@@ -57,6 +57,7 @@ if supabase_proj_url and supabase_anon_key and "REPLACE_WITH_YOUR_ANON_PUBLIC_KE
 
 # Global database connection pool for Supabase
 _connection_pool = None
+DB_INITIALIZED = False
 
 def get_connection():
     """Get database connection (Supabase PostgreSQL pool or local SQLite) with retry logic"""
@@ -92,6 +93,59 @@ def execute_create(cursor, sql):
     if USING_SUPABASE:
         sql = translate_sqlite_schema_to_postgres(sql)
     cursor.execute(sql)
+
+def migrate_account_codes():
+    """Migrate old account codes to sequential codes (101-112) in database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        code_map = {
+            'EXP-201': 'EXP-104',
+            'EXP-202': 'EXP-105',
+            'EXP-203': 'EXP-106',
+            'EXP-204': 'EXP-107',
+            'EXP-205': 'EXP-108',
+            'EXP-206': 'EXP-109',
+            'EXP-207': 'EXP-110',
+            'EXP-301': 'EXP-111',
+            'EXP-401': 'EXP-112',
+            'INC-201': 'INC-103',
+            'INC-202': 'INC-104',
+            'INC-203': 'INC-105',
+            'INC-204': 'INC-106',
+            'INC-301': 'INC-107',
+        }
+        
+        for old_c, new_c in code_map.items():
+            # Check if old code exists in chart_of_accounts
+            cursor.execute(f"SELECT account_name, account_type, category FROM chart_of_accounts WHERE account_code = {placeholder}", (old_c,))
+            old_row = cursor.fetchone()
+            if old_row:
+                name, acc_type, cat = old_row
+                
+                # Check if new code exists
+                cursor.execute(f"SELECT account_code FROM chart_of_accounts WHERE account_code = {placeholder}", (new_c,))
+                new_exists = cursor.fetchone() is not None
+                
+                if not new_exists:
+                    # Safely create new code first
+                    cursor.execute(f"INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})", (new_c, name, acc_type, cat))
+                
+                # Update references in all other tables
+                cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_c, old_c))
+                cursor.execute(f"UPDATE cash_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_c, old_c))
+                cursor.execute(f"UPDATE bank_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_c, old_c))
+                
+                # Delete old code from chart_of_accounts
+                cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_c,))
+                
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error migrating account codes: {str(e)}")
+
 
 def reconcile_books():
     """One-time database reconciliation to align old cash/bank entries with ledger JVs"""
@@ -166,6 +220,9 @@ def reconcile_books():
 
 def init_db():
     """Initialize database and ensure missing columns are added dynamically"""
+    global DB_INITIALIZED
+    if DB_INITIALIZED:
+        return True
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -348,23 +405,23 @@ def init_db():
         default_accounts = [
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
             ("INC-102", "Investment Income", "Income", "Primary Revenue"),
-            ("INC-201", "Processing Fees", "Income", "Service Income"),
-            ("INC-202", "Service Charges", "Income", "Service Income"),
-            ("INC-203", "Commission Income", "Income", "Service Income"),
-            ("INC-204", "Transaction Fees", "Income", "Service Income"),
-            ("INC-301", "Miscellaneous Income", "Income", "Other Income"),
+            ("INC-103", "Processing Fees", "Income", "Service Income"),
+            ("INC-104", "Service Charges", "Income", "Service Income"),
+            ("INC-105", "Commission Income", "Income", "Service Income"),
+            ("INC-106", "Transaction Fees", "Income", "Service Income"),
+            ("INC-107", "Miscellaneous Income", "Income", "Other Income"),
             ("EXP-101", "SB Interest Paid", "Expense", "Cost of Funds"),
             ("EXP-102", "FD Interest Paid", "Expense", "Cost of Funds"),
             ("EXP-103", "RD Interest Paid", "Expense", "Cost of Funds"),
-            ("EXP-201", "Salaries & Benefits", "Expense", "Operating Expenses"),
-            ("EXP-202", "Rent & Utilities", "Expense", "Operating Expenses"),
-            ("EXP-203", "Electricity Charges", "Expense", "Operating Expenses"),
-            ("EXP-204", "Depreciation 5%", "Expense", "Operating Expenses"),
-            ("EXP-205", "Depreciation 10%", "Expense", "Operating Expenses"),
-            ("EXP-206", "Depreciation 15%", "Expense", "Operating Expenses"),
-            ("EXP-207", "Depreciation 40%", "Expense", "Operating Expenses"),
-            ("EXP-301", "Printing & Stationary", "Expense", "Administrative Expenses"),
-            ("EXP-401", "Bank Charges", "Expense", "Other Expenses"),
+            ("EXP-104", "Salaries & Benefits", "Expense", "Operating Expenses"),
+            ("EXP-105", "Rent & Utilities", "Expense", "Operating Expenses"),
+            ("EXP-106", "Electricity Charges", "Expense", "Operating Expenses"),
+            ("EXP-107", "Depreciation 5%", "Expense", "Operating Expenses"),
+            ("EXP-108", "Depreciation 10%", "Expense", "Operating Expenses"),
+            ("EXP-109", "Depreciation 15%", "Expense", "Operating Expenses"),
+            ("EXP-110", "Depreciation 40%", "Expense", "Operating Expenses"),
+            ("EXP-111", "Printing & Stationary", "Expense", "Administrative Expenses"),
+            ("EXP-112", "Bank Charges", "Expense", "Other Expenses"),
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
             ("AST-102", "Union Bank of India", "Asset", "Current Assets"),
             ("AST-103", "State Bank of India", "Asset", "Current Assets"),
@@ -392,9 +449,14 @@ def init_db():
         conn.commit()
         conn.close()
         try:
+            migrate_account_codes()
+        except Exception as e:
+            print(f"⚠️ Failed to run account migration: {str(e)}")
+        try:
             reconcile_books()
         except Exception as e:
             print(f"⚠️ Failed to run one-time reconciliation: {str(e)}")
+        DB_INITIALIZED = True
         return True
     except Exception as e:
         print(f"❌ Database initialization error: {str(e)}")

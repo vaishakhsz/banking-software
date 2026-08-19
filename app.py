@@ -1089,6 +1089,20 @@ def render_chart_of_accounts():
             df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
             st.dataframe(df_coa, use_container_width=True)
 
+            # Option to manually trigger resequencing of all accounts to resolve gaps
+            st.markdown('<div class="resequence-btn-container">', unsafe_allow_html=True)
+            if st.button("🛠️ Force Resequence Account Codes (Enforce strict 101+ order)", use_container_width=True):
+                from database import resequence_all_accounts, reconcile_books
+                try:
+                    resequence_all_accounts()
+                    reconcile_books()
+                    st.success("✅ Resequenced and reconciled Chart of Accounts successfully! All account codes are now in order.")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"❌ Resequencing error: {str(ex)}")
+            st.markdown('</div>', unsafe_allow_html=True)
+
             st.divider()
             st.subheader("🗑️ Delete Account Head")
             del_code = st.selectbox("Select Account Code to Delete", df_coa["Account Code"].tolist())
@@ -2868,13 +2882,6 @@ if uploaded_dbs:
                 except Exception as e:
                     st.sidebar.error(f"❌ Restore error: {str(e)}")
 
-if st.sidebar.button("🛠️ Force Resequence COA", use_container_width=True):
-    from database import resequence_all_accounts, reconcile_books
-    resequence_all_accounts()
-    reconcile_books()
-    st.sidebar.success("✅ Resequenced and reconciled COA successfully!")
-    time.sleep(1)
-    st.rerun()
 
 # Styling specifically targeting all buttons inside the sidebar
 st.sidebar.markdown("""
@@ -2905,21 +2912,78 @@ st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strfti
 st.markdown("""
 <style>
     .company-header {
-        background: linear-gradient(135deg, #1f4e78 0%, #2c6b9e 100%);
-        padding: 15px 25px;
-        border-radius: 10px;
-        margin-bottom: 20px;
+        background: linear-gradient(135deg, #091326 0%, #1a2a4a 100%) !important;
+        padding: 20px 25px;
+        border-radius: 12px;
+        margin-bottom: 25px;
         color: white;
         display: flex;
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-left: 5px solid #00e5ff !important; /* neon cyan left indicator */
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
     }
     .company-header .brand { display: flex; align-items: center; gap: 15px; }
-    .company-header .brand h1 { font-size: 22px; margin: 0; font-weight: 700; letter-spacing: 1px; }
-    .company-header .brand .sub { font-size: 11px; opacity: 0.85; margin-top: 2px; }
-    .company-header .contact { text-align: right; font-size: 12px; opacity: 0.9; line-height: 1.6; }
+    .company-header .brand h1 {
+        font-size: 24px;
+        margin: 0;
+        font-weight: 800;
+        letter-spacing: 0.8px;
+        color: #ffffff;
+        text-shadow: 0 0 10px rgba(0, 229, 255, 0.2);
+    }
+    .company-header .brand .sub {
+        font-size: 11px;
+        color: #94a3b8;
+        margin-top: 4px;
+        font-weight: 500;
+    }
+    .company-header .contact {
+        text-align: right;
+        font-size: 12px;
+        color: #cbd5e1;
+        opacity: 0.9;
+        line-height: 1.6;
+    }
+    .company-header .contact .pulsing-online {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: #10b981;
+        background: rgba(16, 185, 129, 0.1);
+        padding: 4px 10px;
+        border-radius: 20px;
+        margin-bottom: 6px;
+    }
+    .company-header .contact .pulsing-dot {
+        width: 6px;
+        height: 6px;
+        background-color: #10b981;
+        border-radius: 50%;
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+        animation: pulse-live 1.8s infinite;
+    }
+    
+    /* Resequence button styling */
+    .resequence-btn-container button {
+        background-color: #000000 !important;
+        color: #ffffff !important;
+        border: 1px solid #000000 !important;
+        font-weight: 600 !important;
+        border-radius: 8px !important;
+        padding: 10px 20px !important;
+    }
+    .resequence-btn-container button:hover {
+        background-color: #222222 !important;
+        border-color: #222222 !important;
+        color: #ffffff !important;
+    }
 </style>
 <div class="company-header">
     <div class="brand">
@@ -2930,6 +2994,9 @@ st.markdown("""
         </div>
     </div>
     <div class="contact">
+        <div class="pulsing-online">
+            <span class="pulsing-dot"></span> System Online
+        </div>
         <div>CIN: U65990KL22021PLN069978</div>
         <div>📞 0471-2994535</div>
     </div>

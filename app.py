@@ -2500,40 +2500,141 @@ if not get_login_status():
 # --- SIDEBAR STYLING ---
 st.sidebar.markdown("""
 <style>
+    /* Premium Midnight Blue Gradient Sidebar background */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
+        background: linear-gradient(180deg, #091326 0%, #112040 100%) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
     }
+    
+    /* Clean sidebar headers and texts */
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p {
-        color: white !important;
+        color: #e2e8f0 !important;
     }
+    
+    /* Navigation Radio Items styled as custom premium tabs */
     [data-testid="stSidebar"] .stRadio > label {
-        color: white !important;
-        font-weight: bold;
+        color: #94a3b8 !important;
+        font-weight: 700 !important;
+        text-transform: uppercase;
+        font-size: 11px !important;
+        letter-spacing: 0.8px;
+        padding-left: 5px;
+        margin-bottom: 8px !important;
     }
-    [data-testid="stSidebar"] div[role="radiogroup"] label {
-        color: white !important;
+    
+    /* Hide the radio button circle inputs */
+    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] div:first-child {
+        display: none !important;
+    }
+    
+    /* Custom menu list items styling */
+    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] {
         background: transparent !important;
+        padding: 9px 15px !important;
+        border-radius: 8px !important;
+        margin-bottom: 6px !important;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        border-left: 4px solid transparent !important;
+        width: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        box-shadow: none !important;
     }
-    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] input:checked + div {
-        background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
+    
+    /* Hover state for menu list items */
+    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:hover {
+        background-color: rgba(255, 255, 255, 0.04) !important;
+        color: #ffffff !important;
+        border-left: 4px solid #3b82f6 !important;
+        padding-left: 18px !important; /* Subtle slide-in effect */
     }
+    
+    /* Selected/Active state for menu list items */
+    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
+        background: linear-gradient(90deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.03) 100%) !important;
+        color: #ffffff !important;
+        border-left: 4px solid #3b82f6 !important;
+        font-weight: 600 !important;
+        box-shadow: inset 1px 0 0 rgba(255,255,255,0.05) !important;
+    }
+    
+    /* Sidebar Header brand styling */
     .sidebar-header {
         text-align: center;
-        padding: 10px 0 5px 0;
-        border-bottom: 1px solid rgba(255,255,255,0.15);
-        margin-bottom: 10px;
+        padding: 20px 10px 15px 10px;
+        background: rgba(255, 255, 255, 0.02);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        margin: 10px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     }
     .sidebar-header h2 {
-        color: white; font-size: 18px; font-weight: 700; margin: 0;
+        color: #ffffff !important;
+        font-size: 20px !important;
+        font-weight: 800 !important;
+        margin: 0 !important;
+        letter-spacing: 0.5px;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
     .sidebar-header p {
-        color: #b8d4f0; font-size: 10px; margin: 3px 0 0 0;
+        color: #64748b !important;
+        font-size: 11px !important;
+        font-weight: 500;
+        margin: 4px 0 0 0 !important;
+        text-transform: uppercase;
+        letter-spacing: 1px;
     }
+    
     .sidebar-divider {
-        border-top: 1px solid rgba(255,255,255,0.1); margin: 8px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        margin: 15px 10px;
     }
+    
     .user-info {
-        color: #b8d4f0; font-size: 12px; padding: 5px 0; text-align: center;
+        color: #94a3b8 !important;
+        font-size: 12px;
+        padding: 5px 0;
+        text-align: center;
+        font-weight: 500;
+    }
+    
+    /* Live Pulsating Green Dot animation */
+    .pulse-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        background-color: #10b981;
+        border-radius: 50%;
+        margin-right: 6px;
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+        animation: pulse-live 1.8s infinite;
+        vertical-align: middle;
+    }
+    @keyframes pulse-live {
+        0% {
+            transform: scale(0.95);
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+        }
+        70% {
+            transform: scale(1);
+            box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+        }
+        100% {
+            transform: scale(0.95);
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+        }
+    }
+    
+    /* Styled digital clock with Glassmorphism */
+    .ist-clock-card {
+        text-align: center;
+        background: rgba(255, 255, 255, 0.03) !important;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        margin: 10px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(8px);
     }
     
     /* Lock only sidebar file uploader to black, leave main page default */
@@ -2577,7 +2678,7 @@ st.sidebar.markdown("""
 st.sidebar.markdown("""
 <div class="sidebar-header">
     <h2>🏦 AARSHA NIDHI</h2>
-    <p>Financial Banking Software</p>
+    <p>Premium Banking Suite</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -2587,16 +2688,18 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
 current_time_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
 st.sidebar.markdown(f"""
-<div style="text-align: center; background-color: #000000; padding: 10px; border-radius: 8px; border: 1px solid #333333;">
-    <div style="color: #b8d4f0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">IST Clock</div>
-    <div style="color: white; font-size: 16px; font-weight: 700; font-family: monospace; margin: 4px 0;">{current_time_ist.strftime('%I:%M:%S %p')}</div>
-    <div style="color: #b8d4f0; font-size: 10px;">{current_time_ist.strftime('%d %b %Y')}</div>
+<div class="ist-clock-card">
+    <div style="color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; display: flex; align-items: center; justify-content: center; gap: 4px; margin-bottom: 2px;">
+        <span class="pulse-dot"></span> IST Live Clock
+    </div>
+    <div style="color: #00e5ff; font-size: 20px; font-weight: 800; font-family: 'Courier New', monospace; margin: 6px 0; text-shadow: 0 0 10px rgba(0, 229, 255, 0.4);">{current_time_ist.strftime('%I:%M:%S %p')}</div>
+    <div style="color: #cbd5e1; font-size: 11px; font-weight: 500; opacity: 0.85;">{current_time_ist.strftime('%d %b %Y')}</div>
 </div>
 """, unsafe_allow_html=True)
-st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
 
 menu = st.sidebar.radio(
     "📋 MENU",

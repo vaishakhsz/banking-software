@@ -1090,15 +1090,27 @@ def render_cash_book():
         st.info(f"💰 **Current Cash Balance:** ₹{current_cash_balance:,.2f}")
         st.info(f"🏦 **Union Bank Balance:** ₹{current_union_balance:,.2f} | **SBI Balance:** ₹{current_sbi_balance:,.2f}")
         
+        is_opening = st.checkbox("Is this an Opening Balance?")
         with st.form("cash_entry_form"):
             col1, col2 = st.columns(2)
-            entry_type = col1.selectbox("Transaction Type", ["DEBIT (Receipt)", "CREDIT (Payment)"])
+            if is_opening:
+                entry_type = col1.selectbox("Transaction Type", ["DEBIT (Receipt)"], index=0, disabled=True)
+                particulars = st.text_input("Particulars / Description", value="Opening Balance")
+            else:
+                entry_type = col1.selectbox("Transaction Type", ["DEBIT (Receipt)", "CREDIT (Payment)"])
+                particulars = st.text_input("Particulars / Description")
+                
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
+            
+            if is_opening:
+                default_coa_head = next((k for k in coa_dict.keys() if k.startswith("EQT-101") or k.startswith("EQT-102")), list(coa_dict.keys())[0])
+                account_head = st.selectbox("Corresponding Account Head (Equity/Capital)", [default_coa_head], disabled=True)
+            else:
+                account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
+                
             narration = st.text_area("Narration", height=68)
             
             if st.form_submit_button("Record Cash Entry", use_container_width=True):
@@ -1272,15 +1284,27 @@ def render_bank_book():
         current_balance = get_account_balance_from_jv(bank_code)
         st.info(f"🏦 **{bank_name} Current Balance:** ₹{current_balance:,.2f}")
         
+        is_opening = st.checkbox("Is this an Opening Balance?", key="bank_is_opening")
         with st.form("bank_entry_form"):
             col1, col2 = st.columns(2)
-            entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
+            if is_opening:
+                entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)"], index=0, disabled=True)
+                particulars = st.text_input("Particulars / Description", value="Opening Balance")
+            else:
+                entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
+                particulars = st.text_input("Particulars / Description")
+                
             amount = col2.number_input("Amount (₹)", min_value=1.0, value=100.0, step=100.0)
-            particulars = st.text_input("Particulars / Description")
             
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
+            
+            if is_opening:
+                default_coa_head = next((k for k in coa_dict.keys() if k.startswith("EQT-101") or k.startswith("EQT-102")), list(coa_dict.keys())[0])
+                account_head = st.selectbox("Corresponding Account Head (Equity/Capital)", [default_coa_head], disabled=True)
+            else:
+                account_head = st.selectbox("Corresponding Account Head", list(coa_dict.keys()))
+                
             narration = st.text_area("Narration", height=68)
             
             if st.form_submit_button("Record Bank Entry", use_container_width=True):

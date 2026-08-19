@@ -2376,17 +2376,41 @@ if os.path.exists(DB_NAME):
         use_container_width=True
     )
 
-uploaded_db = st.sidebar.file_uploader("📤 Restore Database (.db)", type=["db", "sqlite", "sqlite3"])
+uploaded_db = st.sidebar.file_uploader("📤 Restore Database", type=["db", "sqlite", "sqlite3", "sql"])
 if uploaded_db is not None:
-    if st.sidebar.button("⚠️ Confirm Restore", type="primary", use_container_width=True):
-        try:
-            with open(DB_NAME, "wb") as f:
-                f.write(uploaded_db.getbuffer())
-            st.sidebar.success("✅ Database restored! Please refresh.")
-            time.sleep(1)
-            st.rerun()
-        except Exception as e:
-            st.sidebar.error(f"❌ Error: {str(e)}")
+    file_ext = uploaded_db.name.split(".")[-1].lower()
+    
+    if file_ext == "sql":
+        if st.sidebar.button("⚠️ Confirm Restore (.sql)", type="primary", use_container_width=True):
+            try:
+                # Read the SQL statements from the uploaded script file
+                sql_script = uploaded_db.read().decode("utf-8")
+                
+                # Execute the queries directly against the database
+                conn = get_connection()
+                cursor = conn.cursor()
+                if USING_SUPABASE:
+                    cursor.execute(sql_script)
+                else:
+                    cursor.executescript(sql_script)
+                conn.commit()
+                conn.close()
+                
+                st.sidebar.success("✅ Database restored from SQL script! Please refresh.")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"❌ Restore error: {str(e)}")
+    else:
+        if st.sidebar.button("⚠️ Confirm Restore (.db)", type="primary", use_container_width=True):
+            try:
+                with open(DB_NAME, "wb") as f:
+                    f.write(uploaded_db.getbuffer())
+                st.sidebar.success("✅ Database restored! Please refresh.")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"❌ Error: {str(e)}")
 
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")

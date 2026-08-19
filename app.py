@@ -2533,13 +2533,14 @@ if not get_login_status():
     col1, col2, col3 = st.columns([1, 2.2, 1])
     with col2:
         st.markdown("""
-        <div style="text-align: center; padding: 40px 0 20px 0;">
-            <div style="font-size: 42px; margin-bottom: 5px;">🏦</div>
-            <h1 style="color: #1f4e78; font-size: 32px; margin: 5px 0; font-weight: 700; letter-spacing: 1px;">AARSHA NIDHI LIMITED</h1>
-            <p style="color: #444; font-size: 14px; margin: 5px 0;">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
-            <p style="color: #666; font-size: 12px; margin: 5px 0;">CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
-            <hr style="border: 2px solid #1f4e78; width: 40%; margin: 15px auto;">
-            <h2 style="color: #1f4e78; font-size: 22px; margin: 10px 0; font-weight: 600;">🔐 Banking Software Login</h2>
+        <div style="text-align: center; background: linear-gradient(135deg, #4169E1 0%, #1e3a8a 100%); padding: 30px 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin-bottom: 20px; color: white;">
+            <div style="font-size: 46px; margin-bottom: 5px;">🏦</div>
+            <h1 style="color: white !important; font-size: 26px; margin: 5px 0; font-weight: 800; letter-spacing: 0.8px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">AARSHA NIDHI LIMITED</h1>
+            <p style="color: #cbd5e1 !important; font-size: 11px; margin: 5px 0; font-weight: 500; opacity: 0.9;">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+            <p style="color: #cbd5e1 !important; font-size: 10px; margin: 5px 0; opacity: 0.8;">CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
+        </div>
+        <div style="text-align: center; margin-bottom: 15px;">
+            <h2 style="color: #4169E1; font-size: 20px; margin: 5px 0; font-weight: 700;">🔐 Banking Software Login</h2>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2564,7 +2565,7 @@ st.sidebar.markdown("""
 <style>
     /* Premium Midnight Blue Gradient Sidebar background */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #091326 0%, #112040 100%) !important;
+        background: linear-gradient(180deg, #4169E1 0%, #0a1931 100%) !important;
         border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
     }
     
@@ -2744,16 +2745,11 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-col_user, col_logout = st.sidebar.columns([1.7, 1.3])
-col_user.markdown(f"""
-<div class="user-info" style="text-align: left; padding: 6px 0 0 5px;">
+st.sidebar.markdown(f"""
+<div class="user-info">
     👤 Active: <b style="color:white;">{st.session_state.get('username', 'Admin').upper()}</b>
 </div>
 """, unsafe_allow_html=True)
-if col_logout.button("🚪 Log Out", key="logout_btn", use_container_width=True):
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-    st.rerun()
 
 st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
 current_time_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
@@ -2968,6 +2964,11 @@ st.sidebar.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True):
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.rerun()
+
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
@@ -2975,7 +2976,7 @@ st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strfti
 st.markdown("""
 <style>
     .company-header {
-        background: linear-gradient(135deg, #091326 0%, #1a2a4a 100%) !important;
+        background: linear-gradient(135deg, #4169E1 0%, #1e3a8a 100%) !important;
         padding: 20px 25px;
         border-radius: 12px;
         margin-bottom: 25px;

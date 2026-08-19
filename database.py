@@ -498,14 +498,6 @@ def init_db():
 
         conn.commit()
         conn.close()
-        try:
-            resequence_all_accounts()
-        except Exception as e:
-            print(f"⚠️ Failed to run account resequencing: {str(e)}")
-        try:
-            reconcile_books()
-        except Exception as e:
-            print(f"⚠️ Failed to run one-time reconciliation: {str(e)}")
         DB_INITIALIZED = True
         return True
     except Exception as e:

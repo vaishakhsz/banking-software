@@ -2361,7 +2361,7 @@ def render_reports():
                 data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
                 columns = ["ID", "Name", "Phone", "Email", "KYC Status", "Registered Date"]
             elif report_type == "Daily Transactions Report":
-                data = run_query("SELECT tx_id, account_no, type, amount, mode, narration, date FROM transactions ORDER BY date DESC")
+                data = run_query("SELECT tx_id, account_no, type, amount, mode, narration, date FROM transactions ORDER BY date ASC, tx_id ASC")
                 columns = ["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"]
             elif report_type == "SB Accounts Report":
                 data = run_query("SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at FROM sb_accounts s JOIN customers c ON s.customer_id = c.id")
@@ -2373,10 +2373,10 @@ def render_reports():
                 data = run_query("SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.created_at FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id")
                 columns = ["RD ID", "Customer Name", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Inst. Paid", "Status", "Created Date"]
             elif report_type == "Cash Book Report":
-                data = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration FROM cash_book ORDER BY date DESC")
+                data = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration FROM cash_book ORDER BY date ASC, id ASC")
                 columns = ["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"]
             elif report_type == "Bank Book Report":
-                data = run_query("SELECT date, voucher_no, bank_name, particulars, debit_amount, credit_amount, balance, narration FROM bank_book ORDER BY date DESC")
+                data = run_query("SELECT date, voucher_no, bank_name, particulars, debit_amount, credit_amount, balance, narration FROM bank_book ORDER BY date ASC, id ASC")
                 columns = ["Date", "Voucher No", "Bank", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"]
             elif report_type == "Trial Balance Report":
                 if USING_SUPABASE:
@@ -2395,7 +2395,7 @@ def render_reports():
                     """)
                 columns = ["Account Code", "Account Name", "Account Type", "Total Debit (₹)", "Total Credit (₹)"]
             elif report_type == "Journal Vouchers Report":
-                data = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY voucher_date DESC")
+                data = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY voucher_date ASC, jv_id ASC")
                 columns = ["JV ID", "Date", "Narration", "Status"]
                 
             if data:

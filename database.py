@@ -26,7 +26,6 @@ supabase_anon_key = None
 
 try:
     import streamlit as st
-    # Check top-level secrets
     if "SUPABASE_URL" in st.secrets:
         supabase_url = st.secrets["SUPABASE_URL"]
     elif "DATABASE_URL" in st.secrets:
@@ -36,7 +35,6 @@ try:
     elif "POSTGRES_URL" in st.secrets:
         supabase_url = st.secrets["POSTGRES_URL"]
     
-    # Check [connections.supabase] or [postgres] sections
     if not supabase_url and "connections" in st.secrets and "supabase" in st.secrets["connections"]:
         sub = st.secrets["connections"]["supabase"]
         if isinstance(sub, dict) and "url" in sub:
@@ -68,13 +66,10 @@ def parse_postgres_conn_info(raw_url):
     if not raw_url:
         return None
     
-    # Check if raw_url is a valid postgres connection string
     if not (raw_url.startswith("postgresql://") or raw_url.startswith("postgres://")):
         return None
 
     try:
-        # Regex parse to handle passwords containing '@', ':', '#', etc.
-        # Format: postgresql://[user]:[password]@[host]:[port]/[dbname]?[query]
         pattern = r'^(?:postgresql|postgres):\/\/(?:([^:]+):?(.*)@)?([^:\/\?]+)(?::(\d+))?(?:\/([^?]*))?(?:\?(.*))?$'
         match = re.match(pattern, raw_url)
         
@@ -85,7 +80,6 @@ def parse_postgres_conn_info(raw_url):
             port = int(match.group(4)) if match.group(4) else 5432
             dbname = match.group(5) or "postgres"
             
-            # Unquote URL-encoded user and password if applicable
             user = urllib.parse.unquote(user)
             password = urllib.parse.unquote(password)
             
@@ -123,7 +117,6 @@ if supabase_proj_url and supabase_anon_key and "REPLACE_WITH_YOUR_ANON_PUBLIC_KE
     except Exception as e:
         print(f"⚠️ Failed to initialize Supabase storage client: {str(e)}")
 
-# Database state
 DB_INITIALIZED = False
 DB_INIT_ERROR = None
 
@@ -133,14 +126,12 @@ def get_raw_postgres_connection():
     params = dict(SUPABASE_CONN_PARAMS)
     original_port = params.get("port", 5432)
     
-    # Try primary connection
     try:
         conn = psycopg2.connect(**params)
         conn.autocommit = False
         return conn
     except Exception as err_primary:
         err_msg = str(err_primary)
-        # If port 6543 failed due to pooler timeout/circuit breaker, attempt port 5432 (Session Mode)
         if original_port == 6543 and ("timed out" in err_msg or "ECIRCUITBREAKER" in err_msg or "EAUTHQUERY" in err_msg or "connection" in err_msg.lower()):
             try:
                 print("🔄 Port 6543 failed. Attempting fallback to Port 5432 (Session Mode)...")
@@ -148,10 +139,9 @@ def get_raw_postgres_connection():
                 fallback_params["port"] = 5432
                 conn = psycopg2.connect(**fallback_params)
                 conn.autocommit = False
-                # Update params to use 5432 for subsequent connections
                 SUPABASE_CONN_PARAMS["port"] = 5432
                 return conn
-            except Exception as err_fallback:
+            except Exception:
                 raise Exception(f"Primary (port 6543) and Fallback (port 5432) both failed: {str(err_primary)}")
         raise err_primary
 
@@ -200,14 +190,12 @@ def resequence_all_accounts():
         cursor = conn.cursor()
         placeholder = "%s" if USING_SUPABASE else "?"
         
-        # 1. Fetch all accounts
         cursor.execute("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
         rows = cursor.fetchall()
         if not rows:
             release_connection(conn)
             return
             
-        # Group by account_type
         by_type = {}
         for row in rows:
             code, name, acc_type, cat = row
@@ -221,7 +209,6 @@ def resequence_all_accounts():
             "Equity": "EQT"
         }
         
-        # 2. Determine sequential mapping
         updates_to_make = []
         for acc_type, acc_list in by_type.items():
             prefix = prefix_map.get(acc_type, "ACC")
@@ -246,7 +233,6 @@ def resequence_all_accounts():
             release_connection(conn)
             return
             
-        # Perform updates in a transaction
         try:
             if USING_SUPABASE:
                 try:
@@ -302,7 +288,6 @@ def reconcile_books():
         cursor = conn.cursor()
         placeholder = "%s" if USING_SUPABASE else "?"
         
-        # 1. Reconcile Cash Book entries
         cursor.execute("SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, account_code, narration FROM cash_book")
         cash_rows = cursor.fetchall()
         for row in cash_rows:
@@ -329,7 +314,6 @@ def reconcile_books():
                     cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, {placeholder}, 0)", (jv_id, acc_code, amt))
                     cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, 'AST-101', 0, {placeholder})", (jv_id, amt))
                     
-        # 2. Reconcile Bank Book entries
         cursor.execute("SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, bank_name, account_code, narration FROM bank_book")
         bank_rows = cursor.fetchall()
         for row in bank_rows:
@@ -375,11 +359,9 @@ def init_db():
         conn = get_connection()
         cursor = conn.cursor()
         
-        # Enable foreign keys (SQLite specific)
         if not USING_SUPABASE:
             cursor.execute("PRAGMA foreign_keys = ON")
         
-        # Create all base tables if they don't exist
         execute_create(cursor, """
             CREATE TABLE IF NOT EXISTS customers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -461,28 +443,23 @@ def init_db():
             )
         """)
 
-        # Safe migration for missing columns in SQLite
         if not USING_SUPABASE:
             try:
                 cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN payment_mode TEXT")
             except Exception:
                 pass
-
             try:
                 cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date TEXT")
             except Exception:
                 pass
-
             try:
                 cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN payment_mode TEXT")
             except Exception:
                 pass
-
             try:
                 cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN closed_date TEXT")
             except Exception:
                 pass
-
             try:
                 cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN maturity_amount REAL DEFAULT 0")
             except Exception:
@@ -549,7 +526,6 @@ def init_db():
             )
         """)
 
-        # Comprehensive default Chart of Accounts list
         default_accounts = [
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
             ("INC-102", "Investment Income", "Income", "Primary Revenue"),
@@ -605,7 +581,6 @@ def init_db():
     finally:
         release_connection(conn)
 
-# Safely attempt DB initialization
 try:
     init_db()
 except Exception as e:
@@ -613,7 +588,6 @@ except Exception as e:
 
 def run_query(query, params=(), fetch=True):
     """Execute a database query with auto-commit, rollback, and connection cleanup"""
-    # If not initialized, try initializing once
     if not DB_INITIALIZED:
         init_db()
 
@@ -623,11 +597,8 @@ def run_query(query, params=(), fetch=True):
         cursor = conn.cursor()
         
         if USING_SUPABASE:
-            # Escape literal '%' characters to prevent psycopg2 string formatting errors
             query = query.replace("%", "%%")
-            # Dynamically map query parameters for Postgres
             query = query.replace("?", "%s")
-            # Map SQLite case-insensitive LIKE to Postgres ILIKE
             query = query.replace("LIKE %s", "ILIKE %s")
             query = query.replace("LIKE  %s", "ILIKE %s")
             
@@ -650,7 +621,6 @@ def run_query(query, params=(), fetch=True):
 
 def save_uploaded_file(uploaded_file):
     if uploaded_file is not None:
-        # Check if Supabase Storage is configured and initialized
         if supabase_client is not None:
             try:
                 data = uploaded_file.getvalue()
@@ -668,7 +638,6 @@ def save_uploaded_file(uploaded_file):
                 import streamlit as st
                 st.warning(f"⚠️ Failed to upload to Supabase Storage: {str(e)}. Saving to local disk.")
         
-        # Fallback to local file system
         file_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
@@ -676,7 +645,6 @@ def save_uploaded_file(uploaded_file):
     return None
 
 def get_account_balance_from_jv(account_code):
-    """Get real balance from journal entries - SINGLE SOURCE OF TRUTH"""
     try:
         result = run_query("""
             SELECT COALESCE(SUM(JE.debit), 0) - COALESCE(SUM(JE.credit), 0) as net_balance
@@ -689,11 +657,9 @@ def get_account_balance_from_jv(account_code):
         return 0.0
 
 def get_cash_balance():
-    """Get real cash balance from journal entries"""
     return get_account_balance_from_jv('AST-101')
 
 def get_bank_balance(bank_name=None):
-    """Get real bank balance from journal entries"""
     if bank_name == "Union Bank of India" or bank_name is None:
         return get_account_balance_from_jv('AST-102')
     elif bank_name == "State Bank of India":
@@ -731,7 +697,6 @@ def generate_bank_voucher_no():
     return f"BB{today}{new_seq:04d}"
 
 def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=None):
-    """Post a journal voucher - this is the single source of truth"""
     if amount <= 0:
         return None
     
@@ -782,7 +747,6 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
         release_connection(conn)
 
 def get_account_name(account_code):
-    """Get account name from chart_of_accounts"""
     try:
         result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (account_code,))
         return result[0][0] if result else ""

@@ -1,10 +1,10 @@
 import os
 import sqlite3
 import time
+import re
+import urllib.parse
 from datetime import datetime, date, timezone, timedelta
 import pytz
-import psycopg2
-import psycopg2.pool
 from dotenv import load_dotenv
 
 # Load local environment variables
@@ -17,34 +17,102 @@ DB_NAME = "aasha_nidhi.db"
 UPLOAD_DIR = "customer_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Parse Supabase configuration (supporting both Streamlit secrets and local .env)
+# ----------------------------------------------------
+# SUPABASE / POSTGRESQL CREDENTIALS & PARSING
+# ----------------------------------------------------
 supabase_url = None
 supabase_proj_url = None
 supabase_anon_key = None
 
 try:
     import streamlit as st
+    # Check top-level secrets
     if "SUPABASE_URL" in st.secrets:
         supabase_url = st.secrets["SUPABASE_URL"]
+    elif "DATABASE_URL" in st.secrets:
+        supabase_url = st.secrets["DATABASE_URL"]
+    elif "postgres_url" in st.secrets:
+        supabase_url = st.secrets["postgres_url"]
+    elif "POSTGRES_URL" in st.secrets:
+        supabase_url = st.secrets["POSTGRES_URL"]
+    
+    # Check [connections.supabase] or [postgres] sections
+    if not supabase_url and "connections" in st.secrets and "supabase" in st.secrets["connections"]:
+        sub = st.secrets["connections"]["supabase"]
+        if isinstance(sub, dict) and "url" in sub:
+            supabase_url = sub["url"]
+    
     if "SUPABASE_PROJECT_URL" in st.secrets:
         supabase_proj_url = st.secrets["SUPABASE_PROJECT_URL"]
     if "SUPABASE_ANON_KEY" in st.secrets:
         supabase_anon_key = st.secrets["SUPABASE_ANON_KEY"]
-except:
+except Exception:
     pass
 
 if not supabase_url:
-    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_url = os.getenv("SUPABASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
 if not supabase_proj_url:
     supabase_proj_url = os.getenv("SUPABASE_PROJECT_URL")
 if not supabase_anon_key:
     supabase_anon_key = os.getenv("SUPABASE_ANON_KEY")
 
 USING_SUPABASE = False
+SUPABASE_CONN_PARAMS = {}
 SUPABASE_URL = ""
-if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url and (supabase_url.startswith("postgresql") or supabase_url.startswith("postgres")):
-    USING_SUPABASE = True
-    SUPABASE_URL = supabase_url
+
+def parse_postgres_conn_info(raw_url):
+    """
+    Safely parses PostgreSQL connection string and returns parameter dict
+    to avoid URI parsing issues with special characters in passwords.
+    """
+    if not raw_url:
+        return None
+    
+    # Check if raw_url is a valid postgres connection string
+    if not (raw_url.startswith("postgresql://") or raw_url.startswith("postgres://")):
+        return None
+
+    try:
+        # Regex parse to handle passwords containing '@', ':', '#', etc.
+        # Format: postgresql://[user]:[password]@[host]:[port]/[dbname]?[query]
+        pattern = r'^(?:postgresql|postgres):\/\/(?:([^:]+):?(.*)@)?([^:\/\?]+)(?::(\d+))?(?:\/([^?]*))?(?:\?(.*))?$'
+        match = re.match(pattern, raw_url)
+        
+        if match:
+            user = match.group(1) or "postgres"
+            password = match.group(2) or ""
+            host = match.group(3)
+            port = int(match.group(4)) if match.group(4) else 5432
+            dbname = match.group(5) or "postgres"
+            
+            # Unquote URL-encoded user and password if applicable
+            user = urllib.parse.unquote(user)
+            password = urllib.parse.unquote(password)
+            
+            return {
+                "host": host,
+                "port": port,
+                "user": user,
+                "password": password,
+                "dbname": dbname,
+                "sslmode": "require",
+                "connect_timeout": 15,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5
+            }
+    except Exception as e:
+        print(f"⚠️ Error parsing connection string: {e}")
+    
+    return None
+
+if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url:
+    parsed_params = parse_postgres_conn_info(supabase_url)
+    if parsed_params:
+        USING_SUPABASE = True
+        SUPABASE_URL = supabase_url
+        SUPABASE_CONN_PARAMS = parsed_params
 
 # Initialize Supabase storage client if credentials are provided
 supabase_client = None
@@ -55,33 +123,63 @@ if supabase_proj_url and supabase_anon_key and "REPLACE_WITH_YOUR_ANON_PUBLIC_KE
     except Exception as e:
         print(f"⚠️ Failed to initialize Supabase storage client: {str(e)}")
 
-# Global database connection pool for Supabase
-_connection_pool = None
+# Database state
 DB_INITIALIZED = False
+DB_INIT_ERROR = None
+
+def get_raw_postgres_connection():
+    """Establish a direct PostgreSQL connection with automatic port fallback (6543 -> 5432)"""
+    import psycopg2
+    params = dict(SUPABASE_CONN_PARAMS)
+    original_port = params.get("port", 5432)
+    
+    # Try primary connection
+    try:
+        conn = psycopg2.connect(**params)
+        conn.autocommit = False
+        return conn
+    except Exception as err_primary:
+        err_msg = str(err_primary)
+        # If port 6543 failed due to pooler timeout/circuit breaker, attempt port 5432 (Session Mode)
+        if original_port == 6543 and ("timed out" in err_msg or "ECIRCUITBREAKER" in err_msg or "EAUTHQUERY" in err_msg or "connection" in err_msg.lower()):
+            try:
+                print("🔄 Port 6543 failed. Attempting fallback to Port 5432 (Session Mode)...")
+                fallback_params = dict(params)
+                fallback_params["port"] = 5432
+                conn = psycopg2.connect(**fallback_params)
+                conn.autocommit = False
+                # Update params to use 5432 for subsequent connections
+                SUPABASE_CONN_PARAMS["port"] = 5432
+                return conn
+            except Exception as err_fallback:
+                raise Exception(f"Primary (port 6543) and Fallback (port 5432) both failed: {str(err_primary)}")
+        raise err_primary
 
 def get_connection():
-    """Get database connection (Supabase PostgreSQL pool or local SQLite) with retry logic"""
-    global _connection_pool
+    """Get database connection (Supabase PostgreSQL or local SQLite) with retry logic"""
     max_retries = 3
+    last_err = None
     for attempt in range(max_retries):
         try:
             if USING_SUPABASE:
-                if _connection_pool is None:
-                    # Initialize pool with min 2 and max 20 active connections
-                    _connection_pool = psycopg2.pool.ThreadedConnectionPool(2, 20, dsn=SUPABASE_URL)
-                return _connection_pool.getconn()
+                return get_raw_postgres_connection()
             else:
                 db_dir = os.path.dirname(DB_NAME)
                 if db_dir and not os.path.exists(db_dir):
                     os.makedirs(db_dir, exist_ok=True)
-                return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
+                return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=15)
         except Exception as e:
-            if attempt == max_retries - 1:
-                # Fallback to direct connection if pool fails or is exhausted
-                if USING_SUPABASE:
-                    return psycopg2.connect(SUPABASE_URL)
-                raise e
-            time.sleep(1)
+            last_err = e
+            time.sleep(1.0 + attempt * 0.5)
+    raise last_err
+
+def release_connection(conn, is_broken=False):
+    """Safely release and close database connection"""
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def translate_sqlite_schema_to_postgres(sql):
     sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
@@ -96,6 +194,7 @@ def execute_create(cursor, sql):
 
 def resequence_all_accounts():
     """Resequence all account codes in chart_of_accounts to be strictly sequential (101, 102, 103...)"""
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -105,7 +204,7 @@ def resequence_all_accounts():
         cursor.execute("SELECT account_code, account_name, account_type, category FROM chart_of_accounts")
         rows = cursor.fetchall()
         if not rows:
-            conn.close()
+            release_connection(conn)
             return
             
         # Group by account_type
@@ -127,7 +226,6 @@ def resequence_all_accounts():
         for acc_type, acc_list in by_type.items():
             prefix = prefix_map.get(acc_type, "ACC")
             
-            # Sort the accounts by their suffix number, then name
             def get_sort_key(item):
                 code = item[0]
                 try:
@@ -139,41 +237,37 @@ def resequence_all_accounts():
                 
             acc_list.sort(key=get_sort_key)
             
-            # Generate sequential codes starting at 101
             for index, (old_code, name, cat) in enumerate(acc_list):
                 new_code = f"{prefix}-{101 + index}"
                 if old_code != new_code:
                     updates_to_make.append((old_code, new_code, name, acc_type, cat))
                     
         if not updates_to_make:
-            conn.close()
+            release_connection(conn)
             return
             
-        # Perform updates in a transaction with foreign keys disabled
+        # Perform updates in a transaction
         try:
             if USING_SUPABASE:
-                cursor.execute("SET session_replication_role = 'replica';")
+                try:
+                    cursor.execute("SET session_replication_role = 'replica';")
+                except Exception:
+                    pass
             else:
                 cursor.execute("PRAGMA foreign_keys = OFF;")
                 
             for old_code, new_code, name, acc_type, cat in updates_to_make:
-                # A. Update references in other tables
                 cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
                 cursor.execute(f"UPDATE cash_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
                 cursor.execute(f"UPDATE bank_book SET account_code = {placeholder} WHERE account_code = {placeholder}", (new_code, old_code))
                 
-                # B. Manage chart_of_accounts updates to avoid primary key conflict
-                # First, check if the new_code row already exists
                 cursor.execute(f"SELECT account_name FROM chart_of_accounts WHERE account_code = {placeholder}", (new_code,))
                 new_row = cursor.fetchone()
                 
                 if new_row:
-                    # If it already exists, update its name/category to match the old one
                     cursor.execute(f"UPDATE chart_of_accounts SET account_name = {placeholder}, category = {placeholder} WHERE account_code = {placeholder}", (name, cat, new_code))
-                    # Delete the old code
                     cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
                 else:
-                    # If it doesn't exist, we can just insert the new code and delete the old one
                     cursor.execute(f"INSERT INTO chart_of_accounts (account_code, account_name, account_type, category) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})", (new_code, name, acc_type, cat))
                     cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
                     
@@ -181,24 +275,28 @@ def resequence_all_accounts():
             print("✅ Resequenced all accounts successfully!")
         finally:
             try:
-                # Always restore foreign key enforcement
                 if USING_SUPABASE:
-                    cursor.execute("SET session_replication_role = 'origin';")
+                    try:
+                        cursor.execute("SET session_replication_role = 'origin';")
+                    except Exception:
+                        pass
                 else:
                     cursor.execute("PRAGMA foreign_keys = ON;")
                 conn.commit()
             except Exception as ex:
                 print(f"Error restoring foreign keys: {str(ex)}")
                 
-        conn.close()
     except Exception as e:
         import traceback
         print(f"Error during re-sequencing: {str(e)}")
         traceback.print_exc()
+    finally:
+        release_connection(conn)
 
 
 def reconcile_books():
     """One-time database reconciliation to align old cash/bank entries with ledger JVs"""
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -212,7 +310,6 @@ def reconcile_books():
             amt = dr if dr > 0 else cr
             is_dr = dr > 0
             
-            # Find matching JV by voucher_no in narration or matching particulars + amount
             cursor.execute(f"SELECT jv_id, narration FROM journal_vouchers WHERE narration LIKE {placeholder} OR (narration LIKE {placeholder} AND jv_id IN (SELECT jv_id FROM jv_entries WHERE debit = {placeholder} OR credit = {placeholder}))", (f"%{v_no}%", f"%{part}%", amt, amt))
             jv_row = cursor.fetchone()
             if jv_row:
@@ -224,7 +321,6 @@ def reconcile_books():
                 new_narr = f"{jv_prefix} [{v_no}]: {full_narr}"
                 cursor.execute(f"UPDATE journal_vouchers SET narration = {placeholder} WHERE jv_id = {placeholder}", (new_narr, jv_id))
                 
-                # Update jv_entries
                 cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (jv_id,))
                 if is_dr:
                     cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, 'AST-101', {placeholder}, 0)", (jv_id, amt))
@@ -253,7 +349,6 @@ def reconcile_books():
                 new_narr = f"{jv_prefix} [{v_no}]: {full_narr} - {b_name}"
                 cursor.execute(f"UPDATE journal_vouchers SET narration = {placeholder} WHERE jv_id = {placeholder}", (new_narr, jv_id))
                 
-                # Update jv_entries
                 cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (jv_id,))
                 if is_dr:
                     cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, {placeholder}, 0)", (jv_id, bank_code, amt))
@@ -263,16 +358,19 @@ def reconcile_books():
                     cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, 0, {placeholder})", (jv_id, bank_code, amt))
                     
         conn.commit()
-        conn.close()
     except Exception as e:
         print(f"Error during reconciliation: {str(e)}")
+    finally:
+        release_connection(conn)
 
 
 def init_db():
-    """Initialize database and ensure missing columns are added dynamically"""
-    global DB_INITIALIZED
+    """Initialize database and ensure missing columns and default accounts are present"""
+    global DB_INITIALIZED, DB_INIT_ERROR
     if DB_INITIALIZED:
         return True
+    
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -363,31 +461,31 @@ def init_db():
             )
         """)
 
-        # Safe migration for missing columns (Skip for Supabase as fresh DB already has them)
+        # Safe migration for missing columns in SQLite
         if not USING_SUPABASE:
             try:
                 cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN payment_mode TEXT")
-            except sqlite3.OperationalError:
+            except Exception:
                 pass
 
             try:
                 cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date TEXT")
-            except sqlite3.OperationalError:
+            except Exception:
                 pass
 
             try:
                 cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN payment_mode TEXT")
-            except sqlite3.OperationalError:
+            except Exception:
                 pass
 
             try:
                 cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN closed_date TEXT")
-            except sqlite3.OperationalError:
+            except Exception:
                 pass
 
             try:
                 cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN maturity_amount REAL DEFAULT 0")
-            except sqlite3.OperationalError:
+            except Exception:
                 pass
 
         execute_create(cursor, """
@@ -451,7 +549,7 @@ def init_db():
             )
         """)
 
-        # Comprehensive default Chart of Accounts list with all Depreciation heads
+        # Comprehensive default Chart of Accounts list
         default_accounts = [
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
             ("INC-102", "Investment Income", "Income", "Primary Revenue"),
@@ -497,18 +595,28 @@ def init_db():
             cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
 
         conn.commit()
-        conn.close()
         DB_INITIALIZED = True
+        DB_INIT_ERROR = None
         return True
     except Exception as e:
+        DB_INIT_ERROR = str(e)
         print(f"❌ Database initialization error: {str(e)}")
         return False
+    finally:
+        release_connection(conn)
 
-# Initialize the DB
-init_db()
+# Safely attempt DB initialization
+try:
+    init_db()
+except Exception as e:
+    DB_INIT_ERROR = str(e)
 
 def run_query(query, params=(), fetch=True):
-    """Execute a database query with error handling and connection pool reuse"""
+    """Execute a database query with auto-commit, rollback, and connection cleanup"""
+    # If not initialized, try initializing once
+    if not DB_INITIALIZED:
+        init_db()
+
     conn = None
     try:
         conn = get_connection()
@@ -529,42 +637,36 @@ def run_query(query, params=(), fetch=True):
         return res
     except Exception as e:
         import streamlit as st
-        st.error(f"Database error: {str(e)}")
+        err_str = str(e)
+        st.error(f"Database error: {err_str}")
         if conn is not None and USING_SUPABASE:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return None
     finally:
-        if conn is not None:
-            if USING_SUPABASE and _connection_pool is not None:
-                _connection_pool.putconn(conn)
-            else:
-                conn.close()
+        release_connection(conn)
 
 def save_uploaded_file(uploaded_file):
     if uploaded_file is not None:
         # Check if Supabase Storage is configured and initialized
         if supabase_client is not None:
             try:
-                # Read file binary content
                 data = uploaded_file.getvalue()
-                # Sanitize filename (remove characters that might break URLs)
                 safe_name = "".join(c for c in uploaded_file.name if c.isalnum() or c in "._-")
-                # Prefix with timestamp to prevent name collisions
                 unique_name = f"{int(time.time())}_{safe_name}"
                 
-                # Upload to Supabase Storage bucket 'customer-docs'
                 supabase_client.storage.from_("customer-docs").upload(
                     path=unique_name,
                     file=data,
                     file_options={"content-type": uploaded_file.type}
                 )
-                
-                # Retrieve the public URL for the uploaded document
                 public_url = supabase_client.storage.from_("customer-docs").get_public_url(unique_name)
                 return public_url
             except Exception as e:
                 import streamlit as st
-                st.warning(f"⚠️ Failed to upload to Supabase Storage: {str(e)}. Saving to local server disk instead.")
+                st.warning(f"⚠️ Failed to upload to Supabase Storage: {str(e)}. Saving to local disk.")
         
         # Fallback to local file system
         file_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
@@ -583,7 +685,7 @@ def get_account_balance_from_jv(account_code):
             WHERE CO.account_code = ?
         """, (account_code,))
         return result[0][0] if result and result[0][0] is not None else 0.0
-    except:
+    except Exception:
         return 0.0
 
 def get_cash_balance():
@@ -597,7 +699,6 @@ def get_bank_balance(bank_name=None):
     elif bank_name == "State Bank of India":
         return get_account_balance_from_jv('AST-103')
     else:
-        # Try to find by name
         result = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ? AND account_type = 'Asset'", (bank_name,))
         if result:
             return get_account_balance_from_jv(result[0][0])
@@ -612,7 +713,7 @@ def generate_cash_voucher_no():
             new_seq = last_seq + 1
         else:
             new_seq = 1
-    except:
+    except Exception:
         new_seq = 1
     return f"CB{today}{new_seq:04d}"
 
@@ -625,7 +726,7 @@ def generate_bank_voucher_no():
             new_seq = last_seq + 1
         else:
             new_seq = 1
-    except:
+    except Exception:
         new_seq = 1
     return f"BB{today}{new_seq:04d}"
 
@@ -634,7 +735,6 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
     if amount <= 0:
         return None
     
-    # Determine the transaction/voucher date
     if voucher_date is None:
         target_date = str(date.today())
     else:
@@ -673,21 +773,20 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
         import streamlit as st
         st.error(f"Error posting journal voucher: {str(e)}")
         if conn is not None and USING_SUPABASE:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return None
     finally:
-        if conn is not None:
-            if USING_SUPABASE and _connection_pool is not None:
-                _connection_pool.putconn(conn)
-            else:
-                conn.close()
+        release_connection(conn)
 
 def get_account_name(account_code):
     """Get account name from chart_of_accounts"""
     try:
         result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (account_code,))
         return result[0][0] if result else ""
-    except:
+    except Exception:
         return ""
 
 def fetch_cb_voucher(voucher_no):

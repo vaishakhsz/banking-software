@@ -39,20 +39,11 @@ try:
         sub = st.secrets["connections"]["supabase"]
         if isinstance(sub, dict) and "url" in sub:
             supabase_url = sub["url"]
-    
-    if "SUPABASE_PROJECT_URL" in st.secrets:
-        supabase_proj_url = st.secrets["SUPABASE_PROJECT_URL"]
-    if "SUPABASE_ANON_KEY" in st.secrets:
-        supabase_anon_key = st.secrets["SUPABASE_ANON_KEY"]
 except Exception:
     pass
 
 if not supabase_url:
     supabase_url = os.getenv("SUPABASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
-if not supabase_proj_url:
-    supabase_proj_url = os.getenv("SUPABASE_PROJECT_URL")
-if not supabase_anon_key:
-    supabase_anon_key = os.getenv("SUPABASE_ANON_KEY")
 
 USING_SUPABASE = False
 SUPABASE_CONN_PARAMS = {}
@@ -108,63 +99,65 @@ if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url:
         SUPABASE_URL = supabase_url
         SUPABASE_CONN_PARAMS = parsed_params
 
-# Initialize Supabase storage client if credentials are provided
-supabase_client = None
-if supabase_proj_url and supabase_anon_key and "REPLACE_WITH_YOUR_ANON_PUBLIC_KEY" not in supabase_anon_key:
-    try:
-        from supabase import create_client
-        supabase_client = create_client(supabase_proj_url, supabase_anon_key)
-    except Exception as e:
-        print(f"⚠️ Failed to initialize Supabase storage client: {str(e)}")
-
+# ----------------------------------------------------
+# HIGH-SPEED PERSISTENT CONNECTION POOLING
+# ----------------------------------------------------
 DB_INITIALIZED = False
 DB_INIT_ERROR = None
+_pg_pool = None
 
-def get_raw_postgres_connection():
-    """Establish a direct PostgreSQL connection with automatic port fallback (6543 -> 5432)"""
-    import psycopg2
-    params = dict(SUPABASE_CONN_PARAMS)
-    original_port = params.get("port", 5432)
-    
-    try:
-        conn = psycopg2.connect(**params)
-        conn.autocommit = False
-        return conn
-    except Exception as err_primary:
-        err_msg = str(err_primary)
-        if original_port == 6543 and ("timed out" in err_msg or "ECIRCUITBREAKER" in err_msg or "EAUTHQUERY" in err_msg or "connection" in err_msg.lower()):
-            try:
-                fallback_params = dict(params)
-                fallback_params["port"] = 5432
-                conn = psycopg2.connect(**fallback_params)
-                conn.autocommit = False
-                SUPABASE_CONN_PARAMS["port"] = 5432
-                return conn
-            except Exception:
-                raise Exception(f"Primary (port 6543) and Fallback (port 5432) both failed: {str(err_primary)}")
-        raise err_primary
+def get_pg_pool():
+    """Initializes and returns a persistent PostgreSQL connection pool"""
+    global _pg_pool
+    if _pg_pool is None or _pg_pool.closed:
+        import psycopg2
+        from psycopg2 import pool
+        params = dict(SUPABASE_CONN_PARAMS)
+        _pg_pool = pool.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=10,
+            **params
+        )
+    return _pg_pool
 
 def get_connection():
-    """Get database connection (Supabase PostgreSQL or local SQLite) with fast retry logic"""
-    max_retries = 2
-    last_err = None
-    for attempt in range(max_retries):
+    """Get database connection from persistent pool with sub-millisecond response"""
+    if USING_SUPABASE:
         try:
-            if USING_SUPABASE:
-                return get_raw_postgres_connection()
-            else:
-                db_dir = os.path.dirname(DB_NAME)
-                if db_dir and not os.path.exists(db_dir):
-                    os.makedirs(db_dir, exist_ok=True)
-                return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
-        except Exception as e:
-            last_err = e
-            time.sleep(0.5)
-    raise last_err
+            p = get_pg_pool()
+            conn = p.getconn()
+            if conn.closed:
+                p.putconn(conn, close=True)
+                conn = p.getconn()
+            conn.autocommit = False
+            return conn
+        except Exception:
+            global _pg_pool
+            try:
+                if _pg_pool and not _pg_pool.closed:
+                    _pg_pool.closeall()
+            except Exception:
+                pass
+            _pg_pool = None
+            p = get_pg_pool()
+            conn = p.getconn()
+            conn.autocommit = False
+            return conn
+    else:
+        db_dir = os.path.dirname(DB_NAME)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+        return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
 
 def release_connection(conn, is_broken=False):
-    """Safely release and close database connection"""
+    """Safely return connection back to pool for instant reuse"""
     if conn is not None:
+        if USING_SUPABASE and _pg_pool is not None and not _pg_pool.closed:
+            try:
+                _pg_pool.putconn(conn, close=is_broken)
+                return
+            except Exception:
+                pass
         try:
             conn.close()
         except Exception:
@@ -233,12 +226,7 @@ def resequence_all_accounts():
             return
             
         try:
-            if USING_SUPABASE:
-                try:
-                    cursor.execute("SET session_replication_role = 'replica';")
-                except Exception:
-                    pass
-            else:
+            if not USING_SUPABASE:
                 cursor.execute("PRAGMA foreign_keys = OFF;")
                 
             for old_code, new_code, name, acc_type, cat in updates_to_make:
@@ -260,12 +248,7 @@ def resequence_all_accounts():
             print("✅ Resequenced all accounts successfully!")
         finally:
             try:
-                if USING_SUPABASE:
-                    try:
-                        cursor.execute("SET session_replication_role = 'origin';")
-                    except Exception:
-                        pass
-                else:
+                if not USING_SUPABASE:
                     cursor.execute("PRAGMA foreign_keys = ON;")
                 conn.commit()
             except Exception as ex:
@@ -572,12 +555,25 @@ def run_query(query, params=(), fetch=True):
         release_connection(conn)
 
 def save_uploaded_file(uploaded_file):
-    """Saves uploaded files instantly to local storage with zero network lag"""
+    """Saves uploaded files instantly to local storage with auto image optimization"""
     if uploaded_file is not None:
         try:
             os.makedirs(UPLOAD_DIR, exist_ok=True)
             safe_name = "".join(c for c in uploaded_file.name if c.isalnum() or c in "._- ")
             file_path = os.path.join(UPLOAD_DIR, safe_name)
+            
+            # If uploaded document is an image, compress to ~150KB for ultra-fast storage and load
+            if hasattr(uploaded_file, "type") and uploaded_file.type and uploaded_file.type.startswith("image/"):
+                try:
+                    from PIL import Image
+                    img = Image.open(uploaded_file)
+                    if img.mode in ("RGBA", "P") and not safe_name.lower().endswith(".png"):
+                        img = img.convert("RGB")
+                    img.thumbnail((1400, 1400), Image.LANCZOS)
+                    img.save(file_path, optimize=True, quality=80)
+                    return file_path
+                except Exception:
+                    pass
             
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())

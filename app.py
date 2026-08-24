@@ -14,7 +14,8 @@ from database import (
     IST, DB_NAME, USING_SUPABASE, run_query, save_uploaded_file, 
     get_account_balance_from_jv, get_cash_balance, get_bank_balance,
     generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
-    get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher
+    get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
+    get_connection, release_connection
 )
 import pdf_generator
 
@@ -2487,23 +2488,28 @@ def render_sb_interest_calculation():
                     total_interest_to_post
                 )
                 if jv_id:
-                    import database
-                    db_conn = database.get_connection()
-                    cursor = db_conn.cursor()
-                    for row in preview_rows:
-                        acc_no, _, _, _, interest = row
-                        if interest > 0:
-                            cursor.execute("UPDATE sb_accounts SET balance = balance + ? WHERE account_no = ?", (interest, acc_no))
-                            tx_id = f"INT{datetime.now(IST).strftime('%M%S%f')}"
-                            cursor.execute("""
-                                INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
-                                VALUES (?, ?, 'CREDIT', ?, 'INTEREST', ?, ?)
-                            """, (tx_id, acc_no, interest, f"SB Interest Credit for {days} days", str(calc_date)))
-                    db_conn.commit()
-                    db_conn.close()
-                    st.success(f"Interest credited successfully! Journal Reference: JV-{jv_id}")
-                    time.sleep(0.5)
-                    st.rerun()
+                    db_conn = None
+                    try:
+                        db_conn = get_connection()
+                        cursor = db_conn.cursor()
+                        ph = "%s" if USING_SUPABASE else "?"
+                        for row in preview_rows:
+                            acc_no, _, _, _, interest = row
+                            if interest > 0:
+                                cursor.execute(f"UPDATE sb_accounts SET balance = balance + {ph} WHERE account_no = {ph}", (interest, acc_no))
+                                tx_id = f"INT{datetime.now(IST).strftime('%M%S%f')}"
+                                cursor.execute(f"""
+                                    INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
+                                    VALUES ({ph}, {ph}, 'CREDIT', {ph}, 'INTEREST', {ph}, {ph})
+                                """, (tx_id, acc_no, interest, f"SB Interest Credit for {days} days", str(calc_date)))
+                        db_conn.commit()
+                        st.success(f"Interest credited successfully! Journal Reference: JV-{jv_id}")
+                        time.sleep(0.5)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error updating interest: {str(e)}")
+                    finally:
+                        release_connection(db_conn)
 
 # --- MAIN RUNNING ENTRY POINT ---
 
@@ -2896,15 +2902,19 @@ if uploaded_dbs:
         sql_files = [f for f in uploaded_dbs if f.name.split(".")[-1].lower() == "sql"]
         if sql_files:
             if st.sidebar.button(f"⚠️ Confirm Restore ({len(sql_files)} SQL files)", type="primary", use_container_width=True):
+                conn = None
                 try:
                     conn = get_connection()
                     cursor = conn.cursor()
                     
-                    # Temporarily disable foreign key constraints to allow executing inserts in any order
-                    if USING_SUPABASE:
-                        cursor.execute("SET session_replication_role = 'replica';")
-                    else:
-                        cursor.execute("PRAGMA foreign_keys = OFF;")
+                    # Temporarily disable foreign key constraints
+                    try:
+                        if USING_SUPABASE:
+                            cursor.execute("SET session_replication_role = 'replica';")
+                        else:
+                            cursor.execute("PRAGMA foreign_keys = OFF;")
+                    except Exception:
+                        pass
                     
                     # Execute each SQL script sequentially
                     for sql_file in sql_files:
@@ -2915,13 +2925,15 @@ if uploaded_dbs:
                             cursor.executescript(sql_script)
                     
                     # Re-enable foreign key constraints
-                    if USING_SUPABASE:
-                        cursor.execute("SET session_replication_role = 'origin';")
-                    else:
-                        cursor.execute("PRAGMA foreign_keys = ON;")
+                    try:
+                        if USING_SUPABASE:
+                            cursor.execute("SET session_replication_role = 'origin';")
+                        else:
+                            cursor.execute("PRAGMA foreign_keys = ON;")
+                    except Exception:
+                        pass
                     
                     conn.commit()
-                    conn.close()
                     
                     # Force resequence and reconcile
                     from database import resequence_all_accounts, reconcile_books
@@ -2939,6 +2951,8 @@ if uploaded_dbs:
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"❌ Restore error: {str(e)}")
+                finally:
+                    release_connection(conn)
 
 
 # Styling specifically targeting all buttons inside the sidebar

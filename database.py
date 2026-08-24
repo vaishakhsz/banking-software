@@ -90,11 +90,11 @@ def parse_postgres_conn_info(raw_url):
                 "password": password,
                 "dbname": dbname,
                 "sslmode": "require",
-                "connect_timeout": 15,
+                "connect_timeout": 8,
                 "keepalives": 1,
                 "keepalives_idle": 30,
                 "keepalives_interval": 10,
-                "keepalives_count": 5
+                "keepalives_count": 3
             }
     except Exception as e:
         print(f"⚠️ Error parsing connection string: {e}")
@@ -134,7 +134,6 @@ def get_raw_postgres_connection():
         err_msg = str(err_primary)
         if original_port == 6543 and ("timed out" in err_msg or "ECIRCUITBREAKER" in err_msg or "EAUTHQUERY" in err_msg or "connection" in err_msg.lower()):
             try:
-                print("🔄 Port 6543 failed. Attempting fallback to Port 5432 (Session Mode)...")
                 fallback_params = dict(params)
                 fallback_params["port"] = 5432
                 conn = psycopg2.connect(**fallback_params)
@@ -146,8 +145,8 @@ def get_raw_postgres_connection():
         raise err_primary
 
 def get_connection():
-    """Get database connection (Supabase PostgreSQL or local SQLite) with retry logic"""
-    max_retries = 3
+    """Get database connection (Supabase PostgreSQL or local SQLite) with fast retry logic"""
+    max_retries = 2
     last_err = None
     for attempt in range(max_retries):
         try:
@@ -157,10 +156,10 @@ def get_connection():
                 db_dir = os.path.dirname(DB_NAME)
                 if db_dir and not os.path.exists(db_dir):
                     os.makedirs(db_dir, exist_ok=True)
-                return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=15)
+                return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
         except Exception as e:
             last_err = e
-            time.sleep(1.0 + attempt * 0.5)
+            time.sleep(0.5)
     raise last_err
 
 def release_connection(conn, is_broken=False):
@@ -349,7 +348,7 @@ def reconcile_books():
 
 
 def init_db():
-    """Initialize database and ensure missing columns and default accounts are present"""
+    """Initialize database tables lazily on first query execution"""
     global DB_INITIALIZED, DB_INIT_ERROR
     if DB_INITIALIZED:
         return True
@@ -362,7 +361,8 @@ def init_db():
         if not USING_SUPABASE:
             cursor.execute("PRAGMA foreign_keys = ON")
         
-        execute_create(cursor, """
+        # Combined DDL statements for rapid 1-roundtrip schema execution
+        tables_sql = """
             CREATE TABLE IF NOT EXISTS customers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -381,10 +381,7 @@ def init_db():
                 signature_file TEXT,
                 kyc_status TEXT DEFAULT 'PENDING',
                 created_at TEXT
-            )
-        """)
-        
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS sb_accounts (
                 account_no TEXT PRIMARY KEY,
                 customer_id INTEGER,
@@ -392,10 +389,7 @@ def init_db():
                 interest_rate REAL DEFAULT 3.5,
                 created_at TEXT,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
-            )
-        """)
-        
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tx_id TEXT,
@@ -405,10 +399,7 @@ def init_db():
                 mode TEXT,
                 narration TEXT,
                 date TEXT
-            )
-        """)
-
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS fixed_deposits (
                 fd_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
@@ -422,10 +413,7 @@ def init_db():
                 payment_mode TEXT,
                 closed_date TEXT,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
-            )
-        """)
-
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS recurring_deposits (
                 rd_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
@@ -440,50 +428,19 @@ def init_db():
                 closed_date TEXT,
                 maturity_amount REAL DEFAULT 0,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
-            )
-        """)
-
-        if not USING_SUPABASE:
-            try:
-                cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN payment_mode TEXT")
-            except Exception:
-                pass
-            try:
-                cursor.execute("ALTER TABLE fixed_deposits ADD COLUMN closed_date TEXT")
-            except Exception:
-                pass
-            try:
-                cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN payment_mode TEXT")
-            except Exception:
-                pass
-            try:
-                cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN closed_date TEXT")
-            except Exception:
-                pass
-            try:
-                cursor.execute("ALTER TABLE recurring_deposits ADD COLUMN maturity_amount REAL DEFAULT 0")
-            except Exception:
-                pass
-
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS chart_of_accounts (
                 account_code TEXT PRIMARY KEY,
                 account_name TEXT,
                 account_type TEXT, 
                 category TEXT
-            )
-        """)
-
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS journal_vouchers (
                 jv_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 voucher_date TEXT,
                 narration TEXT,
                 status TEXT DEFAULT 'POSTED'
-            )
-        """)
-
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS jv_entries (
                 entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 jv_id INTEGER,
@@ -492,10 +449,7 @@ def init_db():
                 credit REAL DEFAULT 0,
                 FOREIGN KEY(jv_id) REFERENCES journal_vouchers(jv_id) ON DELETE CASCADE,
                 FOREIGN KEY(account_code) REFERENCES chart_of_accounts(account_code)
-            )
-        """)
-
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS cash_book (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
@@ -507,10 +461,7 @@ def init_db():
                 account_code TEXT,
                 narration TEXT,
                 created_at TEXT
-            )
-        """)
-
-        execute_create(cursor, """
+            );
             CREATE TABLE IF NOT EXISTS bank_book (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
@@ -523,8 +474,14 @@ def init_db():
                 account_code TEXT,
                 narration TEXT,
                 created_at TEXT
-            )
-        """)
+            );
+        """
+        
+        if USING_SUPABASE:
+            tables_sql = translate_sqlite_schema_to_postgres(tables_sql)
+            cursor.execute(tables_sql)
+        else:
+            cursor.executescript(tables_sql)
 
         default_accounts = [
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
@@ -581,13 +538,8 @@ def init_db():
     finally:
         release_connection(conn)
 
-try:
-    init_db()
-except Exception as e:
-    DB_INIT_ERROR = str(e)
-
 def run_query(query, params=(), fetch=True):
-    """Execute a database query with auto-commit, rollback, and connection cleanup"""
+    """Execute a database query with auto-initialization, commit, and connection cleanup"""
     if not DB_INITIALIZED:
         init_db()
 
@@ -620,28 +572,19 @@ def run_query(query, params=(), fetch=True):
         release_connection(conn)
 
 def save_uploaded_file(uploaded_file):
+    """Saves uploaded files instantly to local storage with zero network lag"""
     if uploaded_file is not None:
-        if supabase_client is not None:
-            try:
-                data = uploaded_file.getvalue()
-                safe_name = "".join(c for c in uploaded_file.name if c.isalnum() or c in "._-")
-                unique_name = f"{int(time.time())}_{safe_name}"
-                
-                supabase_client.storage.from_("customer-docs").upload(
-                    path=unique_name,
-                    file=data,
-                    file_options={"content-type": uploaded_file.type}
-                )
-                public_url = supabase_client.storage.from_("customer-docs").get_public_url(unique_name)
-                return public_url
-            except Exception as e:
-                import streamlit as st
-                st.warning(f"⚠️ Failed to upload to Supabase Storage: {str(e)}. Saving to local disk.")
-        
-        file_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        return file_path
+        try:
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            safe_name = "".join(c for c in uploaded_file.name if c.isalnum() or c in "._- ")
+            file_path = os.path.join(UPLOAD_DIR, safe_name)
+            
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            return file_path
+        except Exception as e:
+            print(f"Error saving uploaded file: {str(e)}")
+            return None
     return None
 
 def get_account_balance_from_jv(account_code):
@@ -774,3 +717,4 @@ def fetch_jv_voucher(jv_id):
         WHERE jv.jv_id = ?
     """
     return run_query(query, (jv_id,))
+

@@ -13,7 +13,7 @@ load_dotenv()
 S3_ENDPOINT = "https://br-shiny-band-ayqa8iag.storage.c-5.us-east-2.aws.neon.tech"
 S3_ACCESS_KEY = "nak_live_6f21918c7bdb46bc99e95b1091ed7f98"
 S3_SECRET_KEY = "nsk_live_f39392f340cade411455670348dd4cd187fa13abd5c80d833ca2437e4df8579b"
-S3_BUCKET = "assets"
+S3_BUCKET = "banking-bucket"
 UPLOAD_DIR = "customer_uploads"
 
 # Database connection parsing

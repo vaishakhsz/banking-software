@@ -145,6 +145,7 @@ s3_client = None
 if neon_s3_endpoint and neon_s3_access_key and neon_s3_secret_key:
     try:
         import boto3
+        from botocore.client import Config
         # Dynamically extract region from Neon endpoint URL (e.g. us-east-2)
         region = 'us-east-2'
         if neon_s3_endpoint:
@@ -157,9 +158,10 @@ if neon_s3_endpoint and neon_s3_access_key and neon_s3_secret_key:
             endpoint_url=neon_s3_endpoint,
             aws_access_key_id=neon_s3_access_key,
             aws_secret_access_key=neon_s3_secret_key,
-            region_name=region
+            region_name=region,
+            config=Config(s3={'addressing_style': 'path'})
         )
-        print(f"✅ Neon Object Storage S3 Client (Region: {region}) initialized successfully!")
+        print(f"✅ Neon Object Storage S3 Client (Region: {region}, Path-Style) initialized successfully!")
     except Exception as e:
         print(f"⚠️ Failed to initialize Neon Object Storage S3 Client: {e}")
 

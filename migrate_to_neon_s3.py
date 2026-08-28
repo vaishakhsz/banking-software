@@ -64,14 +64,16 @@ def migrate():
 
     print("⏳ Initializing Neon Object Storage S3 Client...")
     try:
+        from botocore.client import Config
         s3 = boto3.client(
             's3',
             endpoint_url=S3_ENDPOINT,
             aws_access_key_id=S3_ACCESS_KEY,
             aws_secret_access_key=S3_SECRET_KEY,
-            region_name='us-east-2'
+            region_name='us-east-2',
+            config=Config(s3={'addressing_style': 'path'})
         )
-        print("✅ Neon Storage S3 Client initialized successfully.")
+        print("✅ Neon Storage S3 Client initialized successfully (Path-Style).")
     except Exception as e:
         print(f"❌ Failed to initialize S3 client: {e}")
         conn.close()

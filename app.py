@@ -285,7 +285,7 @@ def render_customer_management():
         cust_data = run_query("SELECT name, email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
         if cust_data:
             c = cust_data[0]
-            with st.form("edit_form"):
+            with st.form("edit_profile_form"):
                 new_name = st.text_input("Name", value=c[0])
                 new_email = st.text_input("Email", value=c[1])
                 new_phone = st.text_input("Phone", value=c[2])
@@ -294,90 +294,107 @@ def render_customer_management():
                 new_state = st.text_input("State", value=c[5])
                 new_pincode = st.text_input("Pincode", value=c[6])
                 
-                st.markdown("---")
-                st.markdown("### 📄 Edit / Update Customer Documents")
-                
-                # Aadhaar
-                st.markdown("**Aadhaar Card Document**")
-                if c[7]:
-                    st.info(f"Existing Aadhaar File/Key: `{os.path.basename(c[7])}`")
-                    del_adhar = st.checkbox("🗑️ Delete existing Aadhaar document", key="del_adh_cb")
-                else:
-                    st.warning("No Aadhaar document uploaded.")
-                    del_adhar = False
-                new_adhar = st.file_uploader("Upload New Aadhaar (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="new_adh_file")
-                
-                # PAN
-                st.markdown("**PAN Card Document**")
-                if c[8]:
-                    st.info(f"Existing PAN File/Key: `{os.path.basename(c[8])}`")
-                    del_pan = st.checkbox("🗑️ Delete existing PAN document", key="del_pan_cb")
-                else:
-                    st.warning("No PAN document uploaded.")
-                    del_pan = False
-                new_pan = st.file_uploader("Upload New PAN Card (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="new_pan_file")
-                
-                # Signature
-                st.markdown("**Signature Document**")
-                if c[9]:
-                    st.info(f"Existing Signature File/Key: `{os.path.basename(c[9])}`")
-                    del_sig = st.checkbox("🗑️ Delete existing Signature document", key="del_sig_cb")
-                else:
-                    st.warning("No Signature document uploaded.")
-                    del_sig = False
-                new_sig = st.file_uploader("Upload New Signature (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="new_sig_file")
-                
-                if st.form_submit_button("Update Details"):
-                    # 1. Update text details
+                if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
                     run_query("""
                         UPDATE customers 
                         SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
                         WHERE id=?
                     """, (new_name, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
-                    
-                    # 2. Handle files
-                    from database import save_uploaded_file, delete_document
-                    
-                    # Aadhaar
-                    final_adhar = c[7]
-                    if del_adhar:
-                        delete_document(c[7])
-                        final_adhar = None
-                    if new_adhar:
-                        if c[7]:
-                            delete_document(c[7])
-                        final_adhar = save_uploaded_file(new_adhar)
-                        
-                    # PAN
-                    final_pan = c[8]
-                    if del_pan:
-                        delete_document(c[8])
-                        final_pan = None
-                    if new_pan:
-                        if c[8]:
-                            delete_document(c[8])
-                        final_pan = save_uploaded_file(new_pan)
-                        
-                    # Signature
-                    final_sig = c[9]
-                    if del_sig:
-                        delete_document(c[9])
-                        final_sig = None
-                    if new_sig:
-                        if c[9]:
-                            delete_document(c[9])
-                        final_sig = save_uploaded_file(new_sig)
-                        
-                    # Update file fields in DB
-                    run_query("""
-                        UPDATE customers 
-                        SET adhar_file=?, pan_file=?, signature_file=? 
-                        WHERE id=?
-                    """, (final_adhar, final_pan, final_sig, cust_id_edit), fetch=False)
-                    
-                    st.success("Customer details and documents updated successfully!")
-                    time.sleep(1)
+                    st.success("Profile details updated successfully!")
+                    time.sleep(0.5)
                     st.rerun()
+
+            st.markdown("---")
+            st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")
+            
+            from database import save_uploaded_file, delete_document, get_document_data
+            
+            # --- 1. AADHAAR CARD ---
+            st.write("---")
+            st.markdown("**1. Aadhaar Card Document**")
+            if c[7]:
+                st.info(f"Existing Aadhaar: `{os.path.basename(c[7])}`")
+                col1, col2 = st.columns(2)
+                try:
+                    file_bytes, filename = get_document_data(c[7])
+                    if file_bytes:
+                        col1.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key="dl_edit_adh", use_container_width=True)
+                except Exception:
+                    pass
+                if col2.button("🗑️ Delete & Clear Aadhaar", key="del_edit_adh_btn", type="secondary", use_container_width=True):
+                    delete_document(c[7])
+                    run_query("UPDATE customers SET adhar_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                    st.success("Aadhaar document deleted successfully!")
+                    time.sleep(0.5)
+                    st.rerun()
+            else:
+                st.warning("No Aadhaar document uploaded.")
+                new_adh = st.file_uploader("Upload Aadhaar Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_adh")
+                if new_adh:
+                    if st.button("📤 Upload Aadhaar", key="up_edit_adh_btn", type="primary", use_container_width=True):
+                        saved_path = save_uploaded_file(new_adh)
+                        run_query("UPDATE customers SET adhar_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
+                        st.success("Aadhaar document uploaded and saved to Neon bucket!")
+                        time.sleep(0.5)
+                        st.rerun()
+
+            # --- 2. PAN CARD ---
+            st.write("---")
+            st.markdown("**2. PAN Card Document**")
+            if c[8]:
+                st.info(f"Existing PAN: `{os.path.basename(c[8])}`")
+                col1, col2 = st.columns(2)
+                try:
+                    file_bytes, filename = get_document_data(c[8])
+                    if file_bytes:
+                        col1.download_button("📥 Download PAN", file_bytes, file_name=filename, key="dl_edit_pan", use_container_width=True)
+                except Exception:
+                    pass
+                if col2.button("🗑️ Delete & Clear PAN", key="del_edit_pan_btn", type="secondary", use_container_width=True):
+                    delete_document(c[8])
+                    run_query("UPDATE customers SET pan_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                    st.success("PAN document deleted successfully!")
+                    time.sleep(0.5)
+                    st.rerun()
+            else:
+                st.warning("No PAN document uploaded.")
+                new_pan = st.file_uploader("Upload PAN Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_pan")
+                if new_pan:
+                    if st.button("📤 Upload PAN", key="up_edit_pan_btn", type="primary", use_container_width=True):
+                        saved_path = save_uploaded_file(new_pan)
+                        run_query("UPDATE customers SET pan_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
+                        st.success("PAN document uploaded and saved to Neon bucket!")
+                        time.sleep(0.5)
+                        st.rerun()
+
+            # --- 3. SIGNATURE ---
+            st.write("---")
+            st.markdown("**3. Signature Document**")
+            if c[9]:
+                st.info(f"Existing Signature: `{os.path.basename(c[9])}`")
+                col1, col2 = st.columns(2)
+                try:
+                    file_bytes, filename = get_document_data(c[9])
+                    if file_bytes:
+                        col1.download_button("📥 Download Signature", file_bytes, file_name=filename, key="dl_edit_sig", use_container_width=True)
+                except Exception:
+                    pass
+                if col2.button("🗑️ Delete & Clear Signature", key="del_edit_sig_btn", type="secondary", use_container_width=True):
+                    delete_document(c[9])
+                    run_query("UPDATE customers SET signature_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                    st.success("Signature document deleted successfully!")
+                    time.sleep(0.5)
+                    st.rerun()
+            else:
+                st.warning("No Signature document uploaded.")
+                new_sig = st.file_uploader("Upload Signature Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_sig")
+                if new_sig:
+                    if st.button("📤 Upload Signature", key="up_edit_sig_btn", type="primary", use_container_width=True):
+                        saved_path = save_uploaded_file(new_sig)
+                        run_query("UPDATE customers SET signature_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
+                        st.success("Signature document uploaded and saved to Neon bucket!")
+                        time.sleep(0.5)
+                        st.rerun()
 
 def render_kyc():
     st.title("✅ KYC Verification Panel")

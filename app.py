@@ -219,39 +219,48 @@ def render_customer_management():
                     with d_col1:
                         st.markdown("**Aadhaar Document**")
                         if a_file:
-                            st.write(f"Path: `{a_file}`")
+                            st.write(f"Path/Key: `{a_file}`")
                             try:
-                                original_filename = os.path.basename(a_file)
-                                with open(a_file, "rb") as file_file:
-                                    st.download_button("📥 Download Aadhaar", file_file, file_name=original_filename, key=f"dl_adh_{selected_cust_id}", use_container_width=True)
+                                from database import get_document_data
+                                file_bytes, filename = get_document_data(a_file)
+                                if file_bytes:
+                                    st.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key=f"dl_adh_{selected_cust_id}", use_container_width=True)
+                                else:
+                                    st.info("File not found.")
                             except Exception:
-                                st.info("File not found on disk.")
+                                st.info("File not found.")
                         else:
                             st.info("No file uploaded.")
                             
                     with d_col2:
                         st.markdown("**PAN Card Document**")
                         if p_file:
-                            st.write(f"Path: `{p_file}`")
+                            st.write(f"Path/Key: `{p_file}`")
                             try:
-                                original_filename = os.path.basename(p_file)
-                                with open(p_file, "rb") as file_file:
-                                    st.download_button("📥 Download PAN", file_file, file_name=original_filename, key=f"dl_pan_{selected_cust_id}", use_container_width=True)
+                                from database import get_document_data
+                                file_bytes, filename = get_document_data(p_file)
+                                if file_bytes:
+                                    st.download_button("📥 Download PAN", file_bytes, file_name=filename, key=f"dl_pan_{selected_cust_id}", use_container_width=True)
+                                else:
+                                    st.info("File not found.")
                             except Exception:
-                                st.info("File not found on disk.")
+                                st.info("File not found.")
                         else:
                             st.info("No file uploaded.")
                             
                     with d_col3:
                         st.markdown("**Signature**")
                         if s_file:
-                            st.write(f"Path: `{s_file}`")
+                            st.write(f"Path/Key: `{s_file}`")
                             try:
-                                original_filename = os.path.basename(s_file)
-                                with open(s_file, "rb") as file_file:
-                                    st.download_button("📥 Download Signature", file_file, file_name=original_filename, key=f"dl_sig_{selected_cust_id}", use_container_width=True)
+                                from database import get_document_data
+                                file_bytes, filename = get_document_data(s_file)
+                                if file_bytes:
+                                    st.download_button("📥 Download Signature", file_bytes, file_name=filename, key=f"dl_sig_{selected_cust_id}", use_container_width=True)
+                                else:
+                                    st.info("File not found.")
                             except Exception:
-                                st.info("File not found on disk.")
+                                st.info("File not found.")
                         else:
                             st.info("No file uploaded.")
         else:

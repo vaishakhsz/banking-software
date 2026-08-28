@@ -100,6 +100,63 @@ if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url:
         SUPABASE_CONN_PARAMS = parsed_params
 
 # ----------------------------------------------------
+# NEON OBJECT STORAGE (S3 COMPATIBLE) CONFIGURATION
+# ----------------------------------------------------
+neon_s3_endpoint = None
+neon_s3_access_key = None
+neon_s3_secret_key = None
+neon_s3_bucket = None
+
+try:
+    import streamlit as st
+    if "NEON_STORAGE_ENDPOINT" in st.secrets:
+        neon_s3_endpoint = st.secrets["NEON_STORAGE_ENDPOINT"]
+    elif "S3_ENDPOINT_URL" in st.secrets:
+        neon_s3_endpoint = st.secrets["S3_ENDPOINT_URL"]
+        
+    if "NEON_STORAGE_ACCESS_KEY" in st.secrets:
+        neon_s3_access_key = st.secrets["NEON_STORAGE_ACCESS_KEY"]
+    elif "AWS_ACCESS_KEY_ID" in st.secrets:
+        neon_s3_access_key = st.secrets["AWS_ACCESS_KEY_ID"]
+        
+    if "NEON_STORAGE_SECRET_KEY" in st.secrets:
+        neon_s3_secret_key = st.secrets["NEON_STORAGE_SECRET_KEY"]
+    elif "AWS_SECRET_ACCESS_KEY" in st.secrets:
+        neon_s3_secret_key = st.secrets["AWS_SECRET_ACCESS_KEY"]
+        
+    if "NEON_STORAGE_BUCKET" in st.secrets:
+        neon_s3_bucket = st.secrets["NEON_STORAGE_BUCKET"]
+    elif "S3_BUCKET_NAME" in st.secrets:
+        neon_s3_bucket = st.secrets["S3_BUCKET_NAME"]
+except Exception:
+    pass
+
+if not neon_s3_endpoint:
+    neon_s3_endpoint = os.getenv("NEON_STORAGE_ENDPOINT") or os.getenv("S3_ENDPOINT_URL")
+if not neon_s3_access_key:
+    neon_s3_access_key = os.getenv("NEON_STORAGE_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID")
+if not neon_s3_secret_key:
+    neon_s3_secret_key = os.getenv("NEON_STORAGE_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
+if not neon_s3_bucket:
+    neon_s3_bucket = os.getenv("NEON_STORAGE_BUCKET") or os.getenv("S3_BUCKET_NAME")
+
+# Initialize S3 client for Neon Object Storage
+s3_client = None
+if neon_s3_endpoint and neon_s3_access_key and neon_s3_secret_key:
+    try:
+        import boto3
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=neon_s3_endpoint,
+            aws_access_key_id=neon_s3_access_key,
+            aws_secret_access_key=neon_s3_secret_key,
+            region_name='us-east-1'
+        )
+        print("✅ Neon Object Storage S3 Client initialized successfully!")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize Neon Object Storage S3 Client: {e}")
+
+# ----------------------------------------------------
 # HIGH-SPEED PERSISTENT CONNECTION POOLING
 # ----------------------------------------------------
 DB_INITIALIZED = False
@@ -555,33 +612,93 @@ def run_query(query, params=(), fetch=True):
         release_connection(conn)
 
 def save_uploaded_file(uploaded_file):
-    """Saves uploaded files instantly to local storage with auto image optimization"""
+    """Saves uploaded files to local disk and uploads to Neon Object Storage if configured"""
     if uploaded_file is not None:
         try:
             os.makedirs(UPLOAD_DIR, exist_ok=True)
             safe_name = "".join(c for c in uploaded_file.name if c.isalnum() or c in "._- ")
-            file_path = os.path.join(UPLOAD_DIR, safe_name)
+            unique_name = f"{int(time.time())}_{safe_name}"
+            file_path = os.path.join(UPLOAD_DIR, unique_name)
             
-            # If uploaded document is an image, compress to ~150KB for ultra-fast storage and load
+            # Save file locally first (with PIL compression if image)
+            saved_local = False
             if hasattr(uploaded_file, "type") and uploaded_file.type and uploaded_file.type.startswith("image/"):
                 try:
                     from PIL import Image
                     img = Image.open(uploaded_file)
-                    if img.mode in ("RGBA", "P") and not safe_name.lower().endswith(".png"):
+                    if img.mode in ("RGBA", "P") and not unique_name.lower().endswith(".png"):
                         img = img.convert("RGB")
                     img.thumbnail((1400, 1400), Image.LANCZOS)
                     img.save(file_path, optimize=True, quality=80)
-                    return file_path
-                except Exception:
-                    pass
+                    saved_local = True
+                except Exception as ex:
+                    print(f"PIL compression failed: {ex}")
             
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+            if not saved_local:
+                with open(file_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+            
+            # If S3 is configured, upload the optimized local file to Neon Object Storage
+            if s3_client and neon_s3_bucket:
+                try:
+                    with open(file_path, "rb") as f_s3:
+                        s3_client.put_object(
+                            Bucket=neon_s3_bucket,
+                            Key=unique_name,
+                            Body=f_s3,
+                            ContentType=uploaded_file.type if hasattr(uploaded_file, "type") else "application/octet-stream"
+                        )
+                    print(f"✅ Uploaded to Neon Object Storage: {unique_name}")
+                    # Clean up local file to save disk space if stored in the cloud
+                    try:
+                        os.remove(file_path)
+                    except Exception:
+                        pass
+                    # Return the S3 key so it gets stored in the database!
+                    return unique_name
+                except Exception as s3_err:
+                    print(f"⚠️ S3 upload failed, keeping local file: {s3_err}")
+            
+            # If S3 is not configured, return the local file path
             return file_path
         except Exception as e:
             print(f"Error saving uploaded file: {str(e)}")
             return None
     return None
+
+def get_document_data(file_identifier):
+    """
+    Retrieves the binary bytes and clean filename of the file.
+    Supports both local disk paths and S3 bucket object keys.
+    """
+    if not file_identifier:
+        return None, None
+    
+    filename = os.path.basename(file_identifier)
+    
+    # 1. Try S3 if client is initialized
+    if s3_client and neon_s3_bucket:
+        try:
+            response = s3_client.get_object(Bucket=neon_s3_bucket, Key=file_identifier)
+            return response['Body'].read(), filename
+        except Exception:
+            # Fallback to local file if S3 key is not found or fails
+            pass
+            
+    # 2. Local fallback
+    try:
+        if os.path.exists(file_identifier):
+            with open(file_identifier, "rb") as f:
+                return f.read(), filename
+        # If it's a relative path or key, check in local UPLOAD_DIR
+        local_path = os.path.join(UPLOAD_DIR, filename)
+        if os.path.exists(local_path):
+            with open(local_path, "rb") as f:
+                return f.read(), filename
+    except Exception as e:
+        print(f"Error reading local file: {e}")
+        
+    return None, None
 
 def get_account_balance_from_jv(account_code):
     try:

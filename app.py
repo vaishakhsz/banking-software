@@ -224,6 +224,8 @@ def render_customer_management():
                                 from database import get_document_data
                                 file_bytes, filename = get_document_data(a_file)
                                 if file_bytes:
+                                    if filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                                        st.image(file_bytes, use_container_width=True)
                                     st.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key=f"dl_adh_{selected_cust_id}", use_container_width=True)
                                 else:
                                     st.info("File not found.")
@@ -240,6 +242,8 @@ def render_customer_management():
                                 from database import get_document_data
                                 file_bytes, filename = get_document_data(p_file)
                                 if file_bytes:
+                                    if filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                                        st.image(file_bytes, use_container_width=True)
                                     st.download_button("📥 Download PAN", file_bytes, file_name=filename, key=f"dl_pan_{selected_cust_id}", use_container_width=True)
                                 else:
                                     st.info("File not found.")
@@ -256,6 +260,8 @@ def render_customer_management():
                                 from database import get_document_data
                                 file_bytes, filename = get_document_data(s_file)
                                 if file_bytes:
+                                    if filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                                        st.image(file_bytes, use_container_width=True)
                                     st.download_button("📥 Download Signature", file_bytes, file_name=filename, key=f"dl_sig_{selected_cust_id}", use_container_width=True)
                                 else:
                                     st.info("File not found.")

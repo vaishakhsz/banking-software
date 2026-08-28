@@ -269,7 +269,7 @@ def render_customer_management():
     with tab3:
         st.subheader("Edit Customer Information")
         cust_id_edit = st.number_input("Enter Customer ID to Edit", min_value=1, step=1, key="edit_cust_id")
-        cust_data = run_query("SELECT name, email, phone, street, city, state, pincode FROM customers WHERE id=?", (cust_id_edit,))
+        cust_data = run_query("SELECT name, email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
         if cust_data:
             c = cust_data[0]
             with st.form("edit_form"):
@@ -281,11 +281,90 @@ def render_customer_management():
                 new_state = st.text_input("State", value=c[5])
                 new_pincode = st.text_input("Pincode", value=c[6])
                 
+                st.markdown("---")
+                st.markdown("### 📄 Edit / Update Customer Documents")
+                
+                # Aadhaar
+                st.markdown("**Aadhaar Card Document**")
+                if c[7]:
+                    st.info(f"Existing Aadhaar File/Key: `{os.path.basename(c[7])}`")
+                    del_adhar = st.checkbox("🗑️ Delete existing Aadhaar document", key="del_adh_cb")
+                else:
+                    st.warning("No Aadhaar document uploaded.")
+                    del_adhar = False
+                new_adhar = st.file_uploader("Upload New Aadhaar (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="new_adh_file")
+                
+                # PAN
+                st.markdown("**PAN Card Document**")
+                if c[8]:
+                    st.info(f"Existing PAN File/Key: `{os.path.basename(c[8])}`")
+                    del_pan = st.checkbox("🗑️ Delete existing PAN document", key="del_pan_cb")
+                else:
+                    st.warning("No PAN document uploaded.")
+                    del_pan = False
+                new_pan = st.file_uploader("Upload New PAN Card (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="new_pan_file")
+                
+                # Signature
+                st.markdown("**Signature Document**")
+                if c[9]:
+                    st.info(f"Existing Signature File/Key: `{os.path.basename(c[9])}`")
+                    del_sig = st.checkbox("🗑️ Delete existing Signature document", key="del_sig_cb")
+                else:
+                    st.warning("No Signature document uploaded.")
+                    del_sig = False
+                new_sig = st.file_uploader("Upload New Signature (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="new_sig_file")
+                
                 if st.form_submit_button("Update Details"):
+                    # 1. Update text details
                     run_query("""
-                        UPDATE customers SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? WHERE id=?
+                        UPDATE customers 
+                        SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
+                        WHERE id=?
                     """, (new_name, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
-                    st.success("Customer details updated successfully!")
+                    
+                    # 2. Handle files
+                    from database import save_uploaded_file, delete_document
+                    
+                    # Aadhaar
+                    final_adhar = c[7]
+                    if del_adhar:
+                        delete_document(c[7])
+                        final_adhar = None
+                    if new_adhar:
+                        if c[7]:
+                            delete_document(c[7])
+                        final_adhar = save_uploaded_file(new_adhar)
+                        
+                    # PAN
+                    final_pan = c[8]
+                    if del_pan:
+                        delete_document(c[8])
+                        final_pan = None
+                    if new_pan:
+                        if c[8]:
+                            delete_document(c[8])
+                        final_pan = save_uploaded_file(new_pan)
+                        
+                    # Signature
+                    final_sig = c[9]
+                    if del_sig:
+                        delete_document(c[9])
+                        final_sig = None
+                    if new_sig:
+                        if c[9]:
+                            delete_document(c[9])
+                        final_sig = save_uploaded_file(new_sig)
+                        
+                    # Update file fields in DB
+                    run_query("""
+                        UPDATE customers 
+                        SET adhar_file=?, pan_file=?, signature_file=? 
+                        WHERE id=?
+                    """, (final_adhar, final_pan, final_sig, cust_id_edit), fetch=False)
+                    
+                    st.success("Customer details and documents updated successfully!")
+                    time.sleep(1)
+                    st.rerun()
 
 def render_kyc():
     st.title("✅ KYC Verification Panel")

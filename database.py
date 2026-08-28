@@ -831,3 +831,34 @@ def fetch_jv_voucher(jv_id):
     """
     return run_query(query, (jv_id,))
 
+def delete_document(file_identifier):
+    """
+    Deletes the document from cloud storage (Neon S3) or local disk.
+    """
+    if not file_identifier:
+        return
+        
+    # 1. Try deleting from S3
+    if s3_client and neon_s3_bucket:
+        try:
+            # Check if it's an S3 key (doesn't look like an absolute file path on disk)
+            if not ("/" in file_identifier or "\\" in file_identifier or os.path.isabs(file_identifier)):
+                s3_client.delete_object(Bucket=neon_s3_bucket, Key=file_identifier)
+                print(f"🗑️ Deleted from Neon S3: {file_identifier}")
+                return
+        except Exception as e:
+            print(f"Failed to delete from S3: {e}")
+            
+    # 2. Try deleting from local storage
+    try:
+        if os.path.exists(file_identifier):
+            os.remove(file_identifier)
+            print(f"🗑️ Deleted local file: {file_identifier}")
+            return
+        local_path = os.path.join(UPLOAD_DIR, os.path.basename(file_identifier))
+        if os.path.exists(local_path):
+            os.remove(local_path)
+            print(f"🗑️ Deleted local file: {local_path}")
+    except Exception as e:
+        print(f"Failed to delete local file: {e}")
+

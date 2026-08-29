@@ -301,7 +301,7 @@ def render_customer_management():
                         WHERE id=?
                     """, (new_name, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
                     st.success("Profile details updated successfully!")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
 
             st.markdown("---")
@@ -325,7 +325,7 @@ def render_customer_management():
                     delete_document(c[7])
                     run_query("UPDATE customers SET adhar_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                     st.success("Aadhaar document deleted successfully!")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
             else:
                 st.warning("No Aadhaar document uploaded.")
@@ -335,7 +335,7 @@ def render_customer_management():
                         saved_path = save_uploaded_file(new_adh)
                         run_query("UPDATE customers SET adhar_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
                         st.success("Aadhaar document uploaded and saved to Neon bucket!")
-                        time.sleep(0.5)
+                        time.sleep(0.1)
                         st.rerun()
 
             # --- 2. PAN CARD ---
@@ -354,7 +354,7 @@ def render_customer_management():
                     delete_document(c[8])
                     run_query("UPDATE customers SET pan_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                     st.success("PAN document deleted successfully!")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
             else:
                 st.warning("No PAN document uploaded.")
@@ -364,7 +364,7 @@ def render_customer_management():
                         saved_path = save_uploaded_file(new_pan)
                         run_query("UPDATE customers SET pan_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
                         st.success("PAN document uploaded and saved to Neon bucket!")
-                        time.sleep(0.5)
+                        time.sleep(0.1)
                         st.rerun()
 
             # --- 3. SIGNATURE ---
@@ -383,7 +383,7 @@ def render_customer_management():
                     delete_document(c[9])
                     run_query("UPDATE customers SET signature_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                     st.success("Signature document deleted successfully!")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
             else:
                 st.warning("No Signature document uploaded.")
@@ -393,7 +393,7 @@ def render_customer_management():
                         saved_path = save_uploaded_file(new_sig)
                         run_query("UPDATE customers SET signature_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
                         st.success("Signature document uploaded and saved to Neon bucket!")
-                        time.sleep(0.5)
+                        time.sleep(0.1)
                         st.rerun()
 
 def render_kyc():
@@ -406,12 +406,12 @@ def render_kyc():
                 if col1.button(f"✅ Approve KYC #{p[0]}", key=f"app_{p[0]}", use_container_width=True):
                     run_query("UPDATE customers SET kyc_status='APPROVED' WHERE id=?", (p[0],), fetch=False)
                     st.success(f"KYC Approved for ID {p[0]}")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
                 if col2.button(f"❌ Reject KYC #{p[0]}", key=f"rej_{p[0]}", use_container_width=True):
                     run_query("UPDATE customers SET kyc_status='REJECTED' WHERE id=?", (p[0],), fetch=False)
                     st.error(f"KYC Rejected for ID {p[0]}")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
     else:
         st.info("No pending KYC verification requests.")
@@ -536,7 +536,7 @@ def render_sb_accounts():
                             """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Deposit successful! New Balance: ₹{new_bal:,.2f}")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
                     
                 elif tx_type == "WITHDRAWAL":
@@ -575,7 +575,7 @@ def render_sb_accounts():
                             """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"✅ Withdrawal successful! New Balance: ₹{new_bal:,.2f}")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
 
     with tab3:
@@ -846,7 +846,7 @@ def render_fixed_deposits():
                 
                 st.success(f"FD #{fd_id} closed successfully!")
                 st.info(f"₹{maturity_amount:,.2f} transferred from FD Deposits Control to SB Deposits Control")
-                time.sleep(0.5)
+                time.sleep(0.1)
                 st.rerun()
         else:
             st.info("No active FDs available to close.")
@@ -993,7 +993,7 @@ def render_recurring_deposits():
                             """, (today, voucher_no, f"RD #{rd_id} - Inst #{new_paid}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Installment #{new_paid}", datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                     
                     st.success(f"Installment #{new_paid} successfully paid via {payment_mode_pay}!")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
         else:
             st.info("No active recurring deposits found.")
@@ -1183,7 +1183,7 @@ def render_recurring_deposits():
                     post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned)
                 
                 st.success(f"RD #{rd_id} closed successfully! Amount transferred to SB Deposits Control")
-                time.sleep(0.5)
+                time.sleep(0.1)
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
@@ -1240,7 +1240,7 @@ def render_chart_of_accounts():
                     resequence_all_accounts()
                     reconcile_books()
                     st.success("✅ Resequenced and reconciled Chart of Accounts successfully! All account codes are now in order.")
-                    time.sleep(1)
+                    time.sleep(0.1)
                     st.rerun()
                 except Exception as ex:
                     st.error(f"❌ Resequencing error: {str(ex)}")
@@ -1253,7 +1253,7 @@ def render_chart_of_accounts():
                 try:
                     run_query("DELETE FROM chart_of_accounts WHERE account_code = ?", (del_code,), fetch=False)
                     st.success(f"Successfully deleted account code: {del_code}")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Could not delete account. Error: {e}")
@@ -1297,7 +1297,7 @@ def render_chart_of_accounts():
                                 fetch=False
                             )
                         st.success(f"Account head '{input_code} - {input_name}' saved successfully!")
-                        time.sleep(0.5)
+                        time.sleep(0.1)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error saving account entry: {e}")
@@ -1366,46 +1366,14 @@ def render_cash_book():
                             st.error("❌ Cannot receipt cash from itself!")
                             st.stop()
                     
-                    voucher_no = generate_cash_voucher_no()
-                    if entry_type == "DEBIT (Receipt)":
-                        jv_result = post_automated_jv(f"Cash Receipt [{voucher_no}]: {full_narration}", "AST-101", account_code, amount, voucher_date=str(tx_date))
-                    else:
-                        jv_result = post_automated_jv(f"Cash Payment [{voucher_no}]: {full_narration}", account_code, "AST-101", amount, voucher_date=str(tx_date))
-                    
-                    if jv_result:
-                        today = str(tx_date)
-                        new_cash_balance = get_cash_balance()
-                        dr_amt = amount if entry_type == "DEBIT (Receipt)" else 0
-                        cr_amt = amount if entry_type == "CREDIT (Payment)" else 0
-                        
-                        run_query("""
-                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, particulars, dr_amt, cr_amt, new_cash_balance, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        
-                        # Automated mirror entry for bank books
-                        if account_code == 'AST-102':
-                            bank_voucher_no = generate_bank_voucher_no()
-                            union_bal = get_bank_balance("Union Bank of India")
-                            bank_dr = amount if entry_type == "CREDIT (Payment)" else 0
-                            bank_cr = amount if entry_type == "DEBIT (Receipt)" else 0
-                            run_query("""
-                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, bank_voucher_no, f"Cash Transfer: {particulars}", bank_dr, bank_cr, union_bal, "Union Bank of India", "AST-101", narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        elif account_code == 'AST-103':
-                            bank_voucher_no = generate_bank_voucher_no()
-                            sbi_bal = get_bank_balance("State Bank of India")
-                            bank_dr = amount if entry_type == "CREDIT (Payment)" else 0
-                            bank_cr = amount if entry_type == "DEBIT (Receipt)" else 0
-                            run_query("""
-                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, bank_voucher_no, f"Cash Transfer: {particulars}", bank_dr, bank_cr, sbi_bal, "State Bank of India", "AST-101", narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        
-                        st.success(f"✅ Cash entry recorded! Voucher: {voucher_no}")
-                        time.sleep(0.5)
+                    from database import record_cash_book_transaction
+                    success, res_val = record_cash_book_transaction(entry_type, amount, account_code, particulars, narration, tx_date)
+                    if success:
+                        st.success(f"✅ Cash entry recorded! Voucher: {res_val}")
+                        time.sleep(0.1)
                         st.rerun()
+                    else:
+                        st.error(f"❌ Failed to record cash entry: {res_val}")
 
     with tab2:
         col_date1, col_date2 = st.columns(2)
@@ -1435,7 +1403,7 @@ def render_cash_book():
                 
                 run_query("DELETE FROM cash_book WHERE id=?", (del_id,), fetch=False)
                 st.warning(f"Cash Entry ID {del_id} and related ledger entries deleted successfully.")
-                time.sleep(0.5)
+                time.sleep(0.1)
                 st.rerun()
         else:
             st.info("No cash book entries found in this date range.")
@@ -1469,43 +1437,17 @@ def render_cash_book():
                 new_narration = st.text_area("Narration", value=row[4] if row[4] else "")
                 
                 if st.form_submit_button("Update Cash Entry", use_container_width=True):
-                    d_amt = new_amt if "DEBIT" in new_type else 0.0
-                    c_amt = new_amt if "CREDIT" in new_type else 0.0
                     new_acc_code = coa_dict[new_acc_head]
                     voucher_no = row[6]
-                    entry_date = row[7]
                     
-                    # 1. Update the cash_book entry
-                    run_query("""
-                        UPDATE cash_book 
-                        SET particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
-                        WHERE id = ?
-                    """, (new_part, d_amt, c_amt, new_acc_code, new_narration, edit_id), fetch=False)
-                    
-                    # 2. Locate and update the related Journal Voucher
-                    jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
-                    if jv_row:
-                        jv_id = jv_row[0][0]
-                        full_narration = new_part
-                        if new_narration.strip():
-                            full_narration += f" ({new_narration.strip()})"
-                        
-                        # Update JV header
-                        jv_prefix = "Cash Receipt" if "DEBIT" in new_type else "Cash Payment"
-                        run_query("UPDATE journal_vouchers SET narration = ? WHERE jv_id = ?", (f"{jv_prefix} [{voucher_no}]: {full_narration}", jv_id), fetch=False)
-                        
-                        # Update JV entries (delete old ones and recreate to ensure perfect balance and account mapping)
-                        run_query("DELETE FROM jv_entries WHERE jv_id = ?", (jv_id,), fetch=False)
-                        if "DEBIT" in new_type:
-                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (jv_id, new_amt), fetch=False)
-                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, new_acc_code, new_amt), fetch=False)
-                        else:
-                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, new_acc_code, new_amt), fetch=False)
-                            run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, new_amt), fetch=False)
-                            
-                    st.success("Cash Entry and Ledger updated successfully!")
-                    time.sleep(0.5)
-                    st.rerun()
+                    from database import update_cash_book_transaction
+                    success, res_val = update_cash_book_transaction(edit_id, new_type, new_amt, new_acc_code, new_part, new_narration, voucher_no)
+                    if success:
+                        st.success("✅ Cash Entry and Ledger updated successfully!")
+                        time.sleep(0.1)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed to update entry: {res_val}")
 
     with tab4:
         col_date1, col_date2 = st.columns(2)
@@ -1649,38 +1591,14 @@ def render_bank_book():
                                 st.error(f"❌ Insufficient SBI Balance to transfer! Available: ₹{current_sbi:,.2f}")
                                 st.stop()
                                 
-                        jv_result = post_automated_jv(f"Bank Deposit [{voucher_no}]: {full_narration} - {bank_name}", bank_code, account_code, amount, voucher_date=str(tx_date))
-                    else:
-                        # Withdrawal: decreases selected bank
-                        if current_balance < amount:
-                            st.error(f"❌ Insufficient Bank Balance in {bank_name}! Available: ₹{current_balance:,.2f}")
-                            st.stop()
-                        jv_result = post_automated_jv(f"Bank Withdrawal [{voucher_no}]: {full_narration} - {bank_name}", account_code, bank_code, amount, voucher_date=str(tx_date))
-                    
-                    if jv_result:
-                        today = str(tx_date)
-                        new_balance = get_account_balance_from_jv(bank_code)
-                        dr_amt = amount if entry_type == "DEBIT (Deposit)" else 0
-                        cr_amt = amount if entry_type == "CREDIT (Withdrawal)" else 0
-                        
-                        run_query("""
-                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (today, voucher_no, particulars, dr_amt, cr_amt, new_balance, bank_name, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        
-                        if account_code == 'AST-101':
-                            cash_voucher_no = generate_cash_voucher_no()
-                            cash_bal = get_cash_balance()
-                            cash_dr = amount if entry_type == "CREDIT (Withdrawal)" else 0
-                            cash_cr = amount if entry_type == "DEBIT (Deposit)" else 0
-                            run_query("""
-                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, cash_voucher_no, f"Bank Transfer: {particulars}", cash_dr, cash_cr, cash_bal, bank_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        
-                        st.success(f"✅ Bank entry successfully recorded! Voucher: {voucher_no}")
-                        time.sleep(0.5)
+                    from database import record_bank_book_transaction
+                    success, res_val = record_bank_book_transaction(entry_type, amount, bank_name, bank_code, account_code, particulars, narration, tx_date)
+                    if success:
+                        st.success(f"✅ Bank entry successfully recorded! Voucher: {res_val}")
+                        time.sleep(0.1)
                         st.rerun()
+                    else:
+                        st.error(f"❌ Failed to record bank entry: {res_val}")
 
     with tab2:
         col_date1, col_date2 = st.columns(2)
@@ -1710,7 +1628,7 @@ def render_bank_book():
                 
                 run_query("DELETE FROM bank_book WHERE id=?", (del_id,), fetch=False)
                 st.warning(f"Bank Entry ID {del_id} and related ledger entries deleted successfully.")
-                time.sleep(0.5)
+                time.sleep(0.1)
                 st.rerun()
         else:
             st.info("No bank entries found in this date range.")
@@ -1783,7 +1701,7 @@ def render_bank_book():
                             run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, bank_code, new_amt), fetch=False)
                             
                     st.success("Bank Entry and Ledger updated successfully!")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
 
     with tab4:
@@ -1925,7 +1843,7 @@ def render_journal_vouchers():
                     jv_id = post_automated_jv(narration, acc1_code, acc2_code, dr1)
                     if jv_id:
                         st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully!")
-                        time.sleep(0.5)
+                        time.sleep(0.1)
                         st.rerun()
 
     with tab2:
@@ -2043,7 +1961,7 @@ def render_admin_editor():
                         val = record_id_to_del
                     run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
                     st.success("Record deleted!")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
             elif action == "Edit Record":
                 record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
@@ -2071,7 +1989,7 @@ def render_admin_editor():
                                 update_vals = [updated_values[i] for i in range(len(col_names)) if col_names[i] != pk_col] + [edit_val]
                                 run_query(f"UPDATE {selected_table} SET {', '.join(set_clauses)} WHERE {pk_col} = ?", tuple(update_vals), fetch=False)
                                 st.success("Record updated successfully!")
-                                time.sleep(0.5)
+                                time.sleep(0.1)
                                 st.rerun()
 
 def render_financial_statements():
@@ -2622,7 +2540,7 @@ def render_sb_interest_calculation():
                                 """, (tx_id, acc_no, interest, f"SB Interest Credit for {days} days", str(calc_date)))
                         db_conn.commit()
                         st.success(f"Interest credited successfully! Journal Reference: JV-{jv_id}")
-                        time.sleep(0.5)
+                        time.sleep(0.1)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error updating interest: {str(e)}")
@@ -2677,7 +2595,7 @@ if not get_login_status():
                     st.session_state.logged_in = True
                     st.session_state.username = username
                     st.success("✅ Login successful!")
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     st.rerun()
                 else:
                     st.error("❌ Invalid credentials.")
@@ -3011,7 +2929,7 @@ if uploaded_dbs:
                 reconcile_books()
                 
                 st.sidebar.success("✅ Database restored! Please refresh.")
-                time.sleep(1)
+                time.sleep(0.1)
                 st.rerun()
             except Exception as e:
                 st.sidebar.error(f"❌ Error: {str(e)}")
@@ -3065,7 +2983,7 @@ if uploaded_dbs:
                         print(f"Reconcile error: {str(ex)}")
                     
                     st.sidebar.success(f"✅ Successfully restored from {len(sql_files)} SQL files! Please refresh.")
-                    time.sleep(1)
+                    time.sleep(0.1)
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"❌ Restore error: {str(e)}")

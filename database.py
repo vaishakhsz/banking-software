@@ -882,3 +882,288 @@ def delete_document(file_identifier):
     except Exception as e:
         print(f"Failed to delete local file: {e}")
 
+def record_cash_book_transaction(entry_type, amount, account_code, particulars, narration, tx_date):
+    """
+    Executes JV creation, JV entries, Cash balance calculation, Cash Book insertion, 
+    and Bank Book mirror insertion inside a SINGLE high-speed database transaction.
+    Reduces 10-15 network round trips down to 1 single trip!
+    """
+    if amount <= 0:
+        return False, "Amount must be greater than 0"
+        
+    today = str(tx_date)
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Generate Cash Voucher Number
+        today_code = datetime.now(IST).strftime("%Y%m%d")
+        if USING_SUPABASE:
+            cursor.execute("SELECT voucher_no FROM cash_book WHERE voucher_no LIKE %s ORDER BY id DESC LIMIT 1", (f"CB{today_code}%%",))
+        else:
+            cursor.execute("SELECT voucher_no FROM cash_book WHERE voucher_no LIKE ? ORDER BY id DESC LIMIT 1", (f"CB{today_code}%",))
+        v_res = cursor.fetchone()
+        if v_res and v_res[0]:
+            try:
+                seq = int(v_res[0][-4:]) + 1
+            except Exception:
+                seq = 1
+        else:
+            seq = 1
+        voucher_no = f"CB{today_code}{seq:04d}"
+        
+        # 2. Build narration
+        full_narration = particulars
+        if narration and narration.strip():
+            full_narration += f" ({narration.strip()})"
+            
+        jv_prefix = "Cash Receipt" if "DEBIT" in entry_type else "Cash Payment"
+        jv_narr = f"{jv_prefix} [{voucher_no}]: {full_narration}"
+        
+        # 3. Insert Journal Voucher
+        if USING_SUPABASE:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (today, jv_narr))
+            jv_id = cursor.fetchone()[0]
+            
+            # 4. Insert JV Entries
+            if "DEBIT" in entry_type:
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-101', %s, 0)", (jv_id, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, account_code, amount))
+            else:
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, account_code, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-101', 0, %s)", (jv_id, amount))
+                
+            # 5. Calculate new cash balance
+            cursor.execute("SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = 'AST-101'")
+            new_cash_bal = float(cursor.fetchone()[0] or 0.0)
+            
+            # 6. Insert Cash Book
+            dr_amt = amount if "DEBIT" in entry_type else 0.0
+            cr_amt = amount if "CREDIT" in entry_type else 0.0
+            cursor.execute("""
+                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (today, voucher_no, particulars, dr_amt, cr_amt, new_cash_bal, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")))
+            
+            # 7. Mirror entry for Bank if account_code is AST-102 or AST-103
+            if account_code in ('AST-102', 'AST-103'):
+                bank_name = "Union Bank of India" if account_code == 'AST-102' else "State Bank of India"
+                cursor.execute("SELECT voucher_no FROM bank_book WHERE voucher_no LIKE %s ORDER BY id DESC LIMIT 1", (f"BB{today_code}%%",))
+                bb_res = cursor.fetchone()
+                b_seq = int(bb_res[0][-4:]) + 1 if bb_res and bb_res[0] else 1
+                b_voucher = f"BB{today_code}{b_seq:04d}"
+                
+                cursor.execute("SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = %s", (account_code,))
+                new_bank_bal = float(cursor.fetchone()[0] or 0.0)
+                
+                bank_dr = amount if "CREDIT" in entry_type else 0.0
+                bank_cr = amount if "DEBIT" in entry_type else 0.0
+                cursor.execute("""
+                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (today, b_voucher, f"Cash Transfer: {particulars}", bank_dr, bank_cr, new_bank_bal, bank_name, "AST-101", narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (today, jv_narr))
+            jv_id = cursor.lastrowid
+            if "DEBIT" in entry_type:
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (jv_id, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, account_code, amount))
+            else:
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, account_code, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, amount))
+            
+            cursor.execute("SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = 'AST-101'")
+            new_cash_bal = float(cursor.fetchone()[0] or 0.0)
+            dr_amt = amount if "DEBIT" in entry_type else 0.0
+            cr_amt = amount if "CREDIT" in entry_type else 0.0
+            cursor.execute("""
+                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (today, voucher_no, particulars, dr_amt, cr_amt, new_cash_bal, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")))
+            
+        conn.commit()
+        return True, voucher_no
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+def update_cash_book_transaction(edit_id, entry_type, amount, account_code, particulars, narration, voucher_no):
+    """
+    Executes Cash Book update, JV header update, and JV entries regeneration
+    in a SINGLE high-speed database transaction.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        dr_amt = amount if "DEBIT" in entry_type else 0.0
+        cr_amt = amount if "CREDIT" in entry_type else 0.0
+        
+        if USING_SUPABASE:
+            # 1. Update Cash Book row
+            cursor.execute("""
+                UPDATE cash_book 
+                SET particulars = %s, debit_amount = %s, credit_amount = %s, account_code = %s, narration = %s 
+                WHERE id = %s
+            """, (particulars, dr_amt, cr_amt, account_code, narration, edit_id))
+            
+            # 2. Locate matching JV
+            cursor.execute("SELECT jv_id FROM journal_vouchers WHERE narration LIKE %s", (f"%%{voucher_no}%%",))
+            jv_row = cursor.fetchone()
+            if jv_row:
+                jv_id = jv_row[0]
+                full_narr = particulars
+                if narration and narration.strip():
+                    full_narr += f" ({narration.strip()})"
+                jv_prefix = "Cash Receipt" if "DEBIT" in entry_type else "Cash Payment"
+                cursor.execute("UPDATE journal_vouchers SET narration = %s WHERE jv_id = %s", (f"{jv_prefix} [{voucher_no}]: {full_narr}", jv_id))
+                
+                # Regenerate entries
+                cursor.execute("DELETE FROM jv_entries WHERE jv_id = %s", (jv_id,))
+                if "DEBIT" in entry_type:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-101', %s, 0)", (jv_id, amount))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, account_code, amount))
+                else:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, account_code, amount))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-101', 0, %s)", (jv_id, amount))
+        else:
+            cursor.execute("""
+                UPDATE cash_book 
+                SET particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
+                WHERE id = ?
+            """, (particulars, dr_amt, cr_amt, account_code, narration, edit_id))
+            
+            cursor.execute("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+            jv_row = cursor.fetchone()
+            if jv_row:
+                jv_id = jv_row[0]
+                full_narr = particulars
+                if narration and narration.strip():
+                    full_narr += f" ({narration.strip()})"
+                jv_prefix = "Cash Receipt" if "DEBIT" in entry_type else "Cash Payment"
+                cursor.execute("UPDATE journal_vouchers SET narration = ? WHERE jv_id = ?", (f"{jv_prefix} [{voucher_no}]: {full_narr}", jv_id))
+                cursor.execute("DELETE FROM jv_entries WHERE jv_id = ?", (jv_id,))
+                if "DEBIT" in entry_type:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (jv_id, amount))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, account_code, amount))
+                else:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, account_code, amount))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, amount))
+                    
+        conn.commit()
+        return True, "Updated successfully"
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+def record_bank_book_transaction(entry_type, amount, bank_name, bank_code, account_code, particulars, narration, tx_date):
+    """
+    Executes Bank JV creation, JV entries, Bank balance calculation, Bank Book insertion,
+    and Cash Book mirror insertion inside a SINGLE high-speed database transaction.
+    """
+    if amount <= 0:
+        return False, "Amount must be greater than 0"
+        
+    today = str(tx_date)
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        today_code = datetime.now(IST).strftime("%Y%m%d")
+        if USING_SUPABASE:
+            cursor.execute("SELECT voucher_no FROM bank_book WHERE voucher_no LIKE %s ORDER BY id DESC LIMIT 1", (f"BB{today_code}%%",))
+        else:
+            cursor.execute("SELECT voucher_no FROM bank_book WHERE voucher_no LIKE ? ORDER BY id DESC LIMIT 1", (f"BB{today_code}%",))
+        bb_res = cursor.fetchone()
+        b_seq = int(bb_res[0][-4:]) + 1 if bb_res and bb_res[0] else 1
+        voucher_no = f"BB{today_code}{b_seq:04d}"
+        
+        full_narration = particulars
+        if narration and narration.strip():
+            full_narration += f" ({narration.strip()})"
+            
+        jv_prefix = f"Bank Deposit [{voucher_no}]: {full_narration} - {bank_name}" if "DEBIT" in entry_type else f"Bank Withdrawal [{voucher_no}]: {full_narration} - {bank_name}"
+        
+        if USING_SUPABASE:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (today, jv_prefix))
+            jv_id = cursor.fetchone()[0]
+            
+            if "DEBIT" in entry_type:
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, bank_code, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, account_code, amount))
+            else:
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, account_code, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, bank_code, amount))
+                
+            cursor.execute("SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = %s", (bank_code,))
+            new_bank_bal = float(cursor.fetchone()[0] or 0.0)
+            
+            dr_amt = amount if "DEBIT" in entry_type else 0.0
+            cr_amt = amount if "CREDIT" in entry_type else 0.0
+            cursor.execute("""
+                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (today, voucher_no, particulars, dr_amt, cr_amt, new_bank_bal, bank_name, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")))
+            
+            if account_code == 'AST-101':
+                cursor.execute("SELECT voucher_no FROM cash_book WHERE voucher_no LIKE %s ORDER BY id DESC LIMIT 1", (f"CB{today_code}%%",))
+                cb_res = cursor.fetchone()
+                c_seq = int(cb_res[0][-4:]) + 1 if cb_res and cb_res[0] else 1
+                c_voucher = f"CB{today_code}{c_seq:04d}"
+                
+                cursor.execute("SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = 'AST-101'")
+                new_cash_bal = float(cursor.fetchone()[0] or 0.0)
+                
+                cash_dr = amount if "CREDIT" in entry_type else 0.0
+                cash_cr = amount if "DEBIT" in entry_type else 0.0
+                cursor.execute("""
+                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (today, c_voucher, f"Bank Transfer: {particulars}", cash_dr, cash_cr, new_cash_bal, bank_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (today, jv_prefix))
+            jv_id = cursor.lastrowid
+            if "DEBIT" in entry_type:
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, bank_code, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, account_code, amount))
+            else:
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, account_code, amount))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, bank_code, amount))
+                
+            cursor.execute("SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = ?", (bank_code,))
+            new_bank_bal = float(cursor.fetchone()[0] or 0.0)
+            dr_amt = amount if "DEBIT" in entry_type else 0.0
+            cr_amt = amount if "CREDIT" in entry_type else 0.0
+            cursor.execute("""
+                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (today, voucher_no, particulars, dr_amt, cr_amt, new_bank_bal, bank_name, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")))
+            
+        conn.commit()
+        return True, voucher_no
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+

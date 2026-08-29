@@ -2779,6 +2779,15 @@ st.sidebar.markdown("""
         background: #000000 !important;
         border-top: 1px solid #222222 !important;
     }
+
+    /* Square bordered box for sidebar modules */
+    [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        border-radius: 4px !important; /* Clean square border */
+        background-color: #050b14 !important;
+        padding: 12px 10px !important;
+        margin-bottom: 8px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -2891,37 +2900,41 @@ def generate_sql_backup():
     return "\n".join(sql_lines).encode("utf-8")
 
 with st.sidebar.expander("💾 System Backup & Restore"):
-    if USING_SUPABASE:
-        if st.button("🔄 Prepare SQL Backup", key="prep_sql_bkp", use_container_width=True):
-            with st.spinner("Generating database backup..."):
-                try:
-                    sql_backup_bytes = generate_sql_backup()
-                    st.session_state.sql_backup_bytes = sql_backup_bytes
-                    st.success("✅ Backup prepared!")
-                except Exception as e:
-                    st.error(f"⚠️ Failed to generate backup: {str(e)}")
-                    
-        if "sql_backup_bytes" in st.session_state and st.session_state.sql_backup_bytes:
-            st.download_button(
-                label="📥 Download Backup (.sql)",
-                data=st.session_state.sql_backup_bytes,
-                file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.sql",
-                mime="text/plain",
-                use_container_width=True
-            )
-    else:
-        if os.path.exists(DB_NAME):
-            with open(DB_NAME, "rb") as f:
-                db_bytes = f.read()
-            st.download_button(
-                label="📥 Download Backup (.db)",
-                data=db_bytes,
-                file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
-                mime="application/octet-stream",
-                use_container_width=True
-            )
+    with st.container(border=True):
+        st.markdown("<div style='font-size: 11px; font-weight: 700; color: #00e5ff; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.8px;'>📦 SQL Backup Export</div>", unsafe_allow_html=True)
+        if USING_SUPABASE:
+            if st.button("🔄 Prepare SQL Backup", key="prep_sql_bkp", use_container_width=True):
+                with st.spinner("Generating database backup..."):
+                    try:
+                        sql_backup_bytes = generate_sql_backup()
+                        st.session_state.sql_backup_bytes = sql_backup_bytes
+                        st.success("✅ Backup prepared!")
+                    except Exception as e:
+                        st.error(f"⚠️ Failed to generate backup: {str(e)}")
+                        
+            if "sql_backup_bytes" in st.session_state and st.session_state.sql_backup_bytes:
+                st.download_button(
+                    label="📥 Download Backup (.sql)",
+                    data=st.session_state.sql_backup_bytes,
+                    file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.sql",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+        else:
+            if os.path.exists(DB_NAME):
+                with open(DB_NAME, "rb") as f:
+                    db_bytes = f.read()
+                st.download_button(
+                    label="📥 Download Backup (.db)",
+                    data=db_bytes,
+                    file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
+                    mime="application/octet-stream",
+                    use_container_width=True
+                )
 
-    uploaded_dbs = st.file_uploader("📤 Restore Database", type=["db", "sqlite", "sqlite3", "sql"], accept_multiple_files=True)
+    with st.container(border=True):
+        st.markdown("<div style='font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.8px;'>📥 Database Import</div>", unsafe_allow_html=True)
+        uploaded_dbs = st.file_uploader("Upload Backup File", type=["db", "sqlite", "sqlite3", "sql"], accept_multiple_files=True)
 if uploaded_dbs:
     # If there's only one file and it's a local .db file
     if len(uploaded_dbs) == 1 and uploaded_dbs[0].name.split(".")[-1].lower() in ["db", "sqlite", "sqlite3"]:

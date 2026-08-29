@@ -1,4 +1,5 @@
 import os
+import sys
 import sqlite3
 import time
 import re
@@ -6,6 +7,13 @@ import urllib.parse
 from datetime import datetime, date, timezone, timedelta
 import pytz
 from dotenv import load_dotenv
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 # Load local environment variables
 load_dotenv()
@@ -161,9 +169,9 @@ if neon_s3_endpoint and neon_s3_access_key and neon_s3_secret_key:
             region_name=region,
             config=Config(s3={'addressing_style': 'path'})
         )
-        print(f"✅ Neon Object Storage S3 Client (Region: {region}, Path-Style) initialized successfully!")
+        print(f"[OK] Neon Object Storage S3 Client (Region: {region}, Path-Style) initialized successfully!")
     except Exception as e:
-        print(f"⚠️ Failed to initialize Neon Object Storage S3 Client: {e}")
+        print(f"[WARN] Failed to initialize Neon Object Storage S3 Client: {e}")
 
 # ----------------------------------------------------
 # HIGH-SPEED PERSISTENT CONNECTION POOLING

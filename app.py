@@ -2736,8 +2736,8 @@ st.sidebar.markdown("""
         background-color: #000000 !important;
         background: #000000 !important;
         color: #ffffff !important;
-        border: 1px solid #333333 !important;
-        border-radius: 8px !important;
+        border: 1.5px solid #475569 !important;
+        border-radius: 4px !important;
         font-weight: 600 !important;
     }
 
@@ -3022,15 +3022,16 @@ st.sidebar.markdown("""
     [data-testid="stSidebar"] [data-testid^="stBaseButton"] {
         background-color: #000000 !important;
         color: #ffffff !important;
-        border: 1px solid #000000 !important;
+        border: 1.5px solid #475569 !important; /* Visible square border */
+        border-radius: 4px !important; /* Clean square corners */
     }
     section[data-testid="stSidebar"] button:hover,
     div[data-testid="stSidebar"] button:hover,
     .stSidebar button:hover,
     [data-testid="stSidebar"] [data-testid^="stBaseButton"]:hover {
-        background-color: #333333 !important;
-        color: #ffffff !important;
-        border: 1px solid #333333 !important;
+        background-color: #0f172a !important;
+        color: #00e5ff !important;
+        border: 1.5px solid #00e5ff !important;
     }
 </style>
 """, unsafe_allow_html=True)

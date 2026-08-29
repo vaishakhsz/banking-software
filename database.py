@@ -1166,4 +1166,138 @@ def record_bank_book_transaction(entry_type, amount, bank_name, bank_code, accou
     finally:
         release_connection(conn)
 
+def record_sb_transaction(account_no, tx_type, amount, pay_mode, chosen_asset_code, narration):
+    """
+    Executes SB balance update, transaction record, JV creation, JV entries,
+    and Cash/Bank book recording inside a SINGLE database transaction.
+    """
+    if amount <= 0:
+        return False, "Amount must be greater than 0"
+        
+    today = datetime.now(IST).strftime("%Y-%m-%d")
+    today_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+    today_code = datetime.now(IST).strftime("%Y%m%d")
+    tx_id = f"TX{datetime.now(IST).strftime('%M%S%f')}"
+    
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Fetch current SB balance
+        if USING_SUPABASE:
+            cursor.execute("SELECT balance FROM sb_accounts WHERE account_no = %s", (account_no,))
+        else:
+            cursor.execute("SELECT balance FROM sb_accounts WHERE account_no = ?", (account_no,))
+        res = cursor.fetchone()
+        if not res:
+            return False, "Account not found"
+        current_bal = float(res[0] or 0.0)
+        
+        # 2. Check sufficient funds on withdrawal
+        if tx_type == "WITHDRAWAL":
+            if current_bal < amount:
+                return False, f"Insufficient SB account balance! Available: ₹{current_bal:,.2f}"
+            new_bal = current_bal - amount
+            tx_direction = "DEBIT"
+            debit_acc = "LIA-101"
+            credit_acc = chosen_asset_code
+            cb_dr = 0.0
+            cb_cr = amount
+            bb_dr = 0.0
+            bb_cr = amount
+            particulars = f"SB Withdrawal: {account_no}"
+        else:
+            new_bal = current_bal + amount
+            tx_direction = "CREDIT"
+            debit_acc = chosen_asset_code
+            credit_acc = "LIA-101"
+            cb_dr = amount
+            cb_cr = 0.0
+            bb_dr = amount
+            bb_cr = 0.0
+            particulars = f"SB Deposit: {account_no}"
+            
+        # 3. Update SB Account
+        if USING_SUPABASE:
+            cursor.execute("UPDATE sb_accounts SET balance = %s WHERE account_no = %s", (new_bal, account_no))
+            cursor.execute("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                           (tx_id, account_no, tx_direction, amount, pay_mode, narration, today))
+                           
+            # 4. Insert JV
+            jv_narr = f"SB {tx_type.capitalize()}: {narration} ({account_no})"
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (today, jv_narr))
+            jv_id = cursor.fetchone()[0]
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, debit_acc, amount))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, credit_acc, amount))
+            
+            # 5. Asset balance calculation
+            cursor.execute("SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = %s", (chosen_asset_code,))
+            new_asset_bal = float(cursor.fetchone()[0] or 0.0)
+            
+            # 6. Insert Cash Book / Bank Book
+            if chosen_asset_code == 'AST-101':
+                cursor.execute("SELECT voucher_no FROM cash_book WHERE voucher_no LIKE %s ORDER BY id DESC LIMIT 1", (f"CB{today_code}%%",))
+                cb_res = cursor.fetchone()
+                c_seq = int(cb_res[0][-4:]) + 1 if cb_res and cb_res[0] else 1
+                voucher_no = f"CB{today_code}{c_seq:04d}"
+                cursor.execute("""
+                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (today, voucher_no, particulars, cb_dr, cb_cr, new_asset_bal, chosen_asset_code, narration, today_time))
+            elif chosen_asset_code in ('AST-102', 'AST-103'):
+                bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
+                cursor.execute("SELECT voucher_no FROM bank_book WHERE voucher_no LIKE %s ORDER BY id DESC LIMIT 1", (f"BB{today_code}%%",))
+                bb_res = cursor.fetchone()
+                b_seq = int(bb_res[0][-4:]) + 1 if bb_res and bb_res[0] else 1
+                voucher_no = f"BB{today_code}{b_seq:04d}"
+                cursor.execute("""
+                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (today, voucher_no, particulars, bb_dr, bb_cr, new_asset_bal, bank_name, chosen_asset_code, narration, today_time))
+        else:
+            cursor.execute("UPDATE sb_accounts SET balance = ? WHERE account_no = ?", (new_bal, account_no))
+            cursor.execute("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (tx_id, account_no, tx_direction, amount, pay_mode, narration, today))
+            jv_narr = f"SB {tx_type.capitalize()}: {narration} ({account_no})"
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (today, jv_narr))
+            jv_id = cursor.lastrowid
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, debit_acc, amount))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
+            
+            cursor.execute("SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = ?", (chosen_asset_code,))
+            new_asset_bal = float(cursor.fetchone()[0] or 0.0)
+            
+            if chosen_asset_code == 'AST-101':
+                cursor.execute("SELECT voucher_no FROM cash_book WHERE voucher_no LIKE ? ORDER BY id DESC LIMIT 1", (f"CB{today_code}%",))
+                cb_res = cursor.fetchone()
+                c_seq = int(cb_res[0][-4:]) + 1 if cb_res and cb_res[0] else 1
+                voucher_no = f"CB{today_code}{c_seq:04d}"
+                cursor.execute("""
+                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (today, voucher_no, particulars, cb_dr, cb_cr, new_asset_bal, chosen_asset_code, narration, today_time))
+            elif chosen_asset_code in ('AST-102', 'AST-103'):
+                bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
+                cursor.execute("SELECT voucher_no FROM bank_book WHERE voucher_no LIKE ? ORDER BY id DESC LIMIT 1", (f"BB{today_code}%",))
+                bb_res = cursor.fetchone()
+                b_seq = int(bb_res[0][-4:]) + 1 if bb_res and bb_res[0] else 1
+                voucher_no = f"BB{today_code}{b_seq:04d}"
+                cursor.execute("""
+                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (today, voucher_no, particulars, bb_dr, bb_cr, new_asset_bal, bank_name, chosen_asset_code, narration, today_time))
+                
+        conn.commit()
+        return True, new_bal
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
 

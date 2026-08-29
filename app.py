@@ -503,80 +503,18 @@ def render_sb_accounts():
             else:
                 chosen_asset_code = "AST-101"
                 pay_mode = "CASH"
-                
+            
             narration = st.text_input("Narration / Remarks", value="Counter transaction")
             
             if st.button("Execute Transaction", use_container_width=True):
-                current_bal = run_query("SELECT balance FROM sb_accounts WHERE account_no=?", (acc_choice,))[0][0]
-                
-                if tx_type == "DEPOSIT":
-                    new_bal = current_bal + amount
-                    run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
-                    run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)",
-                              (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
-                    
-                    jv_result = post_automated_jv(f"SB Deposit: {narration} ({acc_choice})", chosen_asset_code, "LIA-101", amount)
-                    
-                    if jv_result:
-                        today = datetime.now(IST).strftime("%Y-%m-%d")
-                        new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
-                        
-                        if chosen_asset_code == 'AST-101':
-                            voucher_no = generate_cash_voucher_no()
-                            run_query("""
-                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        elif chosen_asset_code in ['AST-102', 'AST-103']:
-                            bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
-                            voucher_no = generate_bank_voucher_no()
-                            run_query("""
-                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Deposit: {acc_choice}", amount, 0, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    
-                    st.success(f"✅ Deposit successful! New Balance: ₹{new_bal:,.2f}")
+                from database import record_sb_transaction
+                success, res_val = record_sb_transaction(acc_choice, tx_type, amount, pay_mode, chosen_asset_code, narration)
+                if success:
+                    st.success(f"✅ {tx_type.capitalize()} successful! New Balance: ₹{res_val:,.2f}")
                     time.sleep(0.1)
                     st.rerun()
-                    
-                elif tx_type == "WITHDRAWAL":
-                    if current_bal < amount:
-                        st.error(f"❌ Insufficient SB account balance! Available: ₹{current_bal:,.2f}, Required: ₹{amount:,.2f}")
-                        st.stop()
-                    
-                    asset_balance = get_account_balance_from_jv(chosen_asset_code)
-                    if amount > asset_balance:
-                        st.error(f"❌ Insufficient funds in {pay_mode}! Available: ₹{asset_balance:,.2f}, Required: ₹{amount:,.2f}")
-                        st.stop()
-                    
-                    new_bal = current_bal - amount
-                    run_query("UPDATE sb_accounts SET balance=? WHERE account_no=?", (new_bal, acc_choice), fetch=False)
-                    run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'DEBIT', ?, ?, ?, ?)",
-                              (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_choice, amount, pay_mode, narration, datetime.now(IST).strftime("%Y-%m-%d")), fetch=False)
-                    
-                    jv_result = post_automated_jv(f"SB Withdrawal: {narration} ({acc_choice})", "LIA-101", chosen_asset_code, amount)
-                    
-                    if jv_result:
-                        today = datetime.now(IST).strftime("%Y-%m-%d")
-                        new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
-                        
-                        if chosen_asset_code == 'AST-101':
-                            voucher_no = generate_cash_voucher_no()
-                            run_query("""
-                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        elif chosen_asset_code in ['AST-102', 'AST-103']:
-                            bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
-                            voucher_no = generate_bank_voucher_no()
-                            run_query("""
-                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (today, voucher_no, f"SB Withdrawal: {acc_choice}", 0, amount, new_asset_balance, bank_name, chosen_asset_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    
-                    st.success(f"✅ Withdrawal successful! New Balance: ₹{new_bal:,.2f}")
-                    time.sleep(0.1)
-                    st.rerun()
+                else:
+                    st.error(f"❌ Transaction failed: {res_val}")
 
     with tab3:
         accounts = run_query("""

@@ -721,14 +721,33 @@ def get_account_balance_from_jv(account_code):
     except Exception:
         return 0.0
 
+def get_all_balances():
+    """Fetches Cash, Union Bank, and SBI balances in a single database round-trip."""
+    try:
+        result = run_query("""
+            SELECT account_code, COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) as net_bal
+            FROM jv_entries
+            WHERE account_code IN ('AST-101', 'AST-102', 'AST-103')
+            GROUP BY account_code
+        """)
+        bal_map = {'AST-101': 0.0, 'AST-102': 0.0, 'AST-103': 0.0}
+        if result:
+            for code, bal in result:
+                bal_map[code] = float(bal) if bal is not None else 0.0
+        return bal_map['AST-101'], bal_map['AST-102'], bal_map['AST-103']
+    except Exception:
+        return 0.0, 0.0, 0.0
+
 def get_cash_balance():
-    return get_account_balance_from_jv('AST-101')
+    c_bal, _, _ = get_all_balances()
+    return c_bal
 
 def get_bank_balance(bank_name=None):
+    _, u_bal, s_bal = get_all_balances()
     if bank_name == "Union Bank of India" or bank_name is None:
-        return get_account_balance_from_jv('AST-102')
+        return u_bal
     elif bank_name == "State Bank of India":
-        return get_account_balance_from_jv('AST-103')
+        return s_bal
     else:
         result = run_query("SELECT account_code FROM chart_of_accounts WHERE account_name = ? AND account_type = 'Asset'", (bank_name,))
         if result:
@@ -772,14 +791,6 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
         
     conn = None
     try:
-        debit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (debit_acc,))
-        credit_check = run_query("SELECT account_code FROM chart_of_accounts WHERE account_code = ?", (credit_acc,))
-        
-        if not debit_check or not credit_check:
-            import streamlit as st
-            st.error(f"Invalid account codes: {debit_acc} or {credit_acc}")
-            return None
-        
         conn = get_connection()
         cursor = conn.cursor()
         

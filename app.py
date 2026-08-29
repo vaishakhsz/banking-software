@@ -2714,6 +2714,45 @@ st.sidebar.markdown("""
         border-radius: 8px !important;
         font-weight: 600 !important;
     }
+
+    /* Lock sidebar expander to black background and white text */
+    [data-testid="stSidebar"] [data-testid="stExpander"],
+    [data-testid="stSidebar"] .streamlit-expander {
+        background-color: #000000 !important;
+        background: #000000 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] details,
+    [data-testid="stSidebar"] details {
+        background-color: #000000 !important;
+        background: #000000 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary,
+    [data-testid="stSidebar"] .streamlit-expanderHeader,
+    [data-testid="stSidebar"] summary {
+        background-color: #000000 !important;
+        background: #000000 !important;
+        color: #ffffff !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+        background-color: #1a1a1a !important;
+        color: #00e5ff !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary span,
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary svg,
+    [data-testid="stSidebar"] [data-testid="stExpander"] p,
+    [data-testid="stSidebar"] [data-testid="stExpander"] span {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] div[data-testid="stExpanderDetails"] {
+        background-color: #000000 !important;
+        background: #000000 !important;
+        border-top: 1px solid #222222 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -2766,7 +2805,6 @@ menu = st.sidebar.radio(
 )
 
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
-st.sidebar.markdown('<div style="font-size: 13px; font-weight: 600; padding: 5px 0; color: white;">💾 System Backup</div>', unsafe_allow_html=True)
 
 def generate_sql_backup():
     """Generate a single SQL script containing all database tables and rows"""

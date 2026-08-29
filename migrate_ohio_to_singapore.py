@@ -5,6 +5,9 @@ from psycopg2 import extras
 import urllib.parse
 import re
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 OHIO_URL = "postgresql://neondb_owner:npg_62aSwNvWgUBT@ep-holy-lake-ayhswebt.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require"
 SINGAPORE_URL = "postgresql://neondb_owner:npg_WBjT5wU1lrzy@ep-restless-haze-azsi5s6f-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 
@@ -32,24 +35,24 @@ CREATE TABLE IF NOT EXISTS customers (
     created_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS accounts (
-    id SERIAL PRIMARY KEY,
-    account_number TEXT UNIQUE,
-    account_type TEXT,
+CREATE TABLE IF NOT EXISTS sb_accounts (
+    account_no TEXT PRIMARY KEY,
     customer_id INTEGER,
-    balance REAL DEFAULT 0,
+    balance REAL DEFAULT 0.0,
+    interest_rate REAL DEFAULT 3.5,
     created_at TEXT,
     FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
-    account_id INTEGER,
+    tx_id TEXT,
+    account_no TEXT,
     type TEXT,
     amount REAL,
-    balance_after REAL,
-    date TEXT,
-    FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    mode TEXT,
+    narration TEXT,
+    date TEXT
 );
 
 CREATE TABLE IF NOT EXISTS fixed_deposits (
@@ -139,8 +142,8 @@ TABLES_IN_ORDER = [
     ("chart_of_accounts", ["account_code", "account_name", "account_type", "category"], None),
     ("users", ["username", "password", "role"], None),
     ("customers", ["id", "name", "email", "phone", "street", "city", "state", "pincode", "adhar_file", "pan_file", "signature_file", "kyc_status", "pan", "created_at"], "customers_id_seq"),
-    ("accounts", ["id", "account_number", "account_type", "customer_id", "balance", "created_at"], "accounts_id_seq"),
-    ("transactions", ["id", "account_id", "type", "amount", "balance_after", "date"], "transactions_id_seq"),
+    ("sb_accounts", ["account_no", "customer_id", "balance", "interest_rate", "created_at"], None),
+    ("transactions", ["id", "tx_id", "account_no", "type", "amount", "mode", "narration", "date"], "transactions_id_seq"),
     ("fixed_deposits", ["fd_id", "customer_id", "principal", "tenure_months", "interest_rate", "maturity_amount", "nominee", "status", "created_at", "payment_mode", "closed_date"], "fixed_deposits_fd_id_seq"),
     ("recurring_deposits", ["rd_id", "customer_id", "monthly_amount", "tenure_months", "interest_rate", "installments_paid", "nominee", "status", "created_at", "payment_mode", "closed_date", "maturity_amount"], "recurring_deposits_rd_id_seq"),
     ("journal_vouchers", ["jv_id", "voucher_date", "narration", "status"], "journal_vouchers_jv_id_seq"),
@@ -189,17 +192,38 @@ def migrate():
 
     # 3. Transfer data table by table
     print("\n📦 Transferring data records...")
+    
+    # Discover which tables exist in source
+    cur_src.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+    existing_src_tables = set(r[0] for r in cur_src.fetchall())
+    print(f"Found source tables in Ohio: {', '.join(sorted(existing_src_tables))}")
+    
     for table_name, columns, seq_name in TABLES_IN_ORDER:
-        col_str = ", ".join(columns)
-        placeholders = ", ".join(["%s"] * len(columns))
-        
+        if table_name not in existing_src_tables:
+            print(f"  - {table_name:22} : not present in source database")
+            continue
+            
         try:
+            # Query columns that exist in source table
+            cur_src.execute(f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_schema = 'public' AND table_name = %s
+            """, (table_name,))
+            src_cols = [r[0] for r in cur_src.fetchall()]
+            valid_cols = [c for c in columns if c in src_cols]
+            
+            if not valid_cols:
+                continue
+                
+            col_str = ", ".join(valid_cols)
+            placeholders = ", ".join(["%s"] * len(valid_cols))
+            
             # Read from source
             cur_src.execute(f"SELECT {col_str} FROM {table_name}")
             rows = cur_src.fetchall()
             
             if rows:
-                # Insert into target
                 insert_query = f"INSERT INTO {table_name} ({col_str}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
                 extras.execute_batch(cur_tgt, insert_query, rows)
                 conn_tgt.commit()
@@ -208,15 +232,16 @@ def migrate():
                 # Update sequence to prevent ID conflicts
                 if seq_name:
                     try:
-                        pk_col = columns[0]
+                        pk_col = valid_cols[0]
                         cur_tgt.execute(f"SELECT setval('{seq_name}', COALESCE((SELECT MAX({pk_col}) FROM {table_name}), 1))")
                         conn_tgt.commit()
-                    except Exception as sq_err:
+                    except Exception:
                         pass
             else:
                 print(f"  - {table_name:22} :    0 rows (empty)")
         except Exception as t_err:
             print(f"  ⚠️ Error transferring {table_name}: {t_err}")
+            conn_src.rollback()
             conn_tgt.rollback()
 
     # 4. Final verification

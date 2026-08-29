@@ -1254,10 +1254,7 @@ def render_cash_book():
     
     with tab1:
         from database import get_all_balances
-        all_bals = get_all_balances()
-        current_cash_balance = all_bals.get('AST-101', 0.0)
-        current_union_balance = all_bals.get('AST-102', 0.0)
-        current_sbi_balance = all_bals.get('AST-103', 0.0)
+        current_cash_balance, current_union_balance, current_sbi_balance = get_all_balances()
         
         st.info(f"💰 **Current Cash Balance:** ₹{current_cash_balance:,.2f}")
         st.info(f"🏦 **Union Bank Balance:** ₹{current_union_balance:,.2f} | **SBI Balance:** ₹{current_sbi_balance:,.2f}")

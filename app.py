@@ -1253,9 +1253,11 @@ def render_cash_book():
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book", "🖨️ Print CB Vouchers"])
     
     with tab1:
-        current_cash_balance = get_cash_balance()
-        current_union_balance = get_bank_balance("Union Bank of India")
-        current_sbi_balance = get_bank_balance("State Bank of India")
+        from database import get_all_balances
+        all_bals = get_all_balances()
+        current_cash_balance = all_bals.get('AST-101', 0.0)
+        current_union_balance = all_bals.get('AST-102', 0.0)
+        current_sbi_balance = all_bals.get('AST-103', 0.0)
         
         st.info(f"💰 **Current Cash Balance:** ₹{current_cash_balance:,.2f}")
         st.info(f"🏦 **Union Bank Balance:** ₹{current_union_balance:,.2f} | **SBI Balance:** ₹{current_sbi_balance:,.2f}")
@@ -1410,7 +1412,12 @@ def render_cash_book():
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
-            st.download_button("📥 Download Cash Book PDF", pdf_generator.create_pdf_report("Cash Book Report", df_print_formatted), "cash_book.pdf", "application/pdf", use_container_width=True)
+            
+            if st.button("📄 Prepare Cash Book PDF", key="btn_prep_cb_pdf", use_container_width=True):
+                with st.spinner("Generating PDF report..."):
+                    st.session_state.cb_pdf_bytes = pdf_generator.create_pdf_report("Cash Book Report", df_print_formatted)
+            if "cb_pdf_bytes" in st.session_state and st.session_state.cb_pdf_bytes:
+                st.download_button("📥 Click here to Download PDF", st.session_state.cb_pdf_bytes, "cash_book.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("No cash book entries found in this date range.")
 
@@ -1458,15 +1465,19 @@ def render_cash_book():
                         st.markdown("---")
                         st.caption("Authorized Signature")
                     
-                    pdf_data = pdf_generator.generate_voucher_pdf('CB', v_data)
-                    st.download_button(
-                        label=f"📥 Download Cash Voucher {v_num} (PDF)",
-                        data=pdf_data,
-                        file_name=f"Cash_Voucher_{v_num}.pdf",
-                        mime="application/pdf",
-                        key=f"download_cb_{v_num}",
-                        use_container_width=True
-                    )
+                    if st.button(f"🖨️ Prepare Cash Voucher PDF ({v_num})", key=f"btn_prep_cb_{v_num}", use_container_width=True):
+                        with st.spinner("Generating Voucher PDF..."):
+                            st.session_state[f"cb_v_pdf_{v_num}"] = pdf_generator.generate_voucher_pdf('CB', v_data)
+                            
+                    if f"cb_v_pdf_{v_num}" in st.session_state:
+                        st.download_button(
+                            label=f"📥 Download Cash Voucher {v_num} (PDF)",
+                            data=st.session_state[f"cb_v_pdf_{v_num}"],
+                            file_name=f"Cash_Voucher_{v_num}.pdf",
+                            mime="application/pdf",
+                            key=f"download_cb_{v_num}",
+                            use_container_width=True
+                        )
 
 def render_bank_book():
     st.title("🏦 Bank Book Entries")
@@ -1665,7 +1676,11 @@ def render_bank_book():
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
-            st.download_button("📥 Download Bank Book PDF", pdf_generator.create_pdf_report("Bank Book Report", df_print_formatted), "bank_book.pdf", "application/pdf", use_container_width=True)
+            if st.button("📄 Prepare Bank Book PDF", key="btn_prep_bb_pdf", use_container_width=True):
+                with st.spinner("Generating PDF report..."):
+                    st.session_state.bb_pdf_bytes = pdf_generator.create_pdf_report("Bank Book Report", df_print_formatted)
+            if "bb_pdf_bytes" in st.session_state and st.session_state.bb_pdf_bytes:
+                st.download_button("📥 Click here to Download PDF", st.session_state.bb_pdf_bytes, "bank_book.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("No bank entries found in this date range.")
 
@@ -1714,15 +1729,19 @@ def render_bank_book():
                         st.markdown("---")
                         st.caption("Authorized Signature")
                     
-                    pdf_data = pdf_generator.generate_voucher_pdf('BB', v_data)
-                    st.download_button(
-                        label=f"📥 Download Bank Voucher {v_num} (PDF)",
-                        data=pdf_data,
-                        file_name=f"Bank_Voucher_{v_num}.pdf",
-                        mime="application/pdf",
-                        key=f"download_bb_{v_num}",
-                        use_container_width=True
-                    )
+                    if st.button(f"🖨️ Prepare Bank Voucher PDF ({v_num})", key=f"btn_prep_bb_{v_num}", use_container_width=True):
+                        with st.spinner("Generating Voucher PDF..."):
+                            st.session_state[f"bb_v_pdf_{v_num}"] = pdf_generator.generate_voucher_pdf('BB', v_data)
+                            
+                    if f"bb_v_pdf_{v_num}" in st.session_state:
+                        st.download_button(
+                            label=f"📥 Download Bank Voucher {v_num} (PDF)",
+                            data=st.session_state[f"bb_v_pdf_{v_num}"],
+                            file_name=f"Bank_Voucher_{v_num}.pdf",
+                            mime="application/pdf",
+                            key=f"download_bb_{v_num}",
+                            use_container_width=True
+                        )
 
 def render_journal_vouchers():
     st.title("📝 Journal Vouchers Management")
@@ -1853,17 +1872,19 @@ def render_journal_vouchers():
                         st.dataframe(df_jv_print, use_container_width=True, hide_index=True)
                         st.write(f"**Narration:** {v_data[0][1]}")
                         st.divider()
-                        st.write(f"**Total Debits/Credits:** ₹{total_dr:,.2f}")
-                    
-                    pdf_data = pdf_generator.generate_voucher_pdf('JV', v_data, jv_id)
-                    st.download_button(
-                        label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
-                        data=pdf_data,
-                        file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
-                        mime="application/pdf",
-                        key=f"download_jv_{jv_id}",
-                        use_container_width=True
-                    )
+                    if st.button(f"🖨️ Prepare JV Voucher PDF (JV-{jv_id})", key=f"btn_prep_jv_{jv_id}", use_container_width=True):
+                        with st.spinner("Generating JV Voucher PDF..."):
+                            st.session_state[f"jv_v_pdf_{jv_id}"] = pdf_generator.generate_voucher_pdf('JV', v_data, jv_id)
+                            
+                    if f"jv_v_pdf_{jv_id}" in st.session_state:
+                        st.download_button(
+                            label=f"📥 Download Journal Voucher JV-{jv_id} (PDF)",
+                            data=st.session_state[f"jv_v_pdf_{jv_id}"],
+                            file_name=f"Journal_Voucher_JV-{jv_id}.pdf",
+                            mime="application/pdf",
+                            key=f"download_jv_{jv_id}",
+                            use_container_width=True
+                        )
 
 def render_admin_editor():
     st.title("🛠️ Universal Database Record Editor")

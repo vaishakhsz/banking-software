@@ -2826,31 +2826,38 @@ def generate_sql_backup():
         
     return "\n".join(sql_lines).encode("utf-8")
 
-if USING_SUPABASE:
-    try:
-        sql_backup_bytes = generate_sql_backup()
-        st.sidebar.download_button(
-            label="📥 Download Backup (.sql)",
-            data=sql_backup_bytes,
-            file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.sql",
-            mime="text/plain",
-            use_container_width=True
-        )
-    except Exception as e:
-        st.sidebar.error(f"⚠️ Failed to generate backup: {str(e)}")
-else:
-    if os.path.exists(DB_NAME):
-        with open(DB_NAME, "rb") as f:
-            db_bytes = f.read()
-        st.sidebar.download_button(
-            label="📥 Download Backup (.db)",
-            data=db_bytes,
-            file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
-            mime="application/octet-stream",
-            use_container_width=True
-        )
+with st.sidebar.expander("💾 System Backup & Restore"):
+    if USING_SUPABASE:
+        if st.button("🔄 Prepare SQL Backup", key="prep_sql_bkp", use_container_width=True):
+            with st.spinner("Generating database backup..."):
+                try:
+                    sql_backup_bytes = generate_sql_backup()
+                    st.session_state.sql_backup_bytes = sql_backup_bytes
+                    st.success("✅ Backup prepared!")
+                except Exception as e:
+                    st.error(f"⚠️ Failed to generate backup: {str(e)}")
+                    
+        if "sql_backup_bytes" in st.session_state and st.session_state.sql_backup_bytes:
+            st.download_button(
+                label="📥 Download Backup (.sql)",
+                data=st.session_state.sql_backup_bytes,
+                file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.sql",
+                mime="text/plain",
+                use_container_width=True
+            )
+    else:
+        if os.path.exists(DB_NAME):
+            with open(DB_NAME, "rb") as f:
+                db_bytes = f.read()
+            st.download_button(
+                label="📥 Download Backup (.db)",
+                data=db_bytes,
+                file_name=f"aarsha_nidhi_backup_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.db",
+                mime="application/octet-stream",
+                use_container_width=True
+            )
 
-uploaded_dbs = st.sidebar.file_uploader("📤 Restore Database", type=["db", "sqlite", "sqlite3", "sql"], accept_multiple_files=True)
+    uploaded_dbs = st.file_uploader("📤 Restore Database", type=["db", "sqlite", "sqlite3", "sql"], accept_multiple_files=True)
 if uploaded_dbs:
     # If there's only one file and it's a local .db file
     if len(uploaded_dbs) == 1 and uploaded_dbs[0].name.split(".")[-1].lower() in ["db", "sqlite", "sqlite3"]:

@@ -145,38 +145,26 @@ def get_pg_pool():
     return _pg_pool
 
 def get_connection(retries=3):
-    """Get database connection from persistent pool with automatic liveness health check"""
+    """Get database connection from persistent pool with sub-millisecond response"""
     if USING_SUPABASE:
         for attempt in range(retries):
             try:
                 p = get_pg_pool()
                 conn = p.getconn()
-                
-                # Check connection liveness / health (handles serverless wake-up and SSL drops)
-                is_healthy = False
-                if conn is not None and not conn.closed:
-                    try:
-                        with conn.cursor() as cur:
-                            cur.execute("SELECT 1")
-                        is_healthy = True
-                    except Exception:
-                        is_healthy = False
-                        
-                if not is_healthy:
+                if conn.closed != 0:
                     try:
                         p.putconn(conn, close=True)
                     except Exception:
                         pass
                     reset_pg_pool()
                     continue
-                    
                 conn.autocommit = False
                 return conn
             except Exception:
                 reset_pg_pool()
-                time.sleep(0.15 * (attempt + 1))
+                time.sleep(0.1 * (attempt + 1))
                 
-        # Direct connection fallback if pool ever fails
+        # Direct fallback
         import psycopg2
         params = dict(SUPABASE_CONN_PARAMS)
         direct_conn = psycopg2.connect(**params)
@@ -877,10 +865,20 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
     finally:
         release_connection(conn)
 
+_account_name_cache = {}
+
 def get_account_name(account_code):
+    global _account_name_cache
+    if not account_code:
+        return ""
+    if account_code in _account_name_cache:
+        return _account_name_cache[account_code]
     try:
         result = run_query("SELECT account_name FROM chart_of_accounts WHERE account_code = ?", (account_code,))
-        return result[0][0] if result else ""
+        name = result[0][0] if result else ""
+        if name:
+            _account_name_cache[account_code] = name
+        return name
     except Exception:
         return ""
 

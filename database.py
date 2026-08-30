@@ -110,68 +110,11 @@ if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url:
 # ----------------------------------------------------
 # NEON OBJECT STORAGE (S3 COMPATIBLE) CONFIGURATION
 # ----------------------------------------------------
-neon_s3_endpoint = None
-neon_s3_access_key = None
-neon_s3_secret_key = None
-neon_s3_bucket = None
-
-try:
-    import streamlit as st
-    if "NEON_STORAGE_ENDPOINT" in st.secrets:
-        neon_s3_endpoint = st.secrets["NEON_STORAGE_ENDPOINT"]
-    elif "S3_ENDPOINT_URL" in st.secrets:
-        neon_s3_endpoint = st.secrets["S3_ENDPOINT_URL"]
-        
-    if "NEON_STORAGE_ACCESS_KEY" in st.secrets:
-        neon_s3_access_key = st.secrets["NEON_STORAGE_ACCESS_KEY"]
-    elif "AWS_ACCESS_KEY_ID" in st.secrets:
-        neon_s3_access_key = st.secrets["AWS_ACCESS_KEY_ID"]
-        
-    if "NEON_STORAGE_SECRET_KEY" in st.secrets:
-        neon_s3_secret_key = st.secrets["NEON_STORAGE_SECRET_KEY"]
-    elif "AWS_SECRET_ACCESS_KEY" in st.secrets:
-        neon_s3_secret_key = st.secrets["AWS_SECRET_ACCESS_KEY"]
-        
-    if "NEON_STORAGE_BUCKET" in st.secrets:
-        neon_s3_bucket = st.secrets["NEON_STORAGE_BUCKET"]
-    elif "S3_BUCKET_NAME" in st.secrets:
-        neon_s3_bucket = st.secrets["S3_BUCKET_NAME"]
-except Exception:
-    pass
-
-if not neon_s3_endpoint:
-    neon_s3_endpoint = os.getenv("NEON_STORAGE_ENDPOINT") or os.getenv("S3_ENDPOINT_URL")
-if not neon_s3_access_key:
-    neon_s3_access_key = os.getenv("NEON_STORAGE_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID")
-if not neon_s3_secret_key:
-    neon_s3_secret_key = os.getenv("NEON_STORAGE_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
-if not neon_s3_bucket:
-    neon_s3_bucket = os.getenv("NEON_STORAGE_BUCKET") or os.getenv("S3_BUCKET_NAME")
-
-# Initialize S3 client for Neon Object Storage
+# DIRECT DATABASE DOCUMENT STORAGE (BYTEA)
+# (All customer documents are stored directly in PostgreSQL)
+# ----------------------------------------------------
 s3_client = None
-if neon_s3_endpoint and neon_s3_access_key and neon_s3_secret_key:
-    try:
-        import boto3
-        from botocore.client import Config
-        # Dynamically extract region from Neon endpoint URL (e.g. us-east-2)
-        region = 'us-east-2'
-        if neon_s3_endpoint:
-            region_match = re.search(r'\.([a-z0-9-]+)\.aws\.neon\.tech', neon_s3_endpoint)
-            if region_match:
-                region = region_match.group(1)
-                
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=neon_s3_endpoint,
-            aws_access_key_id=neon_s3_access_key,
-            aws_secret_access_key=neon_s3_secret_key,
-            region_name=region,
-            config=Config(s3={'addressing_style': 'path'})
-        )
-        print(f"[OK] Neon Object Storage S3 Client (Region: {region}, Path-Style) initialized successfully!")
-    except Exception as e:
-        print(f"[WARN] Failed to initialize Neon Object Storage S3 Client: {e}")
+neon_s3_bucket = None
 
 # ----------------------------------------------------
 # HIGH-SPEED PERSISTENT CONNECTION POOLING
@@ -913,24 +856,6 @@ def delete_document(file_identifier, doc_type=None, customer_id=None):
                 signature_data = CASE WHEN signature_file = ? THEN NULL ELSE signature_data END
             WHERE adhar_file = ? OR pan_file = ? OR signature_file = ?
         """, (file_identifier, file_identifier, file_identifier, file_identifier, file_identifier, file_identifier, file_identifier, file_identifier, file_identifier), fetch=False)
-    except Exception:
-        pass
-        
-    # Legacy S3 cleanup
-    if s3_client and neon_s3_bucket:
-        try:
-            if not ("/" in file_identifier or "\\" in file_identifier or os.path.isabs(file_identifier)):
-                s3_client.delete_object(Bucket=neon_s3_bucket, Key=file_identifier)
-        except Exception:
-            pass
-            
-    # Legacy Local cleanup
-    try:
-        if os.path.exists(file_identifier):
-            os.remove(file_identifier)
-        local_path = os.path.join(UPLOAD_DIR, os.path.basename(file_identifier))
-        if os.path.exists(local_path):
-            os.remove(local_path)
     except Exception:
         pass
 

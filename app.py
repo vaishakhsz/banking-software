@@ -218,12 +218,11 @@ def render_customer_management():
             col_csv.download_button("📥 Download CSV Report", df_cust_formatted.to_csv(index=False).encode('utf-8'), "customers_report.csv", "text/csv", use_container_width=True)
             col_pdf.download_button("📥 Download PDF Report", pdf_generator.create_pdf_report("Customer Directory Report", df_cust_formatted), "customers_report.pdf", "application/pdf", use_container_width=True)
             
-            with st.expander("🛠️ Storage Connection Diagnostics (Admin)"):
-                from database import s3_client, neon_s3_bucket, neon_s3_endpoint, neon_s3_access_key
-                st.write(f"**S3 Client Initialized:** {'✅ Yes' if s3_client is not None else '❌ No'}")
-                st.write(f"**Target Bucket:** `{neon_s3_bucket}`")
-                st.write(f"**Endpoint URL:** `{neon_s3_endpoint}`")
-                st.write(f"**Access Key Present:** {'✅ Yes' if neon_s3_access_key else '❌ No'}")
+            with st.expander("🛡️ Document Storage Architecture (Admin)"):
+                st.write("**Document Engine:** `Direct PostgreSQL BYTEA Binary Storage`")
+                st.write("**Storage Region:** `Singapore (ap-southeast-1)` 🇸🇬")
+                st.write("**External S3 Dependencies:** `None (100% Contained in Database)`")
+                st.write("**Portability:** `1-Click SQL Backup includes all documents`")
 
             st.markdown("---")
             st.subheader("🔍 View & Download Original Customer Documents")

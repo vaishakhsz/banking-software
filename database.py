@@ -241,6 +241,7 @@ def translate_sqlite_schema_to_postgres(sql):
     sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
     sql = sql.replace("INTEGER PRIMARY KEY", "SERIAL PRIMARY KEY")
     sql = sql.replace("REAL", "DOUBLE PRECISION")
+    sql = sql.replace("BLOB", "BYTEA")
     return sql
 
 def execute_create(cursor, sql):
@@ -434,8 +435,11 @@ def init_db():
                 pan TEXT,
                 adhar TEXT,
                 adhar_file TEXT,
+                adhar_data BLOB,
                 pan_file TEXT,
+                pan_data BLOB,
                 signature_file TEXT,
+                signature_data BLOB,
                 kyc_status TEXT DEFAULT 'PENDING',
                 created_at TEXT
             );
@@ -537,8 +541,21 @@ def init_db():
         if USING_SUPABASE:
             tables_sql = translate_sqlite_schema_to_postgres(tables_sql)
             cursor.execute(tables_sql)
+            try:
+                cursor.execute("""
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS adhar_data BYTEA;
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS pan_data BYTEA;
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS signature_data BYTEA;
+                """)
+            except Exception:
+                pass
         else:
             cursor.executescript(tables_sql)
+            for col in ["adhar_data", "pan_data", "signature_data"]:
+                try:
+                    cursor.execute(f"ALTER TABLE customers ADD COLUMN {col} BLOB;")
+                except Exception:
+                    pass
 
         default_accounts = [
             ("INC-101", "Loan Interest Income", "Income", "Primary Revenue"),
@@ -629,85 +646,97 @@ def run_query(query, params=(), fetch=True):
         release_connection(conn)
 
 def save_uploaded_file(uploaded_file):
-    """Saves uploaded files to local disk and uploads to Neon Object Storage if configured"""
-    if uploaded_file is not None:
-        try:
-            os.makedirs(UPLOAD_DIR, exist_ok=True)
-            safe_name = "".join(c for c in uploaded_file.name if c.isalnum() or c in "._- ")
-            unique_name = f"{int(time.time())}_{safe_name}"
-            file_path = os.path.join(UPLOAD_DIR, unique_name)
-            
-            # Save file locally first (with PIL compression if image)
-            saved_local = False
-            if hasattr(uploaded_file, "type") and uploaded_file.type and uploaded_file.type.startswith("image/"):
-                try:
-                    from PIL import Image
-                    img = Image.open(uploaded_file)
-                    if img.mode in ("RGBA", "P") and not unique_name.lower().endswith(".png"):
-                        img = img.convert("RGB")
-                    img.thumbnail((1400, 1400), Image.LANCZOS)
-                    img.save(file_path, optimize=True, quality=80)
-                    saved_local = True
-                except Exception as ex:
-                    print(f"PIL compression failed: {ex}")
-            
-            if not saved_local:
-                with open(file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-            
-            # If S3 is configured, upload the optimized local file to Neon Object Storage
-            if s3_client and neon_s3_bucket:
-                try:
-                    with open(file_path, "rb") as f_s3:
-                        s3_client.put_object(
-                            Bucket=neon_s3_bucket,
-                            Key=unique_name,
-                            Body=f_s3,
-                            ContentType=uploaded_file.type if hasattr(uploaded_file, "type") else "application/octet-stream"
-                        )
-                    print(f"✅ Uploaded to Neon Object Storage: {unique_name}")
-                    # Clean up local file to save disk space if stored in the cloud
-                    try:
-                        os.remove(file_path)
-                    except Exception:
-                        pass
-                    # Return the S3 key so it gets stored in the database!
-                    return unique_name
-                except Exception as s3_err:
-                    print(f"⚠️ S3 upload failed, keeping local file: {s3_err}")
-            
-            # If S3 is not configured, return the local file path
-            return file_path
-        except Exception as e:
-            print(f"Error saving uploaded file: {str(e)}")
-            return None
-    return None
+    """
+    Processes uploaded files directly in memory:
+    - Compresses images with PIL (max 1200px, 80% quality)
+    - Returns (safe_filename, binary_bytes) for direct database insertion.
+    """
+    if uploaded_file is None:
+        return None, None
+    try:
+        raw_bytes = uploaded_file.getvalue() if hasattr(uploaded_file, "getvalue") else uploaded_file.read()
+        safe_name = "".join(c for c in uploaded_file.name if c.isalnum() or c in "._- ")
+        unique_name = f"{int(time.time())}_{safe_name}"
+        
+        # Optimize / compress image if it's an image
+        if hasattr(uploaded_file, "type") and uploaded_file.type and uploaded_file.type.startswith("image/"):
+            try:
+                from PIL import Image
+                import io
+                img = Image.open(io.BytesIO(raw_bytes))
+                if img.mode in ("RGBA", "P") and not unique_name.lower().endswith(".png"):
+                    img = img.convert("RGB")
+                img.thumbnail((1200, 1200), Image.LANCZOS)
+                out_io = io.BytesIO()
+                img_format = "PNG" if unique_name.lower().endswith(".png") else "JPEG"
+                img.save(out_io, format=img_format, optimize=True, quality=80)
+                raw_bytes = out_io.getvalue()
+            except Exception as ex:
+                print(f"Image compression note: {ex}")
+                
+        return unique_name, raw_bytes
+    except Exception as e:
+        print(f"Error processing uploaded file: {str(e)}")
+        return None, None
 
-def get_document_data(file_identifier):
+def get_document_data(file_identifier, doc_type=None, customer_id=None):
     """
-    Retrieves the binary bytes and clean filename of the file.
-    Supports both local disk paths and S3 bucket object keys.
+    Retrieves document binary bytes and clean filename.
+    1. First checks the direct database BYTEA/BLOB storage (fastest & most reliable).
+    2. Fallback to S3 bucket or local disk if not yet migrated.
     """
-    if not file_identifier:
+    if not file_identifier and not customer_id:
         return None, None
     
+    # 1. Check direct database binary storage
+    try:
+        if customer_id and doc_type:
+            col_data = f"{doc_type}_data"
+            col_file = f"{doc_type}_file"
+            rows = run_query(f"SELECT {col_file}, {col_data} FROM customers WHERE id = ?", (customer_id,))
+            if rows and rows[0][1]:
+                fn = rows[0][0] or f"{doc_type}.pdf"
+                data = bytes(rows[0][1]) if not isinstance(rows[0][1], bytes) else rows[0][1]
+                return data, os.path.basename(fn)
+                
+        if file_identifier:
+            rows = run_query("""
+                SELECT adhar_file, adhar_data, pan_file, pan_data, signature_file, signature_data
+                FROM customers
+                WHERE adhar_file = ? OR pan_file = ? OR signature_file = ?
+            """, (file_identifier, file_identifier, file_identifier))
+            if rows:
+                row = rows[0]
+                if file_identifier == row[0] and row[1]:
+                    data = bytes(row[1]) if not isinstance(row[1], bytes) else row[1]
+                    return data, os.path.basename(row[0])
+                elif file_identifier == row[2] and row[3]:
+                    data = bytes(row[3]) if not isinstance(row[3], bytes) else row[3]
+                    return data, os.path.basename(row[2])
+                elif file_identifier == row[4] and row[5]:
+                    data = bytes(row[5]) if not isinstance(row[5], bytes) else row[5]
+                    return data, os.path.basename(row[4])
+    except Exception as db_err:
+        print(f"Note on DB document fetch: {db_err}")
+
+    if not file_identifier:
+        return None, None
+
     filename = os.path.basename(file_identifier)
-    
-    # 1. Try S3 if client is initialized
+
+    # 2. Try S3 if client is initialized
     if s3_client and neon_s3_bucket:
         try:
             response = s3_client.get_object(Bucket=neon_s3_bucket, Key=file_identifier)
             return response['Body'].read(), filename
         except Exception:
-            # Fallback to local file if S3 key is not found or fails
             pass
             
-    # 2. Local fallback
+    # 3. Local fallback
     try:
         if os.path.exists(file_identifier):
             with open(file_identifier, "rb") as f:
                 return f.read(), filename
-        # If it's a relative path or key, check in local UPLOAD_DIR
         local_path = os.path.join(UPLOAD_DIR, filename)
         if os.path.exists(local_path):
             with open(local_path, "rb") as f:
@@ -859,36 +888,51 @@ def fetch_jv_voucher(jv_id):
     """
     return run_query(query, (jv_id,))
 
-def delete_document(file_identifier):
+def delete_document(file_identifier, doc_type=None, customer_id=None):
     """
-    Deletes the document from cloud storage (Neon S3) or local disk.
+    Clears the document from database BYTEA storage and cleans up any legacy S3/local files.
     """
+    if customer_id and doc_type:
+        try:
+            run_query(f"UPDATE customers SET {doc_type}_file = NULL, {doc_type}_data = NULL WHERE id = ?", (customer_id,), fetch=False)
+        except Exception:
+            pass
+
     if not file_identifier:
         return
+
+    # Clear from DB by identifier
+    try:
+        run_query("""
+            UPDATE customers
+            SET adhar_file = CASE WHEN adhar_file = ? THEN NULL ELSE adhar_file END,
+                adhar_data = CASE WHEN adhar_file = ? THEN NULL ELSE adhar_data END,
+                pan_file = CASE WHEN pan_file = ? THEN NULL ELSE pan_file END,
+                pan_data = CASE WHEN pan_file = ? THEN NULL ELSE pan_data END,
+                signature_file = CASE WHEN signature_file = ? THEN NULL ELSE signature_file END,
+                signature_data = CASE WHEN signature_file = ? THEN NULL ELSE signature_data END
+            WHERE adhar_file = ? OR pan_file = ? OR signature_file = ?
+        """, (file_identifier, file_identifier, file_identifier, file_identifier, file_identifier, file_identifier, file_identifier, file_identifier, file_identifier), fetch=False)
+    except Exception:
+        pass
         
-    # 1. Try deleting from S3
+    # Legacy S3 cleanup
     if s3_client and neon_s3_bucket:
         try:
-            # Check if it's an S3 key (doesn't look like an absolute file path on disk)
             if not ("/" in file_identifier or "\\" in file_identifier or os.path.isabs(file_identifier)):
                 s3_client.delete_object(Bucket=neon_s3_bucket, Key=file_identifier)
-                print(f"🗑️ Deleted from Neon S3: {file_identifier}")
-                return
-        except Exception as e:
-            print(f"Failed to delete from S3: {e}")
+        except Exception:
+            pass
             
-    # 2. Try deleting from local storage
+    # Legacy Local cleanup
     try:
         if os.path.exists(file_identifier):
             os.remove(file_identifier)
-            print(f"🗑️ Deleted local file: {file_identifier}")
-            return
         local_path = os.path.join(UPLOAD_DIR, os.path.basename(file_identifier))
         if os.path.exists(local_path):
             os.remove(local_path)
-            print(f"🗑️ Deleted local file: {local_path}")
-    except Exception as e:
-        print(f"Failed to delete local file: {e}")
+    except Exception:
+        pass
 
 def record_cash_book_transaction(entry_type, amount, account_code, particulars, narration, tx_date):
     """

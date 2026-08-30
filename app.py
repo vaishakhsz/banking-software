@@ -191,14 +191,19 @@ def render_customer_management():
                     elif existing_pan and existing_pan[0][0] > 0:
                         st.error(f"A customer with PAN number {pan} already exists. PAN ID must be unique.")
                     else:
-                        adhar_path = save_uploaded_file(adhar_upload)
-                        pan_path = save_uploaded_file(pan_upload)
-                        sig_path = save_uploaded_file(sig_upload)
+                        adh_name, adh_bytes = save_uploaded_file(adhar_upload)
+                        pan_name, pan_bytes = save_uploaded_file(pan_upload)
+                        sig_name, sig_bytes = save_uploaded_file(sig_upload)
+                        
+                        import psycopg2
+                        adh_param = psycopg2.Binary(adh_bytes) if (USING_SUPABASE and adh_bytes) else adh_bytes
+                        pan_param = psycopg2.Binary(pan_bytes) if (USING_SUPABASE and pan_bytes) else pan_bytes
+                        sig_param = psycopg2.Binary(sig_bytes) if (USING_SUPABASE and sig_bytes) else sig_bytes
                         
                         run_query("""
-                            INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, pan_file, signature_file, kyc_status, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-                        """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adhar_path, pan_path, sig_path, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
+                            INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, adhar_data, pan_file, pan_data, signature_file, signature_data, kyc_status, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+                        """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adh_name, adh_param, pan_name, pan_param, sig_name, sig_param, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
                         st.success(f"Customer {name} registered successfully!")
 
     with tab2:
@@ -234,54 +239,54 @@ def render_customer_management():
                     with d_col1:
                         st.markdown("**Aadhaar Document**")
                         if a_file:
-                            st.write(f"Path/Key: `{a_file}`")
+                            st.write(f"File: `{os.path.basename(a_file)}`")
                             try:
                                 from database import get_document_data
-                                file_bytes, filename = get_document_data(a_file)
+                                file_bytes, filename = get_document_data(a_file, doc_type='adhar', customer_id=selected_cust_id)
                                 if file_bytes:
                                     if filename.lower().endswith((".jpg", ".jpeg", ".png")):
                                         st.image(file_bytes, use_container_width=True)
                                     st.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key=f"dl_adh_{selected_cust_id}", use_container_width=True)
                                 else:
-                                    st.info("File not found.")
+                                    st.info("Document not found.")
                             except Exception:
-                                st.info("File not found.")
+                                st.info("Document not found.")
                         else:
                             st.info("No file uploaded.")
                             
                     with d_col2:
                         st.markdown("**PAN Card Document**")
                         if p_file:
-                            st.write(f"Path/Key: `{p_file}`")
+                            st.write(f"File: `{os.path.basename(p_file)}`")
                             try:
                                 from database import get_document_data
-                                file_bytes, filename = get_document_data(p_file)
+                                file_bytes, filename = get_document_data(p_file, doc_type='pan', customer_id=selected_cust_id)
                                 if file_bytes:
                                     if filename.lower().endswith((".jpg", ".jpeg", ".png")):
                                         st.image(file_bytes, use_container_width=True)
                                     st.download_button("📥 Download PAN", file_bytes, file_name=filename, key=f"dl_pan_{selected_cust_id}", use_container_width=True)
                                 else:
-                                    st.info("File not found.")
+                                    st.info("Document not found.")
                             except Exception:
-                                st.info("File not found.")
+                                st.info("Document not found.")
                         else:
                             st.info("No file uploaded.")
                             
                     with d_col3:
                         st.markdown("**Signature**")
                         if s_file:
-                            st.write(f"Path/Key: `{s_file}`")
+                            st.write(f"File: `{os.path.basename(s_file)}`")
                             try:
                                 from database import get_document_data
-                                file_bytes, filename = get_document_data(s_file)
+                                file_bytes, filename = get_document_data(s_file, doc_type='signature', customer_id=selected_cust_id)
                                 if file_bytes:
                                     if filename.lower().endswith((".jpg", ".jpeg", ".png")):
                                         st.image(file_bytes, use_container_width=True)
                                     st.download_button("📥 Download Signature", file_bytes, file_name=filename, key=f"dl_sig_{selected_cust_id}", use_container_width=True)
                                 else:
-                                    st.info("File not found.")
+                                    st.info("Document not found.")
                             except Exception:
-                                st.info("File not found.")
+                                st.info("Document not found.")
                         else:
                             st.info("No file uploaded.")
         else:
@@ -316,6 +321,7 @@ def render_customer_management():
             st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")
             
             from database import save_uploaded_file, delete_document, get_document_data
+            import psycopg2
             
             # --- 1. AADHAAR CARD ---
             st.write("---")
@@ -324,14 +330,14 @@ def render_customer_management():
                 st.info(f"Existing Aadhaar: `{os.path.basename(c[7])}`")
                 col1, col2 = st.columns(2)
                 try:
-                    file_bytes, filename = get_document_data(c[7])
+                    file_bytes, filename = get_document_data(c[7], doc_type='adhar', customer_id=cust_id_edit)
                     if file_bytes:
                         col1.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key="dl_edit_adh", use_container_width=True)
                 except Exception:
                     pass
                 if col2.button("🗑️ Delete & Clear Aadhaar", key="del_edit_adh_btn", type="secondary", use_container_width=True):
-                    delete_document(c[7])
-                    run_query("UPDATE customers SET adhar_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                    delete_document(c[7], doc_type='adhar', customer_id=cust_id_edit)
+                    run_query("UPDATE customers SET adhar_file = NULL, adhar_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                     st.success("Aadhaar document deleted successfully!")
                     time.sleep(0.1)
                     st.rerun()
@@ -340,9 +346,10 @@ def render_customer_management():
                 new_adh = st.file_uploader("Upload Aadhaar Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_adh")
                 if new_adh:
                     if st.button("📤 Upload Aadhaar", key="up_edit_adh_btn", type="primary", use_container_width=True):
-                        saved_path = save_uploaded_file(new_adh)
-                        run_query("UPDATE customers SET adhar_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
-                        st.success("Aadhaar document uploaded and saved to Neon bucket!")
+                        saved_name, saved_bytes = save_uploaded_file(new_adh)
+                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                        run_query("UPDATE customers SET adhar_file = ?, adhar_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                        st.success("Aadhaar document saved directly into database!")
                         time.sleep(0.1)
                         st.rerun()
 
@@ -353,14 +360,14 @@ def render_customer_management():
                 st.info(f"Existing PAN: `{os.path.basename(c[8])}`")
                 col1, col2 = st.columns(2)
                 try:
-                    file_bytes, filename = get_document_data(c[8])
+                    file_bytes, filename = get_document_data(c[8], doc_type='pan', customer_id=cust_id_edit)
                     if file_bytes:
                         col1.download_button("📥 Download PAN", file_bytes, file_name=filename, key="dl_edit_pan", use_container_width=True)
                 except Exception:
                     pass
                 if col2.button("🗑️ Delete & Clear PAN", key="del_edit_pan_btn", type="secondary", use_container_width=True):
-                    delete_document(c[8])
-                    run_query("UPDATE customers SET pan_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                    delete_document(c[8], doc_type='pan', customer_id=cust_id_edit)
+                    run_query("UPDATE customers SET pan_file = NULL, pan_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                     st.success("PAN document deleted successfully!")
                     time.sleep(0.1)
                     st.rerun()
@@ -369,9 +376,10 @@ def render_customer_management():
                 new_pan = st.file_uploader("Upload PAN Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_pan")
                 if new_pan:
                     if st.button("📤 Upload PAN", key="up_edit_pan_btn", type="primary", use_container_width=True):
-                        saved_path = save_uploaded_file(new_pan)
-                        run_query("UPDATE customers SET pan_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
-                        st.success("PAN document uploaded and saved to Neon bucket!")
+                        saved_name, saved_bytes = save_uploaded_file(new_pan)
+                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                        run_query("UPDATE customers SET pan_file = ?, pan_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                        st.success("PAN document saved directly into database!")
                         time.sleep(0.1)
                         st.rerun()
 
@@ -382,14 +390,14 @@ def render_customer_management():
                 st.info(f"Existing Signature: `{os.path.basename(c[9])}`")
                 col1, col2 = st.columns(2)
                 try:
-                    file_bytes, filename = get_document_data(c[9])
+                    file_bytes, filename = get_document_data(c[9], doc_type='signature', customer_id=cust_id_edit)
                     if file_bytes:
                         col1.download_button("📥 Download Signature", file_bytes, file_name=filename, key="dl_edit_sig", use_container_width=True)
                 except Exception:
                     pass
                 if col2.button("🗑️ Delete & Clear Signature", key="del_edit_sig_btn", type="secondary", use_container_width=True):
-                    delete_document(c[9])
-                    run_query("UPDATE customers SET signature_file = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                    delete_document(c[9], doc_type='signature', customer_id=cust_id_edit)
+                    run_query("UPDATE customers SET signature_file = NULL, signature_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                     st.success("Signature document deleted successfully!")
                     time.sleep(0.1)
                     st.rerun()
@@ -398,9 +406,10 @@ def render_customer_management():
                 new_sig = st.file_uploader("Upload Signature Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_sig")
                 if new_sig:
                     if st.button("📤 Upload Signature", key="up_edit_sig_btn", type="primary", use_container_width=True):
-                        saved_path = save_uploaded_file(new_sig)
-                        run_query("UPDATE customers SET signature_file = ? WHERE id = ?", (saved_path, cust_id_edit), fetch=False)
-                        st.success("Signature document uploaded and saved to Neon bucket!")
+                        saved_name, saved_bytes = save_uploaded_file(new_sig)
+                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                        run_query("UPDATE customers SET signature_file = ?, signature_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                        st.success("Signature document saved directly into database!")
                         time.sleep(0.1)
                         st.rerun()
 
@@ -2883,6 +2892,12 @@ def generate_sql_backup():
                         val_list.append("NULL")
                     elif isinstance(val, (int, float)):
                         val_list.append(str(val))
+                    elif isinstance(val, (bytes, memoryview, bytearray)):
+                        raw_bytes = bytes(val)
+                        if USING_SUPABASE:
+                            val_list.append(f"'\\x{raw_bytes.hex()}'")
+                        else:
+                            val_list.append(f"X'{raw_bytes.hex()}'")
                     else:
                         # Escape single quotes for SQL insertion
                         escaped_val = str(val).replace("'", "''")

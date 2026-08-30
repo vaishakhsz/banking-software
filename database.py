@@ -108,13 +108,9 @@ if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url:
         SUPABASE_CONN_PARAMS = parsed_params
 
 # ----------------------------------------------------
-# NEON OBJECT STORAGE (S3 COMPATIBLE) CONFIGURATION
-# ----------------------------------------------------
 # DIRECT DATABASE DOCUMENT STORAGE (BYTEA)
 # (All customer documents are stored directly in PostgreSQL)
 # ----------------------------------------------------
-s3_client = None
-neon_s3_bucket = None
 
 # ----------------------------------------------------
 # HIGH-SPEED PERSISTENT CONNECTION POOLING
@@ -667,15 +663,7 @@ def get_document_data(file_identifier, doc_type=None, customer_id=None):
 
     filename = os.path.basename(file_identifier)
 
-    # 2. Try S3 if client is initialized
-    if s3_client and neon_s3_bucket:
-        try:
-            response = s3_client.get_object(Bucket=neon_s3_bucket, Key=file_identifier)
-            return response['Body'].read(), filename
-        except Exception:
-            pass
-            
-    # 3. Local fallback
+    # 2. Local fallback
     try:
         if os.path.exists(file_identifier):
             with open(file_identifier, "rb") as f:

@@ -598,7 +598,10 @@ def run_query(query, params=(), fetch=True, max_retries=3):
                 if "?" not in query and "%s" in query:
                     query = query.replace("%s", "?")
                     
-            cursor.execute(query, params)
+            if params and len(params) > 0:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
             res = cursor.fetchall() if fetch else None
             conn.commit()
             release_connection(conn)

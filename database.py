@@ -89,10 +89,10 @@ def parse_postgres_conn_info(raw_url):
                 "password": password,
                 "dbname": dbname,
                 "sslmode": "require",
-                "connect_timeout": 8,
+                "connect_timeout": 15,
                 "keepalives": 1,
-                "keepalives_idle": 30,
-                "keepalives_interval": 10,
+                "keepalives_idle": 10,
+                "keepalives_interval": 5,
                 "keepalives_count": 3
             }
     except Exception as e:
@@ -119,6 +119,17 @@ DB_INITIALIZED = False
 DB_INIT_ERROR = None
 _pg_pool = None
 
+def reset_pg_pool():
+    """Closes all connections in pool and resets it to force fresh connections"""
+    global _pg_pool
+    if _pg_pool is not None:
+        try:
+            if not _pg_pool.closed:
+                _pg_pool.closeall()
+        except Exception:
+            pass
+    _pg_pool = None
+
 def get_pg_pool():
     """Initializes and returns a persistent PostgreSQL connection pool"""
     global _pg_pool
@@ -133,29 +144,44 @@ def get_pg_pool():
         )
     return _pg_pool
 
-def get_connection():
-    """Get database connection from persistent pool with sub-millisecond response"""
+def get_connection(retries=3):
+    """Get database connection from persistent pool with automatic liveness health check"""
     if USING_SUPABASE:
-        try:
-            p = get_pg_pool()
-            conn = p.getconn()
-            if conn.closed:
-                p.putconn(conn, close=True)
-                conn = p.getconn()
-            conn.autocommit = False
-            return conn
-        except Exception:
-            global _pg_pool
+        for attempt in range(retries):
             try:
-                if _pg_pool and not _pg_pool.closed:
-                    _pg_pool.closeall()
+                p = get_pg_pool()
+                conn = p.getconn()
+                
+                # Check connection liveness / health (handles serverless wake-up and SSL drops)
+                is_healthy = False
+                if conn is not None and not conn.closed:
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT 1")
+                        is_healthy = True
+                    except Exception:
+                        is_healthy = False
+                        
+                if not is_healthy:
+                    try:
+                        p.putconn(conn, close=True)
+                    except Exception:
+                        pass
+                    reset_pg_pool()
+                    continue
+                    
+                conn.autocommit = False
+                return conn
             except Exception:
-                pass
-            _pg_pool = None
-            p = get_pg_pool()
-            conn = p.getconn()
-            conn.autocommit = False
-            return conn
+                reset_pg_pool()
+                time.sleep(0.15 * (attempt + 1))
+                
+        # Direct connection fallback if pool ever fails
+        import psycopg2
+        params = dict(SUPABASE_CONN_PARAMS)
+        direct_conn = psycopg2.connect(**params)
+        direct_conn.autocommit = False
+        return direct_conn
     else:
         db_dir = os.path.dirname(DB_NAME)
         if db_dir and not os.path.exists(db_dir):
@@ -163,7 +189,7 @@ def get_connection():
         return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
 
 def release_connection(conn, is_broken=False):
-    """Safely return connection back to pool for instant reuse"""
+    """Safely return connection back to pool for instant reuse or close if broken"""
     if conn is not None:
         if USING_SUPABASE and _pg_pool is not None and not _pg_pool.closed:
             try:
@@ -551,40 +577,60 @@ def init_db():
     finally:
         release_connection(conn)
 
-def run_query(query, params=(), fetch=True):
-    """Execute a database query with auto-initialization, commit, and connection cleanup"""
+def run_query(query, params=(), fetch=True, max_retries=3):
+    """Execute a database query with auto-initialization, automatic retry on SSL/connection drops, and connection cleanup"""
     if not DB_INITIALIZED:
         init_db()
 
-    conn = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        # Automatic translation for SQLite/Postgres placeholder compatibility
-        if USING_SUPABASE:
-            if "%s" not in query and "?" in query:
-                query = query.replace("?", "%s")
-        else:
-            if "?" not in query and "%s" in query:
-                query = query.replace("%s", "?")
+    last_err = None
+    for attempt in range(max_retries):
+        conn = None
+        is_broken = False
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            # Automatic translation for SQLite/Postgres placeholder compatibility
+            if USING_SUPABASE:
+                if "%s" not in query and "?" in query:
+                    query = query.replace("?", "%s")
+            else:
+                if "?" not in query and "%s" in query:
+                    query = query.replace("%s", "?")
+                    
+            cursor.execute(query, params)
+            res = cursor.fetchall() if fetch else None
+            conn.commit()
+            release_connection(conn)
+            return res
+        except Exception as e:
+            last_err = e
+            is_broken = True
+            if conn is not None and USING_SUPABASE:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            release_connection(conn, is_broken=True)
+            
+            # If SSL drop, connection lost, or operational error, reset pool and retry!
+            err_msg = str(e).lower()
+            if any(s in err_msg for s in ["ssl", "closed unexpectedly", "terminat", "broken", "connection", "operationalerror", "eof"]):
+                reset_pg_pool()
+                time.sleep(0.2 * (attempt + 1))
+                continue
+            else:
+                break
                 
-        cursor.execute(query, params)
-        res = cursor.fetchall() if fetch else None
-        conn.commit()
-        return res
-    except Exception as e:
+    try:
         import streamlit as st
-        err_str = str(e)
-        st.error(f"Database error: {err_str}")
-        if conn is not None and USING_SUPABASE:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-        return None
-    finally:
-        release_connection(conn)
+        if hasattr(st, "runtime") and st.runtime.exists():
+            st.error(f"Database error: {str(last_err)}")
+        else:
+            print(f"Database error: {str(last_err)}")
+    except Exception:
+        print(f"Database error: {str(last_err)}")
+    return None
 
 def sync_db_sequences():
     """

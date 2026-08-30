@@ -623,41 +623,51 @@ def run_query(query, params=(), fetch=True, max_retries=3):
         print(f"Database error: {str(last_err)}")
     return None
 
-def sync_db_sequences():
+def sync_db_sequences(table_name=None, id_column='id'):
     """
-    Syncs all PostgreSQL auto-increment sequences (e.g. customers, cash_book, bank_book, jv)
-    to match the current MAX(id) in the table, preventing gaps after deletions.
+    Syncs PostgreSQL auto-increment sequences to match MAX(id) in a single fast roundtrip.
     """
     if not USING_SUPABASE:
         return
-    table_cols = [
-        ('customers', 'id'), ('journal_vouchers', 'jv_id'), ('jv_entries', 'entry_id'),
-        ('cash_book', 'id'), ('bank_book', 'id'), ('transactions', 'id'),
-        ('fixed_deposits', 'fd_id'), ('recurring_deposits', 'rd_id')
-    ]
+    
+    if table_name:
+        table_cols = [(table_name, id_column)]
+    else:
+        table_cols = [
+            ('customers', 'id'), ('journal_vouchers', 'jv_id'), ('jv_entries', 'entry_id'),
+            ('cash_book', 'id'), ('bank_book', 'id'), ('transactions', 'id'),
+            ('fixed_deposits', 'fd_id'), ('recurring_deposits', 'rd_id')
+        ]
+        
+    statements = []
     for tbl, col in table_cols:
-        try:
-            run_query(f"""
-                DO $$
-                DECLARE
-                    seq_name text;
-                    max_id bigint;
-                BEGIN
-                    seq_name := pg_get_serial_sequence('{tbl}', '{col}');
-                    IF seq_name IS NOT NULL THEN
-                        EXECUTE 'SELECT COALESCE(MAX({col}), 0) FROM {tbl}' INTO max_id;
-                        IF max_id = 0 THEN
-                            EXECUTE 'ALTER SEQUENCE ' || seq_name || ' RESTART WITH 1';
-                        ELSE
-                            EXECUTE 'SELECT setval(''' || seq_name || ''', ' || max_id || ', true)';
-                        END IF;
-                    END IF;
-                EXCEPTION WHEN OTHERS THEN
-                    NULL;
-                END $$;
-            """, fetch=False)
-        except Exception:
-            pass
+        statements.append(f"""
+            seq_name := pg_get_serial_sequence('{tbl}', '{col}');
+            IF seq_name IS NOT NULL THEN
+                EXECUTE 'SELECT COALESCE(MAX({col}), 0) FROM {tbl}' INTO max_id;
+                IF max_id = 0 THEN
+                    EXECUTE 'ALTER SEQUENCE ' || seq_name || ' RESTART WITH 1';
+                ELSE
+                    EXECUTE 'SELECT setval(''' || seq_name || ''', ' || max_id || ', true)';
+                END IF;
+            END IF;
+        """)
+        
+    combined_sql = f"""
+        DO $$
+        DECLARE
+            seq_name text;
+            max_id bigint;
+        BEGIN
+            {' '.join(statements)}
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END $$;
+    """
+    try:
+        run_query(combined_sql, fetch=False)
+    except Exception:
+        pass
 
 def save_uploaded_file(uploaded_file):
     """

@@ -1355,9 +1355,8 @@ def render_cash_book():
                         run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
                 
                 run_query("DELETE FROM cash_book WHERE id=?", (del_id,), fetch=False)
-                sync_db_sequences()
+                sync_db_sequences("cash_book", "id")
                 st.warning(f"Cash Entry ID {del_id} and related ledger entries deleted successfully.")
-                time.sleep(0.1)
                 st.rerun()
         else:
             st.info("No cash book entries found in this date range.")
@@ -1590,9 +1589,8 @@ def render_bank_book():
                         run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
                 
                 run_query("DELETE FROM bank_book WHERE id=?", (del_id,), fetch=False)
-                sync_db_sequences()
+                sync_db_sequences("bank_book", "id")
                 st.warning(f"Bank Entry ID {del_id} and related ledger entries deleted successfully.")
-                time.sleep(0.1)
                 st.rerun()
         else:
             st.info("No bank entries found in this date range.")
@@ -1945,9 +1943,8 @@ def render_admin_editor():
                     except ValueError:
                         val = record_id_to_del
                     run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
-                    sync_db_sequences()
+                    sync_db_sequences(selected_table, pk_col)
                     st.success("Record deleted and sequences synced!")
-                    time.sleep(0.1)
                     st.rerun()
             elif action == "Edit Record":
                 record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
@@ -1988,9 +1985,8 @@ def render_admin_editor():
                                         valid_vals.append(v)
                                 valid_vals.append(edit_val)
                                 run_query(f"UPDATE {selected_table} SET {', '.join(valid_cols)} WHERE {pk_col} = ?", tuple(valid_vals), fetch=False)
-                                sync_db_sequences()
+                                sync_db_sequences(selected_table, pk_col)
                                 st.success("Record updated successfully!")
-                                time.sleep(0.1)
                                 st.rerun()
                     else:
                         st.info(f"No record found with {pk_col} = {edit_val}")

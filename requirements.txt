@@ -5,6 +5,6 @@ reportlab
 pytz
 python-dotenv
 psycopg2-binary
-supabase
-boto3
+Pillow
+
 

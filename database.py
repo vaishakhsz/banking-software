@@ -543,11 +543,6 @@ def init_db():
         conn.commit()
         DB_INITIALIZED = True
         DB_INIT_ERROR = None
-        
-        # Automatically sync sequences on initialization
-        if USING_SUPABASE:
-            sync_db_sequences()
-            
         return True
     except Exception as e:
         DB_INIT_ERROR = str(e)
@@ -555,42 +550,6 @@ def init_db():
         return False
     finally:
         release_connection(conn)
-
-def sync_db_sequences():
-    """
-    Syncs all PostgreSQL auto-increment sequences (e.g. customers, cash_book, bank_book, jv)
-    to match the current MAX(id) in the table, preventing gaps after deletions.
-    """
-    if not USING_SUPABASE:
-        return
-    tables = [
-        'customers', 'journal_vouchers', 'jv_entries', 'cash_book', 
-        'bank_book', 'transactions', 'chart_of_accounts', 'sb_accounts', 
-        'fixed_deposits', 'recurring_deposits'
-    ]
-    for tbl in tables:
-        try:
-            run_query(f"""
-                DO $$
-                DECLARE
-                    seq_name text;
-                    max_id bigint;
-                BEGIN
-                    seq_name := pg_get_serial_sequence('{tbl}', 'id');
-                    IF seq_name IS NOT NULL THEN
-                        EXECUTE 'SELECT COALESCE(MAX(id), 0) FROM {tbl}' INTO max_id;
-                        IF max_id = 0 THEN
-                            EXECUTE 'ALTER SEQUENCE ' || seq_name || ' RESTART WITH 1';
-                        ELSE
-                            EXECUTE 'SELECT setval(''' || seq_name || ''', ' || max_id || ', true)';
-                        END IF;
-                    END IF;
-                EXCEPTION WHEN OTHERS THEN
-                    NULL;
-                END $$;
-            """, fetch=False)
-        except Exception:
-            pass
 
 def run_query(query, params=(), fetch=True):
     """Execute a database query with auto-initialization, commit, and connection cleanup"""
@@ -602,12 +561,14 @@ def run_query(query, params=(), fetch=True):
         conn = get_connection()
         cursor = conn.cursor()
         
+        # Automatic translation for SQLite/Postgres placeholder compatibility
         if USING_SUPABASE:
-            query = query.replace("%", "%%")
-            query = query.replace("?", "%s")
-            query = query.replace("LIKE %s", "ILIKE %s")
-            query = query.replace("LIKE  %s", "ILIKE %s")
-            
+            if "%s" not in query and "?" in query:
+                query = query.replace("?", "%s")
+        else:
+            if "?" not in query and "%s" in query:
+                query = query.replace("%s", "?")
+                
         cursor.execute(query, params)
         res = cursor.fetchall() if fetch else None
         conn.commit()
@@ -624,6 +585,42 @@ def run_query(query, params=(), fetch=True):
         return None
     finally:
         release_connection(conn)
+
+def sync_db_sequences():
+    """
+    Syncs all PostgreSQL auto-increment sequences (e.g. customers, cash_book, bank_book, jv)
+    to match the current MAX(id) in the table, preventing gaps after deletions.
+    """
+    if not USING_SUPABASE:
+        return
+    table_cols = [
+        ('customers', 'id'), ('journal_vouchers', 'jv_id'), ('jv_entries', 'entry_id'),
+        ('cash_book', 'id'), ('bank_book', 'id'), ('transactions', 'id'),
+        ('fixed_deposits', 'fd_id'), ('recurring_deposits', 'rd_id')
+    ]
+    for tbl, col in table_cols:
+        try:
+            run_query(f"""
+                DO $$
+                DECLARE
+                    seq_name text;
+                    max_id bigint;
+                BEGIN
+                    seq_name := pg_get_serial_sequence('{tbl}', '{col}');
+                    IF seq_name IS NOT NULL THEN
+                        EXECUTE 'SELECT COALESCE(MAX({col}), 0) FROM {tbl}' INTO max_id;
+                        IF max_id = 0 THEN
+                            EXECUTE 'ALTER SEQUENCE ' || seq_name || ' RESTART WITH 1';
+                        ELSE
+                            EXECUTE 'SELECT setval(''' || seq_name || ''', ' || max_id || ', true)';
+                        END IF;
+                    END IF;
+                EXCEPTION WHEN OTHERS THEN
+                    NULL;
+                END $$;
+            """, fetch=False)
+        except Exception:
+            pass
 
 def save_uploaded_file(uploaded_file):
     """

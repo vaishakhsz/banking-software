@@ -6,3 +6,4 @@ customer_uploads/
 *.pyc
 .DS_Store
 .env
+EXTRACTED_FROM_BYTEA_*.pdf

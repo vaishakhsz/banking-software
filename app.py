@@ -23,7 +23,7 @@ from database import (
     get_account_balance_from_jv, get_cash_balance, get_bank_balance,
     generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
     get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
-    get_connection, release_connection
+    get_connection, release_connection, sync_db_sequences
 )
 import pdf_generator
 
@@ -1355,6 +1355,7 @@ def render_cash_book():
                         run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
                 
                 run_query("DELETE FROM cash_book WHERE id=?", (del_id,), fetch=False)
+                sync_db_sequences()
                 st.warning(f"Cash Entry ID {del_id} and related ledger entries deleted successfully.")
                 time.sleep(0.1)
                 st.rerun()
@@ -1589,6 +1590,7 @@ def render_bank_book():
                         run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
                 
                 run_query("DELETE FROM bank_book WHERE id=?", (del_id,), fetch=False)
+                sync_db_sequences()
                 st.warning(f"Bank Entry ID {del_id} and related ledger entries deleted successfully.")
                 time.sleep(0.1)
                 st.rerun()

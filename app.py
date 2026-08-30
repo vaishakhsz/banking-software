@@ -1896,22 +1896,22 @@ def render_journal_vouchers():
 def render_admin_editor():
     st.title("🛠️ Universal Database Record Editor")
     if USING_SUPABASE:
-        tables_res = run_query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name NOT LIKE 'pg_%'")
+        tables_res = run_query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name NOT LIKE 'pg_%' ORDER BY table_name")
     else:
-        tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
     
     table_list = [t[0] for t in tables_res] if tables_res else []
     selected_table = st.selectbox("Select Database Table to Manage", table_list)
     
     if selected_table:
         if USING_SUPABASE:
-            cols = run_query("SELECT column_name FROM information_schema.columns WHERE table_name = ?", (selected_table,))
+            cols = run_query("SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = 'public' ORDER BY ordinal_position", (selected_table,))
             col_names = [c[0] for c in cols] if cols else []
             pk_res = run_query("""
                 SELECT kcu.column_name
                 FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-                WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = ?
+                JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+                WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = ? AND tc.table_schema = 'public'
             """, (selected_table,))
             pk_col = pk_res[0][0] if pk_res else (col_names[0] if col_names else None)
         else:
@@ -1922,7 +1922,18 @@ def render_admin_editor():
         rows = run_query(f"SELECT * FROM {selected_table}")
         
         if rows:
-            df_table = pd.DataFrame(rows, columns=col_names)
+            # Clean display for dataframe (format binary data nicely)
+            clean_rows = []
+            for r in rows:
+                clean_r = []
+                for val in r:
+                    if isinstance(val, (bytes, memoryview, bytearray)):
+                        clean_r.append(f"<Binary Data ({len(val)} bytes)>")
+                    else:
+                        clean_r.append(val)
+                clean_rows.append(clean_r)
+                
+            df_table = pd.DataFrame(clean_rows, columns=col_names[:len(clean_rows[0])] if clean_rows else col_names)
             st.dataframe(df_table, use_container_width=True)
             
             action = st.radio("Select Action", ["Delete Record", "Edit Record"], horizontal=True)
@@ -1934,7 +1945,8 @@ def render_admin_editor():
                     except ValueError:
                         val = record_id_to_del
                     run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
-                    st.success("Record deleted!")
+                    sync_db_sequences()
+                    st.success("Record deleted and sequences synced!")
                     time.sleep(0.1)
                     st.rerun()
             elif action == "Edit Record":
@@ -1945,26 +1957,43 @@ def render_admin_editor():
                     except ValueError:
                         edit_val = record_id_to_edit
                     target_row = run_query(f"SELECT * FROM {selected_table} WHERE {pk_col} = ?", (edit_val,))
-                    if target_row:
+                    if target_row and len(target_row) > 0:
                         row_data = target_row[0]
                         with st.form("admin_edit_form"):
                             updated_values = []
-                            for idx, col_name in enumerate(col_names):
+                            max_idx = min(len(col_names), len(row_data))
+                            for idx in range(max_idx):
+                                col_name = col_names[idx]
                                 current_val = row_data[idx]
                                 if col_name == pk_col:
-                                    st.text(f"{col_name} (Read Only): {current_val}")
+                                    st.text(f"{col_name} (Primary Key - Read Only): {current_val}")
+                                    updated_values.append(current_val)
+                                elif isinstance(current_val, (bytes, memoryview, bytearray)):
+                                    st.info(f"📄 {col_name} (Binary Document/Photo): {len(current_val)} bytes stored")
                                     updated_values.append(current_val)
                                 else:
                                     new_input = st.text_input(f"Field: {col_name}", value="" if current_val is None else str(current_val))
                                     updated_values.append(new_input)
                             
-                            if st.form_submit_button("Save Changes"):
-                                set_clauses = [f"{col_names[i]} = ?" for i in range(len(col_names)) if col_names[i] != pk_col]
-                                update_vals = [updated_values[i] for i in range(len(col_names)) if col_names[i] != pk_col] + [edit_val]
-                                run_query(f"UPDATE {selected_table} SET {', '.join(set_clauses)} WHERE {pk_col} = ?", tuple(update_vals), fetch=False)
+                            if st.form_submit_button("Save Changes", use_container_width=True):
+                                valid_cols = []
+                                valid_vals = []
+                                for i in range(len(updated_values)):
+                                    if col_names[i] != pk_col:
+                                        valid_cols.append(f"{col_names[i]} = ?")
+                                        v = updated_values[i]
+                                        if isinstance(v, (bytes, memoryview, bytearray)) and USING_SUPABASE:
+                                            import psycopg2
+                                            v = psycopg2.Binary(bytes(v))
+                                        valid_vals.append(v)
+                                valid_vals.append(edit_val)
+                                run_query(f"UPDATE {selected_table} SET {', '.join(valid_cols)} WHERE {pk_col} = ?", tuple(valid_vals), fetch=False)
+                                sync_db_sequences()
                                 st.success("Record updated successfully!")
                                 time.sleep(0.1)
                                 st.rerun()
+                    else:
+                        st.info(f"No record found with {pk_col} = {edit_val}")
 
 def render_financial_statements():
     st.title("⚖️ Financial Statements")

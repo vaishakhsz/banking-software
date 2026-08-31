@@ -9,4 +9,7 @@ customer_uploads/
 EXTRACTED_FROM_BYTEA_*.pdf
 .streamlit/
 *.xlsx
+*.xls
 *.csv
+UBI BANK BOOK STATEMENTS/
+

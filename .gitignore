@@ -7,3 +7,6 @@ customer_uploads/
 .DS_Store
 .env
 EXTRACTED_FROM_BYTEA_*.pdf
+.streamlit/
+*.xlsx
+*.csv

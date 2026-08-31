@@ -64,12 +64,24 @@ def create_pdf_report(title, df):
             cleaned_row = []
             for col_idx, val in enumerate(row):
                 col_name = columns[col_idx].lower()
-                val_str = str(val) if val is not None else ""
+                
+                # Format float/numeric amounts nicely with commas
+                if isinstance(val, (int, float)):
+                    if any(k in col_name for k in ['debit', 'credit', 'balance', 'amount', 'total', 'interest', 'rs', '₹']):
+                        if val == 0:
+                            val_str = "0.00"
+                        else:
+                            val_str = f"{val:,.2f}"
+                    else:
+                        val_str = str(val)
+                else:
+                    val_str = str(val) if val is not None else ""
+                
                 val_str = val_str.replace('₹', 'Rs.')
                 ascii_val = val_str.encode('ascii', 'ignore').decode('ascii')
                 
                 # Wrap long text columns in Paragraph to enable auto line-wrapping in ReportLab
-                if col_name in ['particulars/narration', 'particulars', 'narration', 'description', 'name', 'account name']:
+                if col_name in ['particulars/narration', 'particulars', 'narration', 'description', 'name', 'account name', 'account head', 'head of account']:
                     cell_text_style = ParagraphStyle(
                         f'CellText_{col_idx}',
                         parent=styles['Normal'],
@@ -82,56 +94,73 @@ def create_pdf_report(title, df):
                     cleaned_row.append(ascii_val)
             cleaned_data.append(cleaned_row)
         
-        # Calculate column widths based on content
+        # Calculate optimal column widths based on column names
+        available_width = 262  # mm total printable width for landscape A4
         num_cols = len(columns)
-        available_width = 260  # mm
-        min_col_width = 15  # mm
-        max_col_width = 80  # mm
         
-        if num_cols <= 4:
-            col_widths = [available_width / num_cols] * num_cols
-        else:
-            col_widths = []
-            for i, col in enumerate(columns):
-                col_lower = col.lower()
-                if col_lower in ['name', 'particulars', 'narration', 'description', 'account name', 'particulars/narration']:
-                    col_widths.append(min(80, available_width * 0.25))
-                elif col_lower in ['account no', 'voucher no', 'tx id', 'id', 'voucher id']:
-                    col_widths.append(min(45, available_width * 0.15))
-                else:
-                    col_widths.append(min(50, available_width * 0.12))
-            
-            total = sum(col_widths)
-            if total < available_width:
-                remainder = (available_width - total) / num_cols
-                col_widths = [w + remainder for w in col_widths]
-            elif total > available_width:
-                scale = available_width / total
-                col_widths = [w * scale for w in col_widths]
+        # Specific optimized widths for standard 7-8 column financial books
+        col_widths = []
+        for col in columns:
+            c_low = col.lower()
+            if 'date' in c_low:
+                col_widths.append(22)
+            elif any(k in c_low for k in ['voucher', 'tx id', 'id', 'vr no']):
+                col_widths.append(28)
+            elif 'account head' in c_low or 'head of account' in c_low:
+                col_widths.append(48)
+            elif 'particulars' in c_low or 'description' in c_low:
+                col_widths.append(60)
+            elif any(k in c_low for k in ['debit', 'credit', 'balance', 'amount', 'total', 'interest', 'rs', '₹']):
+                col_widths.append(24)
+            elif 'narration' in c_low:
+                col_widths.append(32)
+            elif 'bank' in c_low:
+                col_widths.append(30)
+            else:
+                col_widths.append(30)
+                
+        total_w = sum(col_widths)
+        if total_w != available_width:
+            scale = available_width / total_w
+            col_widths = [w * scale for w in col_widths]
         
         col_widths_pt = [w * mm for w in col_widths]
         
         table_data = [columns] + cleaned_data
         t = Table(table_data, colWidths=col_widths_pt, repeatRows=1)
         
-        t.setStyle(TableStyle([
+        # Build precise alignment and styling rules
+        table_styles = [
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-            ('TOPPADDING', (0, 0), (-1, 0), 6),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f9f9f9')),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('FONTSIZE', (0, 0), (-1, 0), 7.5),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+            ('TOPPADDING', (0, 0), (-1, 0), 5),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d0d5dd')),
             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
             ('FONTSIZE', (0, 1), (-1, -1), 7),
-            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('PADDING', (0, 0), (-1, -1), 3),
-            ('WORDWRAP', (0, 0), (-1, -1), 'LTR'),
-        ]))
+            ('TOPPADDING', (0, 1), (-1, -1), 3.5),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 3.5),
+        ]
         
+        # Alternating row background colors
+        for r_idx in range(1, len(table_data)):
+            bg = colors.HexColor('#ffffff') if r_idx % 2 == 1 else colors.HexColor('#f8fafd')
+            table_styles.append(('BACKGROUND', (0, r_idx), (-1, r_idx), bg))
+            
+        # Precise Column Alignments (Numbers Right, IDs/Dates Center, Text Left)
+        for c_idx, col in enumerate(columns):
+            c_low = col.lower()
+            if any(k in c_low for k in ['debit', 'credit', 'balance', 'amount', 'total', 'interest', 'rs', '₹', 'rate', 'price']):
+                table_styles.append(('ALIGN', (c_idx, 0), (c_idx, -1), 'RIGHT'))
+            elif any(k in c_low for k in ['date', 'voucher', 'tx id', 'id', 'vr no', 'status', 'code', 'account no']):
+                table_styles.append(('ALIGN', (c_idx, 0), (c_idx, -1), 'CENTER'))
+            else:
+                table_styles.append(('ALIGN', (c_idx, 0), (c_idx, -1), 'LEFT'))
+        
+        t.setStyle(TableStyle(table_styles))
         elements.append(t)
         
         elements.append(Spacer(1, 10))

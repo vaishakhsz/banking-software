@@ -1334,13 +1334,16 @@ def render_cash_book():
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_view_to", format="DD-MM-YYYY")
         
         entries = run_query("""
-            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration 
-            FROM cash_book 
-            WHERE date BETWEEN ? AND ? 
-            ORDER BY id DESC
+            SELECT cb.id, cb.date, cb.voucher_no, 
+                   COALESCE(co.account_code || ' - ' || co.account_name, cb.account_code) as account_head,
+                   cb.particulars, cb.debit_amount, cb.credit_amount, cb.balance, cb.narration 
+            FROM cash_book cb
+            LEFT JOIN chart_of_accounts co ON cb.account_code = co.account_code
+            WHERE cb.date BETWEEN ? AND ? 
+            ORDER BY cb.id DESC
         """, (str(from_date), str(to_date)))
         if entries:
-            df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Account Code", "Narration"])
+            df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
             st.dataframe(format_df_dates(df_cash), use_container_width=True)
             
             del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
@@ -1409,13 +1412,16 @@ def render_cash_book():
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_print_to", format="DD-MM-YYYY")
         
         entries = run_query("""
-            SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration 
-            FROM cash_book 
-            WHERE date BETWEEN ? AND ? 
-            ORDER BY id ASC
+            SELECT cb.date, cb.voucher_no, 
+                   COALESCE(co.account_code || ' - ' || co.account_name, cb.account_code) as account_head,
+                   cb.particulars, cb.debit_amount, cb.credit_amount, cb.balance, cb.narration 
+            FROM cash_book cb
+            LEFT JOIN chart_of_accounts co ON cb.account_code = co.account_code
+            WHERE cb.date BETWEEN ? AND ? 
+            ORDER BY cb.id ASC
         """, (str(from_date), str(to_date)))
         if entries:
-            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
+            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             
@@ -1569,13 +1575,16 @@ def render_bank_book():
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to", format="DD-MM-YYYY")
         
         entries = run_query("""
-            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration 
-            FROM bank_book 
-            WHERE date BETWEEN ? AND ? 
-            ORDER BY id DESC
+            SELECT bb.id, bb.date, bb.voucher_no, 
+                   COALESCE(co.account_code || ' - ' || co.account_name, bb.account_code) as account_head,
+                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
+            FROM bank_book bb
+            LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
+            WHERE bb.date BETWEEN ? AND ? 
+            ORDER BY bb.id DESC
         """, (str(from_date), str(to_date)))
         if entries:
-            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
+            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
@@ -1674,13 +1683,16 @@ def render_bank_book():
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to", format="DD-MM-YYYY")
         
         entries = run_query("""
-            SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration 
-            FROM bank_book 
-            WHERE date BETWEEN ? AND ? 
-            ORDER BY id ASC
+            SELECT bb.date, bb.voucher_no, 
+                   COALESCE(co.account_code || ' - ' || co.account_name, bb.account_code) as account_head,
+                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
+            FROM bank_book bb
+            LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
+            WHERE bb.date BETWEEN ? AND ? 
+            ORDER BY bb.id ASC
         """, (str(from_date), str(to_date)))
         if entries:
-            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             if st.button("📄 Prepare Bank Book PDF", key="btn_prep_bb_pdf", use_container_width=True):

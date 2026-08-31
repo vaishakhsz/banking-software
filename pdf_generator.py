@@ -174,6 +174,76 @@ def create_pdf_report(title, df):
     buffer.seek(0)
     return buffer.getvalue()
 
+def create_csv_report(title, df, from_date=None, to_date=None):
+    """
+    Exports a professional CSV report matching the PDF header, title, date range,
+    and structured columns with a totals summary row.
+    """
+    import csv
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    
+    # 1. Company Header (matching PDF)
+    writer.writerow(["AARSHA NIDHI LIMITED"])
+    writer.writerow(["6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"])
+    writer.writerow(["CIN: U65990KL22021PLN069978 | Ph: 0471-2994535"])
+    
+    # 2. Report Title & Date Scope
+    date_str = f"From: {from_date} To: {to_date}" if from_date and to_date else ""
+    writer.writerow([f"{title.upper()} - {date_str}" if date_str else title.upper()])
+    writer.writerow([f"Generated on: {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}"])
+    writer.writerow([])  # Blank line separator
+    
+    if not df.empty:
+        # 3. Columns
+        cols = list(df.columns)
+        writer.writerow(cols)
+        
+        # 4. Rows with clean number formatting
+        total_dr = 0.0
+        total_cr = 0.0
+        
+        for row in df.values:
+            cleaned_row = []
+            for col_idx, val in enumerate(row):
+                col_name = cols[col_idx].lower()
+                if isinstance(val, (int, float)):
+                    if any(k in col_name for k in ['debit', 'credit', 'balance', 'amount', 'total', 'interest', 'rs', '₹']):
+                        if 'debit' in col_name:
+                            total_dr += float(val)
+                        elif 'credit' in col_name:
+                            total_cr += float(val)
+                        cleaned_row.append(f"{val:.2f}")
+                    else:
+                        cleaned_row.append(str(val))
+                else:
+                    cleaned_row.append("" if val is None else str(val))
+            writer.writerow(cleaned_row)
+            
+        # 5. Summary Footer Row
+        summary_row = []
+        for c_idx, col in enumerate(cols):
+            c_name = col.lower()
+            if c_idx == 0:
+                summary_row.append("TOTALS")
+            elif 'debit' in c_name:
+                summary_row.append(f"{total_dr:.2f}")
+            elif 'credit' in c_name:
+                summary_row.append(f"{total_cr:.2f}")
+            elif 'balance' in c_name and len(df) > 0:
+                last_bal = df.iloc[-1][col]
+                summary_row.append(f"{float(last_bal):.2f}" if isinstance(last_bal, (int, float)) else str(last_bal))
+            elif c_idx == 2 or (c_idx == 3 and len(cols) > 4):
+                summary_row.append(f"Total Dr: Rs.{total_dr:,.2f} | Total Cr: Rs.{total_cr:,.2f}")
+            else:
+                summary_row.append("")
+        writer.writerow([])
+        writer.writerow(summary_row)
+    else:
+        writer.writerow(["No records found for this report."])
+        
+    return buffer.getvalue().encode('utf-8-sig')
+
 def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A5, 

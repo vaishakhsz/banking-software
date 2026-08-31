@@ -1427,7 +1427,7 @@ def render_cash_book():
             
             col_dl1, col_dl2 = st.columns(2)
             with col_dl1:
-                csv_bytes = df_print_formatted.to_csv(index=False).encode('utf-8')
+                csv_bytes = pdf_generator.create_csv_report("Cash Book Report", df_print_formatted, from_date, to_date)
                 st.download_button(
                     "📥 Download Cash Book CSV",
                     data=csv_bytes,
@@ -1710,7 +1710,7 @@ def render_bank_book():
             
             col_dl1, col_dl2 = st.columns(2)
             with col_dl1:
-                csv_bytes = df_print_formatted.to_csv(index=False).encode('utf-8')
+                csv_bytes = pdf_generator.create_csv_report("Bank Book Report", df_print_formatted, from_date, to_date)
                 st.download_button(
                     "📥 Download Bank Book CSV",
                     data=csv_bytes,

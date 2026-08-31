@@ -1425,23 +1425,33 @@ def render_cash_book():
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             
-            col_dl1, col_dl2 = st.columns(2)
+            col_dl1, col_dl2, col_dl3 = st.columns(3)
             with col_dl1:
+                excel_bytes = pdf_generator.create_excel_report("Cash Book Report", df_print, from_date, to_date)
+                st.download_button(
+                    "📊 Download Excel (.xlsx)",
+                    data=excel_bytes,
+                    file_name=f"cash_book_{from_date}_{to_date}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_cb_excel"
+                )
+            with col_dl2:
                 csv_bytes = pdf_generator.create_csv_report("Cash Book Report", df_print_formatted, from_date, to_date)
                 st.download_button(
-                    "📥 Download Cash Book CSV",
+                    "📥 Download CSV (.csv)",
                     data=csv_bytes,
                     file_name=f"cash_book_{from_date}_{to_date}.csv",
                     mime="text/csv",
                     use_container_width=True,
                     key="btn_cb_csv"
                 )
-            with col_dl2:
-                if st.button("📄 Prepare Cash Book PDF", key="btn_prep_cb_pdf", use_container_width=True):
+            with col_dl3:
+                if st.button("📄 Prepare PDF", key="btn_prep_cb_pdf", use_container_width=True):
                     with st.spinner("Generating PDF report..."):
                         st.session_state.cb_pdf_bytes = pdf_generator.create_pdf_report("Cash Book Report", df_print_formatted)
                 if "cb_pdf_bytes" in st.session_state and st.session_state.cb_pdf_bytes:
-                    st.download_button("📥 Click here to Download PDF", st.session_state.cb_pdf_bytes, f"cash_book_{from_date}_{to_date}.pdf", "application/pdf", use_container_width=True, key="btn_cb_pdf")
+                    st.download_button("📥 Click to Download PDF", st.session_state.cb_pdf_bytes, f"cash_book_{from_date}_{to_date}.pdf", "application/pdf", use_container_width=True, key="btn_cb_pdf")
         else:
             st.info("No cash book entries found in this date range.")
 
@@ -1708,23 +1718,33 @@ def render_bank_book():
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             
-            col_dl1, col_dl2 = st.columns(2)
+            col_dl1, col_dl2, col_dl3 = st.columns(3)
             with col_dl1:
+                excel_bytes = pdf_generator.create_excel_report("Bank Book Report", df_print, from_date, to_date)
+                st.download_button(
+                    "📊 Download Excel (.xlsx)",
+                    data=excel_bytes,
+                    file_name=f"bank_book_{from_date}_{to_date}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_bb_excel"
+                )
+            with col_dl2:
                 csv_bytes = pdf_generator.create_csv_report("Bank Book Report", df_print_formatted, from_date, to_date)
                 st.download_button(
-                    "📥 Download Bank Book CSV",
+                    "📥 Download CSV (.csv)",
                     data=csv_bytes,
                     file_name=f"bank_book_{from_date}_{to_date}.csv",
                     mime="text/csv",
                     use_container_width=True,
                     key="btn_bb_csv"
                 )
-            with col_dl2:
-                if st.button("📄 Prepare Bank Book PDF", key="btn_prep_bb_pdf", use_container_width=True):
+            with col_dl3:
+                if st.button("📄 Prepare PDF", key="btn_prep_bb_pdf", use_container_width=True):
                     with st.spinner("Generating PDF report..."):
                         st.session_state.bb_pdf_bytes = pdf_generator.create_pdf_report("Bank Book Report", df_print_formatted)
                 if "bb_pdf_bytes" in st.session_state and st.session_state.bb_pdf_bytes:
-                    st.download_button("📥 Click here to Download PDF", st.session_state.bb_pdf_bytes, f"bank_book_{from_date}_{to_date}.pdf", "application/pdf", use_container_width=True, key="btn_bb_pdf")
+                    st.download_button("📥 Click to Download PDF", st.session_state.bb_pdf_bytes, f"bank_book_{from_date}_{to_date}.pdf", "application/pdf", use_container_width=True, key="btn_bb_pdf")
         else:
             st.info("No bank entries found in this date range.")
 

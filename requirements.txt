@@ -6,5 +6,5 @@ pytz
 python-dotenv
 psycopg2-binary
 Pillow
-
-
+openpyxl
+xlrd

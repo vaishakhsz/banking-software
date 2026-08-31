@@ -254,9 +254,13 @@ def create_excel_report(title, df, from_date=None, to_date=None):
     - Currency formatting (#,##0.00) and column alignments
     - Bold summary footer with double underline
     """
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        # Fallback to CSV bytes if openpyxl is still installing on cloud server
+        return create_csv_report(title, df, from_date, to_date)
 
     wb = openpyxl.Workbook()
     ws = wb.active

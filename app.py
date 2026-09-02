@@ -153,7 +153,7 @@ def render_dashboard():
 
 def render_customer_management():
     st.title("👥 Customer Management Module")
-    tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer", "📖 Customer Passbook & Loan Statement"])
     
     with tab1:
         st.subheader("New Customer Registration")
@@ -403,6 +403,39 @@ def render_customer_management():
                         st.success("Signature document saved directly into database!")
                         time.sleep(0.1)
                         st.rerun()
+
+    with tab4:
+        st.subheader("📖 Customer Passbook & Loan Statement")
+        all_custs = run_query("SELECT id, name, COALESCE(account_no, 'N/A') FROM customers ORDER BY name ASC")
+        if all_custs:
+            cust_options = {f"{r[2]} - {r[1]} (ID: {r[0]})": r[0] for r in all_custs}
+            selected_label = st.selectbox("Select Customer to View Passbook / Statement", list(cust_options.keys()), key="sel_passbook_cust")
+            selected_id = cust_options[selected_label]
+            
+            c_info = run_query("SELECT name, account_no, phone, kyc_status FROM customers WHERE id = ?", (selected_id,))
+            acc_info = run_query("SELECT id, account_number, account_type, balance FROM accounts WHERE customer_id = ?", (selected_id,))
+            
+            if c_info and acc_info:
+                c_name, c_acc, c_phone, c_kyc = c_info[0]
+                acc_id, a_num, a_type, cur_bal = acc_info[0]
+                
+                c_m1, c_m2, c_m3 = st.columns(3)
+                c_m1.metric("Customer Name", c_name)
+                c_m2.metric("Account Number", c_acc or a_num)
+                c_m3.metric("Outstanding Balance Due", f"₹{cur_bal:,.2f}")
+                
+                tx_rows = run_query("SELECT date, type, amount, balance_after FROM transactions WHERE account_id = ? ORDER BY id ASC", (acc_id,))
+                if tx_rows:
+                    df_tx = pd.DataFrame(tx_rows, columns=["Date", "Transaction Type", "Amount (₹)", "Balance After (₹)"])
+                    st.dataframe(format_df_dates(df_tx), use_container_width=True)
+                    
+                    col_csv, col_pdf = st.columns(2)
+                    col_csv.download_button("📥 Download Passbook CSV", df_tx.to_csv(index=False).encode('utf-8'), f"passbook_{c_acc}.csv", "text/csv", use_container_width=True)
+                    col_pdf.download_button("📥 Download Passbook PDF", pdf_generator.create_pdf_report(f"Passbook Statement - {c_name} ({c_acc})", df_tx), f"passbook_{c_acc}.pdf", "application/pdf", use_container_width=True)
+                else:
+                    st.info("No transaction history found for this customer account.")
+            else:
+                st.info("No active loan/deposit account linked to this customer yet.")
 
 def render_kyc():
     st.title("✅ KYC Verification Panel")

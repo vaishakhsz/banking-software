@@ -1543,11 +1543,7 @@ def render_bank_book():
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book", "🖨️ Print BB Vouchers"])
     
     with tab1:
-        bank_accounts = [("AST-102", "Union Bank of India"), ("AST-103", "State Bank of India")]
-        bank_dict = {f"{b[0]} - {b[1]}": (b[0], b[1]) for b in bank_accounts}
-        selected_bank_str = st.selectbox("Select Bank", list(bank_dict.keys()), key="bank_select")
-        bank_code, bank_name = bank_dict[selected_bank_str]
-        
+        bank_code, bank_name = "AST-102", "Union Bank of India"
         current_balance = get_account_balance_from_jv(bank_code)
         st.info(f"🏦 **{bank_name} Current Balance:** ₹{current_balance:,.2f}")
         
@@ -1601,11 +1597,6 @@ def render_bank_book():
                             if current_union < amount:
                                 st.error(f"❌ Insufficient Union Bank Balance to transfer! Available: ₹{current_union:,.2f}")
                                 st.stop()
-                        elif account_code == 'AST-103':
-                            current_sbi = get_bank_balance("State Bank of India")
-                            if current_sbi < amount:
-                                st.error(f"❌ Insufficient SBI Balance to transfer! Available: ₹{current_sbi:,.2f}")
-                                st.stop()
                                 
                     from database import record_bank_book_transaction
                     success, res_val = record_bank_book_transaction(entry_type, amount, bank_name, bank_code, account_code, particulars, narration, tx_date)
@@ -1617,8 +1608,7 @@ def render_bank_book():
                         st.error(f"❌ Failed to record bank entry: {res_val}")
 
     with tab2:
-        col_b, col_date1, col_date2 = st.columns([1.5, 1, 1])
-        filter_bank = col_b.selectbox("Filter by Bank", ["All Banks", "Union Bank of India", "State Bank of India"], key="bb_view_bank_sel")
+        col_date1, col_date2 = st.columns(2)
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_view_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to", format="DD-MM-YYYY")
         
@@ -1732,8 +1722,7 @@ def render_bank_book():
                     st.rerun()
 
     with tab4:
-        col_b, col_date1, col_date2 = st.columns([1.5, 1, 1])
-        filter_bank = col_b.selectbox("Select Bank for Report", ["All Banks", "Union Bank of India", "State Bank of India"], key="bb_print_bank_sel")
+        col_date1, col_date2 = st.columns(2)
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_print_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to", format="DD-MM-YYYY")
         
@@ -1751,14 +1740,9 @@ def render_bank_book():
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
             WHERE bb.date BETWEEN ? AND ?
+            ORDER BY bb.id ASC
         """
-        p_params = [str(from_date), str(to_date)]
-        if filter_bank != "All Banks":
-            bb_print_query += " AND bb.bank_name = ?"
-            p_params.append(filter_bank)
-        bb_print_query += " ORDER BY bb.id ASC"
-        
-        entries = run_query(bb_print_query, tuple(p_params))
+        entries = run_query(bb_print_query, (str(from_date), str(to_date)))
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             df_print_formatted = format_df_dates(df_print)

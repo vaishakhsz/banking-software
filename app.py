@@ -1538,6 +1538,51 @@ def render_cash_book():
                             use_container_width=True
                         )
 
+def extract_party_details(particulars, acc_code, acc_name, cust_list):
+    if not particulars:
+        return 'N/A'
+    p = str(particulars).strip()
+    
+    # 1. Match Registered Customers
+    for cid, cname, cacc in cust_list:
+        if cacc and len(str(cacc)) >= 4 and str(cacc) in p:
+            return f"{cname} (Acc: {cacc})"
+        c_parts = [part.strip() for part in re.split(r'[\s\.]+', cname) if len(part.strip()) >= 3 and part.upper() not in ('THE', 'AND', 'DOCTOR', 'FOR')]
+        for cp in c_parts:
+            if re.search(r'\b' + re.escape(cp) + r'\b', p, re.IGNORECASE):
+                acc_label = f" (Acc: {cacc})" if cacc else ""
+                return f"{cname}{acc_label}"
+                
+    # 2. Staff Salary
+    staff_names = ['SREEKALA J', 'SASIKUMARAN A', 'BINU B', 'KEERTHI R', 'SREEJITH RADHAKRISHNAN', 'LEKSHMI SK', 'SREEKALA', 'SASIKUMARAN', 'SREEJITH']
+    for sn in staff_names:
+        if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
+            return f"Staff Salary: {sn}"
+            
+    # 3. Bank Charges / Processing
+    if any(k in p.lower() for k in ['charge', 'sms', 'pord', 'gst', 'consolidated chg', 'atm']):
+        return "Union Bank Processing / Service Charges"
+        
+    # 4. Cash Contra
+    if 'cash' in p.lower() or 'contra' in p.lower() or acc_code == 'AST-101':
+        return "Cash Drawer (Office Contra)"
+        
+    # 5. Extract UPI Member Name
+    upi_match = re.search(r'/CR/([^/]+)/', p, re.IGNORECASE)
+    if upi_match:
+        name_clean = upi_match.group(1).strip()
+        if name_clean and len(name_clean) > 1:
+            return f"Member: {name_clean}"
+            
+    # 6. Extract NEFT Party Name
+    neft_match = re.search(r'NEFT(?:O|-|:)?\s*([A-Za-z\s\.]+?)(?:\s+\d+|\s+HDFC|\s+SBIN|\s+CNRB|$)', p, re.IGNORECASE)
+    if neft_match:
+        n_clean = neft_match.group(1).strip()
+        if n_clean and len(n_clean) > 2:
+            return f"Party: {n_clean}"
+            
+    return p
+
 def render_bank_book():
     st.title("🏦 Bank Book Entries")
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book", "🖨️ Print BB Vouchers"])
@@ -1622,20 +1667,21 @@ def render_bank_book():
                        WHEN bb.debit_amount > 0 THEN 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
                        ELSE bb.bank_name
                    END as credit_side,
-                   COALESCE(c.name || ' (Acc: ' || c.account_no || ')', bb.particulars) as customer_party,
-                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
+                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration,
+                   bb.account_code, co.account_name 
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
-            LEFT JOIN customers c ON (
-                (c.account_no IS NOT NULL AND c.account_no != '' AND POSITION(c.account_no IN bb.particulars) > 0)
-                OR (POSITION(UPPER(c.name) IN UPPER(bb.particulars)) > 0)
-            )
             WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id DESC
         """
         entries = run_query(bb_query, (str(from_date), str(to_date)))
         if entries:
-            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+            cust_list = run_query("SELECT id, name, COALESCE(account_no, '') FROM customers") or []
+            formatted_entries = []
+            for r in entries:
+                party = extract_party_details(r[5], r[11], r[12], cust_list)
+                formatted_entries.append((r[0], r[1], r[2], r[3], r[4], party, r[5], r[6], r[7], r[8], r[9], r[10]))
+            df_bank = pd.DataFrame(formatted_entries, columns=["ID", "Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
@@ -1745,20 +1791,21 @@ def render_bank_book():
                        WHEN bb.debit_amount > 0 THEN 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
                        ELSE bb.bank_name
                    END as credit_side,
-                   COALESCE(c.name || ' (Acc: ' || c.account_no || ')', bb.particulars) as customer_party,
-                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
+                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration,
+                   bb.account_code, co.account_name 
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
-            LEFT JOIN customers c ON (
-                (c.account_no IS NOT NULL AND c.account_no != '' AND POSITION(c.account_no IN bb.particulars) > 0)
-                OR (POSITION(UPPER(c.name) IN UPPER(bb.particulars)) > 0)
-            )
             WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id ASC
         """
         entries = run_query(bb_print_query, (str(from_date), str(to_date)))
         if entries:
-            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+            cust_list = run_query("SELECT id, name, COALESCE(account_no, '') FROM customers") or []
+            formatted_print = []
+            for r in entries:
+                party = extract_party_details(r[4], r[10], r[11], cust_list)
+                formatted_print.append((r[0], r[1], r[2], r[3], party, r[4], r[5], r[6], r[7], r[8], r[9]))
+            df_print = pd.DataFrame(formatted_print, columns=["Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             

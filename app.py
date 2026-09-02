@@ -161,56 +161,47 @@ def render_customer_management():
         with st.form("reg_form"):
             col1, col2 = st.columns(2)
             name = col1.text_input("Full Name *")
-            dob = col2.date_input("Date of Birth *", value=date(1995, 1, 1), min_value=date(1900, 1, 1), max_value=date.today(), format="DD-MM-YYYY")
-            gender = col1.selectbox("Gender", ["Male", "Female", "Other"])
-            email = col2.text_input("Email Address")
-            phone = col1.text_input("Phone Number *")
-            street = col2.text_input("Street Address")
-            city = col1.text_input("City")
-            state = col2.text_input("State")
+            acc_no = col2.text_input("Account Number *")
+            dob = col1.date_input("Date of Birth", value=date(1995, 1, 1), min_value=date(1900, 1, 1), max_value=date.today(), format="DD-MM-YYYY")
+            gender = col2.selectbox("Gender", ["Male", "Female", "Other"])
+            email = col1.text_input("Email Address")
+            phone = col2.text_input("Phone Number")
+            street = col1.text_input("Street Address")
+            city = col2.text_input("City")
+            state = col1.text_input("State")
             pincode = col2.text_input("Pincode")
-            pan = col1.text_input("PAN Number *")
+            pan = col1.text_input("PAN Number")
             
             st.markdown("---")
-            adhar_upload = st.file_uploader("Upload Aadhaar Document *", type=["pdf", "png", "jpg", "jpeg"], key="reg_adhar")
-            pan_upload = st.file_uploader("Upload PAN Card Document *", type=["pdf", "png", "jpg", "jpeg"], key="reg_pan")
-            sig_upload = st.file_uploader("Upload Signature *", type=["png", "jpg", "jpeg"], key="reg_sig")
+            adhar_upload = st.file_uploader("Upload Aadhaar Document", type=["pdf", "png", "jpg", "jpeg"], key="reg_adhar")
+            pan_upload = st.file_uploader("Upload PAN Card Document", type=["pdf", "png", "jpg", "jpeg"], key="reg_pan")
+            sig_upload = st.file_uploader("Upload Signature", type=["png", "jpg", "jpeg"], key="reg_sig")
             
             submitted = st.form_submit_button("Register Customer")
             if submitted:
-                if not name or not phone or not pan:
-                    st.error("Please fill in mandatory fields: Full Name, Phone Number, and PAN Number.")
-                elif not adhar_upload or not pan_upload or not sig_upload:
-                    st.error("All document uploads (Aadhaar, PAN Card, and Signature) are mandatory before registering.")
+                if not name or not acc_no:
+                    st.error("Please fill in mandatory fields: Full Name and Account Number.")
                 else:
-                    existing_phone = run_query("SELECT COUNT(*) FROM customers WHERE phone = ?", (phone,))
-                    existing_pan = run_query("SELECT COUNT(*) FROM customers WHERE pan = ?", (pan,))
+                    adh_name, adh_bytes = save_uploaded_file(adhar_upload) if adhar_upload else (None, None)
+                    pan_name, pan_bytes = save_uploaded_file(pan_upload) if pan_upload else (None, None)
+                    sig_name, sig_bytes = save_uploaded_file(sig_upload) if sig_upload else (None, None)
                     
-                    if existing_phone and existing_phone[0][0] > 0:
-                        st.error(f"A customer with phone number {phone} already exists. Duplication is not allowed.")
-                    elif existing_pan and existing_pan[0][0] > 0:
-                        st.error(f"A customer with PAN number {pan} already exists. PAN ID must be unique.")
-                    else:
-                        adh_name, adh_bytes = save_uploaded_file(adhar_upload)
-                        pan_name, pan_bytes = save_uploaded_file(pan_upload)
-                        sig_name, sig_bytes = save_uploaded_file(sig_upload)
-                        
-                        import psycopg2
-                        adh_param = psycopg2.Binary(adh_bytes) if (USING_SUPABASE and adh_bytes) else adh_bytes
-                        pan_param = psycopg2.Binary(pan_bytes) if (USING_SUPABASE and pan_bytes) else pan_bytes
-                        sig_param = psycopg2.Binary(sig_bytes) if (USING_SUPABASE and sig_bytes) else sig_bytes
-                        
-                        run_query("""
-                            INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, adhar_data, pan_file, pan_data, signature_file, signature_data, kyc_status, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-                        """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adh_name, adh_param, pan_name, pan_param, sig_name, sig_param, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        st.success(f"Customer {name} registered successfully!")
+                    import psycopg2
+                    adh_param = psycopg2.Binary(adh_bytes) if (USING_SUPABASE and adh_bytes) else adh_bytes
+                    pan_param = psycopg2.Binary(pan_bytes) if (USING_SUPABASE and pan_bytes) else pan_bytes
+                    sig_param = psycopg2.Binary(sig_bytes) if (USING_SUPABASE and sig_bytes) else sig_bytes
+                    
+                    run_query("""
+                        INSERT INTO customers (name, account_no, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, adhar_data, pan_file, pan_data, signature_file, signature_data, kyc_status, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'VERIFIED', ?)
+                    """, (name, acc_no, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adh_name, adh_param, pan_name, pan_param, sig_name, sig_param, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
+                    st.success(f"Customer {name} (Acc: {acc_no}) registered successfully!")
 
     with tab2:
         st.subheader("Customer Directory & Document Viewer")
-        customers = run_query("SELECT id, name, phone, email, kyc_status, pan, created_at FROM customers")
+        customers = run_query("SELECT id, COALESCE(account_no, 'N/A') as account_no, name, phone, email, kyc_status, pan, created_at FROM customers ORDER BY id ASC")
         if customers:
-            df_cust = pd.DataFrame(customers, columns=["ID", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
+            df_cust = pd.DataFrame(customers, columns=["ID", "Account No", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
             df_cust_formatted = format_df_dates(df_cust)
             st.dataframe(df_cust_formatted, use_container_width=True)
             
@@ -294,24 +285,25 @@ def render_customer_management():
     with tab3:
         st.subheader("Edit Customer Information")
         cust_id_edit = st.number_input("Enter Customer ID to Edit", min_value=1, step=1, key="edit_cust_id")
-        cust_data = run_query("SELECT name, email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
+        cust_data = run_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
         if cust_data:
             c = cust_data[0]
             with st.form("edit_profile_form"):
                 new_name = st.text_input("Name", value=c[0])
-                new_email = st.text_input("Email", value=c[1])
-                new_phone = st.text_input("Phone", value=c[2])
-                new_street = st.text_input("Street", value=c[3])
-                new_city = st.text_input("City", value=c[4])
-                new_state = st.text_input("State", value=c[5])
-                new_pincode = st.text_input("Pincode", value=c[6])
+                new_acc_no = st.text_input("Account Number", value=c[1])
+                new_email = st.text_input("Email", value=c[2])
+                new_phone = st.text_input("Phone", value=c[3])
+                new_street = st.text_input("Street", value=c[4])
+                new_city = st.text_input("City", value=c[5])
+                new_state = st.text_input("State", value=c[6])
+                new_pincode = st.text_input("Pincode", value=c[7])
                 
                 if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
                     run_query("""
                         UPDATE customers 
-                        SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
+                        SET name=?, account_no=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
                         WHERE id=?
-                    """, (new_name, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
+                    """, (new_name, new_acc_no, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
                     st.success("Profile details updated successfully!")
                     time.sleep(0.1)
                     st.rerun()

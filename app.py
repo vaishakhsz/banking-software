@@ -405,37 +405,143 @@ def render_customer_management():
                         st.rerun()
 
     with tab4:
-        st.subheader("📖 Customer Passbook & Loan Statement")
-        all_custs = run_query("SELECT id, name, COALESCE(account_no, 'N/A') FROM customers ORDER BY name ASC")
-        if all_custs:
-            cust_options = {f"{r[2]} - {r[1]} (ID: {r[0]})": r[0] for r in all_custs}
-            selected_label = st.selectbox("Select Customer to View Passbook / Statement", list(cust_options.keys()), key="sel_passbook_cust")
-            selected_id = cust_options[selected_label]
-            
-            c_info = run_query("SELECT name, account_no, phone, kyc_status FROM customers WHERE id = ?", (selected_id,))
-            acc_info = run_query("SELECT id, account_number, account_type, balance FROM accounts WHERE customer_id = ?", (selected_id,))
-            
-            if c_info and acc_info:
-                c_name, c_acc, c_phone, c_kyc = c_info[0]
-                acc_id, a_num, a_type, cur_bal = acc_info[0]
+        st.subheader("📖 Customer Passbook & Loan Ledger")
+        view_mode = st.radio("Choose Passbook View Mode:", ["👤 Individual Member Passbook", "📊 Master Loan Portfolio Summary (All Members)"], horizontal=True, key="passbook_view_mode")
+        
+        if view_mode == "👤 Individual Member Passbook":
+            all_custs = run_query("SELECT id, name, COALESCE(account_no, 'N/A') FROM customers ORDER BY id ASC")
+            if all_custs:
+                cust_options = {f"{r[0]}. {r[1]} (Acc: {r[2]})": r[0] for r in all_custs}
+                selected_label = st.selectbox("Select Customer to View Passbook / Statement", list(cust_options.keys()), key="sel_passbook_cust")
+                selected_id = cust_options[selected_label]
                 
-                c_m1, c_m2, c_m3 = st.columns(3)
-                c_m1.metric("Customer Name", c_name)
-                c_m2.metric("Account Number", c_acc or a_num)
-                c_m3.metric("Outstanding Balance Due", f"₹{cur_bal:,.2f}")
+                c_info = run_query("SELECT name, account_no, phone, kyc_status FROM customers WHERE id = ?", (selected_id,))
+                acc_info = run_query("SELECT id, account_number, account_type, balance FROM accounts WHERE customer_id = ?", (selected_id,))
                 
-                tx_rows = run_query("SELECT date, type, amount, balance_after FROM transactions WHERE account_id = ? ORDER BY id ASC", (acc_id,))
-                if tx_rows:
-                    df_tx = pd.DataFrame(tx_rows, columns=["Date", "Transaction Type", "Amount (₹)", "Balance After (₹)"])
-                    st.dataframe(format_df_dates(df_tx), use_container_width=True)
+                if c_info and acc_info:
+                    c_name, c_acc, c_phone, c_kyc = c_info[0]
+                    acc_id, a_num, a_type, cur_bal = acc_info[0]
                     
-                    col_csv, col_pdf = st.columns(2)
-                    col_csv.download_button("📥 Download Passbook CSV", df_tx.to_csv(index=False).encode('utf-8'), f"passbook_{c_acc}.csv", "text/csv", use_container_width=True)
-                    col_pdf.download_button("📥 Download Passbook PDF", pdf_generator.create_pdf_report(f"Passbook Statement - {c_name} ({c_acc})", df_tx), f"passbook_{c_acc}.pdf", "application/pdf", use_container_width=True)
+                    # Fetch all transactions
+                    tx_rows = run_query("SELECT date, type, amount, balance_after FROM transactions WHERE account_id = ? ORDER BY id ASC", (acc_id,))
+                    
+                    tot_dr = sum(float(r[2]) for r in tx_rows if 'DEBIT' in r[1]) if tx_rows else float(cur_bal)
+                    tot_cr = sum(float(r[2]) for r in tx_rows if 'CREDIT' in r[1]) if tx_rows else 0.0
+                    
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Customer Name", c_name)
+                    m2.metric("Account Number", c_acc or a_num)
+                    m3.metric("Total Repaid (Credit)", f"₹{tot_cr:,.2f}")
+                    m4.metric("Outstanding Balance Due", f"₹{cur_bal:,.2f}")
+                    
+                    if tx_rows:
+                        formatted_tx = []
+                        for idx, tr in enumerate(tx_rows, 1):
+                            dr_val = tr[2] if 'DEBIT' in tr[1] else 0.0
+                            cr_val = tr[2] if 'CREDIT' in tr[1] else 0.0
+                            formatted_tx.append((tr[0], f"TXN-{acc_id}-{idx:03d}", tr[1], dr_val, cr_val, tr[3]))
+                            
+                        df_tx = pd.DataFrame(formatted_tx, columns=["Date", "Voucher / Txn Ref", "Transaction Particulars", "Debit (+₹)", "Credit (-₹)", "Running Due Balance (₹)"])
+                        st.dataframe(format_df_dates(df_tx), use_container_width=True)
+                        
+                        col_dl1, col_dl2, col_dl3 = st.columns(3)
+                        with col_dl1:
+                            excel_bytes = pdf_generator.create_excel_report(f"Customer Passbook - {c_name}", df_tx)
+                            st.download_button(
+                                "📊 Download Passbook Excel (.xlsx)",
+                                data=excel_bytes,
+                                file_name=f"passbook_{c_acc}_{selected_id}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True,
+                                key=f"btn_pb_xl_{selected_id}"
+                            )
+                        with col_dl2:
+                            csv_bytes = pdf_generator.create_csv_report(f"Customer Passbook - {c_name}", df_tx)
+                            st.download_button(
+                                "📥 Download Passbook CSV (.csv)",
+                                data=csv_bytes,
+                                file_name=f"passbook_{c_acc}_{selected_id}.csv",
+                                mime="text/csv",
+                                use_container_width=True,
+                                key=f"btn_pb_csv_{selected_id}"
+                            )
+                        with col_dl3:
+                            pdf_bytes = pdf_generator.create_pdf_report(f"Customer Passbook Statement - {c_name} (Acc: {c_acc})", df_tx)
+                            st.download_button(
+                                "📄 Download Passbook PDF",
+                                data=pdf_bytes,
+                                file_name=f"passbook_{c_acc}_{selected_id}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key=f"btn_pb_pdf_{selected_id}"
+                            )
+                    else:
+                        st.info("No transaction history found for this customer account.")
                 else:
-                    st.info("No transaction history found for this customer account.")
-            else:
-                st.info("No active loan/deposit account linked to this customer yet.")
+                    st.info("No active loan account found for this customer.")
+        else:
+            # Master Loan Portfolio Summary
+            st.markdown("### 📊 Master Customer Loan Portfolio & Passbook Register")
+            master_query = """
+                SELECT 
+                    c.id as member_id,
+                    COALESCE(c.account_no, 'N/A') as account_no,
+                    c.name as customer_name,
+                    COALESCE(c.phone, 'N/A') as contact_no,
+                    COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.account_id = a.id AND t.type LIKE '%DEBIT%'), a.balance) as sanctioned_loan,
+                    COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.account_id = a.id AND t.type LIKE '%CREDIT%'), 0) as total_repaid,
+                    a.balance as current_due_balance,
+                    c.kyc_status as kyc_status
+                FROM customers c
+                LEFT JOIN accounts a ON c.id = a.customer_id
+                ORDER BY c.id ASC
+            """
+            master_rows = run_query(master_query)
+            if master_rows:
+                df_master = pd.DataFrame(master_rows, columns=["ID", "Account No", "Customer Name", "Contact", "Sanctioned Loan (₹)", "Total Repaid (₹)", "Outstanding Due (₹)", "KYC Status"])
+                
+                tot_sanc = df_master["Sanctioned Loan (₹)"].sum()
+                tot_rep = df_master["Total Repaid (₹)"].sum()
+                tot_due = df_master["Outstanding Due (₹)"].sum()
+                
+                sm1, sm2, sm3 = st.columns(3)
+                sm1.metric("Total Sanctioned Loan Portfolio", f"₹{tot_sanc:,.2f}")
+                sm2.metric("Total Repayments Collected", f"₹{tot_rep:,.2f}")
+                sm3.metric("Total Outstanding Due Portfolio", f"₹{tot_due:,.2f}")
+                
+                st.dataframe(format_df_dates(df_master), use_container_width=True)
+                
+                c_dl1, c_dl2, c_dl3 = st.columns(3)
+                with c_dl1:
+                    m_xl = pdf_generator.create_excel_report("Master Loan Portfolio Register", df_master)
+                    st.download_button(
+                        "📊 Download Master Register (.xlsx)",
+                        data=m_xl,
+                        file_name="master_loan_portfolio_register.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="btn_m_xl"
+                    )
+                with c_dl2:
+                    m_csv = pdf_generator.create_csv_report("Master Loan Portfolio Register", df_master)
+                    st.download_button(
+                        "📥 Download Master Register (.csv)",
+                        data=m_csv,
+                        file_name="master_loan_portfolio_register.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="btn_m_csv"
+                    )
+                with c_dl3:
+                    m_pdf = pdf_generator.create_pdf_report("Master Loan Portfolio Register", df_master)
+                    st.download_button(
+                        "📄 Download Master Register PDF",
+                        data=m_pdf,
+                        file_name="master_loan_portfolio_register.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="btn_m_pdf"
+                    )
 
 def render_kyc():
     st.title("✅ KYC Verification Panel")

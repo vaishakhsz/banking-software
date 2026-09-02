@@ -1649,7 +1649,15 @@ def extract_party_details(particulars, acc_code, acc_name, cust_list):
         return 'N/A'
     p = str(particulars).strip()
     
-    # 1. Match Registered Customers
+    # 1. Staff Salary & Benefits (EXP-104 or staff withdrawal names)
+    staff_names = ['SREEKALA J', 'SASIKUMARAN A', 'BINU B', 'KEERTHI R', 'SREEJITH RADHAKRISHNAN', 'LEKSHMI SK', 'SREEKALA', 'SASIKUMARAN', 'SREEJITH', 'BINU', 'KEERTHI']
+    if acc_code == 'EXP-104' or any(k in p.lower() for k in ['salary', 'salaries', 'staff']):
+        for sn in staff_names:
+            if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
+                return f"Staff Salary: {sn}"
+        return "Staff Salaries & Benefits"
+        
+    # 2. Match Registered Customers
     for cid, cname, cacc in cust_list:
         if cacc and len(str(cacc)) >= 4 and str(cacc) in p:
             return f"{cname} (Acc: {cacc})"
@@ -1659,28 +1667,27 @@ def extract_party_details(particulars, acc_code, acc_name, cust_list):
                 acc_label = f" (Acc: {cacc})" if cacc else ""
                 return f"{cname}{acc_label}"
                 
-    # 2. Staff Salary
-    staff_names = ['SREEKALA J', 'SASIKUMARAN A', 'BINU B', 'KEERTHI R', 'SREEJITH RADHAKRISHNAN', 'LEKSHMI SK', 'SREEKALA', 'SASIKUMARAN', 'SREEJITH']
+    # 3. Staff Field Collections / Staff UPI Deposits
     for sn in staff_names:
         if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
-            return f"Staff Salary: {sn}"
+            return f"Staff Field Agent: {sn}"
             
-    # 3. Bank Charges / Processing
+    # 4. Bank Charges / Processing
     if any(k in p.lower() for k in ['charge', 'sms', 'pord', 'gst', 'consolidated chg', 'atm']):
         return "Union Bank Processing / Service Charges"
         
-    # 4. Cash Contra
+    # 5. Cash Contra
     if 'cash' in p.lower() or 'contra' in p.lower() or acc_code == 'AST-101':
         return "Cash Drawer (Office Contra)"
         
-    # 5. Extract UPI Member Name
+    # 6. Extract UPI Member Name
     upi_match = re.search(r'/CR/([^/]+)/', p, re.IGNORECASE)
     if upi_match:
         name_clean = upi_match.group(1).strip()
         if name_clean and len(name_clean) > 1:
             return f"Member: {name_clean}"
             
-    # 6. Extract NEFT Party Name
+    # 7. Extract NEFT Party Name
     neft_match = re.search(r'NEFT(?:O|-|:)?\s*([A-Za-z\s\.]+?)(?:\s+\d+|\s+HDFC|\s+SBIN|\s+CNRB|$)', p, re.IGNORECASE)
     if neft_match:
         n_clean = neft_match.group(1).strip()

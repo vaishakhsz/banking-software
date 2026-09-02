@@ -1359,13 +1359,16 @@ def render_cash_book():
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_view_to", format="DD-MM-YYYY")
         
         entries = run_query("""
-            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration 
-            FROM cash_book 
-            WHERE date BETWEEN ? AND ? 
-            ORDER BY id DESC
+            SELECT cb.id, cb.date, cb.voucher_no, 
+                   COALESCE(co.account_code || ' - ' || co.account_name, cb.account_code) as account_head,
+                   cb.particulars, cb.debit_amount, cb.credit_amount, cb.balance, cb.narration 
+            FROM cash_book cb
+            LEFT JOIN chart_of_accounts co ON cb.account_code = co.account_code
+            WHERE cb.date BETWEEN ? AND ? 
+            ORDER BY cb.id DESC
         """, (str(from_date), str(to_date)))
         if entries:
-            df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Account Code", "Narration"])
+            df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
             st.dataframe(format_df_dates(df_cash), use_container_width=True)
             
             del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
@@ -1380,8 +1383,9 @@ def render_cash_book():
                         run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
                 
                 run_query("DELETE FROM cash_book WHERE id=?", (del_id,), fetch=False)
-                sync_db_sequences("cash_book", "id")
+                sync_db_sequences()
                 st.warning(f"Cash Entry ID {del_id} and related ledger entries deleted successfully.")
+                time.sleep(0.1)
                 st.rerun()
         else:
             st.info("No cash book entries found in this date range.")
@@ -1433,21 +1437,46 @@ def render_cash_book():
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_print_to", format="DD-MM-YYYY")
         
         entries = run_query("""
-            SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration 
-            FROM cash_book 
-            WHERE date BETWEEN ? AND ? 
-            ORDER BY id ASC
+            SELECT cb.date, cb.voucher_no, 
+                   COALESCE(co.account_code || ' - ' || co.account_name, cb.account_code) as account_head,
+                   cb.particulars, cb.debit_amount, cb.credit_amount, cb.balance, cb.narration 
+            FROM cash_book cb
+            LEFT JOIN chart_of_accounts co ON cb.account_code = co.account_code
+            WHERE cb.date BETWEEN ? AND ? 
+            ORDER BY cb.id ASC
         """, (str(from_date), str(to_date)))
         if entries:
-            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
+            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             
-            if st.button("📄 Prepare Cash Book PDF", key="btn_prep_cb_pdf", use_container_width=True):
-                with st.spinner("Generating PDF report..."):
-                    st.session_state.cb_pdf_bytes = pdf_generator.create_pdf_report("Cash Book Report", df_print_formatted)
-            if "cb_pdf_bytes" in st.session_state and st.session_state.cb_pdf_bytes:
-                st.download_button("📥 Click here to Download PDF", st.session_state.cb_pdf_bytes, "cash_book.pdf", "application/pdf", use_container_width=True)
+            col_dl1, col_dl2, col_dl3 = st.columns(3)
+            with col_dl1:
+                excel_bytes = pdf_generator.create_excel_report("Cash Book Report", df_print, from_date, to_date)
+                st.download_button(
+                    "📊 Download Excel (.xlsx)",
+                    data=excel_bytes,
+                    file_name=f"cash_book_{from_date}_{to_date}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_cb_excel"
+                )
+            with col_dl2:
+                csv_bytes = pdf_generator.create_csv_report("Cash Book Report", df_print_formatted, from_date, to_date)
+                st.download_button(
+                    "📥 Download CSV (.csv)",
+                    data=csv_bytes,
+                    file_name=f"cash_book_{from_date}_{to_date}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="btn_cb_csv"
+                )
+            with col_dl3:
+                if st.button("📄 Prepare PDF", key="btn_prep_cb_pdf", use_container_width=True):
+                    with st.spinner("Generating PDF report..."):
+                        st.session_state.cb_pdf_bytes = pdf_generator.create_pdf_report("Cash Book Report", df_print_formatted)
+                if "cb_pdf_bytes" in st.session_state and st.session_state.cb_pdf_bytes:
+                    st.download_button("📥 Click to Download PDF", st.session_state.cb_pdf_bytes, f"cash_book_{from_date}_{to_date}.pdf", "application/pdf", use_container_width=True, key="btn_cb_pdf")
         else:
             st.info("No cash book entries found in this date range.")
 
@@ -1588,18 +1617,28 @@ def render_bank_book():
                         st.error(f"❌ Failed to record bank entry: {res_val}")
 
     with tab2:
-        col_date1, col_date2 = st.columns(2)
+        col_b, col_date1, col_date2 = st.columns([1.5, 1, 1])
+        filter_bank = col_b.selectbox("Filter by Bank", ["All Banks", "Union Bank of India", "State Bank of India"], key="bb_view_bank_sel")
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_view_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to", format="DD-MM-YYYY")
         
-        entries = run_query("""
-            SELECT id, date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration 
-            FROM bank_book 
-            WHERE date BETWEEN ? AND ? 
-            ORDER BY id DESC
-        """, (str(from_date), str(to_date)))
+        bb_query = """
+            SELECT bb.id, bb.date, bb.voucher_no, 
+                   COALESCE(co.account_code || ' - ' || co.account_name, bb.account_code) as account_head,
+                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
+            FROM bank_book bb
+            LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
+            WHERE bb.date BETWEEN ? AND ?
+        """
+        params = [str(from_date), str(to_date)]
+        if filter_bank != "All Banks":
+            bb_query += " AND bb.bank_name = ?"
+            params.append(filter_bank)
+        bb_query += " ORDER BY bb.id DESC"
+        
+        entries = run_query(bb_query, tuple(params))
         if entries:
-            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Account Code", "Narration"])
+            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
@@ -1614,8 +1653,9 @@ def render_bank_book():
                         run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
                 
                 run_query("DELETE FROM bank_book WHERE id=?", (del_id,), fetch=False)
-                sync_db_sequences("bank_book", "id")
+                sync_db_sequences()
                 st.warning(f"Bank Entry ID {del_id} and related ledger entries deleted successfully.")
+                time.sleep(0.1)
                 st.rerun()
         else:
             st.info("No bank entries found in this date range.")
@@ -1692,25 +1732,58 @@ def render_bank_book():
                     st.rerun()
 
     with tab4:
-        col_date1, col_date2 = st.columns(2)
+        col_b, col_date1, col_date2 = st.columns([1.5, 1, 1])
+        filter_bank = col_b.selectbox("Select Bank for Report", ["All Banks", "Union Bank of India", "State Bank of India"], key="bb_print_bank_sel")
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_print_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to", format="DD-MM-YYYY")
         
-        entries = run_query("""
-            SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration 
-            FROM bank_book 
-            WHERE date BETWEEN ? AND ? 
-            ORDER BY id ASC
-        """, (str(from_date), str(to_date)))
+        bb_print_query = """
+            SELECT bb.date, bb.voucher_no, 
+                   COALESCE(co.account_code || ' - ' || co.account_name, bb.account_code) as account_head,
+                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
+            FROM bank_book bb
+            LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
+            WHERE bb.date BETWEEN ? AND ?
+        """
+        p_params = [str(from_date), str(to_date)]
+        if filter_bank != "All Banks":
+            bb_print_query += " AND bb.bank_name = ?"
+            p_params.append(filter_bank)
+        bb_print_query += " ORDER BY bb.id ASC"
+        
+        entries = run_query(bb_print_query, tuple(p_params))
         if entries:
-            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
-            if st.button("📄 Prepare Bank Book PDF", key="btn_prep_bb_pdf", use_container_width=True):
-                with st.spinner("Generating PDF report..."):
-                    st.session_state.bb_pdf_bytes = pdf_generator.create_pdf_report("Bank Book Report", df_print_formatted)
-            if "bb_pdf_bytes" in st.session_state and st.session_state.bb_pdf_bytes:
-                st.download_button("📥 Click here to Download PDF", st.session_state.bb_pdf_bytes, "bank_book.pdf", "application/pdf", use_container_width=True)
+            
+            col_dl1, col_dl2, col_dl3 = st.columns(3)
+            with col_dl1:
+                excel_bytes = pdf_generator.create_excel_report("Bank Book Report", df_print, from_date, to_date)
+                st.download_button(
+                    "📊 Download Excel (.xlsx)",
+                    data=excel_bytes,
+                    file_name=f"bank_book_{from_date}_{to_date}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_bb_excel"
+                )
+            with col_dl2:
+                csv_bytes = pdf_generator.create_csv_report("Bank Book Report", df_print_formatted, from_date, to_date)
+                st.download_button(
+                    "📥 Download CSV (.csv)",
+                    data=csv_bytes,
+                    file_name=f"bank_book_{from_date}_{to_date}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="btn_bb_csv"
+                )
+            with col_dl3:
+                if st.button("📄 Prepare PDF", key="btn_prep_bb_pdf", use_container_width=True):
+                    with st.spinner("Generating PDF report..."):
+                        st.session_state.bb_pdf_bytes = pdf_generator.create_pdf_report("Bank Book Report", df_print_formatted)
+                if "bb_pdf_bytes" in st.session_state and st.session_state.bb_pdf_bytes:
+                    st.download_button("📥 Click to Download PDF", st.session_state.bb_pdf_bytes, f"bank_book_{from_date}_{to_date}.pdf", "application/pdf", use_container_width=True, key="btn_bb_pdf")
         else:
             st.info("No bank entries found in this date range.")
 
@@ -1968,8 +2041,9 @@ def render_admin_editor():
                     except ValueError:
                         val = record_id_to_del
                     run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
-                    sync_db_sequences(selected_table, pk_col)
+                    sync_db_sequences()
                     st.success("Record deleted and sequences synced!")
+                    time.sleep(0.1)
                     st.rerun()
             elif action == "Edit Record":
                 record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
@@ -2010,8 +2084,9 @@ def render_admin_editor():
                                         valid_vals.append(v)
                                 valid_vals.append(edit_val)
                                 run_query(f"UPDATE {selected_table} SET {', '.join(valid_cols)} WHERE {pk_col} = ?", tuple(valid_vals), fetch=False)
-                                sync_db_sequences(selected_table, pk_col)
+                                sync_db_sequences()
                                 st.success("Record updated successfully!")
+                                time.sleep(0.1)
                                 st.rerun()
                     else:
                         st.info(f"No record found with {pk_col} = {edit_val}")

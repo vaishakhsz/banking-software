@@ -1627,8 +1627,8 @@ def render_bank_book():
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
             LEFT JOIN customers c ON (
-                (c.account_no IS NOT NULL AND c.account_no != '' AND bb.particulars ILIKE ('%' || c.account_no || '%'))
-                OR (bb.particulars ILIKE ('%' || c.name || '%'))
+                (c.account_no IS NOT NULL AND c.account_no != '' AND POSITION(c.account_no IN bb.particulars) > 0)
+                OR (POSITION(UPPER(c.name) IN UPPER(bb.particulars)) > 0)
             )
             WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id DESC
@@ -1750,8 +1750,8 @@ def render_bank_book():
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
             LEFT JOIN customers c ON (
-                (c.account_no IS NOT NULL AND c.account_no != '' AND bb.particulars ILIKE ('%' || c.account_no || '%'))
-                OR (bb.particulars ILIKE ('%' || c.name || '%'))
+                (c.account_no IS NOT NULL AND c.account_no != '' AND POSITION(c.account_no IN bb.particulars) > 0)
+                OR (POSITION(UPPER(c.name) IN UPPER(bb.particulars)) > 0)
             )
             WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id ASC

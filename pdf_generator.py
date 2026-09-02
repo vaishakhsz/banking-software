@@ -64,12 +64,24 @@ def create_pdf_report(title, df):
             cleaned_row = []
             for col_idx, val in enumerate(row):
                 col_name = columns[col_idx].lower()
-                val_str = str(val) if val is not None else ""
+                
+                # Format float/numeric amounts nicely with commas
+                if isinstance(val, (int, float)):
+                    if any(k in col_name for k in ['debit', 'credit', 'balance', 'amount', 'total', 'interest', 'rs', '₹']):
+                        if val == 0:
+                            val_str = "0.00"
+                        else:
+                            val_str = f"{val:,.2f}"
+                    else:
+                        val_str = str(val)
+                else:
+                    val_str = str(val) if val is not None else ""
+                
                 val_str = val_str.replace('₹', 'Rs.')
                 ascii_val = val_str.encode('ascii', 'ignore').decode('ascii')
                 
                 # Wrap long text columns in Paragraph to enable auto line-wrapping in ReportLab
-                if col_name in ['particulars/narration', 'particulars', 'narration', 'description', 'name', 'account name']:
+                if col_name in ['particulars/narration', 'particulars', 'narration', 'description', 'name', 'account name', 'account head', 'head of account']:
                     cell_text_style = ParagraphStyle(
                         f'CellText_{col_idx}',
                         parent=styles['Normal'],
@@ -82,56 +94,73 @@ def create_pdf_report(title, df):
                     cleaned_row.append(ascii_val)
             cleaned_data.append(cleaned_row)
         
-        # Calculate column widths based on content
+        # Calculate optimal column widths based on column names
+        available_width = 262  # mm total printable width for landscape A4
         num_cols = len(columns)
-        available_width = 260  # mm
-        min_col_width = 15  # mm
-        max_col_width = 80  # mm
         
-        if num_cols <= 4:
-            col_widths = [available_width / num_cols] * num_cols
-        else:
-            col_widths = []
-            for i, col in enumerate(columns):
-                col_lower = col.lower()
-                if col_lower in ['name', 'particulars', 'narration', 'description', 'account name', 'particulars/narration']:
-                    col_widths.append(min(80, available_width * 0.25))
-                elif col_lower in ['account no', 'voucher no', 'tx id', 'id', 'voucher id']:
-                    col_widths.append(min(45, available_width * 0.15))
-                else:
-                    col_widths.append(min(50, available_width * 0.12))
-            
-            total = sum(col_widths)
-            if total < available_width:
-                remainder = (available_width - total) / num_cols
-                col_widths = [w + remainder for w in col_widths]
-            elif total > available_width:
-                scale = available_width / total
-                col_widths = [w * scale for w in col_widths]
+        # Specific optimized widths for standard 7-8 column financial books
+        col_widths = []
+        for col in columns:
+            c_low = col.lower()
+            if 'date' in c_low:
+                col_widths.append(22)
+            elif any(k in c_low for k in ['voucher', 'tx id', 'id', 'vr no']):
+                col_widths.append(28)
+            elif 'account head' in c_low or 'head of account' in c_low:
+                col_widths.append(48)
+            elif 'particulars' in c_low or 'description' in c_low:
+                col_widths.append(60)
+            elif any(k in c_low for k in ['debit', 'credit', 'balance', 'amount', 'total', 'interest', 'rs', '₹']):
+                col_widths.append(24)
+            elif 'narration' in c_low:
+                col_widths.append(32)
+            elif 'bank' in c_low:
+                col_widths.append(30)
+            else:
+                col_widths.append(30)
+                
+        total_w = sum(col_widths)
+        if total_w != available_width:
+            scale = available_width / total_w
+            col_widths = [w * scale for w in col_widths]
         
         col_widths_pt = [w * mm for w in col_widths]
         
         table_data = [columns] + cleaned_data
         t = Table(table_data, colWidths=col_widths_pt, repeatRows=1)
         
-        t.setStyle(TableStyle([
+        # Build precise alignment and styling rules
+        table_styles = [
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-            ('TOPPADDING', (0, 0), (-1, 0), 6),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f9f9f9')),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('FONTSIZE', (0, 0), (-1, 0), 7.5),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+            ('TOPPADDING', (0, 0), (-1, 0), 5),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d0d5dd')),
             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
             ('FONTSIZE', (0, 1), (-1, -1), 7),
-            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('PADDING', (0, 0), (-1, -1), 3),
-            ('WORDWRAP', (0, 0), (-1, -1), 'LTR'),
-        ]))
+            ('TOPPADDING', (0, 1), (-1, -1), 3.5),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 3.5),
+        ]
         
+        # Alternating row background colors
+        for r_idx in range(1, len(table_data)):
+            bg = colors.HexColor('#ffffff') if r_idx % 2 == 1 else colors.HexColor('#f8fafd')
+            table_styles.append(('BACKGROUND', (0, r_idx), (-1, r_idx), bg))
+            
+        # Precise Column Alignments (Numbers Right, IDs/Dates Center, Text Left)
+        for c_idx, col in enumerate(columns):
+            c_low = col.lower()
+            if any(k in c_low for k in ['debit', 'credit', 'balance', 'amount', 'total', 'interest', 'rs', '₹', 'rate', 'price']):
+                table_styles.append(('ALIGN', (c_idx, 0), (c_idx, -1), 'RIGHT'))
+            elif any(k in c_low for k in ['date', 'voucher', 'tx id', 'id', 'vr no', 'status', 'code', 'account no']):
+                table_styles.append(('ALIGN', (c_idx, 0), (c_idx, -1), 'CENTER'))
+            else:
+                table_styles.append(('ALIGN', (c_idx, 0), (c_idx, -1), 'LEFT'))
+        
+        t.setStyle(TableStyle(table_styles))
         elements.append(t)
         
         elements.append(Spacer(1, 10))
@@ -142,6 +171,253 @@ def create_pdf_report(title, df):
         elements.append(Paragraph("No records found for this report.", styles['Normal']))
         
     doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+def create_csv_report(title, df, from_date=None, to_date=None):
+    """
+    Exports a professional CSV report matching the PDF header, title, date range,
+    and structured columns with a totals summary row.
+    """
+    import csv
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    
+    # 1. Company Header (matching PDF)
+    writer.writerow(["AARSHA NIDHI LIMITED"])
+    writer.writerow(["6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"])
+    writer.writerow(["CIN: U65990KL22021PLN069978 | Ph: 0471-2994535"])
+    
+    # 2. Report Title & Date Scope
+    date_str = f"From: {from_date} To: {to_date}" if from_date and to_date else ""
+    writer.writerow([f"{title.upper()} - {date_str}" if date_str else title.upper()])
+    writer.writerow([f"Generated on: {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}"])
+    writer.writerow([])  # Blank line separator
+    
+    if not df.empty:
+        # 3. Columns
+        cols = list(df.columns)
+        writer.writerow(cols)
+        
+        # 4. Rows with clean number formatting
+        total_dr = 0.0
+        total_cr = 0.0
+        
+        for row in df.values:
+            cleaned_row = []
+            for col_idx, val in enumerate(row):
+                col_name = cols[col_idx].lower()
+                if isinstance(val, (int, float)):
+                    if any(k in col_name for k in ['debit', 'credit', 'balance', 'amount', 'total', 'interest', 'rs', '₹']):
+                        if 'debit' in col_name:
+                            total_dr += float(val)
+                        elif 'credit' in col_name:
+                            total_cr += float(val)
+                        cleaned_row.append(f"{val:.2f}")
+                    else:
+                        cleaned_row.append(str(val))
+                else:
+                    cleaned_row.append("" if val is None else str(val))
+            writer.writerow(cleaned_row)
+            
+        # 5. Summary Footer Row
+        summary_row = []
+        for c_idx, col in enumerate(cols):
+            c_name = col.lower()
+            if c_idx == 0:
+                summary_row.append("TOTALS")
+            elif 'debit' in c_name:
+                summary_row.append(f"{total_dr:.2f}")
+            elif 'credit' in c_name:
+                summary_row.append(f"{total_cr:.2f}")
+            elif 'balance' in c_name and len(df) > 0:
+                last_bal = df.iloc[-1][col]
+                summary_row.append(f"{float(last_bal):.2f}" if isinstance(last_bal, (int, float)) else str(last_bal))
+            elif c_idx == 2 or (c_idx == 3 and len(cols) > 4):
+                summary_row.append(f"Total Dr: Rs.{total_dr:,.2f} | Total Cr: Rs.{total_cr:,.2f}")
+            else:
+                summary_row.append("")
+        writer.writerow([])
+        writer.writerow(summary_row)
+    else:
+        writer.writerow(["No records found for this report."])
+        
+    return buffer.getvalue().encode('utf-8-sig')
+
+def create_excel_report(title, df, from_date=None, to_date=None):
+    """
+    Exports a fully-styled Excel (.xlsx) report matching the PDF design 100%:
+    - Navy Blue header (#1F4E78) with white bold text
+    - Company branding & CIN subheadings
+    - Alternating row backgrounds (#FFFFFF and #F8FAFD)
+    - Grid borders (#D0D5DD)
+    - Currency formatting (#,##0.00) and column alignments
+    - Bold summary footer with double underline
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        # Fallback to CSV bytes if openpyxl is still installing on cloud server
+        return create_csv_report(title, df, from_date, to_date)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Report"
+    ws.views.sheetView[0].showGridLines = True
+
+    cols = list(df.columns) if not df.empty else ["A", "B", "C", "D", "E"]
+    num_cols = len(cols)
+    last_col_letter = get_column_letter(num_cols)
+
+    # Styles
+    border_color = "D0D5DD"
+    thin_border = Border(
+        left=Side(style='thin', color=border_color),
+        right=Side(style='thin', color=border_color),
+        top=Side(style='thin', color=border_color),
+        bottom=Side(style='thin', color=border_color)
+    )
+
+    # Row 1: Company Header
+    ws.merge_cells(f"A1:{last_col_letter}1")
+    c1 = ws["A1"]
+    c1.value = "AARSHA NIDHI LIMITED"
+    c1.font = Font(name="Segoe UI", size=14, bold=True, color="1F4E78")
+    c1.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 24
+
+    # Row 2: Address
+    ws.merge_cells(f"A2:{last_col_letter}2")
+    c2 = ws["A2"]
+    c2.value = "6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
+    c2.font = Font(name="Segoe UI", size=9, color="4B5563")
+    c2.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 16
+
+    # Row 3: CIN
+    ws.merge_cells(f"A3:{last_col_letter}3")
+    c3 = ws["A3"]
+    c3.value = "CIN: U65990KL22021PLN069978 | Ph: 0471-2994535"
+    c3.font = Font(name="Segoe UI", size=9, color="4B5563")
+    c3.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[3].height = 16
+
+    # Row 4: Title & Date Range
+    ws.merge_cells(f"A4:{last_col_letter}4")
+    c4 = ws["A4"]
+    date_str = f" (From: {from_date} To: {to_date})" if from_date and to_date else ""
+    c4.value = f"{title.upper()}{date_str}"
+    c4.font = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
+    c4.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[4].height = 22
+
+    # Row 5: Blank separator
+    ws.row_dimensions[5].height = 8
+
+    # Row 6: Table Headers
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    header_font = Font(name="Segoe UI", size=9.5, bold=True, color="FFFFFF")
+    ws.row_dimensions[6].height = 24
+
+    for c_idx, col in enumerate(cols, 1):
+        cell = ws.cell(row=6, column=c_idx, value=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = thin_border
+        c_low = col.lower()
+        if any(k in c_low for k in ['debit', 'credit', 'balance', 'amount']):
+            cell.alignment = Alignment(horizontal="right", vertical="center")
+        elif any(k in c_low for k in ['date', 'voucher', 'id', 'vr no', 'code']):
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        else:
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    # Data Rows
+    alt_fill = PatternFill(start_color="F8FAFD", end_color="F8FAFD", fill_type="solid")
+    white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    
+    total_dr = 0.0
+    total_cr = 0.0
+    current_row = 7
+
+    if not df.empty:
+        for r_idx, row in enumerate(df.values):
+            ws.row_dimensions[current_row].height = 19
+            fill = white_fill if r_idx % 2 == 0 else alt_fill
+            
+            for c_idx, val in enumerate(row, 1):
+                cell = ws.cell(row=current_row, column=c_idx)
+                cell.fill = fill
+                cell.border = thin_border
+                cell.font = Font(name="Segoe UI", size=9)
+                
+                c_name = cols[c_idx - 1].lower()
+                if isinstance(val, (int, float)):
+                    cell.value = float(val)
+                    if any(k in c_name for k in ['debit', 'credit', 'balance', 'amount', 'total']):
+                        cell.number_format = '#,##0.00'
+                        cell.alignment = Alignment(horizontal="right", vertical="center")
+                        if 'debit' in c_name: total_dr += float(val)
+                        elif 'credit' in c_name: total_cr += float(val)
+                else:
+                    cell.value = str(val) if val is not None else ""
+                    if any(k in c_name for k in ['date', 'voucher', 'id', 'vr no']):
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    else:
+                        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            current_row += 1
+
+        # Summary / Totals Row
+        ws.row_dimensions[current_row].height = 24
+        tot_border = Border(
+            top=Side(style='thin', color="1F4E78"),
+            bottom=Side(style='double', color="1F4E78"),
+            left=Side(style='thin', color=border_color),
+            right=Side(style='thin', color=border_color)
+        )
+        tot_font = Font(name="Segoe UI", size=9.5, bold=True, color="1F4E78")
+        tot_fill = PatternFill(start_color="EAEEF4", end_color="EAEEF4", fill_type="solid")
+
+        for c_idx, col in enumerate(cols, 1):
+            cell = ws.cell(row=current_row, column=c_idx)
+            cell.border = tot_border
+            cell.font = tot_font
+            cell.fill = tot_fill
+            c_name = col.lower()
+            if c_idx == 1:
+                cell.value = "TOTALS"
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            elif 'debit' in c_name:
+                cell.value = total_dr
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            elif 'credit' in c_name:
+                cell.value = total_cr
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            elif 'balance' in c_name and len(df) > 0:
+                last_b = df.iloc[-1][cols[c_idx - 1]]
+                cell.value = float(last_b) if isinstance(last_b, (int, float)) else last_b
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            elif c_idx == 3:
+                cell.value = f"Total Dr: Rs.{total_dr:,.2f} | Total Cr: Rs.{total_cr:,.2f}"
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+
+        # Auto-adjust column widths
+        for col_cells in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col_cells[0].column)
+            for cell in col_cells[5:]:
+                if cell.value:
+                    val_str = str(cell.value)
+                    max_len = max(max_len, len(val_str))
+            ws.column_dimensions[col_letter].width = max(min(max_len + 4, 38), 12)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
 

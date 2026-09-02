@@ -1739,7 +1739,14 @@ def render_bank_book():
         
         bb_print_query = """
             SELECT bb.date, bb.voucher_no, 
-                   COALESCE(co.account_code || ' - ' || co.account_name, bb.account_code) as account_head,
+                   CASE 
+                       WHEN bb.debit_amount > 0 THEN bb.bank_name
+                       ELSE COALESCE(co.account_code || ' (' || co.account_name || ')', bb.account_code)
+                   END as debit_side,
+                   CASE 
+                       WHEN bb.debit_amount > 0 THEN COALESCE(co.account_code || ' (' || co.account_name || ')', bb.account_code)
+                       ELSE bb.bank_name
+                   END as credit_side,
                    bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
@@ -1753,7 +1760,7 @@ def render_bank_book():
         
         entries = run_query(bb_print_query, tuple(p_params))
         if entries:
-            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             

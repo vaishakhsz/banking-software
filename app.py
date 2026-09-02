@@ -1616,21 +1616,26 @@ def render_bank_book():
             SELECT bb.id, bb.date, bb.voucher_no, 
                    CASE 
                        WHEN bb.debit_amount > 0 THEN bb.bank_name
-                       ELSE COALESCE(co.account_code || ' (' || co.account_name || ')', bb.account_code)
+                       ELSE 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
                    END as debit_side,
                    CASE 
-                       WHEN bb.debit_amount > 0 THEN COALESCE(co.account_code || ' (' || co.account_name || ')', bb.account_code)
+                       WHEN bb.debit_amount > 0 THEN 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
                        ELSE bb.bank_name
                    END as credit_side,
+                   COALESCE(c.name || ' (Acc: ' || c.account_no || ')', bb.particulars) as customer_party,
                    bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
+            LEFT JOIN customers c ON (
+                (c.account_no IS NOT NULL AND c.account_no != '' AND bb.particulars ILIKE ('%' || c.account_no || '%'))
+                OR (bb.particulars ILIKE ('%' || c.name || '%'))
+            )
             WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id DESC
         """
         entries = run_query(bb_query, (str(from_date), str(to_date)))
         if entries:
-            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
@@ -1662,34 +1667,36 @@ def render_bank_book():
             # row = (id, particulars, debit_amount, credit_amount, bank_name, narration, account_code, voucher_no, date)
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            coa_keys = list(coa_dict.keys())
             
-            curr_acc = row[6]
-            default_index = 0
-            for idx, k in enumerate(coa_keys):
-                if coa_dict[k] == curr_acc:
-                    default_index = idx
-                    break
-                    
+            # Find current key
+            current_head_key = next((k for k, v in coa_dict.items() if v == row[6]), list(coa_dict.keys())[0])
+            
             with st.form("edit_bank_form"):
-                new_part = st.text_input("Particulars", value=row[1])
-                curr_dr = row[2] if row[2] > 0 else row[3]
-                is_debit = row[2] > 0
-                new_type = st.selectbox("Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"], index=0 if is_debit else 1)
-                new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
-                new_acc_head = st.selectbox("Corresponding Account Head", coa_keys, index=default_index)
-                new_narration = st.text_area("Narration", value=row[5] if row[5] else "")
+                col_d, col_t, col_a = st.columns(3)
+                edit_date = col_d.date_input("Date", value=datetime.strptime(row[8], "%Y-%m-%d").date() if row[8] else date.today(), format="DD-MM-YYYY")
+                current_type = "DEBIT (Deposit)" if row[2] > 0 else "CREDIT (Withdrawal)"
+                new_type = col_t.selectbox("Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"], index=0 if "DEBIT" in current_type else 1)
+                current_val = float(row[2]) if row[2] > 0 else float(row[3])
+                new_amt = col_a.number_input("Amount (₹)", min_value=1.0, value=current_val, step=100.0)
                 
-                if st.form_submit_button("Update Bank Entry", use_container_width=True):
+                new_head = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_head_key) if current_head_key in coa_dict else 0)
+                new_part = st.text_input("Particulars", value=row[1])
+                new_narration = st.text_area("Narration", value=row[5] or "")
+                
+                if st.form_submit_button("Save Changes", use_container_width=True):
+                    new_acc_code = coa_dict[new_head]
                     d_amt = new_amt if "DEBIT" in new_type else 0.0
                     c_amt = new_amt if "CREDIT" in new_type else 0.0
-                    new_acc_code = coa_dict[new_acc_head]
-                    bank_name = row[4]
                     voucher_no = row[7]
-                    entry_date = row[8]
+                    bank_name = row[4]
+                    bank_code = "AST-102"
                     
-                    # 1. Find Bank Code based on name
-                    bank_code = "AST-102" if "Union" in bank_name else "AST-103"
+                    # 1. Check Cash Balance if adjusting deposit from Cash
+                    if new_acc_code == 'AST-101' and "DEBIT" in new_type:
+                        cur_cash = get_cash_balance()
+                        if cur_cash < new_amt:
+                            st.error(f"❌ Insufficient Cash Balance! Available: ₹{cur_cash:,.2f}")
+                            st.stop()
                     
                     # 2. Update the bank_book entry
                     run_query("""
@@ -1732,21 +1739,26 @@ def render_bank_book():
             SELECT bb.date, bb.voucher_no, 
                    CASE 
                        WHEN bb.debit_amount > 0 THEN bb.bank_name
-                       ELSE COALESCE(co.account_code || ' (' || co.account_name || ')', bb.account_code)
+                       ELSE 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
                    END as debit_side,
                    CASE 
-                       WHEN bb.debit_amount > 0 THEN COALESCE(co.account_code || ' (' || co.account_name || ')', bb.account_code)
+                       WHEN bb.debit_amount > 0 THEN 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
                        ELSE bb.bank_name
                    END as credit_side,
+                   COALESCE(c.name || ' (Acc: ' || c.account_no || ')', bb.particulars) as customer_party,
                    bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
+            LEFT JOIN customers c ON (
+                (c.account_no IS NOT NULL AND c.account_no != '' AND bb.particulars ILIKE ('%' || c.account_no || '%'))
+                OR (bb.particulars ILIKE ('%' || c.name || '%'))
+            )
             WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id ASC
         """
         entries = run_query(bb_print_query, (str(from_date), str(to_date)))
         if entries:
-            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             

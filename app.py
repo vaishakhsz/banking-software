@@ -1614,21 +1614,23 @@ def render_bank_book():
         
         bb_query = """
             SELECT bb.id, bb.date, bb.voucher_no, 
-                   COALESCE(co.account_code || ' - ' || co.account_name, bb.account_code) as account_head,
+                   CASE 
+                       WHEN bb.debit_amount > 0 THEN bb.bank_name
+                       ELSE COALESCE(co.account_code || ' (' || co.account_name || ')', bb.account_code)
+                   END as debit_side,
+                   CASE 
+                       WHEN bb.debit_amount > 0 THEN COALESCE(co.account_code || ' (' || co.account_name || ')', bb.account_code)
+                       ELSE bb.bank_name
+                   END as credit_side,
                    bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
             WHERE bb.date BETWEEN ? AND ?
+            ORDER BY bb.id DESC
         """
-        params = [str(from_date), str(to_date)]
-        if filter_bank != "All Banks":
-            bb_query += " AND bb.bank_name = ?"
-            params.append(filter_bank)
-        bb_query += " ORDER BY bb.id DESC"
-        
-        entries = run_query(bb_query, tuple(params))
+        entries = run_query(bb_query, (str(from_date), str(to_date)))
         if entries:
-            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")

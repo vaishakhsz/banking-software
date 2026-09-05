@@ -1787,14 +1787,15 @@ def render_recurring_deposits():
     with tab3:
         rds = run_query("""
             SELECT COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as acc_no, 
-                   c.name, r.monthly_amount, r.tenure_months, r.interest_rate, 
+                   c.name, COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme,
+                   r.monthly_amount, r.tenure_months, r.interest_rate, 
                    r.installments_paid, COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
                    r.maturity_amount, r.nominee, r.status
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             WHERE r.status = 'ACTIVE'
         """)
         if rds:
-            df_rds = pd.DataFrame(rds, columns=["A/C No", "Customer Name", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Inst.", "Total Deposited (₹)", "Est. Maturity (₹)", "Nominee", "Status"])
+            df_rds = pd.DataFrame(rds, columns=["A/C No", "Customer Name", "Scheme", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Inst.", "Total Deposited (₹)", "Est. Maturity (₹)", "Nominee", "Status"])
             st.dataframe(df_rds, use_container_width=True)
         else:
             st.info("No active recurring deposits found.")
@@ -1807,7 +1808,8 @@ def render_recurring_deposits():
                    r.installments_paid, r.maturity_amount, r.nominee, 
                    r.created_at, r.status, r.closed_date,
                    COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as acc_no,
-                   COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal
+                   COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
+                   COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             ORDER BY r.rd_id DESC
         """)
@@ -1815,16 +1817,16 @@ def render_recurring_deposits():
             rd_print_dict = {}
             for r in all_rds:
                 status_display = "🔴 CLOSED" if r[13] == 'CLOSED' else "🟢 ACTIVE"
-                label = f"A/C: {r[15]} - {r[1]} (Monthly: ₹{r[6]:,.2f}, Balance: ₹{r[16]:,.2f}) - {status_display}"
+                label = f"A/C: {r[15]} - {r[1]} ({r[17]} | Paid: {r[9]}/{r[7]} | Balance: ₹{r[16]:,.2f}) - {status_display}"
                 rd_print_dict[label] = r
             
             selected_rd_print = st.selectbox("Select RD Account for Printing/View", list(rd_print_dict.keys()), key="rd_print_select")
             rd_data = rd_print_dict[selected_rd_print]
             
-            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance = rd_data
+            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name = rd_data
             
             full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
-            total_deposited = monthly_amt * paid_inst
+            total_deposited = col_balance
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#2980b9"
             
@@ -1865,11 +1867,15 @@ def render_recurring_deposits():
               
               <div class="grid-row">
                 <div><b>RDR No. / A/c No:</b> {rd_acc_no}</div>
+                <div><b>Scheme:</b> <span style="color:#1b4f72;font-weight:bold;">{scheme_name}</span></div>
+              </div>
+              <div class="grid-row">
                 <div><b>A/c Opening Date:</b> {created_at}</div>
+                <div><b>Interest Rate:</b> {rate}% p.a.</div>
               </div>
               <div class="grid-row">
                 <div><b>Name:</b> {c_name}</div>
-                <div><b>Interest Rate:</b> {rate}% p.a.</div>
+                <div><b>Status:</b> {status_text}</div>
               </div>
               <div class="grid-row">
                 <div><b>Address:</b> {full_address}</div>

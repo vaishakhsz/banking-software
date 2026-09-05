@@ -946,15 +946,20 @@ def generate_rd_pdf(rd_data):
         alignment=2  
     )
     
-    if len(rd_data) >= 17:
+    if len(rd_data) >= 18:
+        rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name = rd_data[:18]
+    elif len(rd_data) == 17:
         rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance = rd_data[:17]
+        scheme_name = "SWAYAMVARA KSHEMANIDHI"
     elif len(rd_data) == 16:
         rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no = rd_data[:16]
         col_balance = monthly_amt * paid_inst
+        scheme_name = "SWAYAMVARA KSHEMANIDHI"
     else:
         rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date = rd_data[:15]
         rd_acc_no = f"RD-{rd_id:05d}"
         col_balance = monthly_amt * paid_inst
+        scheme_name = "SWAYAMVARA KSHEMANIDHI"
 
     full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
     total_deposited = col_balance
@@ -971,17 +976,18 @@ def generate_rd_pdf(rd_data):
     
     detail_data = [
         [Paragraph("<b>RDR No. / A/c No:</b>", detail_label), Paragraph(str(rd_acc_no), detail_value),
-         Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(str(created_at), detail_value)],
-        [Paragraph("<b>Name:</b>", detail_label), Paragraph(str(c_name), detail_value),
+         Paragraph("<b>Scheme:</b>", detail_label), Paragraph(str(scheme_name), detail_value)],
+        [Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(str(created_at), detail_value),
          Paragraph("<b>Interest Rate:</b>", detail_label), Paragraph(f"{rate}% p.a.", detail_value)],
-        [Paragraph("<b>Address:</b>", detail_label), Paragraph(str(full_address), detail_value),
+        [Paragraph("<b>Name:</b>", detail_label), Paragraph(str(c_name), detail_value),
          Paragraph("<b>Status:</b>", detail_label), Paragraph(status_text, detail_value)],
-        [Paragraph("<b>Monthly Installment:</b>", detail_label), Paragraph(f"₹{monthly_amt:,.2f}", detail_value),
+        [Paragraph("<b>Address:</b>", detail_label), Paragraph(str(full_address), detail_value),
          Paragraph("<b>Nominee:</b>", detail_label), Paragraph(nominee if nominee else 'N/A', detail_value)],
-        [Paragraph("<b>Tenure:</b>", detail_label), Paragraph(f"{tenure} MONTHS", detail_value),
-         Paragraph("<b>Installments Paid:</b>", detail_label), Paragraph(f"{paid_inst} / {tenure}", detail_value)],
-        [Paragraph("<b>Total Deposited:</b>", detail_label), Paragraph(f"₹{total_deposited:,.2f}", detail_value),
-         Paragraph("<b>Estimated Maturity:</b>", detail_label), Paragraph(f"₹{maturity:,.2f}", detail_value)],
+        [Paragraph("<b>Monthly Installment:</b>", detail_label), Paragraph(f"₹{monthly_amt:,.2f}", detail_value),
+         Paragraph("<b>Tenure:</b>", detail_label), Paragraph(f"{tenure} MONTHS", detail_value)],
+        [Paragraph("<b>Installments Paid:</b>", detail_label), Paragraph(f"{paid_inst} / {tenure}", detail_value),
+         Paragraph("<b>Total Deposited:</b>", detail_label), Paragraph(f"₹{total_deposited:,.2f}", detail_value)],
+        [Paragraph("<b>Estimated Maturity:</b>", detail_label), Paragraph(f"₹{maturity:,.2f}", detail_value), "", ""],
     ]
     if status == 'CLOSED':
         detail_data.append([Paragraph("<b>Closed Date:</b>", detail_label), Paragraph(str(closed_date), detail_value), "", ""])

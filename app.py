@@ -773,9 +773,10 @@ def render_daily_collection_sheet():
 
 def render_personal_loans():
     st.title("💼 Personal & Micro Loan Management")
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📝 New Loan & 1-Click Disbursal", 
         "💳 Collect Repayment / Installment", 
+        "✏️ Edit / Delete Loan Sanction",
         "📋 Active Loan Register & Legal Tracker", 
         "🖨️ Loan Statement & Promissory Note"
     ])
@@ -1026,6 +1027,125 @@ def render_personal_loans():
             st.info("No active personal loans pending repayment.")
 
     with tab3:
+        st.subheader("✏️ Edit or Delete Loan Sanction")
+        all_loans = run_query("""
+            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.principal_amount, pl.outstanding_due, pl.sanction_date, pl.status
+            FROM personal_loans pl
+            JOIN customers c ON pl.customer_id = c.id
+            ORDER BY pl.id DESC
+        """)
+        if all_loans:
+            loan_options = {
+                f"#{r[0]} - {r[1]} | {r[2]} (Acc: {r[3]} | Principal: ₹{float(r[4]):,.2f} | Due: ₹{float(r[5]):,.2f} | Sanc: {r[6]} | Status: {r[7]})": r[0]
+                for r in all_loans
+            }
+            sel_loan_label = st.selectbox("Select Sanctioned Loan to Edit / Manage", list(loan_options.keys()), key="edit_pl_select")
+            sel_pl_id = loan_options[sel_loan_label]
+            
+            l_data = run_query("""
+                SELECT pl.loan_no, pl.customer_id, pl.sanction_date, pl.principal_amount, pl.interest_rate,
+                       pl.interest_type, pl.tenure_days, pl.tenure_months, pl.total_interest, pl.total_repayable,
+                       pl.installment_amount, pl.outstanding_due, pl.disbursal_mode, pl.voucher_no,
+                       pl.guarantor_name, pl.guarantor_phone, pl.purpose, pl.status, pl.remarks,
+                       c.name, COALESCE(c.account_no, 'N/A'), c.phone
+                FROM personal_loans pl
+                JOIN customers c ON pl.customer_id = c.id
+                WHERE pl.id = ?
+            """, (sel_pl_id,))
+            
+            if l_data:
+                row = l_data[0]
+                (l_no, c_id, s_date, princ, rate, i_type, t_days, t_months, t_int, t_rep,
+                 inst_amt, out_due, d_mode, v_no, g_name, g_phone, purp, stat, rem,
+                 c_name, c_acc, c_phone) = row
+                
+                try:
+                    s_date_obj = datetime.strptime(str(s_date)[:10], "%Y-%m-%d").date()
+                except Exception:
+                    s_date_obj = date.today()
+                
+                with st.form(f"edit_loan_form_{sel_pl_id}"):
+                    st.markdown(f"#### 👤 Borrower: **{c_name}** (Acc: `{c_acc}` | ID: `#{c_id}`)")
+                    
+                    ec1, ec2, ec3 = st.columns(3)
+                    new_l_no = ec1.text_input("Loan Number *", value=str(l_no))
+                    new_s_date = ec2.date_input("Sanction Date", value=s_date_obj, format="DD-MM-YYYY")
+                    new_status = ec3.selectbox(
+                        "Loan Status",
+                        ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"],
+                        index=["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"].index(stat) if stat in ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"] else 0
+                    )
+                    
+                    ec4, ec5, ec6 = st.columns(3)
+                    new_princ = ec4.number_input("Principal Loan Amount (₹)", min_value=0.0, value=float(princ), step=1000.0)
+                    new_rate = ec5.number_input("Annual Interest Rate (%)", min_value=0.0, value=float(rate or 0.0), step=0.5)
+                    new_i_type = ec6.text_input("Repayment Scheme / Plan", value=str(i_type or "Flexible / Custom"))
+                    
+                    ec7, ec8, ec9 = st.columns(3)
+                    new_t_days = ec7.number_input("Tenure (Days)", min_value=0, value=int(t_days or 0), step=10)
+                    new_t_months = ec8.number_input("Tenure (Months)", min_value=0, value=int(t_months or 0), step=1)
+                    new_inst = ec9.number_input("Daily / Monthly Installment (₹)", min_value=0.0, value=float(inst_amt or 0.0), step=100.0)
+                    
+                    ec10, ec11, ec12 = st.columns(3)
+                    new_t_int = ec10.number_input("Total Interest (₹)", min_value=0.0, value=float(t_int or 0.0), step=100.0)
+                    new_t_rep = ec11.number_input("Total Repayable (₹)", min_value=0.0, value=float(t_rep or 0.0), step=100.0)
+                    new_out_due = ec12.number_input("Current Outstanding Due (₹)", min_value=0.0, value=float(out_due or 0.0), step=100.0)
+                    
+                    ec13, ec14, ec15 = st.columns(3)
+                    new_g_name = ec13.text_input("Guarantor / Surety Name", value=str(g_name or ""))
+                    new_g_phone = ec14.text_input("Guarantor Phone", value=str(g_phone or ""))
+                    new_d_mode = ec15.text_input("Disbursal Mode", value=str(d_mode or "Union Bank of India"))
+                    
+                    ec16, ec17 = st.columns(2)
+                    new_purp = ec16.text_input("Loan Purpose", value=str(purp or ""))
+                    new_rem = ec17.text_input("Remarks / Legal Notes", value=str(rem or ""))
+                    
+                    if st.form_submit_button("💾 Save & Update Loan Sanction Details", use_container_width=True):
+                        run_query("""
+                            UPDATE personal_loans
+                            SET loan_no = ?, sanction_date = ?, principal_amount = ?, interest_rate = ?,
+                                interest_type = ?, tenure_days = ?, tenure_months = ?, total_interest = ?,
+                                total_repayable = ?, installment_amount = ?, outstanding_due = ?, disbursal_mode = ?,
+                                guarantor_name = ?, guarantor_phone = ?, purpose = ?, status = ?, remarks = ?
+                            WHERE id = ?
+                        """, (
+                            new_l_no, str(new_s_date), new_princ, new_rate,
+                            new_i_type, new_t_days, new_t_months, new_t_int,
+                            new_t_rep, new_inst, new_out_due, new_d_mode,
+                            new_g_name, new_g_phone, new_purp, new_status, new_rem,
+                            sel_pl_id
+                        ), fetch=False)
+                        
+                        # Sync accounts table balance
+                        run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_out_due, c_id), fetch=False)
+                        
+                        st.success(f"🎉 Loan #{new_l_no} details updated successfully!")
+                        time.sleep(1.0)
+                        st.rerun()
+
+                # Danger Zone: Delete Loan
+                st.write("---")
+                with st.expander(f"🚨 Danger Zone: Delete Loan #{l_no}", expanded=False):
+                    st.error(f"⚠️ **Warning:** Permanently deleting Loan **#{l_no}** for **{c_name}** will remove this loan sanction record and its repayment transactions from the database.")
+                    conf_del = st.checkbox(f"Yes, I confirm I want to permanently delete Loan #{l_no} (Borrower: {c_name})", key=f"conf_del_pl_{sel_pl_id}")
+                    if conf_del:
+                        if st.button(f"🗑️ Permanently Delete Loan #{l_no}", type="primary", use_container_width=True, key=f"btn_del_pl_{sel_pl_id}"):
+                            # 1. Delete repayments
+                            run_query("DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (sel_pl_id,), fetch=False)
+                            # 2. Delete from personal_loans
+                            run_query("DELETE FROM personal_loans WHERE id = ?", (sel_pl_id,), fetch=False)
+                            # 3. Update customer's account balance
+                            rem_loans = run_query("SELECT SUM(outstanding_due) FROM personal_loans WHERE customer_id = ?", (c_id,))
+                            new_acc_bal = float(rem_loans[0][0]) if rem_loans and rem_loans[0][0] is not None else 0.0
+                            run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_acc_bal, c_id), fetch=False)
+                            
+                            st.success(f"✅ Loan #{l_no} for {c_name} was permanently deleted.")
+                            time.sleep(1.0)
+                            st.rerun()
+        else:
+            st.info("No personal loan records found to edit or manage.")
+
+    with tab4:
         st.subheader("📋 Active Personal Loans & Legal Tracker")
         status_filter = st.selectbox("Filter by Loan Status", ["ALL", "ACTIVE", "COURT_CASE", "POLICE_COMPLAINT", "CLOSED", "NOT_REMITTING"], key="pl_filter_st")
         
@@ -1062,7 +1182,7 @@ def render_personal_loans():
         else:
             st.info("No personal loan records found matching this filter.")
 
-    with tab4:
+    with tab5:
         st.subheader("🖨️ Loan Statement & Promissory Note (DP Note)")
         all_l = run_query("SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A') FROM personal_loans pl JOIN customers c ON pl.customer_id = c.id ORDER BY pl.id ASC")
         if all_l:

@@ -563,6 +563,634 @@ def render_kyc():
     else:
         st.info("No pending KYC verification requests.")
 
+def render_daily_collection_sheet():
+    st.title("📅 Daily Report & Collection Sheet")
+    col_d1, col_d2 = st.columns([2, 1])
+    report_date = col_d1.date_input("Daily Report Date", value=date.today(), format="DD-MM-YYYY", key="daily_rep_date")
+    
+    cur_cash = get_cash_balance()
+    cur_bank = get_account_balance_from_jv("AST-102")
+    tot_due_res = run_query("SELECT SUM(outstanding_due) FROM personal_loans WHERE status != 'CLOSED'")
+    tot_due_val = float(tot_due_res[0][0]) if (tot_due_res and tot_due_res[0][0]) else 1458104.00
+    
+    m1, m2, m3 = st.columns(3)
+    m1.metric("💵 Cash in Office", f"₹{cur_cash:,.2f}")
+    m2.metric("🏦 Union Bank Balance", f"₹{cur_bank:,.2f}")
+    m3.metric("📈 Total Outstanding Due Portfolio", f"₹{tot_due_val:,.2f}")
+    
+    tab1, tab2 = st.tabs(["📝 Quick Collection Entry", "📊 Full Daily Member Register & Export"])
+    
+    with tab1:
+        st.subheader("⚡ Record Member Daily Collection")
+        pl_active = run_query("""
+            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.outstanding_due, pl.installment_amount, pl.customer_id
+            FROM personal_loans pl
+            JOIN customers c ON pl.customer_id = c.id
+            WHERE pl.outstanding_due > 0
+            ORDER BY pl.id ASC
+        """)
+        if pl_active:
+            pl_dict = {f"{r[0]}. {r[2]} (Acc: {r[3]} | Due: ₹{float(r[4]):,.2f})": r for r in pl_active}
+            sel_key = st.selectbox("Select Customer / Loan Account", list(pl_dict.keys()), key="dc_sel_loan")
+            selected_row = pl_dict[sel_key]
+            l_id, l_no, l_name, l_acc, l_due, l_inst, l_cid = selected_row
+            
+            with st.form("quick_daily_collection_form"):
+                c_amt, c_mode = st.columns(2)
+                coll_amt = c_amt.number_input("Collection Amount (₹)", min_value=1.0, value=float(l_inst) if l_inst > 0 else 500.0, step=100.0)
+                coll_mode = c_mode.selectbox("Collection Payment Mode", ["Union Bank of India (UPI / Bank)", "Cash in Hand (Office Drawer)"])
+                
+                c_notes = st.text_input("Narration / Reference", value=f"Daily Collection {l_name} ({l_no})")
+                
+                if st.form_submit_button("💾 Save & Post Collection to Ledger", use_container_width=True):
+                    rep_voucher = f"DC{report_date.strftime('%Y%m%d')}{l_id:03d}"
+                    new_due = max(0.0, float(l_due) - float(coll_amt))
+                    new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
+                    
+                    # 1. Update personal_loans
+                    run_query("UPDATE personal_loans SET outstanding_due = ?, status = ? WHERE id = ?", (new_due, new_status, l_id), fetch=False)
+                    
+                    # 2. Record in loan_repayments
+                    run_query("""
+                        INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
+                        VALUES ('PERSONAL', ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                    """, (l_id, l_cid, str(report_date), coll_amt, coll_amt, coll_mode, rep_voucher, c_notes), fetch=False)
+                    
+                    # 3. Post to Bank Book or Cash Book & JV
+                    part_text = f"Daily Collection: {l_name} (Acc: {l_acc}) [{l_no}]"
+                    if "Union Bank" in coll_mode:
+                        run_query("""
+                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'INC-108')
+                        """, (str(report_date), rep_voucher, part_text, coll_amt, c_notes), fetch=False)
+                        # JV
+                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(report_date), f"Daily Collection [{rep_voucher}]: {part_text}"), fetch=False)
+                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', ?, 0)", (j_id, coll_amt), fetch=False)
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-108', 0, ?)", (j_id, coll_amt), fetch=False)
+                    else:
+                        run_query("""
+                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                            VALUES (?, ?, ?, ?, 0, 0, ?, 'INC-108')
+                        """, (str(report_date), rep_voucher, part_text, coll_amt, c_notes), fetch=False)
+                        # JV
+                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(report_date), f"Daily Collection (Cash) [{rep_voucher}]: {part_text}"), fetch=False)
+                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (j_id, coll_amt), fetch=False)
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-108', 0, ?)", (j_id, coll_amt), fetch=False)
+                        
+                    # 4. Update Customer Passbook
+                    acc_r = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (l_cid,))
+                    if acc_r:
+                        a_id, a_bal = acc_r[0]
+                        pass_bal = max(0.0, float(a_bal) - float(coll_amt))
+                        run_query("UPDATE accounts SET balance = ? WHERE id = ?", (pass_bal, a_id), fetch=False)
+                        run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"DAILY COLLECTION [{l_no}] (CREDIT)", coll_amt, pass_bal, str(report_date)), fetch=False)
+                        
+                    st.success(f"🎉 Received ₹{coll_amt:,.2f} from {l_name}! Posted to Bank Book ({rep_voucher}) and Customer Passbook.")
+                    time.sleep(0.1)
+                    st.rerun()
+        else:
+            st.info("No active loans found.")
+
+    with tab2:
+        st.subheader("📊 Master Daily Report Register (All 39 Members)")
+        daily_query = """
+            SELECT 
+                c.id as sl_no,
+                c.name as customer_name,
+                COALESCE(c.account_no, 'N/A') as account_no,
+                COALESCE(c.phone, 'N/A') as contact_no,
+                COALESCE(pl.principal_amount, 0.0) as loan_amount,
+                COALESCE(pl.outstanding_due, 0.0) as due_amount,
+                COALESCE(pl.status, 'ACTIVE') as status,
+                COALESCE(pl.remarks, '') as remarks
+            FROM customers c
+            LEFT JOIN personal_loans pl ON c.id = pl.customer_id
+            ORDER BY c.id ASC
+        """
+        d_rows = run_query(daily_query)
+        if d_rows:
+            df_daily = pd.DataFrame(d_rows, columns=["Sl", "Customer Name", "Account No", "Contact No", "Loan Amount (₹)", "Due Amount (₹)", "Status", "Remarks / Legal Status"])
+            st.dataframe(format_df_dates(df_daily), use_container_width=True)
+            
+            c_x, c_c, c_p = st.columns(3)
+            with c_x:
+                st.download_button("📊 Download Daily Report (.xlsx)", pdf_generator.create_excel_report(f"Daily Report - {report_date}", df_daily), f"daily_report_{report_date}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with c_c:
+                st.download_button("📥 Download Daily Report (.csv)", pdf_generator.create_csv_report(f"Daily Report - {report_date}", df_daily), f"daily_report_{report_date}.csv", "text/csv", use_container_width=True)
+            with c_p:
+                st.download_button("📄 Download Daily Report PDF", pdf_generator.create_pdf_report(f"Daily Report - {report_date}", df_daily), f"daily_report_{report_date}.pdf", "application/pdf", use_container_width=True)
+
+
+def render_personal_loans():
+    st.title("💼 Personal & Micro Loan Management")
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📝 New Loan & 1-Click Disbursal", 
+        "💳 Collect Repayment / Installment", 
+        "📋 Active Loan Register & Legal Tracker", 
+        "🖨️ Loan Statement & Promissory Note"
+    ])
+    
+    with tab1:
+        st.subheader("📝 Sanction New Personal Loan")
+        cust_list = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone FROM customers ORDER BY id ASC") or []
+        if not cust_list:
+            st.warning("Please register a customer first.")
+            return
+            
+        cust_dict = {f"{c[0]}. {c[1]} (Acc: {c[2]} | Ph: {c[3]})": c[0] for c in cust_list}
+        selected_cust_label = st.selectbox("Select Member / Borrower", list(cust_dict.keys()), key="pl_cust_sel")
+        selected_cust_id = cust_dict[selected_cust_label]
+        
+        with st.form("new_personal_loan_form"):
+            col1, col2, col3 = st.columns(3)
+            sanction_date = col1.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY")
+            principal = col2.number_input("Principal Loan Amount (₹)", min_value=1000.0, value=25000.0, step=1000.0)
+            int_rate = col3.number_input("Annual Interest Rate (%)", min_value=1.0, value=12.0, step=0.5)
+            
+            col4, col5, col6 = st.columns(3)
+            loan_type = col4.selectbox("Loan Scheme", ["Daily 100-Day Micro Loan", "Monthly Flat Rate", "Reducing Balance EMI"])
+            tenure_days = col5.number_input("Tenure in Days", min_value=10, value=100, step=10) if "Daily" in loan_type else 100
+            tenure_months = col5.number_input("Tenure in Months", min_value=1, value=12, step=1) if "Daily" not in loan_type else 12
+            
+            # Live Calculator Math
+            if "Daily" in loan_type:
+                tot_interest = round(principal * (int_rate / 100.0) * (tenure_days / 365.0), 2)
+                tot_repayable = round(principal + tot_interest, 2)
+                installment = round(tot_repayable / float(tenure_days), 2)
+                inst_label = f"₹{installment:,.2f} / Day ({tenure_days} Days)"
+            else:
+                tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
+                tot_repayable = round(principal + tot_interest, 2)
+                installment = round(tot_repayable / float(tenure_months), 2)
+                inst_label = f"₹{installment:,.2f} / Month ({tenure_months} Months)"
+                
+            col6.selectbox("Payment Frequency", ["Daily Collection" if "Daily" in loan_type else "Monthly Installment"])
+            
+            st.info(f"📊 **Loan Calculation Preview:** Principal: **₹{principal:,.2f}** | Total Interest: **₹{tot_interest:,.2f}** | Total Repayable: **₹{tot_repayable:,.2f}** | Installment: **{inst_label}**")
+            
+            g_col1, g_col2, g_col3 = st.columns(3)
+            guarantor_name = g_col1.text_input("Guarantor / Surety Member Name", value="Member Surety")
+            guarantor_phone = g_col2.text_input("Guarantor Phone", value="9846000000")
+            purpose = g_col3.text_input("Loan Purpose", value="Business Working Capital / Personal")
+            
+            st.markdown("### ⚡ Automated 1-Click Disbursal Mode")
+            disb_mode = st.radio("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], horizontal=True, key="pl_disb_mode")
+            remarks = st.text_input("Remarks / Notes", value="New Personal Loan Disbursed")
+            
+            if st.form_submit_button("🚀 Confirm & 1-Click Disburse Loan", use_container_width=True):
+                cur_count = run_query("SELECT COUNT(*) FROM personal_loans")[0][0] + 1
+                loan_no = f"PL-2026-{cur_count:04d}"
+                voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{cur_count:03d}"
+                
+                if "Cash" in disb_mode:
+                    cur_cash = get_cash_balance()
+                    if cur_cash < principal:
+                        st.error(f"❌ Insufficient Cash Balance in Drawer! Available: ₹{cur_cash:,.2f}")
+                        st.stop()
+                        
+                run_query("""
+                    INSERT INTO personal_loans (
+                        loan_no, customer_id, sanction_date, principal_amount, interest_rate,
+                        interest_type, tenure_days, tenure_months, total_interest, total_repayable,
+                        installment_amount, outstanding_due, disbursal_mode, voucher_no,
+                        guarantor_name, guarantor_phone, purpose, status, remarks
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+                """, (
+                    loan_no, selected_cust_id, str(sanction_date), principal, int_rate,
+                    loan_type, tenure_days, tenure_months, tot_interest, tot_repayable,
+                    installment, tot_repayable, disb_mode, voucher_no,
+                    guarantor_name, guarantor_phone, purpose, remarks
+                ), fetch=False)
+                
+                c_details = run_query("SELECT name, COALESCE(account_no, '') FROM customers WHERE id = ?", (selected_cust_id,))[0]
+                cust_name, cust_acc = c_details[0], c_details[1]
+                part_text = f"Loan Disbursal to {cust_name} (Acc: {cust_acc}) [{loan_no}]"
+                
+                if "Union Bank" in disb_mode:
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-108')
+                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                    run_query("""
+                        INSERT INTO journal_vouchers (jv_number, date, narration, created_by)
+                        VALUES (?, ?, ?, 'System Admin')
+                    """, (voucher_no, str(sanction_date), f"Personal Loan Disbursal [{voucher_no}]: {part_text}"), fetch=False)
+                    jv_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (voucher_no,))[0][0]
+                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-108', ?, 0)", (jv_id, principal), fetch=False)
+                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', 0, ?)", (jv_id, principal), fetch=False)
+                else:
+                    run_query("""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-108')
+                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                    run_query("""
+                        INSERT INTO journal_vouchers (jv_number, date, narration, created_by)
+                        VALUES (?, ?, ?, 'System Admin')
+                    """, (voucher_no, str(sanction_date), f"Personal Loan Disbursal (Cash) [{voucher_no}]: {part_text}"), fetch=False)
+                    jv_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (voucher_no,))[0][0]
+                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-108', ?, 0)", (jv_id, principal), fetch=False)
+                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, principal), fetch=False)
+                    
+                acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
+                if acc_row:
+                    acc_id, old_bal = acc_row[0]
+                    new_bal = float(old_bal) + float(tot_repayable)
+                    run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_bal, acc_id), fetch=False)
+                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, new_bal, str(sanction_date)), fetch=False)
+                else:
+                    run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (cust_acc, selected_cust_id, tot_repayable, str(sanction_date)), fetch=False)
+                    acc_id = run_query("SELECT id FROM accounts WHERE customer_id = ?", (selected_cust_id,))[0][0]
+                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, tot_repayable, str(sanction_date)), fetch=False)
+                    
+                st.success(f"🎉 Loan {loan_no} Disbursed Successfully! Posted to Bank Book ({voucher_no}) and Customer Passbook.")
+                time.sleep(0.1)
+                st.rerun()
+
+    with tab2:
+        st.subheader("💳 Record Loan Repayment / Daily Collection")
+        active_loans = run_query("""
+            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.outstanding_due, pl.installment_amount, pl.customer_id
+            FROM personal_loans pl
+            JOIN customers c ON pl.customer_id = c.id
+            WHERE pl.outstanding_due > 0
+            ORDER BY pl.id ASC
+        """)
+        if active_loans:
+            loan_dict = {f"{r[1]} - {r[2]} (Acc: {r[3]} | Due: ₹{float(r[4]):,.2f} | Inst: ₹{float(r[5]):,.2f})": r for r in active_loans}
+            sel_l_key = st.selectbox("Select Active Loan to Record Payment", list(loan_dict.keys()), key="rep_loan_sel")
+            sel_loan = loan_dict[sel_l_key]
+            l_id, l_no, l_cname, l_cacc, l_due, l_inst, l_cid = sel_loan
+            
+            with st.form("loan_repayment_form"):
+                col_r1, col_r2, col_r3 = st.columns(3)
+                pay_date = col_r1.date_input("Payment Date", value=date.today(), format="DD-MM-YYYY")
+                amt_paid = col_r2.number_input("Amount Collected (₹)", min_value=1.0, value=float(l_inst) if l_inst > 0 else 500.0, step=100.0)
+                pay_mode = col_r3.selectbox("Payment Mode", ["Union Bank of India (UPI / NEFT)", "Cash in Hand (Office Drawer)"])
+                
+                rep_narration = st.text_input("Narration / UTR Reference", value=f"Daily Repayment {l_cname} ({l_no})")
+                
+                if st.form_submit_button("💾 Post Repayment Receipt", use_container_width=True):
+                    rep_voucher = f"RPL{pay_date.strftime('%Y%m%d')}{l_id:03d}"
+                    new_due = max(0.0, float(l_due) - float(amt_paid))
+                    new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
+                    
+                    run_query("UPDATE personal_loans SET outstanding_due = ?, status = ? WHERE id = ?", (new_due, new_status, l_id), fetch=False)
+                    run_query("""
+                        INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
+                        VALUES ('PERSONAL', ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                    """, (l_id, l_cid, str(pay_date), amt_paid, amt_paid, pay_mode, rep_voucher, rep_narration), fetch=False)
+                    
+                    part_rep = f"Loan Repayment: {l_cname} (Acc: {l_cacc}) [{l_no}]"
+                    if "Union Bank" in pay_mode:
+                        run_query("""
+                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'INC-108')
+                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, rep_narration), fetch=False)
+                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(pay_date), f"Loan Receipt [{rep_voucher}]: {part_rep}"), fetch=False)
+                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', ?, 0)", (j_id, amt_paid), fetch=False)
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-108', 0, ?)", (j_id, amt_paid), fetch=False)
+                    else:
+                        run_query("""
+                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                            VALUES (?, ?, ?, ?, 0, 0, ?, 'INC-108')
+                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, rep_narration), fetch=False)
+                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(pay_date), f"Loan Receipt (Cash) [{rep_voucher}]: {part_rep}"), fetch=False)
+                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (j_id, amt_paid), fetch=False)
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-108', 0, ?)", (j_id, amt_paid), fetch=False)
+                        
+                    acc_r = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (l_cid,))
+                    if acc_r:
+                        a_id, a_bal = acc_r[0]
+                        pass_bal = max(0.0, float(a_bal) - float(amt_paid))
+                        run_query("UPDATE accounts SET balance = ? WHERE id = ?", (pass_bal, a_id), fetch=False)
+                        run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"LOAN REPAYMENT [{l_no}] (CREDIT)", amt_paid, pass_bal, str(pay_date)), fetch=False)
+                        
+                    st.success(f"✅ Repayment of ₹{amt_paid:,.2f} recorded for {l_cname}! New Balance Due: ₹{new_due:,.2f}")
+                    time.sleep(0.1)
+                    st.rerun()
+        else:
+            st.info("No active personal loans pending repayment.")
+
+    with tab3:
+        st.subheader("📋 Active Personal Loans & Legal Tracker")
+        status_filter = st.selectbox("Filter by Loan Status", ["ALL", "ACTIVE", "COURT_CASE", "POLICE_COMPLAINT", "CLOSED", "NOT_REMITTING"], key="pl_filter_st")
+        
+        q_pl = """
+            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.principal_amount, pl.installment_amount, pl.outstanding_due, pl.status, pl.remarks
+            FROM personal_loans pl
+            JOIN customers c ON pl.customer_id = c.id
+        """
+        if status_filter != "ALL":
+            q_pl += f" WHERE pl.status = '{status_filter}'"
+        q_pl += " ORDER BY pl.id ASC"
+        
+        pl_rows = run_query(q_pl)
+        if pl_rows:
+            df_pl = pd.DataFrame(pl_rows, columns=["ID", "Loan No", "Customer Name", "Account No", "Principal (₹)", "Daily/Monthly Inst (₹)", "Outstanding Due (₹)", "Status", "Legal Remarks / Notes"])
+            
+            tot_p = df_pl["Principal (₹)"].sum()
+            tot_d = df_pl["Outstanding Due (₹)"].sum()
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Sanctioned Principal", f"₹{tot_p:,.2f}")
+            m2.metric("Total Outstanding Due Portfolio", f"₹{tot_d:,.2f}")
+            m3.metric("Total Loan Count", len(df_pl))
+            
+            st.dataframe(format_df_dates(df_pl), use_container_width=True)
+            
+            col_x, col_c, col_p = st.columns(3)
+            with col_x:
+                st.download_button("📊 Download Register (.xlsx)", pdf_generator.create_excel_report("Personal Loan Register", df_pl), "personal_loans.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with col_c:
+                st.download_button("📥 Download Register (.csv)", pdf_generator.create_csv_report("Personal Loan Register", df_pl), "personal_loans.csv", "text/csv", use_container_width=True)
+            with col_p:
+                st.download_button("📄 Download Register PDF", pdf_generator.create_pdf_report("Personal Loan Register", df_pl), "personal_loans.pdf", "application/pdf", use_container_width=True)
+        else:
+            st.info("No personal loan records found matching this filter.")
+
+    with tab4:
+        st.subheader("🖨️ Loan Statement & Promissory Note (DP Note)")
+        all_l = run_query("SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A') FROM personal_loans pl JOIN customers c ON pl.customer_id = c.id ORDER BY pl.id ASC")
+        if all_l:
+            l_options = {f"{r[1]} - {r[2]} (Acc: {r[3]})": r[0] for r in all_l}
+            sel_pr_id = st.selectbox("Select Loan to View Statement / Print DP Note", list(l_options.keys()), key="pl_print_sel")
+            
+            pl_info = run_query("""
+                SELECT pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, pl.sanction_date, pl.principal_amount, pl.interest_rate, pl.total_repayable, pl.installment_amount, pl.outstanding_due, pl.guarantor_name, pl.guarantor_phone, pl.status, pl.remarks
+                FROM personal_loans pl
+                JOIN customers c ON pl.customer_id = c.id
+                WHERE pl.id = ?
+            """, (sel_pr_id,))
+            
+            if pl_info:
+                p = pl_info[0]
+                with st.container(border=True):
+                    c1, c2 = st.columns(2)
+                    c1.markdown(f"### **DEMAND PROMISSORY NOTE (DP NOTE)**\n**Loan No:** `{p[0]}`\n\n**Borrower:** {p[1]} (Acc: {p[2]})\n\n**Phone:** {p[3]}")
+                    c2.markdown(f"**Sanction Date:** {p[4]}\n\n**Principal Amount:** ₹{float(p[5]):,.2f}\n\n**Total Repayable:** ₹{float(p[7]):,.2f}\n\n**Status:** `{p[12]}`")
+                    st.divider()
+                    st.write(f"**Guarantor / Surety:** {p[10]} (Ph: {p[11]})")
+                    st.write(f"**Remarks / Condition:** {p[13]}")
+                    
+                rep_txs = run_query("SELECT payment_date, voucher_no, amount_paid, payment_mode, narration FROM loan_repayments WHERE loan_type='PERSONAL' AND loan_id=? ORDER BY id ASC", (sel_pr_id,))
+                if rep_txs:
+                    st.markdown("#### 📜 Repayment History")
+                    df_rep = pd.DataFrame(rep_txs, columns=["Date", "Voucher No", "Amount Paid (₹)", "Payment Mode", "Narration"])
+                    st.dataframe(format_df_dates(df_rep), use_container_width=True)
+                else:
+                    st.info("No repayment transactions recorded for this loan yet.")
+
+
+def render_gold_loans():
+    st.title("🪙 Gold & Jewel Loan Management")
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🪙 Jewel Appraisal & 1-Click Disbursal", 
+        "💳 Monthly Interest & Part-Principal Receipt", 
+        "🏷️ Gold Vault Register & Safe Custody", 
+        "🖨️ Pawn Ticket & Release Acknowledgment"
+    ])
+    
+    with tab1:
+        st.subheader("🪙 Gold Appraisal & New Jewel Loan Sanction")
+        cust_list = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone FROM customers ORDER BY id ASC") or []
+        if not cust_list:
+            st.warning("Please register a customer first.")
+            return
+            
+        cust_dict = {f"{c[0]}. {c[1]} (Acc: {c[2]} | Ph: {c[3]})": c[0] for c in cust_list}
+        selected_cust_label = st.selectbox("Select Customer / Borrower", list(cust_dict.keys()), key="gl_cust_sel")
+        selected_cust_id = cust_dict[selected_cust_label]
+        
+        with st.form("new_gold_loan_form"):
+            col1, col2 = st.columns(2)
+            sanction_date = col1.date_input("Appraisal / Sanction Date", value=date.today(), format="DD-MM-YYYY")
+            gold_rate = col2.number_input("Today's 22K Gold Market Rate (₹ / gram)", min_value=1000.0, value=6500.0, step=50.0)
+            
+            ornament_desc = st.text_input("Ornaments Description", value="2 Gold Bangles, 1 Chain 22K Hallmarked")
+            
+            col_w1, col_w2, col_w3, col_w4 = st.columns(4)
+            item_count = col_w1.number_input("Item Count", min_value=1, value=2, step=1)
+            gross_weight = col_w2.number_input("Gross Weight (g)", min_value=0.1, value=15.500, step=0.1, format="%.3f")
+            stone_ded = col_w3.number_input("Stone / Dross Deduction (g)", min_value=0.0, value=0.500, step=0.05, format="%.3f")
+            net_weight = max(0.01, float(gross_weight) - float(stone_ded))
+            col_w4.metric("Net Gold Weight", f"{net_weight:.3f} g")
+            
+            # Auto Market Valuation & 75% LTV
+            market_val = round(net_weight * gold_rate, 2)
+            max_eligible = round(market_val * 0.75, 2)
+            
+            col_v1, col_v2 = st.columns(2)
+            col_v1.info(f"💎 **Market Value:** ₹{market_val:,.2f}")
+            col_v2.success(f"🎯 **Max Eligible Loan (75% LTV):** ₹{max_eligible:,.2f}")
+            
+            col_p1, col_p2, col_p3 = st.columns(3)
+            principal = col_p1.number_input("Sanctioned Loan Amount (₹)", min_value=1000.0, max_value=float(max_eligible), value=float(min(max_eligible, 50000.0)), step=1000.0)
+            int_monthly = col_p2.number_input("Monthly Interest Rate (%)", min_value=0.5, value=1.00, step=0.25)
+            tenure_months = col_p3.selectbox("Tenure (Months)", [6, 12, 3], index=1)
+            
+            monthly_interest = round(principal * (int_monthly / 100.0), 2)
+            st.info(f"📅 **Monthly Interest Servicing Due:** ₹{monthly_interest:,.2f} / Month (Tenure: {tenure_months} Months)")
+            
+            col_s1, col_s2, col_s3 = st.columns(3)
+            cur_gl_cnt = run_query("SELECT COUNT(*) FROM gold_loans")[0][0] + 1
+            packet_no = col_s1.text_input("Safe Vault Packet No", value=f"PKT-{cur_gl_cnt:03d}")
+            locker_no = col_s2.text_input("Locker Number", value="LOCKER-01")
+            appraiser_name = col_s3.text_input("Certified Appraiser Name", value="Approved Nidhi Appraiser")
+            
+            st.markdown("### ⚡ Automated 1-Click Disbursal Mode")
+            disb_mode = st.radio("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], horizontal=True, key="gl_disb_mode")
+            remarks = st.text_input("Remarks / Condition", value="Gold Pledged in Safe Vault")
+            
+            if st.form_submit_button("🪙 Confirm Appraisal & Disburse Gold Loan", use_container_width=True):
+                loan_no = f"GL-2026-{cur_gl_cnt:04d}"
+                voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{cur_gl_cnt:03d}"
+                
+                if "Cash" in disb_mode:
+                    cur_cash = get_cash_balance()
+                    if cur_cash < principal:
+                        st.error(f"❌ Insufficient Cash Balance in Drawer! Available: ₹{cur_cash:,.2f}")
+                        st.stop()
+                        
+                run_query("""
+                    INSERT INTO gold_loans (
+                        loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
+                        item_count, gross_weight, stone_deduction, net_weight, purity,
+                        market_value, ltv_percent, principal_amount, interest_rate_monthly,
+                        tenure_months, monthly_interest_due, outstanding_due, vault_packet_no,
+                        locker_no, appraiser_name, disbursal_mode, voucher_no, status, remarks
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '22K', ?, 75.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+                """, (
+                    loan_no, selected_cust_id, str(sanction_date), gold_rate, ornament_desc,
+                    item_count, gross_weight, stone_ded, net_weight,
+                    market_val, principal, int_monthly,
+                    tenure_months, monthly_interest, principal, packet_no,
+                    locker_no, appraiser_name, disb_mode, voucher_no, remarks
+                ), fetch=False)
+                
+                c_details = run_query("SELECT name, COALESCE(account_no, '') FROM customers WHERE id = ?", (selected_cust_id,))[0]
+                cust_name, cust_acc = c_details[0], c_details[1]
+                part_text = f"Gold Loan Disbursal: {cust_name} (Acc: {cust_acc}) [{loan_no} | {packet_no}]"
+                
+                if "Union Bank" in disb_mode:
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-104')
+                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                    run_query("""
+                        INSERT INTO journal_vouchers (jv_number, date, narration, created_by)
+                        VALUES (?, ?, ?, 'System Admin')
+                    """, (voucher_no, str(sanction_date), f"Gold Loan Disbursal [{voucher_no}]: {part_text}"), fetch=False)
+                    jv_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (voucher_no,))[0][0]
+                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-104', ?, 0)", (jv_id, principal), fetch=False)
+                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', 0, ?)", (jv_id, principal), fetch=False)
+                else:
+                    run_query("""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-104')
+                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                    run_query("""
+                        INSERT INTO journal_vouchers (jv_number, date, narration, created_by)
+                        VALUES (?, ?, ?, 'System Admin')
+                    """, (voucher_no, str(sanction_date), f"Gold Loan Disbursal (Cash) [{voucher_no}]: {part_text}"), fetch=False)
+                    jv_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (voucher_no,))[0][0]
+                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-104', ?, 0)", (jv_id, principal), fetch=False)
+                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, principal), fetch=False)
+                    
+                st.success(f"🪙 Gold Loan {loan_no} Disbursed! Packet {packet_no} securely logged in Vault.")
+                time.sleep(0.1)
+                st.rerun()
+
+    with tab2:
+        st.subheader("💳 Collect Gold Loan Interest / Settlement")
+        active_gl = run_query("""
+            SELECT gl.id, gl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), gl.outstanding_due, gl.monthly_interest_due, gl.vault_packet_no, gl.customer_id
+            FROM gold_loans gl
+            JOIN customers c ON gl.customer_id = c.id
+            WHERE gl.outstanding_due > 0
+            ORDER BY gl.id ASC
+        """)
+        if active_gl:
+            gl_dict = {f"{r[1]} - {r[2]} (Pkt: {r[6]} | Principal Due: ₹{float(r[4]):,.2f} | Monthly Int: ₹{float(r[5]):,.2f})": r for r in active_gl}
+            sel_gl_key = st.selectbox("Select Active Gold Loan", list(gl_dict.keys()), key="gl_rep_sel")
+            sel_g = gl_dict[sel_gl_key]
+            gl_id, gl_no, gl_cname, gl_cacc, gl_due, gl_mint, gl_pkt, gl_cid = sel_g
+            
+            with st.form("gl_repayment_form"):
+                col_g1, col_g2, col_g3 = st.columns(3)
+                pay_date = col_g1.date_input("Receipt Date", value=date.today(), format="DD-MM-YYYY")
+                rec_type = col_g2.selectbox("Receipt Type", ["Monthly Interest Servicing", "Part Principal Repayment", "Full Settlement & Jewel Release"])
+                
+                default_amt = float(gl_mint) if rec_type == "Monthly Interest Servicing" else float(gl_due)
+                amt_received = col_g3.number_input("Amount Received (₹)", min_value=1.0, value=default_amt, step=100.0)
+                
+                col_m1, col_m2 = st.columns(2)
+                pay_mode = col_m1.selectbox("Payment Mode", ["Union Bank of India (UPI / NEFT)", "Cash in Hand (Office Drawer)"])
+                narration = col_m2.text_input("Receipt Narration", value=f"Gold Loan {rec_type} - {gl_cname} ({gl_no})")
+                
+                if st.form_submit_button("💾 Post Gold Loan Receipt", use_container_width=True):
+                    rep_voucher = f"RGL{pay_date.strftime('%Y%m%d')}{gl_id:03d}"
+                    
+                    if "Interest" in rec_type:
+                        p_comp, i_comp = 0.0, float(amt_received)
+                        new_due = float(gl_due)
+                        new_status = 'ACTIVE'
+                        acc_code = 'INC-104'
+                    else:
+                        p_comp, i_comp = float(amt_received), 0.0
+                        new_due = max(0.0, float(gl_due) - float(amt_received))
+                        new_status = 'CLOSED_RELEASED' if new_due <= 0 else 'ACTIVE'
+                        acc_code = 'AST-104'
+                        
+                    run_query("UPDATE gold_loans SET outstanding_due = ?, status = ? WHERE id = ?", (new_due, new_status, gl_id), fetch=False)
+                    run_query("""
+                        INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
+                        VALUES ('GOLD', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (gl_id, gl_cid, str(pay_date), amt_received, p_comp, i_comp, pay_mode, rep_voucher, narration), fetch=False)
+                    
+                    part_text = f"Gold Loan Receipt: {gl_cname} (Acc: {gl_cacc}) [{gl_no}]"
+                    if "Union Bank" in pay_mode:
+                        run_query("""
+                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, ?)
+                        """, (str(pay_date), rep_voucher, part_text, amt_received, narration, acc_code), fetch=False)
+                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(pay_date), f"Gold Loan Receipt [{rep_voucher}]: {part_text}"), fetch=False)
+                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', ?, 0)", (j_id, amt_received), fetch=False)
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (j_id, acc_code, amt_received), fetch=False)
+                    else:
+                        run_query("""
+                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                            VALUES (?, ?, ?, ?, 0, 0, ?, ?)
+                        """, (str(pay_date), rep_voucher, part_text, amt_received, narration, acc_code), fetch=False)
+                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(pay_date), f"Gold Loan Receipt (Cash) [{rep_voucher}]: {part_text}"), fetch=False)
+                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (j_id, amt_received), fetch=False)
+                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (j_id, acc_code, amt_received), fetch=False)
+                        
+                    st.success(f"✅ Received ₹{amt_received:,.2f} for Gold Loan {gl_no}! New Due: ₹{new_due:,.2f}")
+                    time.sleep(0.1)
+                    st.rerun()
+        else:
+            st.info("No active gold loans.")
+
+    with tab3:
+        st.subheader("🏷️ Gold Safe Vault & Packet Register")
+        gl_rows = run_query("""
+            SELECT gl.id, gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, gl.ornament_details, gl.net_weight, gl.market_value, gl.principal_amount, gl.outstanding_due, gl.status
+            FROM gold_loans gl
+            JOIN customers c ON gl.customer_id = c.id
+            ORDER BY gl.id ASC
+        """)
+        if gl_rows:
+            df_gl = pd.DataFrame(gl_rows, columns=["ID", "Loan No", "Packet No", "Locker", "Customer Name", "Ornaments", "Net Wt (g)", "Market Value (₹)", "Principal (₹)", "Outstanding Due (₹)", "Status"])
+            
+            tot_wt = df_gl[df_gl["Status"] == "ACTIVE"]["Net Wt (g)"].sum()
+            tot_gl_due = df_gl[df_gl["Status"] == "ACTIVE"]["Outstanding Due (₹)"].sum()
+            
+            vm1, vm2, vm3 = st.columns(3)
+            vm1.metric("🔒 Active Gold Weight in Vault", f"{tot_wt:.3f} grams")
+            vm2.metric("💰 Active Gold Loan Portfolio", f"₹{tot_gl_due:,.2f}")
+            vm3.metric("📦 Total Packets", len(df_gl))
+            
+            st.dataframe(format_df_dates(df_gl), use_container_width=True)
+            
+            col_x, col_c, col_p = st.columns(3)
+            with col_x:
+                st.download_button("📊 Download Vault Register (.xlsx)", pdf_generator.create_excel_report("Gold Vault Register", df_gl), "gold_vault_register.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with col_c:
+                st.download_button("📥 Download Vault Register (.csv)", pdf_generator.create_csv_report("Gold Vault Register", df_gl), "gold_vault_register.csv", "text/csv", use_container_width=True)
+            with col_p:
+                st.download_button("📄 Download Vault Register PDF", pdf_generator.create_pdf_report("Gold Vault Register", df_gl), "gold_vault_register.pdf", "application/pdf", use_container_width=True)
+
+    with tab4:
+        st.subheader("🖨️ Pawn Ticket & Security Vault Tag")
+        all_gl = run_query("SELECT gl.id, gl.loan_no, gl.vault_packet_no, c.name FROM gold_loans gl JOIN customers c ON gl.customer_id = c.id ORDER BY gl.id ASC")
+        if all_gl:
+            gl_opts = {f"{r[1]} - {r[2]} ({r[3]})": r[0] for r in all_gl}
+            sel_gl_pr_id = st.selectbox("Select Gold Loan to Print Pawn Ticket", list(gl_opts.keys()), key="gl_pawn_sel")
+            
+            gl_pr_info = run_query("""
+                SELECT gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, gl.sanction_date, gl.ornament_details, gl.item_count, gl.gross_weight, gl.net_weight, gl.market_value, gl.principal_amount, gl.interest_rate_monthly, gl.monthly_interest_due, gl.outstanding_due, gl.status
+                FROM gold_loans gl
+                JOIN customers c ON gl.customer_id = c.id
+                WHERE gl.id = ?
+            """, (sel_gl_pr_id,))
+            
+            if gl_pr_info:
+                g = gl_pr_info[0]
+                with st.container(border=True):
+                    c1, c2 = st.columns(2)
+                    c1.markdown(f"### 🪙 **GOLD LOAN PAWN TICKET**\n**Loan No:** `{g[0]}` | **Packet:** `{g[1]}` | **Locker:** `{g[2]}`\n\n**Borrower:** {g[3]} (Acc: {g[4]})\n\n**Phone:** {g[5]}")
+                    c2.markdown(f"**Sanction Date:** {g[6]}\n\n**Principal Loan:** ₹{float(g[12]):,.2f}\n\n**Monthly Interest (1%):** ₹{float(g[14]):,.2f}\n\n**Status:** `{g[16]}`")
+                    st.divider()
+                    st.write(f"**Pledged Jewels:** {g[7]} (Count: {g[8]})")
+                    st.write(f"**Gross Wt:** {float(g[9]):.3f}g | **Net Wt:** {float(g[10]):.3f}g | **Market Value:** ₹{float(g[11]):,.2f}")
+
+
 def render_sb_accounts():
     st.title("💰 Savings Bank (SB) Management")
     tab1, tab2, tab3 = st.tabs(["Open SB Account", "Transact", "View Accounts"])
@@ -3121,6 +3749,9 @@ menu = st.sidebar.radio(
     "📋 MENU",
     [
         "📊 Dashboard",
+        "📅 Daily Collection Sheet",
+        "💼 Personal Loans",
+        "🪙 Gold Loans",
         "👥 Customer Management",
         "🔍 KYC Verification",
         "💰 SB Accounts",
@@ -3448,6 +4079,12 @@ st.markdown("""
 # Navigation routing
 if menu == "📊 Dashboard":
     render_dashboard()
+elif menu == "📅 Daily Collection Sheet":
+    render_daily_collection_sheet()
+elif menu == "💼 Personal Loans":
+    render_personal_loans()
+elif menu == "🪙 Gold Loans":
+    render_gold_loans()
 elif menu == "👥 Customer Management":
     render_customer_management()
 elif menu == "🔍 KYC Verification":

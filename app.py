@@ -1007,7 +1007,8 @@ def render_personal_loans():
         all_l = run_query("SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A') FROM personal_loans pl JOIN customers c ON pl.customer_id = c.id ORDER BY pl.id ASC")
         if all_l:
             l_options = {f"{r[1]} - {r[2]} (Acc: {r[3]})": r[0] for r in all_l}
-            sel_pr_id = st.selectbox("Select Loan to View Statement / Print DP Note", list(l_options.keys()), key="pl_print_sel")
+            sel_pr_label = st.selectbox("Select Loan to View Statement / Print DP Note", list(l_options.keys()), key="pl_print_sel")
+            sel_pr_id = l_options[sel_pr_label]
             
             pl_info = run_query("""
                 SELECT pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, pl.sanction_date, pl.principal_amount, pl.interest_rate, pl.total_repayable, pl.installment_amount, pl.outstanding_due, pl.guarantor_name, pl.guarantor_phone, pl.status, pl.remarks
@@ -1261,7 +1262,8 @@ def render_gold_loans():
         all_gl = run_query("SELECT gl.id, gl.loan_no, gl.vault_packet_no, c.name FROM gold_loans gl JOIN customers c ON gl.customer_id = c.id ORDER BY gl.id ASC")
         if all_gl:
             gl_opts = {f"{r[1]} - {r[2]} ({r[3]})": r[0] for r in all_gl}
-            sel_gl_pr_id = st.selectbox("Select Gold Loan to Print Pawn Ticket", list(gl_opts.keys()), key="gl_pawn_sel")
+            sel_gl_pr_label = st.selectbox("Select Gold Loan to Print Pawn Ticket", list(gl_opts.keys()), key="gl_pawn_sel")
+            sel_gl_pr_id = gl_opts[sel_gl_pr_label]
             
             gl_pr_info = run_query("""
                 SELECT gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, gl.sanction_date, gl.ornament_details, gl.item_count, gl.gross_weight, gl.net_weight, gl.market_value, gl.principal_amount, gl.interest_rate_monthly, gl.monthly_interest_due, gl.outstanding_due, gl.status

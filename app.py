@@ -782,79 +782,96 @@ def render_personal_loans():
     
     with tab1:
         st.subheader("📝 Sanction New Personal Loan")
-        cust_list = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone FROM customers ORDER BY id ASC") or []
+        cust_list = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone FROM customers ORDER BY id DESC") or []
         if not cust_list:
             st.warning("Please register a customer first.")
             return
             
-        cust_dict = {f"{c[0]}. {c[1]} (Acc: {c[2]} | Ph: {c[3]})": c[0] for c in cust_list}
-        selected_cust_label = st.selectbox("Select Member / Borrower", list(cust_dict.keys()), key="pl_cust_sel")
+        cust_dict = {f"#{c[0]} - {c[1]} (Acc: {c[2]} | Ph: {c[3]})": c[0] for c in cust_list}
+        selected_cust_label = st.selectbox("1️⃣ Select Member / Borrower", list(cust_dict.keys()), key="pl_cust_sel")
         selected_cust_id = cust_dict[selected_cust_label]
         
+        st.markdown("### 2️⃣ Choose Repayment Scheme / Mode")
+        repay_mode = st.radio(
+            "How will the borrower repay this loan?",
+            [
+                "🟢 Flexible / Pay-Anytime (No Fixed EMI - Borrower pays any amount at any time)",
+                "🔵 Daily Micro Collection (Fixed Daily Installment, e.g. 100 or 110 Days)",
+                "🟣 Monthly Fixed EMI (Fixed Monthly Installment, e.g. 12 or 24 Months)",
+                "🟡 Weekly Installments (Fixed Weekly Installment, e.g. 20 Weeks)"
+            ],
+            index=0,
+            key="pl_repay_mode_radio"
+        )
+        
         with st.form("new_personal_loan_form"):
+            st.markdown("### 3️⃣ Loan Amount & Interest Details")
             col1, col2, col3 = st.columns(3)
             sanction_date = col1.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY")
-            principal = col2.number_input("Principal Loan Amount (₹)", min_value=1000.0, value=25000.0, step=1000.0)
-            int_rate = col3.number_input("Annual Interest Rate (%)", min_value=1.0, value=12.0, step=0.5)
+            principal = col2.number_input("Principal Loan Amount (₹)", min_value=1000.0, value=50000.0, step=1000.0, help="The actual cash amount handed over / disbursed to the borrower")
+            int_rate = col3.number_input("Annual Interest Rate (%)", min_value=0.0, value=20.0, step=0.5, help="Annual interest rate percentage (e.g. 20%)")
             
-            col4, col5, col6 = st.columns(3)
-            loan_type = col4.selectbox("Repayment Scheme / Mode", [
-                "Flexible / Custom (No Fixed EMI - Pay Anytime)",
-                "Daily Collection (e.g. 100 Days)",
-                "Weekly Installment (e.g. ₹500/week)",
-                "Monthly Fixed EMI",
-                "Bullet Repayment (Principal at end)"
-            ])
-            
-            if "Daily" in loan_type:
-                tenure_days = col5.number_input("Tenure in Days", min_value=10, value=100, step=10)
+            if "Daily" in repay_mode:
+                col_t1, col_t2 = st.columns(2)
+                tenure_days = col_t1.number_input("Tenure (Number of Days)", min_value=10, value=110, step=10)
                 tenure_months = max(1, int(tenure_days / 30))
+                loan_scheme_name = f"Daily {tenure_days}-Day Micro Loan"
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_days / 365.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_days), 2)
-                inst_label = f"₹{installment:,.2f} / Day ({tenure_days} Days)"
-            elif "Weekly" in loan_type:
-                tenure_weeks = col5.number_input("Tenure in Weeks", min_value=4, value=20, step=4)
-                tenure_days = tenure_weeks * 7
-                tenure_months = max(1, int(tenure_weeks / 4))
-                tot_interest = round(principal * (int_rate / 100.0) * (tenure_weeks / 52.0), 2)
-                tot_repayable = round(principal + tot_interest, 2)
-                installment = round(tot_repayable / float(tenure_weeks), 2)
-                inst_label = f"₹{installment:,.2f} / Week ({tenure_weeks} Weeks)"
-            elif "Monthly" in loan_type:
-                tenure_months = col5.number_input("Tenure in Months", min_value=1, value=12, step=1)
+                inst_text = f"₹{installment:,.2f} / Day ({tenure_days} Days)"
+            elif "Monthly" in repay_mode:
+                col_t1, col_t2 = st.columns(2)
+                tenure_months = col_t1.number_input("Tenure (Number of Months)", min_value=1, value=12, step=1)
                 tenure_days = tenure_months * 30
+                loan_scheme_name = f"Monthly {tenure_months}-Month EMI Loan"
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_months), 2)
-                inst_label = f"₹{installment:,.2f} / Month ({tenure_months} Months)"
+                inst_text = f"₹{installment:,.2f} / Month ({tenure_months} Months)"
+            elif "Weekly" in repay_mode:
+                col_t1, col_t2 = st.columns(2)
+                tenure_weeks = col_t1.number_input("Tenure (Number of Weeks)", min_value=2, value=20, step=1)
+                tenure_days = tenure_weeks * 7
+                tenure_months = max(1, int(tenure_weeks / 4))
+                loan_scheme_name = f"Weekly {tenure_weeks}-Week Loan"
+                tot_interest = round(principal * (int_rate / 100.0) * (tenure_weeks / 52.0), 2)
+                tot_repayable = round(principal + tot_interest, 2)
+                installment = round(tot_repayable / float(tenure_weeks), 2)
+                inst_text = f"₹{installment:,.2f} / Week ({tenure_weeks} Weeks)"
             else:
-                # Flexible / Bullet (No fixed mandatory EMI)
-                tenure_months = col5.number_input("Agreed Period (Months)", min_value=1, value=12, step=1)
+                # Flexible / Custom (No Fixed EMI)
+                col_t1, col_t2 = st.columns(2)
+                tenure_months = col_t1.number_input("Agreed Term (Months)", min_value=1, value=12, step=1, help="Period used to calculate total agreed interest")
                 tenure_days = tenure_months * 30
+                loan_scheme_name = "Flexible / Custom (No Fixed EMI)"
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = 0.0
-                inst_label = "Flexible / Variable Amounts (No Fixed EMI)"
+                inst_text = "Flexible (Pay Any Amount Anytime)"
                 
-            col6.selectbox("Payment Type", [
-                "Flexible / As Agreed" if "Flexible" in loan_type else ("Daily Micro" if "Daily" in loan_type else ("Weekly" if "Weekly" in loan_type else "Monthly EMI"))
-            ])
-            
-            st.info(f"📊 **Loan Calculation Preview:** Principal: **₹{principal:,.2f}** | Total Interest: **₹{tot_interest:,.2f}** | Total Repayable: **₹{tot_repayable:,.2f}** | Repayment Plan: **{inst_label}**")
+            with st.container(border=True):
+                st.markdown("#### 📊 Live Loan Breakdown")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("💵 Principal Cash", f"₹{principal:,.2f}")
+                m2.metric(f"📈 Total Interest ({int_rate}%)", f"₹{tot_interest:,.2f}")
+                m3.metric("💳 Total Repayable Due", f"₹{tot_repayable:,.2f}")
+                m4.metric("📅 Repayment Mode", inst_text)
+                
+            st.markdown("### 4️⃣ Disbursal Account & Surety Details")
+            col_d1, col_d2 = st.columns(2)
+            disb_mode = col_d1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"])
+            custom_loan_no = col_d2.text_input("Custom Loan Number (Optional - leave blank to auto-generate)")
             
             g_col1, g_col2, g_col3 = st.columns(3)
             guarantor_name = g_col1.text_input("Guarantor / Surety Member Name", value="Member Surety")
             guarantor_phone = g_col2.text_input("Guarantor Phone", value="9846000000")
             purpose = g_col3.text_input("Loan Purpose", value="Business Working Capital / Personal")
-            
-            st.markdown("### ⚡ Automated 1-Click Disbursal Mode")
-            disb_mode = st.radio("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], horizontal=True, key="pl_disb_mode")
             remarks = st.text_input("Remarks / Notes", value="New Personal Loan Disbursed")
             
             if st.form_submit_button("🚀 Confirm & 1-Click Disburse Loan", use_container_width=True):
                 cur_count = run_query("SELECT COUNT(*) FROM personal_loans")[0][0] + 1
-                loan_no = f"PL-2026-{cur_count:04d}"
+                loan_no = custom_loan_no.strip() if custom_loan_no and custom_loan_no.strip() else f"PL-2026-{cur_count:04d}"
                 voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{cur_count:03d}"
                 
                 if "Cash" in disb_mode:
@@ -872,7 +889,7 @@ def render_personal_loans():
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
                 """, (
                     loan_no, selected_cust_id, str(sanction_date), principal, int_rate,
-                    loan_type, tenure_days, tenure_months, tot_interest, tot_repayable,
+                    loan_scheme_name, tenure_days, tenure_months, tot_interest, tot_repayable,
                     installment, tot_repayable, disb_mode, voucher_no,
                     guarantor_name, guarantor_phone, purpose, remarks
                 ), fetch=False)
@@ -917,34 +934,54 @@ def render_personal_loans():
                     acc_id = run_query("SELECT id FROM accounts WHERE customer_id = ?", (selected_cust_id,))[0][0]
                     run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, tot_repayable, str(sanction_date)), fetch=False)
                     
-                st.success(f"🎉 Loan {loan_no} Disbursed Successfully! Posted to Bank Book ({voucher_no}) and Customer Passbook.")
-                time.sleep(0.1)
+                st.success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}**.")
+                time.sleep(1.0)
                 st.rerun()
 
     with tab2:
-        st.subheader("💳 Record Loan Repayment / Daily Collection")
+        st.subheader("💳 Record Loan Repayment / Collect Installment")
         active_loans = run_query("""
-            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.outstanding_due, pl.installment_amount, pl.customer_id
+            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.outstanding_due, pl.installment_amount, pl.customer_id, pl.principal_amount, pl.total_repayable, pl.interest_type
             FROM personal_loans pl
             JOIN customers c ON pl.customer_id = c.id
             WHERE pl.outstanding_due > 0
-            ORDER BY pl.id ASC
+            ORDER BY pl.id DESC
         """)
         if active_loans:
-            loan_dict = {f"{r[1]} - {r[2]} (Acc: {r[3]} | Due: ₹{float(r[4]):,.2f} | Inst: ₹{float(r[5]):,.2f})": r for r in active_loans}
-            sel_l_key = st.selectbox("Select Active Loan to Record Payment", list(loan_dict.keys()), key="rep_loan_sel")
+            loan_dict = {}
+            for r in active_loans:
+                inst_str = f"₹{float(r[5]):,.2f}/inst" if float(r[5]) > 0 else "Flexible"
+                label = f"#{r[1]} - {r[2]} (Acc: {r[3]} | Due: ₹{float(r[4]):,.2f} | Plan: {inst_str})"
+                loan_dict[label] = r
+                
+            sel_l_key = st.selectbox("1️⃣ Select Active Loan to Record Payment", list(loan_dict.keys()), key="rep_loan_sel")
             sel_loan = loan_dict[sel_l_key]
-            l_id, l_no, l_cname, l_cacc, l_due, l_inst, l_cid = sel_loan
+            l_id, l_no, l_cname, l_cacc, l_due, l_inst, l_cid, l_princ, l_tot_rep, l_scheme = sel_loan
+            
+            already_paid = max(0.0, float(l_tot_rep) - float(l_due))
+            
+            with st.container(border=True):
+                st.markdown(f"#### 👤 Borrower: **{l_cname}** (Loan: `{l_no}`, Acc: `{l_cacc}`)")
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                sc1.metric("💵 Principal Loan", f"₹{float(l_princ):,.2f}")
+                sc2.metric("💳 Total Repayable", f"₹{float(l_tot_rep):,.2f}")
+                sc3.metric("🟢 Already Repaid", f"₹{already_paid:,.2f}")
+                sc4.metric("🔴 Outstanding Due Balance", f"₹{float(l_due):,.2f}")
+                st.caption(f"📌 **Repayment Scheme:** {l_scheme} | **Suggested Installment:** {'₹{:,.2f}'.format(float(l_inst)) if float(l_inst) > 0 else 'Flexible / Pay Any Amount'}")
             
             with st.form("loan_repayment_form"):
+                st.markdown("### 2️⃣ Payment Details")
                 col_r1, col_r2, col_r3 = st.columns(3)
                 pay_date = col_r1.date_input("Payment Date", value=date.today(), format="DD-MM-YYYY")
-                amt_paid = col_r2.number_input("Amount Collected (₹)", min_value=1.0, value=float(l_inst) if l_inst > 0 else 500.0, step=100.0)
-                pay_mode = col_r3.selectbox("Payment Mode", ["Union Bank of India (UPI / NEFT)", "Cash in Hand (Office Drawer)"])
+                default_amt = float(l_inst) if float(l_inst) > 0 else (min(float(l_due), 1000.0) if float(l_due) > 0 else 500.0)
+                amt_paid = col_r2.number_input("Amount Collected (₹)", min_value=1.0, max_value=float(l_due), value=min(default_amt, float(l_due)), step=100.0, help="Enter any amount paid by the borrower today")
+                pay_mode = col_r3.selectbox("Payment Mode", ["Cash in Hand (Office Drawer)", "Union Bank of India (UPI / NEFT)"])
                 
-                rep_narration = st.text_input("Narration / UTR Reference", value=f"Daily Repayment {l_cname} ({l_no})")
+                rep_narration = st.text_input("Narration / Remarks / UTR", value=f"Repayment {l_cname} ({l_no})")
                 
-                if st.form_submit_button("💾 Post Repayment Receipt", use_container_width=True):
+                st.info(f"ℹ️ **Payment Preview:** Paying **₹{amt_paid:,.2f}** will reduce the borrower's remaining due from **₹{float(l_due):,.2f}** ➔ **₹{max(0.0, float(l_due) - amt_paid):,.2f}**.")
+                
+                if st.form_submit_button("💾 Confirm & Post Repayment Receipt", use_container_width=True):
                     rep_voucher = f"RPL{pay_date.strftime('%Y%m%d')}{l_id:03d}"
                     new_due = max(0.0, float(l_due) - float(amt_paid))
                     new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
@@ -982,8 +1019,8 @@ def render_personal_loans():
                         run_query("UPDATE accounts SET balance = ? WHERE id = ?", (pass_bal, a_id), fetch=False)
                         run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"LOAN REPAYMENT [{l_no}] (CREDIT)", amt_paid, pass_bal, str(pay_date)), fetch=False)
                         
-                    st.success(f"✅ Repayment of ₹{amt_paid:,.2f} recorded for {l_cname}! New Balance Due: ₹{new_due:,.2f}")
-                    time.sleep(0.1)
+                    st.success(f"✅ Repayment of **₹{amt_paid:,.2f}** recorded for **{l_cname}**! Remaining Due: **₹{new_due:,.2f}**")
+                    time.sleep(1.0)
                     st.rerun()
         else:
             st.info("No active personal loans pending repayment.")

@@ -500,9 +500,29 @@ def init_db():
             cursor.execute(tables_sql)
             try:
                 cursor.execute("""
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS dob TEXT;
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS gender TEXT;
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS adhar TEXT;
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS adhar_data BYTEA;
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS pan_data BYTEA;
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS signature_data BYTEA;
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS account_no TEXT;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS account_number TEXT;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS account_type TEXT;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS balance REAL DEFAULT 0.0;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS created_at TEXT;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS account_no TEXT;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS balance REAL DEFAULT 0.0;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS interest_rate REAL DEFAULT 3.5;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS created_at TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_id TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_no TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS mode TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS narration TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS balance_after REAL;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id INTEGER;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS scheme_name TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
@@ -512,9 +532,14 @@ def init_db():
                 pass
         else:
             cursor.executescript(tables_sql)
-            for col in ["adhar_data", "pan_data", "signature_data"]:
+            for col in [("dob", "TEXT"), ("gender", "TEXT"), ("adhar", "TEXT"), ("account_no", "TEXT"), ("adhar_data", "BLOB"), ("pan_data", "BLOB"), ("signature_data", "BLOB")]:
                 try:
-                    cursor.execute(f"ALTER TABLE customers ADD COLUMN {col} BLOB;")
+                    cursor.execute(f"ALTER TABLE customers ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+            for col in [("tx_id", "TEXT"), ("account_no", "TEXT"), ("mode", "TEXT"), ("narration", "TEXT"), ("balance_after", "REAL"), ("account_id", "INTEGER")]:
+                try:
+                    cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
             for col in [("scheme_name", "TEXT"), ("rd_no", "TEXT"), ("maturity_date", "TEXT"), ("collected_balance", "REAL")]:

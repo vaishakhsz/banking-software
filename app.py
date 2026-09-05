@@ -183,67 +183,84 @@ def render_customer_management():
             
             submitted = st.form_submit_button("🚀 Register Customer & Auto-Create Account", use_container_width=True)
             if submitted:
-                if not name or not acc_no:
-                    st.error("Please fill in mandatory fields: Full Name and Account Number.")
+                if not name or not name.strip():
+                    st.error("❌ Please enter the customer's Full Name.")
                 else:
-                    adh_name, adh_bytes = save_uploaded_file(adhar_upload) if adhar_upload else (None, None)
-                    pan_name, pan_bytes = save_uploaded_file(pan_upload) if pan_upload else (None, None)
-                    sig_name, sig_bytes = save_uploaded_file(sig_upload) if sig_upload else (None, None)
+                    final_acc_no = acc_no.strip() if acc_no and acc_no.strip() else f"0128{datetime.now(IST).strftime('%m%d%H%M')}"
                     
-                    import psycopg2
-                    adh_param = psycopg2.Binary(adh_bytes) if (USING_SUPABASE and adh_bytes) else adh_bytes
-                    pan_param = psycopg2.Binary(pan_bytes) if (USING_SUPABASE and pan_bytes) else pan_bytes
-                    sig_param = psycopg2.Binary(sig_bytes) if (USING_SUPABASE and sig_bytes) else sig_bytes
-                    
-                    # 1. Insert into customers
-                    run_query("""
-                        INSERT INTO customers (name, account_no, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, adhar_data, pan_file, pan_data, signature_file, signature_data, kyc_status, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'VERIFIED', ?)
-                    """, (name, acc_no, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adh_name, adh_param, pan_name, pan_param, sig_name, sig_param, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                    
-                    # 2. Get new customer ID
-                    new_cust_id_row = run_query("SELECT id FROM customers WHERE account_no = ? ORDER BY id DESC LIMIT 1", (acc_no,))
-                    if new_cust_id_row:
-                        new_c_id = new_cust_id_row[0][0]
-                        today_str = datetime.now(IST).strftime("%Y-%m-%d")
-                        
-                        # 3. Automatically create Account in accounts table
-                        db_acc_type = 'Loan Account' if 'Loan' in acc_type else 'Savings Account'
-                        run_query("""
-                            INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
-                            VALUES (?, ?, ?, ?, ?)
-                        """, (acc_no, db_acc_type, new_c_id, initial_balance, today_str), fetch=False)
-                        
-                        acc_id_row = run_query("SELECT id FROM accounts WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (new_c_id,))
-                        if acc_id_row:
-                            acc_pk = acc_id_row[0][0]
-                            # 4. Log Opening Transaction if balance > 0
-                            if initial_balance > 0:
-                                tx_type = 'LOAN OPENING DUE (DEBIT)' if 'Loan' in acc_type else 'SB OPENING DEPOSIT (CREDIT)'
-                                run_query("""
-                                    INSERT INTO transactions (account_id, type, amount, balance_after, date)
-                                    VALUES (?, ?, ?, ?, ?)
-                                """, (acc_pk, tx_type, initial_balance, initial_balance, today_str), fetch=False)
+                    # Check for duplicate account number in accounts table
+                    existing_acc = run_query("SELECT id FROM accounts WHERE account_number = ?", (final_acc_no,))
+                    if existing_acc:
+                        st.error(f"❌ Account number `{final_acc_no}` is already registered in the system. Please specify a unique Account Number.")
+                    else:
+                        try:
+                            adh_name, adh_bytes = save_uploaded_file(adhar_upload) if adhar_upload else (None, None)
+                            pan_name, pan_bytes = save_uploaded_file(pan_upload) if pan_upload else (None, None)
+                            sig_name, sig_bytes = save_uploaded_file(sig_upload) if sig_upload else (None, None)
+                            
+                            import psycopg2
+                            adh_param = psycopg2.Binary(adh_bytes) if (USING_SUPABASE and adh_bytes) else adh_bytes
+                            pan_param = psycopg2.Binary(pan_bytes) if (USING_SUPABASE and pan_bytes) else pan_bytes
+                            sig_param = psycopg2.Binary(sig_bytes) if (USING_SUPABASE and sig_bytes) else sig_bytes
+                            
+                            today_str = datetime.now(IST).strftime("%Y-%m-%d")
+                            now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+                            
+                            # 1. Insert into customers
+                            run_query("""
+                                INSERT INTO customers (name, account_no, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, adhar_data, pan_file, pan_data, signature_file, signature_data, kyc_status, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'VERIFIED', ?)
+                            """, (name.strip(), final_acc_no, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adh_name, adh_param, pan_name, pan_param, sig_name, sig_param, now_str), fetch=False)
+                            
+                            # 2. Get new customer ID
+                            new_cust_id_row = run_query("SELECT id FROM customers WHERE account_no = ? ORDER BY id DESC LIMIT 1", (final_acc_no,))
+                            if not new_cust_id_row:
+                                new_cust_id_row = run_query("SELECT id FROM customers WHERE name = ? ORDER BY id DESC LIMIT 1", (name.strip(),))
                                 
-                                # If loan, also create personal_loans record automatically
-                                if 'Loan' in acc_type:
-                                    pl_code = f"PL-2026-{new_c_id:04d}"
-                                    run_query("""
-                                        INSERT INTO personal_loans (
-                                            loan_no, customer_id, sanction_date, principal_amount, interest_rate,
-                                            interest_type, tenure_days, tenure_months, total_interest, total_repayable,
-                                            installment_amount, outstanding_due, disbursal_mode, voucher_no,
-                                            guarantor_name, guarantor_phone, purpose, status, remarks
-                                        ) VALUES (?, ?, ?, ?, 12.00, 'Daily 100-Day Micro Loan', 100, 12, 0, ?, ?, ?, 'Union Bank of India', ?, 'Member Surety', ?, 'Personal Loan', 'ACTIVE', 'Opening Loan Balance')
-                                    """, (pl_code, new_c_id, today_str, initial_balance, initial_balance, round(initial_balance/100, 2), initial_balance, f"PLV{new_c_id:04d}", phone or 'N/A'), fetch=False)
-                                    
-                        # 5. Also insert into sb_accounts for standard SB tracking
-                        run_query("INSERT INTO sb_accounts VALUES (?, ?, ?, 3.5, ?)", 
-                                  (acc_no, new_c_id, initial_balance, today_str), fetch=False)
-                                  
-                    st.success(f"🎉 Customer {name} (Acc: {acc_no}) registered successfully! Primary Account & Passbook created automatically with initial balance ₹{initial_balance:,.2f}.")
-                    time.sleep(0.1)
-                    st.rerun()
+                            if new_cust_id_row:
+                                new_c_id = new_cust_id_row[0][0]
+                                
+                                # 3. Automatically create Account in accounts table
+                                db_acc_type = 'Loan Account' if 'Loan' in acc_type else 'Savings Account'
+                                run_query("""
+                                    INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
+                                    VALUES (?, ?, ?, ?, ?)
+                                """, (final_acc_no, db_acc_type, new_c_id, initial_balance, today_str), fetch=False)
+                                
+                                acc_id_row = run_query("SELECT id FROM accounts WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (new_c_id,))
+                                if acc_id_row:
+                                    acc_pk = acc_id_row[0][0]
+                                    # 4. Log Opening Transaction if balance > 0
+                                    if initial_balance > 0:
+                                        tx_type = 'LOAN OPENING DUE (DEBIT)' if 'Loan' in acc_type else 'SB OPENING DEPOSIT (CREDIT)'
+                                        run_query("""
+                                            INSERT INTO transactions (account_id, type, amount, balance_after, date)
+                                            VALUES (?, ?, ?, ?, ?)
+                                        """, (acc_pk, tx_type, initial_balance, initial_balance, today_str), fetch=False)
+                                        
+                                        # If loan, also create personal_loans record automatically
+                                        if 'Loan' in acc_type:
+                                            pl_code = f"PL-2026-{new_c_id:04d}"
+                                            run_query("""
+                                                INSERT INTO personal_loans (
+                                                    loan_no, customer_id, sanction_date, principal_amount, interest_rate,
+                                                    interest_type, tenure_days, tenure_months, total_interest, total_repayable,
+                                                    installment_amount, outstanding_due, disbursal_mode, voucher_no,
+                                                    guarantor_name, guarantor_phone, purpose, status, remarks
+                                                ) VALUES (?, ?, ?, ?, 12.00, 'Daily 100-Day Micro Loan', 100, 12, 0, ?, ?, ?, 'Union Bank of India', ?, 'Member Surety', ?, 'Personal Loan', 'ACTIVE', 'Opening Loan Balance')
+                                            """, (pl_code, new_c_id, today_str, initial_balance, initial_balance, round(initial_balance/100, 2), initial_balance, f"PLV{new_c_id:04d}", phone or 'N/A'), fetch=False)
+                                            
+                                # 5. Also insert into sb_accounts for standard SB tracking
+                                run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, ?, 3.5, ?)", 
+                                          (final_acc_no, new_c_id, initial_balance, today_str), fetch=False)
+                                          
+                                st.success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: {new_c_id}) registered successfully! Primary Account & Passbook created automatically with initial balance ₹{initial_balance:,.2f}.")
+                                time.sleep(1.0)
+                                st.rerun()
+                            else:
+                                st.error("❌ Failed to create customer record. Please check inputs or database connectivity.")
+                        except Exception as ex:
+                            st.error(f"❌ Error during registration: {str(ex)}")
 
     with tab2:
         st.subheader("Customer Directory & Document Viewer")

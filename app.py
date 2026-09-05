@@ -758,25 +758,50 @@ def render_personal_loans():
             int_rate = col3.number_input("Annual Interest Rate (%)", min_value=1.0, value=12.0, step=0.5)
             
             col4, col5, col6 = st.columns(3)
-            loan_type = col4.selectbox("Loan Scheme", ["Daily 100-Day Micro Loan", "Monthly Flat Rate", "Reducing Balance EMI"])
-            tenure_days = col5.number_input("Tenure in Days", min_value=10, value=100, step=10) if "Daily" in loan_type else 100
-            tenure_months = col5.number_input("Tenure in Months", min_value=1, value=12, step=1) if "Daily" not in loan_type else 12
+            loan_type = col4.selectbox("Repayment Scheme / Mode", [
+                "Flexible / Custom (No Fixed EMI - Pay Anytime)",
+                "Daily Collection (e.g. 100 Days)",
+                "Weekly Installment (e.g. ₹500/week)",
+                "Monthly Fixed EMI",
+                "Bullet Repayment (Principal at end)"
+            ])
             
-            # Live Calculator Math
             if "Daily" in loan_type:
+                tenure_days = col5.number_input("Tenure in Days", min_value=10, value=100, step=10)
+                tenure_months = max(1, int(tenure_days / 30))
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_days / 365.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_days), 2)
                 inst_label = f"₹{installment:,.2f} / Day ({tenure_days} Days)"
-            else:
+            elif "Weekly" in loan_type:
+                tenure_weeks = col5.number_input("Tenure in Weeks", min_value=4, value=20, step=4)
+                tenure_days = tenure_weeks * 7
+                tenure_months = max(1, int(tenure_weeks / 4))
+                tot_interest = round(principal * (int_rate / 100.0) * (tenure_weeks / 52.0), 2)
+                tot_repayable = round(principal + tot_interest, 2)
+                installment = round(tot_repayable / float(tenure_weeks), 2)
+                inst_label = f"₹{installment:,.2f} / Week ({tenure_weeks} Weeks)"
+            elif "Monthly" in loan_type:
+                tenure_months = col5.number_input("Tenure in Months", min_value=1, value=12, step=1)
+                tenure_days = tenure_months * 30
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_months), 2)
                 inst_label = f"₹{installment:,.2f} / Month ({tenure_months} Months)"
+            else:
+                # Flexible / Bullet (No fixed mandatory EMI)
+                tenure_months = col5.number_input("Agreed Period (Months)", min_value=1, value=12, step=1)
+                tenure_days = tenure_months * 30
+                tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
+                tot_repayable = round(principal + tot_interest, 2)
+                installment = 0.0
+                inst_label = "Flexible / Variable Amounts (No Fixed EMI)"
                 
-            col6.selectbox("Payment Frequency", ["Daily Collection" if "Daily" in loan_type else "Monthly Installment"])
+            col6.selectbox("Payment Type", [
+                "Flexible / As Agreed" if "Flexible" in loan_type else ("Daily Micro" if "Daily" in loan_type else ("Weekly" if "Weekly" in loan_type else "Monthly EMI"))
+            ])
             
-            st.info(f"📊 **Loan Calculation Preview:** Principal: **₹{principal:,.2f}** | Total Interest: **₹{tot_interest:,.2f}** | Total Repayable: **₹{tot_repayable:,.2f}** | Installment: **{inst_label}**")
+            st.info(f"📊 **Loan Calculation Preview:** Principal: **₹{principal:,.2f}** | Total Interest: **₹{tot_interest:,.2f}** | Total Repayable: **₹{tot_repayable:,.2f}** | Repayment Plan: **{inst_label}**")
             
             g_col1, g_col2, g_col3 = st.columns(3)
             guarantor_name = g_col1.text_input("Guarantor / Surety Member Name", value="Member Surety")

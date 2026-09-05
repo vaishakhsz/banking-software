@@ -431,6 +431,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS recurring_deposits (
                 rd_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
+                scheme_name TEXT DEFAULT 'SWAYAMVARA KSHEMANIDHI',
+                rd_no TEXT,
                 monthly_amount REAL,
                 tenure_months INTEGER,
                 interest_rate REAL,
@@ -439,8 +441,10 @@ def init_db():
                 status TEXT DEFAULT 'ACTIVE',
                 created_at TEXT,
                 payment_mode TEXT,
+                maturity_date TEXT,
                 closed_date TEXT,
                 maturity_amount REAL DEFAULT 0,
+                collected_balance REAL DEFAULT 0,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS chart_of_accounts (
@@ -499,6 +503,10 @@ def init_db():
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS adhar_data BYTEA;
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS pan_data BYTEA;
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS signature_data BYTEA;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS scheme_name TEXT;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS collected_balance DOUBLE PRECISION DEFAULT 0;
                 """)
             except Exception:
                 pass
@@ -507,6 +515,11 @@ def init_db():
             for col in ["adhar_data", "pan_data", "signature_data"]:
                 try:
                     cursor.execute(f"ALTER TABLE customers ADD COLUMN {col} BLOB;")
+                except Exception:
+                    pass
+            for col in [("scheme_name", "TEXT"), ("rd_no", "TEXT"), ("maturity_date", "TEXT"), ("collected_balance", "REAL")]:
+                try:
+                    cursor.execute(f"ALTER TABLE recurring_deposits ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
 

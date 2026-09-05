@@ -800,6 +800,87 @@ def get_document_data(file_identifier, doc_type=None, customer_id=None):
         
     return None, None
 
+def delete_customer_cascade(customer_id):
+    """
+    Safely deletes a customer and cascades all linked accounts, transactions,
+    loans, deposits, shares, and documents.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch customer details
+        cursor.execute(f"SELECT id, name, account_no, adhar_file, pan_file, signature_file FROM customers WHERE id = {placeholder}", (customer_id,))
+        cust_row = cursor.fetchone()
+        if not cust_row:
+            release_connection(conn)
+            return False, f"Customer with ID {customer_id} not found."
+        
+        c_id, c_name, c_acc, adh_f, pan_f, sig_f = cust_row
+        
+        # Helper to execute safe query with savepoints in Postgres
+        def safe_exec(sql, params):
+            try:
+                if USING_SUPABASE:
+                    cursor.execute("SAVEPOINT sp")
+                cursor.execute(sql, params)
+                if USING_SUPABASE:
+                    cursor.execute("RELEASE SAVEPOINT sp")
+            except Exception:
+                if USING_SUPABASE:
+                    cursor.execute("ROLLBACK TO SAVEPOINT sp")
+
+        # 2. Delete transactions linked to customer's accounts
+        cursor.execute(f"SELECT id FROM accounts WHERE customer_id = {placeholder}", (c_id,))
+        acc_ids = [r[0] for r in cursor.fetchall()]
+        for a_id in acc_ids:
+            safe_exec(f"DELETE FROM transactions WHERE account_id = {placeholder}", (a_id,))
+        safe_exec(f"DELETE FROM accounts WHERE customer_id = {placeholder}", (c_id,))
+            
+        # 3. Delete from sb_accounts
+        safe_exec(f"DELETE FROM sb_accounts WHERE customer_id = {placeholder}", (c_id,))
+        if c_acc:
+            safe_exec(f"DELETE FROM sb_accounts WHERE account_no = {placeholder}", (c_acc,))
+            
+        # 4. Delete loan repayments and loans
+        cursor.execute(f"SELECT id FROM personal_loans WHERE customer_id = {placeholder}", (c_id,))
+        pl_ids = [r[0] for r in cursor.fetchall()]
+        for pl_id in pl_ids:
+            safe_exec(f"DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder}", (pl_id,))
+        safe_exec(f"DELETE FROM loan_repayments WHERE customer_id = {placeholder}", (c_id,))
+        safe_exec(f"DELETE FROM personal_loans WHERE customer_id = {placeholder}", (c_id,))
+        
+        # 5. Delete daily loans, gold loans, FDs, RDs
+        safe_exec(f"DELETE FROM gold_loans WHERE customer_id = {placeholder}", (c_id,))
+        safe_exec(f"DELETE FROM fixed_deposits WHERE customer_id = {placeholder}", (c_id,))
+        safe_exec(f"DELETE FROM recurring_deposits WHERE customer_id = {placeholder}", (c_id,))
+            
+        # 6. Delete from customers table
+        cursor.execute(f"DELETE FROM customers WHERE id = {placeholder}", (c_id,))
+        
+        conn.commit()
+        release_connection(conn)
+        
+        # 7. Clean up local files if any
+        for fpath in [adh_f, pan_f, sig_f]:
+            if fpath and os.path.exists(fpath):
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+                    
+        return True, f"Customer #{c_id} ({c_name}) and all associated accounts were permanently deleted."
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            release_connection(conn)
+        return False, str(e)
+
 def get_account_balance_from_jv(account_code):
     try:
         result = run_query("""

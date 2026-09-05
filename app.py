@@ -153,7 +153,7 @@ def render_dashboard():
 
 def render_customer_management():
     st.title("👥 Customer Management Module")
-    tab1, tab2, tab3, tab4 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer", "📖 Customer Passbook & Loan Statement"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Register Customer", "View / Manage Customers", "✏️ Edit / Delete Customer", "📖 Customer Passbook & Loan Statement"])
     
     with tab1:
         st.subheader("New Customer Registration")
@@ -348,126 +348,149 @@ def render_customer_management():
             st.info("No customers found.")
 
     with tab3:
-        st.subheader("Edit Customer Information")
-        cust_id_edit = st.number_input("Enter Customer ID to Edit", min_value=1, step=1, key="edit_cust_id")
-        cust_data = run_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
-        if cust_data:
-            c = cust_data[0]
-            with st.form("edit_profile_form"):
-                new_name = st.text_input("Name", value=c[0])
-                new_acc_no = st.text_input("Account Number", value=c[1])
-                new_email = st.text_input("Email", value=c[2])
-                new_phone = st.text_input("Phone", value=c[3])
-                new_street = st.text_input("Street", value=c[4])
-                new_city = st.text_input("City", value=c[5])
-                new_state = st.text_input("State", value=c[6])
-                new_pincode = st.text_input("Pincode", value=c[7])
+        st.subheader("✏️ Edit / Delete Customer Information")
+        all_cust_list = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone FROM customers ORDER BY id DESC")
+        if all_cust_list:
+            c_dict = {f"#{r[0]} - {r[1]} (Acc: {r[2]} | Ph: {r[3]})": r[0] for r in all_cust_list}
+            sel_c_label = st.selectbox("Select Customer to Edit / Manage / Delete", list(c_dict.keys()), key="edit_cust_sel")
+            cust_id_edit = c_dict[sel_c_label]
+            
+            cust_data = run_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
+            if cust_data:
+                c = cust_data[0]
+                with st.form(f"edit_profile_form_{cust_id_edit}"):
+                    new_name = st.text_input("Name", value=c[0])
+                    new_acc_no = st.text_input("Account Number", value=c[1])
+                    new_email = st.text_input("Email", value=c[2])
+                    new_phone = st.text_input("Phone", value=c[3])
+                    new_street = st.text_input("Street", value=c[4])
+                    new_city = st.text_input("City", value=c[5])
+                    new_state = st.text_input("State", value=c[6])
+                    new_pincode = st.text_input("Pincode", value=c[7])
+                    
+                    if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
+                        run_query("""
+                            UPDATE customers 
+                            SET name=?, account_no=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
+                            WHERE id=?
+                        """, (new_name, new_acc_no, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
+                        st.success("Profile details updated successfully!")
+                        time.sleep(0.1)
+                        st.rerun()
+
+                st.markdown("---")
+                st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")
                 
-                if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
-                    run_query("""
-                        UPDATE customers 
-                        SET name=?, account_no=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
-                        WHERE id=?
-                    """, (new_name, new_acc_no, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
-                    st.success("Profile details updated successfully!")
-                    time.sleep(0.1)
-                    st.rerun()
-
-            st.markdown("---")
-            st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")
-            
-            from database import save_uploaded_file, delete_document, get_document_data
-            import psycopg2
-            
-            # --- 1. AADHAAR CARD ---
-            st.write("---")
-            st.markdown("**1. Aadhaar Card Document**")
-            if c[7]:
-                st.info(f"Existing Aadhaar: `{os.path.basename(c[7])}`")
-                col1, col2 = st.columns(2)
-                try:
-                    file_bytes, filename = get_document_data(c[7], doc_type='adhar', customer_id=cust_id_edit)
-                    if file_bytes:
-                        col1.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key="dl_edit_adh", use_container_width=True)
-                except Exception:
-                    pass
-                if col2.button("🗑️ Delete & Clear Aadhaar", key="del_edit_adh_btn", type="secondary", use_container_width=True):
-                    delete_document(c[7], doc_type='adhar', customer_id=cust_id_edit)
-                    run_query("UPDATE customers SET adhar_file = NULL, adhar_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
-                    st.success("Aadhaar document deleted successfully!")
-                    time.sleep(0.1)
-                    st.rerun()
-            else:
-                st.warning("No Aadhaar document uploaded.")
-                new_adh = st.file_uploader("Upload Aadhaar Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_adh")
-                if new_adh:
-                    if st.button("📤 Upload Aadhaar", key="up_edit_adh_btn", type="primary", use_container_width=True):
-                        saved_name, saved_bytes = save_uploaded_file(new_adh)
-                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
-                        run_query("UPDATE customers SET adhar_file = ?, adhar_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
-                        st.success("Aadhaar document saved directly into database!")
+                from database import save_uploaded_file, delete_document, get_document_data
+                import psycopg2
+                
+                # --- 1. AADHAAR CARD ---
+                st.write("---")
+                st.markdown("**1. Aadhaar Card Document**")
+                if c[8]:
+                    st.info(f"Existing Aadhaar: `{os.path.basename(c[8])}`")
+                    col1, col2 = st.columns(2)
+                    try:
+                        file_bytes, filename = get_document_data(c[8], doc_type='adhar', customer_id=cust_id_edit)
+                        if file_bytes:
+                            col1.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key=f"dl_edit_adh_{cust_id_edit}", use_container_width=True)
+                    except Exception:
+                        pass
+                    if col2.button("🗑️ Delete & Clear Aadhaar", key=f"del_edit_adh_btn_{cust_id_edit}", type="secondary", use_container_width=True):
+                        delete_document(c[8], doc_type='adhar', customer_id=cust_id_edit)
+                        run_query("UPDATE customers SET adhar_file = NULL, adhar_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        st.success("Aadhaar document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
+                else:
+                    st.warning("No Aadhaar document uploaded.")
+                    new_adh = st.file_uploader("Upload Aadhaar Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key=f"edit_upload_adh_{cust_id_edit}")
+                    if new_adh:
+                        if st.button("📤 Upload Aadhaar", key=f"up_edit_adh_btn_{cust_id_edit}", type="primary", use_container_width=True):
+                            saved_name, saved_bytes = save_uploaded_file(new_adh)
+                            param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                            run_query("UPDATE customers SET adhar_file = ?, adhar_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            st.success("Aadhaar document saved directly into database!")
+                            time.sleep(0.1)
+                            st.rerun()
 
-            # --- 2. PAN CARD ---
-            st.write("---")
-            st.markdown("**2. PAN Card Document**")
-            if c[8]:
-                st.info(f"Existing PAN: `{os.path.basename(c[8])}`")
-                col1, col2 = st.columns(2)
-                try:
-                    file_bytes, filename = get_document_data(c[8], doc_type='pan', customer_id=cust_id_edit)
-                    if file_bytes:
-                        col1.download_button("📥 Download PAN", file_bytes, file_name=filename, key="dl_edit_pan", use_container_width=True)
-                except Exception:
-                    pass
-                if col2.button("🗑️ Delete & Clear PAN", key="del_edit_pan_btn", type="secondary", use_container_width=True):
-                    delete_document(c[8], doc_type='pan', customer_id=cust_id_edit)
-                    run_query("UPDATE customers SET pan_file = NULL, pan_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
-                    st.success("PAN document deleted successfully!")
-                    time.sleep(0.1)
-                    st.rerun()
-            else:
-                st.warning("No PAN document uploaded.")
-                new_pan = st.file_uploader("Upload PAN Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_pan")
-                if new_pan:
-                    if st.button("📤 Upload PAN", key="up_edit_pan_btn", type="primary", use_container_width=True):
-                        saved_name, saved_bytes = save_uploaded_file(new_pan)
-                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
-                        run_query("UPDATE customers SET pan_file = ?, pan_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
-                        st.success("PAN document saved directly into database!")
+                # --- 2. PAN CARD ---
+                st.write("---")
+                st.markdown("**2. PAN Card Document**")
+                if c[9]:
+                    st.info(f"Existing PAN Card: `{os.path.basename(c[9])}`")
+                    col1, col2 = st.columns(2)
+                    try:
+                        file_bytes, filename = get_document_data(c[9], doc_type='pan', customer_id=cust_id_edit)
+                        if file_bytes:
+                            col1.download_button("📥 Download PAN", file_bytes, file_name=filename, key=f"dl_edit_pan_{cust_id_edit}", use_container_width=True)
+                    except Exception:
+                        pass
+                    if col2.button("🗑️ Delete & Clear PAN", key=f"del_edit_pan_btn_{cust_id_edit}", type="secondary", use_container_width=True):
+                        delete_document(c[9], doc_type='pan', customer_id=cust_id_edit)
+                        run_query("UPDATE customers SET pan_file = NULL, pan_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        st.success("PAN document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
+                else:
+                    st.warning("No PAN document uploaded.")
+                    new_pan = st.file_uploader("Upload PAN Card Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key=f"edit_upload_pan_{cust_id_edit}")
+                    if new_pan:
+                        if st.button("📤 Upload PAN", key=f"up_edit_pan_btn_{cust_id_edit}", type="primary", use_container_width=True):
+                            saved_name, saved_bytes = save_uploaded_file(new_pan)
+                            param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                            run_query("UPDATE customers SET pan_file = ?, pan_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            st.success("PAN document saved directly into database!")
+                            time.sleep(0.1)
+                            st.rerun()
 
-            # --- 3. SIGNATURE ---
-            st.write("---")
-            st.markdown("**3. Signature Document**")
-            if c[9]:
-                st.info(f"Existing Signature: `{os.path.basename(c[9])}`")
-                col1, col2 = st.columns(2)
-                try:
-                    file_bytes, filename = get_document_data(c[9], doc_type='signature', customer_id=cust_id_edit)
-                    if file_bytes:
-                        col1.download_button("📥 Download Signature", file_bytes, file_name=filename, key="dl_edit_sig", use_container_width=True)
-                except Exception:
-                    pass
-                if col2.button("🗑️ Delete & Clear Signature", key="del_edit_sig_btn", type="secondary", use_container_width=True):
-                    delete_document(c[9], doc_type='signature', customer_id=cust_id_edit)
-                    run_query("UPDATE customers SET signature_file = NULL, signature_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
-                    st.success("Signature document deleted successfully!")
-                    time.sleep(0.1)
-                    st.rerun()
-            else:
-                st.warning("No Signature document uploaded.")
-                new_sig = st.file_uploader("Upload Signature Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_sig")
-                if new_sig:
-                    if st.button("📤 Upload Signature", key="up_edit_sig_btn", type="primary", use_container_width=True):
-                        saved_name, saved_bytes = save_uploaded_file(new_sig)
-                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
-                        run_query("UPDATE customers SET signature_file = ?, signature_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
-                        st.success("Signature document saved directly into database!")
+                # --- 3. SIGNATURE ---
+                st.write("---")
+                st.markdown("**3. Signature Document**")
+                if c[10]:
+                    st.info(f"Existing Signature: `{os.path.basename(c[10])}`")
+                    col1, col2 = st.columns(2)
+                    try:
+                        file_bytes, filename = get_document_data(c[10], doc_type='signature', customer_id=cust_id_edit)
+                        if file_bytes:
+                            col1.download_button("📥 Download Signature", file_bytes, file_name=filename, key=f"dl_edit_sig_{cust_id_edit}", use_container_width=True)
+                    except Exception:
+                        pass
+                    if col2.button("🗑️ Delete & Clear Signature", key=f"del_edit_sig_btn_{cust_id_edit}", type="secondary", use_container_width=True):
+                        delete_document(c[10], doc_type='signature', customer_id=cust_id_edit)
+                        run_query("UPDATE customers SET signature_file = NULL, signature_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        st.success("Signature document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
+                else:
+                    st.warning("No Signature document uploaded.")
+                    new_sig = st.file_uploader("Upload Signature Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key=f"edit_upload_sig_{cust_id_edit}")
+                    if new_sig:
+                        if st.button("📤 Upload Signature", key=f"up_edit_sig_btn_{cust_id_edit}", type="primary", use_container_width=True):
+                            saved_name, saved_bytes = save_uploaded_file(new_sig)
+                            param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                            run_query("UPDATE customers SET signature_file = ?, signature_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            st.success("Signature document saved directly into database!")
+                            time.sleep(0.1)
+                            st.rerun()
+
+                # --- 4. DANGER ZONE: DELETE CUSTOMER ---
+                st.write("---")
+                with st.expander("🚨 Danger Zone: Delete Customer Record", expanded=False):
+                    st.error(f"⚠️ **Warning**: Permanently delete customer **{c[0]}** (Customer ID: `#{cust_id_edit}`). This will permanently delete this customer profile along with their linked accounts, savings balances, loans, deposits, and documents.")
+                    confirm_del = st.checkbox(f"Yes, I confirm I want to permanently delete customer #{cust_id_edit} - {c[0]}", key=f"confirm_del_cust_{cust_id_edit}")
+                    if confirm_del:
+                        if st.button(f"🗑️ Permanently Delete Customer #{cust_id_edit}", type="primary", use_container_width=True, key=f"btn_delete_cust_{cust_id_edit}"):
+                            from database import delete_customer_cascade
+                            success, msg = delete_customer_cascade(cust_id_edit)
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(1.0)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to delete customer: {msg}")
+        else:
+            st.info("No customers found.")
 
     with tab4:
         st.subheader("📖 Customer Passbook & Loan Ledger")

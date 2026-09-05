@@ -1926,9 +1926,9 @@ def render_recurring_deposits():
             
             rd_pdf_data = pdf_generator.generate_rd_pdf(rd_data)
             st.download_button(
-                label=f"📥 Download RD Certificate RD-{rd_id:05d} (PDF)",
+                label=f"📥 Download RD Certificate {rd_acc_no} (PDF)",
                 data=rd_pdf_data,
-                file_name=f"RD_Certificate_RD-{rd_id:05d}.pdf",
+                file_name=f"RD_Certificate_{rd_acc_no}.pdf",
                 mime="application/pdf",
                 key=f"download_rd_pdf_{rd_id}",
                 use_container_width=True

@@ -1790,12 +1790,13 @@ def render_recurring_deposits():
                    c.name, COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme,
                    r.monthly_amount, r.tenure_months, r.interest_rate, 
                    r.installments_paid, COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
+                   COALESCE(r.maturity_date, '2026-12-20') as mat_date,
                    r.maturity_amount, r.nominee, r.status
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             WHERE r.status = 'ACTIVE'
         """)
         if rds:
-            df_rds = pd.DataFrame(rds, columns=["A/C No", "Customer Name", "Scheme", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Inst.", "Total Deposited (₹)", "Est. Maturity (₹)", "Nominee", "Status"])
+            df_rds = pd.DataFrame(rds, columns=["A/C No", "Customer Name", "Scheme", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Inst.", "Total Deposited (₹)", "Maturity Date", "Maturity Amount (₹)", "Nominee", "Status"])
             st.dataframe(df_rds, use_container_width=True)
         else:
             st.info("No active recurring deposits found.")
@@ -1809,7 +1810,8 @@ def render_recurring_deposits():
                    r.created_at, r.status, r.closed_date,
                    COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as acc_no,
                    COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
-                   COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name
+                   COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name,
+                   COALESCE(r.maturity_date, '2026-12-20') as maturity_date
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             ORDER BY r.rd_id DESC
         """)
@@ -1823,7 +1825,7 @@ def render_recurring_deposits():
             selected_rd_print = st.selectbox("Select RD Account for Printing/View", list(rd_print_dict.keys()), key="rd_print_select")
             rd_data = rd_print_dict[selected_rd_print]
             
-            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name = rd_data
+            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name, maturity_date = rd_data
             
             full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
             total_deposited = col_balance
@@ -1871,11 +1873,11 @@ def render_recurring_deposits():
               </div>
               <div class="grid-row">
                 <div><b>A/c Opening Date:</b> {created_at}</div>
-                <div><b>Interest Rate:</b> {rate}% p.a.</div>
+                <div><b>Maturity Date:</b> <span style="color:#27ae60;font-weight:bold;">{maturity_date}</span></div>
               </div>
               <div class="grid-row">
                 <div><b>Name:</b> {c_name}</div>
-                <div><b>Status:</b> {status_text}</div>
+                <div><b>Interest Rate:</b> {rate}% p.a.</div>
               </div>
               <div class="grid-row">
                 <div><b>Address:</b> {full_address}</div>
@@ -1886,12 +1888,12 @@ def render_recurring_deposits():
                 <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
               </div>
               <div class="grid-row">
-                <div><b>Tenure:</b> {tenure} MONTHS</div>
+                <div><b>Tenure:</b> {tenure} MONTHS (4 Years 4 Months)</div>
                 <div><b>Installments Paid:</b> {paid_inst} / {tenure}</div>
               </div>
               <div class="grid-row">
-                <div><b>Total Balance Collected:</b> ₹{col_balance:,.2f}</div>
-                <div><b>Estimated Maturity:</b> ₹{maturity:,.2f}</div>
+                <div><b>Total Balance Deposited:</b> ₹{col_balance:,.2f}</div>
+                <div><b>Maturity Amount:</b> <span style="color:#1b4f72;font-weight:bold;">₹{maturity:,.2f}</span></div>
               </div>
               {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date}</div><div></div></div>' if status == 'CLOSED' else ''}
               

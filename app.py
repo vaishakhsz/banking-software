@@ -1939,10 +1939,14 @@ def render_recurring_deposits():
                 payment_mode = "Cash"
             
             total_deposits = monthly_amt * tenure
-            approx_interest = total_deposits * (interest_rate / 100) * (tenure / 24)
-            approx_maturity = total_deposits + approx_interest
+            i_qc = interest_rate / 400.0
+            approx_maturity = 0.0
+            for k in range(1, int(tenure) + 1):
+                approx_maturity += monthly_amt * ((1.0 + i_qc) ** ((tenure - k + 1) / 3.0))
+            approx_maturity = round(approx_maturity, 2)
+            approx_interest = round(approx_maturity - total_deposits, 2)
             
-            st.info(f"**Estimated Maturity:** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
+            st.info(f"**Estimated Maturity (Quarterly Compounding):** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
             
             if st.button("Open RD Account", use_container_width=True):
                 available_balance = get_account_balance_from_jv(chosen_asset_code)

@@ -2543,8 +2543,11 @@ def render_cash_book():
                         st.error(f"❌ Failed to record cash entry: {res_val}")
 
     with tab2:
+        min_cb_d = run_query("SELECT MIN(date) FROM cash_book")
+        cb_default_from = datetime.strptime(min_cb_d[0][0], "%Y-%m-%d").date() if (min_cb_d and min_cb_d[0][0]) else (date.today() - timedelta(days=365))
+        
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_view_from", format="DD-MM-YYYY")
+        from_date = col_date1.date_input("From Date", value=cb_default_from, key="cb_view_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_view_to", format="DD-MM-YYYY")
         
         entries = run_query("""
@@ -2554,10 +2557,22 @@ def render_cash_book():
             FROM cash_book cb
             LEFT JOIN chart_of_accounts co ON cb.account_code = co.account_code
             WHERE cb.date BETWEEN ? AND ? 
-            ORDER BY cb.id DESC
+            ORDER BY cb.date ASC, cb.id ASC
         """, (str(from_date), str(to_date)))
         if entries:
             df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
+            df_cash.insert(0, "Sl No", range(1, len(df_cash) + 1))
+            
+            # Key Financial Metrics (Opening Balance First, Closing Balance Last)
+            m1, m2, m3, m4 = st.columns(4)
+            first_row = df_cash.iloc[0]
+            last_row = df_cash.iloc[-1]
+            op_bal = first_row["Balance (₹)"] if "Opening" in str(first_row["Particulars"]) else (first_row["Balance (₹)"] - first_row["Debit (₹)"] + first_row["Credit (₹)"])
+            m1.metric("🏁 Opening Balance", f"₹{op_bal:,.2f}")
+            m2.metric("📥 Total Receipts (Dr)", f"₹{df_cash['Debit (₹)'].sum():,.2f}")
+            m3.metric("📤 Total Payments (Cr)", f"₹{df_cash['Credit (₹)'].sum():,.2f}")
+            m4.metric("🏁 Closing Balance", f"₹{last_row['Balance (₹)']:,.2f}")
+            
             st.dataframe(format_df_dates(df_cash), use_container_width=True)
             
             del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
@@ -2621,8 +2636,11 @@ def render_cash_book():
                         st.error(f"❌ Failed to update entry: {res_val}")
 
     with tab4:
+        min_cb_d = run_query("SELECT MIN(date) FROM cash_book")
+        cb_default_from = datetime.strptime(min_cb_d[0][0], "%Y-%m-%d").date() if (min_cb_d and min_cb_d[0][0]) else (date.today() - timedelta(days=365))
+
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_print_from", format="DD-MM-YYYY")
+        from_date = col_date1.date_input("From Date", value=cb_default_from, key="cb_print_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_print_to", format="DD-MM-YYYY")
         
         entries = run_query("""
@@ -2632,10 +2650,11 @@ def render_cash_book():
             FROM cash_book cb
             LEFT JOIN chart_of_accounts co ON cb.account_code = co.account_code
             WHERE cb.date BETWEEN ? AND ? 
-            ORDER BY cb.id ASC
+            ORDER BY cb.date ASC, cb.id ASC
         """, (str(from_date), str(to_date)))
         if entries:
             df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
+            df_print.insert(0, "Sl No", range(1, len(df_print) + 1))
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             
@@ -2849,8 +2868,11 @@ def render_bank_book():
                         st.error(f"❌ Failed to record bank entry: {res_val}")
 
     with tab2:
+        min_bb_d = run_query("SELECT MIN(date) FROM bank_book")
+        bb_default_from = datetime.strptime(min_bb_d[0][0], "%Y-%m-%d").date() if (min_bb_d and min_bb_d[0][0]) else (date.today() - timedelta(days=365))
+
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_view_from", format="DD-MM-YYYY")
+        from_date = col_date1.date_input("From Date", value=bb_default_from, key="bb_view_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to", format="DD-MM-YYYY")
         
         bb_query = """
@@ -2868,7 +2890,7 @@ def render_bank_book():
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
             WHERE bb.date BETWEEN ? AND ?
-            ORDER BY bb.id DESC
+            ORDER BY bb.date ASC, bb.id ASC
         """
         entries = run_query(bb_query, (str(from_date), str(to_date)))
         if entries:
@@ -2878,6 +2900,18 @@ def render_bank_book():
                 party = extract_party_details(r[5], r[11], r[12], cust_list)
                 formatted_entries.append((r[0], r[1], r[2], r[3], r[4], party, r[5], r[6], r[7], r[8], r[9], r[10]))
             df_bank = pd.DataFrame(formatted_entries, columns=["ID", "Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_bank.insert(0, "Sl No", range(1, len(df_bank) + 1))
+            
+            # Key Financial Metrics (Opening Balance First, Closing Balance Last)
+            m1, m2, m3, m4 = st.columns(4)
+            first_row = df_bank.iloc[0]
+            last_row = df_bank.iloc[-1]
+            op_bal = first_row["Balance (₹)"] if "Opening" in str(first_row["Particulars"]) else (first_row["Balance (₹)"] - first_row["Deposit (₹)"] + first_row["Withdrawal (₹)"])
+            m1.metric("🏁 Opening Balance", f"₹{op_bal:,.2f}")
+            m2.metric("📥 Total Deposits (Dr)", f"₹{df_bank['Deposit (₹)'].sum():,.2f}")
+            m3.metric("📤 Total Withdrawals (Cr)", f"₹{df_bank['Withdrawal (₹)'].sum():,.2f}")
+            m4.metric("🏁 Closing Balance", f"₹{last_row['Balance (₹)']:,.2f}")
+
             st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
@@ -2973,8 +3007,11 @@ def render_bank_book():
                     st.rerun()
 
     with tab4:
+        min_bb_d = run_query("SELECT MIN(date) FROM bank_book")
+        bb_default_from = datetime.strptime(min_bb_d[0][0], "%Y-%m-%d").date() if (min_bb_d and min_bb_d[0][0]) else (date.today() - timedelta(days=365))
+
         col_date1, col_date2 = st.columns(2)
-        from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_print_from", format="DD-MM-YYYY")
+        from_date = col_date1.date_input("From Date", value=bb_default_from, key="bb_print_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to", format="DD-MM-YYYY")
         
         bb_print_query = """
@@ -2992,7 +3029,7 @@ def render_bank_book():
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
             WHERE bb.date BETWEEN ? AND ?
-            ORDER BY bb.id ASC
+            ORDER BY bb.date ASC, bb.id ASC
         """
         entries = run_query(bb_print_query, (str(from_date), str(to_date)))
         if entries:
@@ -3002,6 +3039,7 @@ def render_bank_book():
                 party = extract_party_details(r[4], r[10], r[11], cust_list)
                 formatted_print.append((r[0], r[1], r[2], r[3], party, r[4], r[5], r[6], r[7], r[8], r[9]))
             df_print = pd.DataFrame(formatted_print, columns=["Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
+            df_print.insert(0, "Sl No", range(1, len(df_print) + 1))
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             
@@ -3784,6 +3822,7 @@ def render_reports():
                 
             if data:
                 df_rep = pd.DataFrame(data, columns=columns)
+                df_rep.insert(0, "Sl No", range(1, len(df_rep) + 1))
                 df_rep_formatted = format_df_dates(df_rep)
                 st.dataframe(df_rep_formatted, use_container_width=True)
                 st.download_button("📥 Download PDF Report", pdf_generator.create_pdf_report(report_type, df_rep_formatted), f"{report_type.replace(' ', '_').lower()}.pdf", "application/pdf", use_container_width=True)

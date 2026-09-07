@@ -577,9 +577,13 @@ def init_db():
             ("AST-105", "Fixed Asset Furniture & Fixtures", "Asset", "Non Current Assets"),
             ("AST-106", "Office Equipments", "Asset", "Non Current Assets"),  
             ("AST-107", "Building", "Asset", "Non Current Assets"),
+            ("AST-108", "Loan Principal Control", "Asset", "Loans & Advances"),
+            ("AST-110", "Gold Loan Advances", "Asset", "Loans & Advances"),
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
             ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
+            ("LIA-104", "Unearned Interest Suspense Account", "Liability", "Deferred Income"),
+            ("INC-111", "Gold Loan Interest Income", "Income", "Primary Revenue"),
             ("EQT-101", "Capital Account", "Equity", "Capital"),
             ("EQT-102", "Retained Earnings", "Equity", "Reserves"),
             ("EQT-103", "Income Summary", "Equity", "Temporary")
@@ -987,6 +991,57 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
     except Exception as e:
         import streamlit as st
         st.error(f"Error posting journal voucher: {str(e)}")
+        if conn is not None and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return None
+    finally:
+        release_connection(conn)
+
+def post_compound_jv(narration, debit_entries, credit_entries, voucher_date=None):
+    """
+    debit_entries: list of (account_code, amount)
+    credit_entries: list of (account_code, amount)
+    """
+    if voucher_date is None:
+        target_date = str(date.today())
+    else:
+        target_date = str(voucher_date)
+        
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        if USING_SUPABASE:
+            cursor.execute("""
+                INSERT INTO journal_vouchers (voucher_date, narration, status) 
+                VALUES (%s, %s, 'POSTED') RETURNING jv_id
+            """, (target_date, narration))
+            jv_id = cursor.fetchone()[0]
+            for acc, amt in debit_entries:
+                if amt > 0:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, acc, amt))
+            for acc, amt in credit_entries:
+                if amt > 0:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, acc, amt))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (target_date, narration))
+            jv_id = cursor.lastrowid
+            for acc, amt in debit_entries:
+                if amt > 0:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, acc, amt))
+            for acc, amt in credit_entries:
+                if amt > 0:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc, amt))
+        
+        conn.commit()
+        return jv_id
+    except Exception as e:
+        import streamlit as st
+        st.error(f"Error posting compound journal voucher: {str(e)}")
         if conn is not None and USING_SUPABASE:
             try:
                 conn.rollback()

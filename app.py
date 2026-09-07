@@ -22,7 +22,7 @@ from database import (
     IST, DB_NAME, USING_SUPABASE, run_query, save_uploaded_file, 
     get_account_balance_from_jv, get_cash_balance, get_bank_balance,
     generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
-    get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
+    post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
     get_connection, release_connection, sync_db_sequences
 )
 import pdf_generator
@@ -695,37 +695,69 @@ def render_daily_collection_sheet():
                     new_due = max(0.0, float(l_due) - float(coll_amt))
                     new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
                     
+                    # Compute proportional interest and principal split
+                    p_info = run_query("SELECT principal_amount, total_repayable FROM personal_loans WHERE id = ?", (l_id,))
+                    l_princ = float(p_info[0][0]) if p_info else float(coll_amt)
+                    l_tot_rep = float(p_info[0][1]) if p_info else float(coll_amt)
+                    tot_loan_int = max(0.0, round(l_tot_rep - l_princ, 2))
+                    
+                    prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (l_id,))
+                    prev_int_rec = float(prev_int_row[0][0]) if prev_int_row else 0.0
+                    rem_int_to_rec = max(0.0, round(tot_loan_int - prev_int_rec, 2))
+                    
+                    if l_tot_rep > 0 and tot_loan_int > 0:
+                        prop_int = round(float(coll_amt) * (tot_loan_int / l_tot_rep), 2)
+                        if new_due <= 0:
+                            int_portion = rem_int_to_rec
+                        else:
+                            int_portion = min(prop_int, rem_int_to_rec)
+                        princ_portion = round(float(coll_amt) - int_portion, 2)
+                    else:
+                        int_portion = 0.0
+                        princ_portion = float(coll_amt)
+                    
                     # 1. Update personal_loans
                     run_query("UPDATE personal_loans SET outstanding_due = ?, status = ? WHERE id = ?", (new_due, new_status, l_id), fetch=False)
                     
                     # 2. Record in loan_repayments
                     run_query("""
                         INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
-                        VALUES ('PERSONAL', ?, ?, ?, ?, ?, 0, ?, ?, ?)
-                    """, (l_id, l_cid, str(report_date), coll_amt, coll_amt, coll_mode, rep_voucher, c_notes), fetch=False)
+                        VALUES ('PERSONAL', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (l_id, l_cid, str(report_date), coll_amt, princ_portion, int_portion, coll_mode, rep_voucher, c_notes), fetch=False)
                     
-                    # 3. Post to Bank Book or Cash Book & JV
+                    # 3. Post to Bank Book or Cash Book & Double-Entry JVs
                     part_text = f"Daily Collection: {l_name} (Acc: {l_acc}) [{l_no}]"
+                    bank_or_cash_code = 'AST-102' if "Union Bank" in coll_mode else 'AST-101'
+                    
                     if "Union Bank" in coll_mode:
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'INC-108')
+                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'AST-108')
                         """, (str(report_date), rep_voucher, part_text, coll_amt, c_notes), fetch=False)
-                        # JV
-                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(report_date), f"Daily Collection [{rep_voucher}]: {part_text}"), fetch=False)
-                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', ?, 0)", (j_id, coll_amt), fetch=False)
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-108', 0, ?)", (j_id, coll_amt), fetch=False)
                     else:
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, ?, 'INC-108')
+                            VALUES (?, ?, ?, ?, 0, 0, ?, 'AST-108')
                         """, (str(report_date), rep_voucher, part_text, coll_amt, c_notes), fetch=False)
-                        # JV
-                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(report_date), f"Daily Collection (Cash) [{rep_voucher}]: {part_text}"), fetch=False)
-                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (j_id, coll_amt), fetch=False)
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-108', 0, ?)", (j_id, coll_amt), fetch=False)
+                        
+                    # Voucher 1: Receipt JV (Bank/Cash Dr, AST-108 Cr)
+                    post_automated_jv(
+                        f"Daily Collection [{rep_voucher}]: {part_text}",
+                        bank_or_cash_code,
+                        'AST-108',
+                        coll_amt,
+                        voucher_date=report_date
+                    )
+                    
+                    # Voucher 2: Interest Realization JV (LIA-104 Dr, INC-101 Cr)
+                    if int_portion > 0:
+                        post_automated_jv(
+                            f"Interest Realization [{l_no}]: {l_name} - ₹{int_portion:,.2f} earned interest recognized",
+                            'LIA-104',
+                            'INC-101',
+                            int_portion,
+                            voucher_date=report_date
+                        )
                         
                     # 4. Update Customer Passbook
                     acc_r = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (l_cid,))
@@ -904,25 +936,27 @@ def render_personal_loans():
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
                         VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-108')
                     """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
-                    run_query("""
-                        INSERT INTO journal_vouchers (jv_number, date, narration, created_by)
-                        VALUES (?, ?, ?, 'System Admin')
-                    """, (voucher_no, str(sanction_date), f"Personal Loan Disbursal [{voucher_no}]: {part_text}"), fetch=False)
-                    jv_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (voucher_no,))[0][0]
-                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-108', ?, 0)", (jv_id, principal), fetch=False)
-                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', 0, ?)", (jv_id, principal), fetch=False)
+                    bank_or_cash_code = 'AST-102'
                 else:
                     run_query("""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
                         VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-108')
                     """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
-                    run_query("""
-                        INSERT INTO journal_vouchers (jv_number, date, narration, created_by)
-                        VALUES (?, ?, ?, 'System Admin')
-                    """, (voucher_no, str(sanction_date), f"Personal Loan Disbursal (Cash) [{voucher_no}]: {part_text}"), fetch=False)
-                    jv_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (voucher_no,))[0][0]
-                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-108', ?, 0)", (jv_id, principal), fetch=False)
-                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, principal), fetch=False)
+                    bank_or_cash_code = 'AST-101'
+                    
+                # Full Double-Entry JV:
+                # AST-108 (Loan Principal / Party Loan Account) Dr = tot_repayable
+                # AST-102 / AST-101 (Bank / Cash) Cr = principal
+                # LIA-104 (Unearned Interest Suspense Account) Cr = tot_interest
+                cr_entries = [(bank_or_cash_code, principal)]
+                if tot_interest > 0:
+                    cr_entries.append(('LIA-104', tot_interest))
+                post_compound_jv(
+                    f"Personal Loan Disbursal [{voucher_no}]: {part_text} (Principal: ₹{principal:,.2f} + Planned Interest: ₹{tot_interest:,.2f} = Total Due: ₹{tot_repayable:,.2f})",
+                    [('AST-108', tot_repayable)],
+                    cr_entries,
+                    voucher_date=sanction_date
+                )
                     
                 acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
                 if acc_row:
@@ -984,34 +1018,64 @@ def render_personal_loans():
                 
                 if st.form_submit_button("💾 Confirm & Post Repayment Receipt", use_container_width=True):
                     rep_voucher = f"RPL{pay_date.strftime('%Y%m%d')}{l_id:03d}"
-                    new_due = max(0.0, float(l_due) - float(amt_paid))
+                    new_due = max(0.0, round(float(l_due) - float(amt_paid), 2))
                     new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
+                    
+                    # Compute proportional interest and principal split
+                    tot_loan_int = max(0.0, round(float(l_tot_rep) - float(l_princ), 2))
+                    prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (l_id,))
+                    prev_int_rec = float(prev_int_row[0][0]) if prev_int_row else 0.0
+                    rem_int_to_rec = max(0.0, round(tot_loan_int - prev_int_rec, 2))
+                    
+                    if float(l_tot_rep) > 0 and tot_loan_int > 0:
+                        prop_int = round(float(amt_paid) * (tot_loan_int / float(l_tot_rep)), 2)
+                        if new_due <= 0:
+                            int_portion = rem_int_to_rec
+                        else:
+                            int_portion = min(prop_int, rem_int_to_rec)
+                        princ_portion = round(float(amt_paid) - int_portion, 2)
+                    else:
+                        int_portion = 0.0
+                        princ_portion = float(amt_paid)
                     
                     run_query("UPDATE personal_loans SET outstanding_due = ?, status = ? WHERE id = ?", (new_due, new_status, l_id), fetch=False)
                     run_query("""
                         INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
-                        VALUES ('PERSONAL', ?, ?, ?, ?, ?, 0, ?, ?, ?)
-                    """, (l_id, l_cid, str(pay_date), amt_paid, amt_paid, pay_mode, rep_voucher, rep_narration), fetch=False)
+                        VALUES ('PERSONAL', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (l_id, l_cid, str(pay_date), amt_paid, princ_portion, int_portion, pay_mode, rep_voucher, rep_narration), fetch=False)
                     
                     part_rep = f"Loan Repayment: {l_cname} (Acc: {l_cacc}) [{l_no}]"
+                    bank_or_cash_code = 'AST-102' if "Union Bank" in pay_mode else 'AST-101'
+                    
                     if "Union Bank" in pay_mode:
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'INC-108')
+                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'AST-108')
                         """, (str(pay_date), rep_voucher, part_rep, amt_paid, rep_narration), fetch=False)
-                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(pay_date), f"Loan Receipt [{rep_voucher}]: {part_rep}"), fetch=False)
-                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', ?, 0)", (j_id, amt_paid), fetch=False)
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-108', 0, ?)", (j_id, amt_paid), fetch=False)
                     else:
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, ?, 'INC-108')
+                            VALUES (?, ?, ?, ?, 0, 0, ?, 'AST-108')
                         """, (str(pay_date), rep_voucher, part_rep, amt_paid, rep_narration), fetch=False)
-                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(pay_date), f"Loan Receipt (Cash) [{rep_voucher}]: {part_rep}"), fetch=False)
-                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (j_id, amt_paid), fetch=False)
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-108', 0, ?)", (j_id, amt_paid), fetch=False)
+                        
+                    # Voucher 1: Receipt JV (Bank/Cash Dr, AST-108 Cr)
+                    post_automated_jv(
+                        f"Loan Receipt [{rep_voucher}]: {part_rep}",
+                        bank_or_cash_code,
+                        'AST-108',
+                        amt_paid,
+                        voucher_date=pay_date
+                    )
+                    
+                    # Voucher 2: Interest Realization / Revenue Recognition JV (LIA-104 Dr, INC-101 Cr)
+                    if int_portion > 0:
+                        post_automated_jv(
+                            f"Interest Realization [{l_no}]: {l_cname} - ₹{int_portion:,.2f} earned interest recognized",
+                            'LIA-104',
+                            'INC-101',
+                            int_portion,
+                            voucher_date=pay_date
+                        )
                         
                     acc_r = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (l_cid,))
                     if acc_r:
@@ -1306,30 +1370,26 @@ def render_gold_loans():
                 cust_name, cust_acc = c_details[0], c_details[1]
                 part_text = f"Gold Loan Disbursal: {cust_name} (Acc: {cust_acc}) [{loan_no} | {packet_no}]"
                 
+                bank_or_cash_code = 'AST-102' if "Union Bank" in disb_mode else 'AST-101'
                 if "Union Bank" in disb_mode:
                     run_query("""
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                        VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-104')
+                        VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-110')
                     """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
-                    run_query("""
-                        INSERT INTO journal_vouchers (jv_number, date, narration, created_by)
-                        VALUES (?, ?, ?, 'System Admin')
-                    """, (voucher_no, str(sanction_date), f"Gold Loan Disbursal [{voucher_no}]: {part_text}"), fetch=False)
-                    jv_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (voucher_no,))[0][0]
-                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-104', ?, 0)", (jv_id, principal), fetch=False)
-                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', 0, ?)", (jv_id, principal), fetch=False)
                 else:
                     run_query("""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                        VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-104')
+                        VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-110')
                     """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
-                    run_query("""
-                        INSERT INTO journal_vouchers (jv_number, date, narration, created_by)
-                        VALUES (?, ?, ?, 'System Admin')
-                    """, (voucher_no, str(sanction_date), f"Gold Loan Disbursal (Cash) [{voucher_no}]: {part_text}"), fetch=False)
-                    jv_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (voucher_no,))[0][0]
-                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-104', ?, 0)", (jv_id, principal), fetch=False)
-                    run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, principal), fetch=False)
+                
+                # Gold Loan Disbursal JV: AST-110 Dr, AST-102/101 Cr
+                post_automated_jv(
+                    f"Gold Loan Disbursal [{voucher_no}]: {part_text}",
+                    'AST-110',
+                    bank_or_cash_code,
+                    principal,
+                    voucher_date=sanction_date
+                )
                     
                 st.success(f"🪙 Gold Loan {loan_no} Disbursed! Packet {packet_no} securely logged in Vault.")
                 time.sleep(0.1)
@@ -1369,12 +1429,12 @@ def render_gold_loans():
                         p_comp, i_comp = 0.0, float(amt_received)
                         new_due = float(gl_due)
                         new_status = 'ACTIVE'
-                        acc_code = 'INC-104'
+                        acc_code = 'INC-111'
                     else:
                         p_comp, i_comp = float(amt_received), 0.0
                         new_due = max(0.0, float(gl_due) - float(amt_received))
                         new_status = 'CLOSED_RELEASED' if new_due <= 0 else 'ACTIVE'
-                        acc_code = 'AST-104'
+                        acc_code = 'AST-110'
                         
                     run_query("UPDATE gold_loans SET outstanding_due = ?, status = ? WHERE id = ?", (new_due, new_status, gl_id), fetch=False)
                     run_query("""
@@ -1383,24 +1443,27 @@ def render_gold_loans():
                     """, (gl_id, gl_cid, str(pay_date), amt_received, p_comp, i_comp, pay_mode, rep_voucher, narration), fetch=False)
                     
                     part_text = f"Gold Loan Receipt: {gl_cname} (Acc: {gl_cacc}) [{gl_no}]"
+                    bank_or_cash_code = 'AST-102' if "Union Bank" in pay_mode else 'AST-101'
+                    
                     if "Union Bank" in pay_mode:
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
                             VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, ?)
                         """, (str(pay_date), rep_voucher, part_text, amt_received, narration, acc_code), fetch=False)
-                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(pay_date), f"Gold Loan Receipt [{rep_voucher}]: {part_text}"), fetch=False)
-                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-102', ?, 0)", (j_id, amt_received), fetch=False)
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (j_id, acc_code, amt_received), fetch=False)
                     else:
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
                             VALUES (?, ?, ?, ?, 0, 0, ?, ?)
                         """, (str(pay_date), rep_voucher, part_text, amt_received, narration, acc_code), fetch=False)
-                        run_query("INSERT INTO journal_vouchers (jv_number, date, narration, created_by) VALUES (?, ?, ?, 'System Admin')", (rep_voucher, str(pay_date), f"Gold Loan Receipt (Cash) [{rep_voucher}]: {part_text}"), fetch=False)
-                        j_id = run_query("SELECT jv_id FROM journal_vouchers WHERE jv_number = ?", (rep_voucher,))[0][0]
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (j_id, amt_received), fetch=False)
-                        run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (j_id, acc_code, amt_received), fetch=False)
+                        
+                    # Gold Loan Receipt JV: Bank/Cash Dr, acc_code Cr
+                    post_automated_jv(
+                        f"Gold Loan Receipt [{rep_voucher}]: {part_text}",
+                        bank_or_cash_code,
+                        acc_code,
+                        amt_received,
+                        voucher_date=pay_date
+                    )
                         
                     st.success(f"✅ Received ₹{amt_received:,.2f} for Gold Loan {gl_no}! New Due: ₹{new_due:,.2f}")
                     time.sleep(0.1)
@@ -3531,6 +3594,14 @@ def render_financial_statements():
             if rd_liability != 0:
                 lia_data.append(["RD Deposits Control", f"₹{rd_liability:,.2f}"])
                 total_lia += rd_liability
+                
+            # Other Liabilities (e.g. LIA-104 Unearned Interest Suspense Account)
+            for code, info in balance_dict.items():
+                if info.get("type") == "Liability" and code not in ('LIA-101', 'LIA-102', 'LIA-103'):
+                    net = info.get("net_lia_eq_inc", 0.0)
+                    if net != 0:
+                        lia_data.append([f"{info.get('name')} ({code})", f"₹{net:,.2f}"])
+                        total_lia += net
                 
             if USING_SUPABASE:
                 equity_details = run_query("""

@@ -153,7 +153,7 @@ def render_dashboard():
 
 def render_customer_management():
     st.title("👥 Customer Management Module")
-    tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "Edit Customer"])
+    tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "✏️ Edit / Delete Customer"])
     
     with tab1:
         st.subheader("New Customer Registration")
@@ -161,56 +161,99 @@ def render_customer_management():
         with st.form("reg_form"):
             col1, col2 = st.columns(2)
             name = col1.text_input("Full Name *")
-            dob = col2.date_input("Date of Birth *", value=date(1995, 1, 1), min_value=date(1900, 1, 1), max_value=date.today(), format="DD-MM-YYYY")
-            gender = col1.selectbox("Gender", ["Male", "Female", "Other"])
-            email = col2.text_input("Email Address")
-            phone = col1.text_input("Phone Number *")
-            street = col2.text_input("Street Address")
-            city = col1.text_input("City")
-            state = col2.text_input("State")
+            acc_no = col2.text_input("Account Number *")
+            dob = col1.date_input("Date of Birth", value=date(1995, 1, 1), min_value=date(1900, 1, 1), max_value=date.today(), format="DD-MM-YYYY")
+            gender = col2.selectbox("Gender", ["Male", "Female", "Other"])
+            email = col1.text_input("Email Address")
+            phone = col2.text_input("Phone Number")
+            col_b1, col_b2 = st.columns(2)
+            initial_balance = col_b1.number_input("Opening SB Deposit Balance (₹)", min_value=0.0, value=0.0, step=500.0)
+            
+            street = col1.text_input("Street Address")
+            city = col2.text_input("City")
+            state = col1.text_input("State")
             pincode = col2.text_input("Pincode")
-            pan = col1.text_input("PAN Number *")
+            pan = col1.text_input("PAN Number")
             
             st.markdown("---")
-            adhar_upload = st.file_uploader("Upload Aadhaar Document *", type=["pdf", "png", "jpg", "jpeg"], key="reg_adhar")
-            pan_upload = st.file_uploader("Upload PAN Card Document *", type=["pdf", "png", "jpg", "jpeg"], key="reg_pan")
-            sig_upload = st.file_uploader("Upload Signature *", type=["png", "jpg", "jpeg"], key="reg_sig")
+            adhar_upload = st.file_uploader("Upload Aadhaar Document", type=["pdf", "png", "jpg", "jpeg"], key="reg_adhar")
+            pan_upload = st.file_uploader("Upload PAN Card Document", type=["pdf", "png", "jpg", "jpeg"], key="reg_pan")
+            sig_upload = st.file_uploader("Upload Signature", type=["png", "jpg", "jpeg"], key="reg_sig")
             
-            submitted = st.form_submit_button("Register Customer")
+            submitted = st.form_submit_button("🚀 Register Customer & Auto-Create Account", use_container_width=True)
             if submitted:
-                if not name or not phone or not pan:
-                    st.error("Please fill in mandatory fields: Full Name, Phone Number, and PAN Number.")
-                elif not adhar_upload or not pan_upload or not sig_upload:
-                    st.error("All document uploads (Aadhaar, PAN Card, and Signature) are mandatory before registering.")
+                if not name or not name.strip():
+                    st.error("❌ Please enter the customer's Full Name.")
                 else:
-                    existing_phone = run_query("SELECT COUNT(*) FROM customers WHERE phone = ?", (phone,))
-                    existing_pan = run_query("SELECT COUNT(*) FROM customers WHERE pan = ?", (pan,))
+                    final_acc_no = acc_no.strip() if acc_no and acc_no.strip() else f"0128{datetime.now(IST).strftime('%m%d%H%M')}"
                     
-                    if existing_phone and existing_phone[0][0] > 0:
-                        st.error(f"A customer with phone number {phone} already exists. Duplication is not allowed.")
-                    elif existing_pan and existing_pan[0][0] > 0:
-                        st.error(f"A customer with PAN number {pan} already exists. PAN ID must be unique.")
+                    # Check for duplicate account number in accounts table
+                    existing_acc = run_query("SELECT id FROM accounts WHERE account_number = ?", (final_acc_no,))
+                    if existing_acc:
+                        st.error(f"❌ Account number `{final_acc_no}` is already registered in the system. Please specify a unique Account Number.")
                     else:
-                        adh_name, adh_bytes = save_uploaded_file(adhar_upload)
-                        pan_name, pan_bytes = save_uploaded_file(pan_upload)
-                        sig_name, sig_bytes = save_uploaded_file(sig_upload)
-                        
-                        import psycopg2
-                        adh_param = psycopg2.Binary(adh_bytes) if (USING_SUPABASE and adh_bytes) else adh_bytes
-                        pan_param = psycopg2.Binary(pan_bytes) if (USING_SUPABASE and pan_bytes) else pan_bytes
-                        sig_param = psycopg2.Binary(sig_bytes) if (USING_SUPABASE and sig_bytes) else sig_bytes
-                        
-                        run_query("""
-                            INSERT INTO customers (name, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, adhar_data, pan_file, pan_data, signature_file, signature_data, kyc_status, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-                        """, (name, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adh_name, adh_param, pan_name, pan_param, sig_name, sig_param, datetime.now(IST).strftime("%Y-%m-%d %H:%M")), fetch=False)
-                        st.success(f"Customer {name} registered successfully!")
+                        try:
+                            adh_name, adh_bytes = save_uploaded_file(adhar_upload) if adhar_upload else (None, None)
+                            pan_name, pan_bytes = save_uploaded_file(pan_upload) if pan_upload else (None, None)
+                            sig_name, sig_bytes = save_uploaded_file(sig_upload) if sig_upload else (None, None)
+                            
+                            import psycopg2
+                            adh_param = psycopg2.Binary(adh_bytes) if (USING_SUPABASE and adh_bytes) else adh_bytes
+                            pan_param = psycopg2.Binary(pan_bytes) if (USING_SUPABASE and pan_bytes) else pan_bytes
+                            sig_param = psycopg2.Binary(sig_bytes) if (USING_SUPABASE and sig_bytes) else sig_bytes
+                            
+                            today_str = datetime.now(IST).strftime("%Y-%m-%d")
+                            now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+                            
+                            # 1. Insert into customers
+                            run_query("""
+                                INSERT INTO customers (name, account_no, dob, gender, email, phone, street, city, state, pincode, pan, adhar, adhar_file, adhar_data, pan_file, pan_data, signature_file, signature_data, kyc_status, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'VERIFIED', ?)
+                            """, (name.strip(), final_acc_no, str(dob), gender, email, phone, street, city, state, pincode, pan, "[Redacted]", adh_name, adh_param, pan_name, pan_param, sig_name, sig_param, now_str), fetch=False)
+                            
+                            # 2. Get new customer ID
+                            new_cust_id_row = run_query("SELECT id FROM customers WHERE account_no = ? ORDER BY id DESC LIMIT 1", (final_acc_no,))
+                            if not new_cust_id_row:
+                                new_cust_id_row = run_query("SELECT id FROM customers WHERE name = ? ORDER BY id DESC LIMIT 1", (name.strip(),))
+                                
+                            if new_cust_id_row:
+                                new_c_id = new_cust_id_row[0][0]
+                                
+                                # 3. Automatically create Account in accounts table
+                                db_acc_type = 'Savings Account'
+                                run_query("""
+                                    INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
+                                    VALUES (?, ?, ?, ?, ?)
+                                """, (final_acc_no, db_acc_type, new_c_id, initial_balance, today_str), fetch=False)
+                                
+                                acc_id_row = run_query("SELECT id FROM accounts WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (new_c_id,))
+                                if acc_id_row:
+                                    acc_pk = acc_id_row[0][0]
+                                    # 4. Log Opening Transaction if balance > 0
+                                    if initial_balance > 0:
+                                        tx_type = 'SB OPENING DEPOSIT (CREDIT)'
+                                        run_query("""
+                                            INSERT INTO transactions (account_id, type, amount, balance_after, date)
+                                            VALUES (?, ?, ?, ?, ?)
+                                        """, (acc_pk, tx_type, initial_balance, initial_balance, today_str), fetch=False)
+                                        
+                                # 5. Also insert into sb_accounts for standard SB tracking
+                                run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, ?, 3.5, ?)", 
+                                          (final_acc_no, new_c_id, initial_balance, today_str), fetch=False)
+                                          
+                                st.success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: {new_c_id}) registered successfully! SB Account created automatically with initial balance ₹{initial_balance:,.2f}.")
+                                time.sleep(1.0)
+                                st.rerun()
+                            else:
+                                st.error("❌ Failed to create customer record. Please check inputs or database connectivity.")
+                        except Exception as ex:
+                            st.error(f"❌ Error during registration: {str(ex)}")
 
     with tab2:
         st.subheader("Customer Directory & Document Viewer")
-        customers = run_query("SELECT id, name, phone, email, kyc_status, pan, created_at FROM customers")
+        customers = run_query("SELECT id, COALESCE(account_no, 'N/A') as account_no, name, phone, email, kyc_status, pan, created_at FROM customers ORDER BY id ASC")
         if customers:
-            df_cust = pd.DataFrame(customers, columns=["ID", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
+            df_cust = pd.DataFrame(customers, columns=["ID", "Account No", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
             df_cust_formatted = format_df_dates(df_cust)
             st.dataframe(df_cust_formatted, use_container_width=True)
             
@@ -292,125 +335,149 @@ def render_customer_management():
             st.info("No customers found.")
 
     with tab3:
-        st.subheader("Edit Customer Information")
-        cust_id_edit = st.number_input("Enter Customer ID to Edit", min_value=1, step=1, key="edit_cust_id")
-        cust_data = run_query("SELECT name, email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
-        if cust_data:
-            c = cust_data[0]
-            with st.form("edit_profile_form"):
-                new_name = st.text_input("Name", value=c[0])
-                new_email = st.text_input("Email", value=c[1])
-                new_phone = st.text_input("Phone", value=c[2])
-                new_street = st.text_input("Street", value=c[3])
-                new_city = st.text_input("City", value=c[4])
-                new_state = st.text_input("State", value=c[5])
-                new_pincode = st.text_input("Pincode", value=c[6])
+        st.subheader("✏️ Edit / Delete Customer Information")
+        all_cust_list = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone FROM customers ORDER BY id DESC")
+        if all_cust_list:
+            c_dict = {f"#{r[0]} - {r[1]} (Acc: {r[2]} | Ph: {r[3]})": r[0] for r in all_cust_list}
+            sel_c_label = st.selectbox("Select Customer to Edit / Manage / Delete", list(c_dict.keys()), key="edit_cust_sel")
+            cust_id_edit = c_dict[sel_c_label]
+            
+            cust_data = run_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
+            if cust_data:
+                c = cust_data[0]
+                with st.form(f"edit_profile_form_{cust_id_edit}"):
+                    new_name = st.text_input("Name", value=c[0])
+                    new_acc_no = st.text_input("Account Number", value=c[1])
+                    new_email = st.text_input("Email", value=c[2])
+                    new_phone = st.text_input("Phone", value=c[3])
+                    new_street = st.text_input("Street", value=c[4])
+                    new_city = st.text_input("City", value=c[5])
+                    new_state = st.text_input("State", value=c[6])
+                    new_pincode = st.text_input("Pincode", value=c[7])
+                    
+                    if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
+                        run_query("""
+                            UPDATE customers 
+                            SET name=?, account_no=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
+                            WHERE id=?
+                        """, (new_name, new_acc_no, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
+                        st.success("Profile details updated successfully!")
+                        time.sleep(0.1)
+                        st.rerun()
+
+                st.markdown("---")
+                st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")
                 
-                if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
-                    run_query("""
-                        UPDATE customers 
-                        SET name=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
-                        WHERE id=?
-                    """, (new_name, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
-                    st.success("Profile details updated successfully!")
-                    time.sleep(0.1)
-                    st.rerun()
-
-            st.markdown("---")
-            st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")
-            
-            from database import save_uploaded_file, delete_document, get_document_data
-            import psycopg2
-            
-            # --- 1. AADHAAR CARD ---
-            st.write("---")
-            st.markdown("**1. Aadhaar Card Document**")
-            if c[7]:
-                st.info(f"Existing Aadhaar: `{os.path.basename(c[7])}`")
-                col1, col2 = st.columns(2)
-                try:
-                    file_bytes, filename = get_document_data(c[7], doc_type='adhar', customer_id=cust_id_edit)
-                    if file_bytes:
-                        col1.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key="dl_edit_adh", use_container_width=True)
-                except Exception:
-                    pass
-                if col2.button("🗑️ Delete & Clear Aadhaar", key="del_edit_adh_btn", type="secondary", use_container_width=True):
-                    delete_document(c[7], doc_type='adhar', customer_id=cust_id_edit)
-                    run_query("UPDATE customers SET adhar_file = NULL, adhar_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
-                    st.success("Aadhaar document deleted successfully!")
-                    time.sleep(0.1)
-                    st.rerun()
-            else:
-                st.warning("No Aadhaar document uploaded.")
-                new_adh = st.file_uploader("Upload Aadhaar Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_adh")
-                if new_adh:
-                    if st.button("📤 Upload Aadhaar", key="up_edit_adh_btn", type="primary", use_container_width=True):
-                        saved_name, saved_bytes = save_uploaded_file(new_adh)
-                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
-                        run_query("UPDATE customers SET adhar_file = ?, adhar_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
-                        st.success("Aadhaar document saved directly into database!")
+                from database import save_uploaded_file, delete_document, get_document_data
+                import psycopg2
+                
+                # --- 1. AADHAAR CARD ---
+                st.write("---")
+                st.markdown("**1. Aadhaar Card Document**")
+                if c[8]:
+                    st.info(f"Existing Aadhaar: `{os.path.basename(c[8])}`")
+                    col1, col2 = st.columns(2)
+                    try:
+                        file_bytes, filename = get_document_data(c[8], doc_type='adhar', customer_id=cust_id_edit)
+                        if file_bytes:
+                            col1.download_button("📥 Download Aadhaar", file_bytes, file_name=filename, key=f"dl_edit_adh_{cust_id_edit}", use_container_width=True)
+                    except Exception:
+                        pass
+                    if col2.button("🗑️ Delete & Clear Aadhaar", key=f"del_edit_adh_btn_{cust_id_edit}", type="secondary", use_container_width=True):
+                        delete_document(c[8], doc_type='adhar', customer_id=cust_id_edit)
+                        run_query("UPDATE customers SET adhar_file = NULL, adhar_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        st.success("Aadhaar document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
+                else:
+                    st.warning("No Aadhaar document uploaded.")
+                    new_adh = st.file_uploader("Upload Aadhaar Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key=f"edit_upload_adh_{cust_id_edit}")
+                    if new_adh:
+                        if st.button("📤 Upload Aadhaar", key=f"up_edit_adh_btn_{cust_id_edit}", type="primary", use_container_width=True):
+                            saved_name, saved_bytes = save_uploaded_file(new_adh)
+                            param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                            run_query("UPDATE customers SET adhar_file = ?, adhar_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            st.success("Aadhaar document saved directly into database!")
+                            time.sleep(0.1)
+                            st.rerun()
 
-            # --- 2. PAN CARD ---
-            st.write("---")
-            st.markdown("**2. PAN Card Document**")
-            if c[8]:
-                st.info(f"Existing PAN: `{os.path.basename(c[8])}`")
-                col1, col2 = st.columns(2)
-                try:
-                    file_bytes, filename = get_document_data(c[8], doc_type='pan', customer_id=cust_id_edit)
-                    if file_bytes:
-                        col1.download_button("📥 Download PAN", file_bytes, file_name=filename, key="dl_edit_pan", use_container_width=True)
-                except Exception:
-                    pass
-                if col2.button("🗑️ Delete & Clear PAN", key="del_edit_pan_btn", type="secondary", use_container_width=True):
-                    delete_document(c[8], doc_type='pan', customer_id=cust_id_edit)
-                    run_query("UPDATE customers SET pan_file = NULL, pan_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
-                    st.success("PAN document deleted successfully!")
-                    time.sleep(0.1)
-                    st.rerun()
-            else:
-                st.warning("No PAN document uploaded.")
-                new_pan = st.file_uploader("Upload PAN Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_pan")
-                if new_pan:
-                    if st.button("📤 Upload PAN", key="up_edit_pan_btn", type="primary", use_container_width=True):
-                        saved_name, saved_bytes = save_uploaded_file(new_pan)
-                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
-                        run_query("UPDATE customers SET pan_file = ?, pan_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
-                        st.success("PAN document saved directly into database!")
+                # --- 2. PAN CARD ---
+                st.write("---")
+                st.markdown("**2. PAN Card Document**")
+                if c[9]:
+                    st.info(f"Existing PAN Card: `{os.path.basename(c[9])}`")
+                    col1, col2 = st.columns(2)
+                    try:
+                        file_bytes, filename = get_document_data(c[9], doc_type='pan', customer_id=cust_id_edit)
+                        if file_bytes:
+                            col1.download_button("📥 Download PAN", file_bytes, file_name=filename, key=f"dl_edit_pan_{cust_id_edit}", use_container_width=True)
+                    except Exception:
+                        pass
+                    if col2.button("🗑️ Delete & Clear PAN", key=f"del_edit_pan_btn_{cust_id_edit}", type="secondary", use_container_width=True):
+                        delete_document(c[9], doc_type='pan', customer_id=cust_id_edit)
+                        run_query("UPDATE customers SET pan_file = NULL, pan_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        st.success("PAN document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
+                else:
+                    st.warning("No PAN document uploaded.")
+                    new_pan = st.file_uploader("Upload PAN Card Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key=f"edit_upload_pan_{cust_id_edit}")
+                    if new_pan:
+                        if st.button("📤 Upload PAN", key=f"up_edit_pan_btn_{cust_id_edit}", type="primary", use_container_width=True):
+                            saved_name, saved_bytes = save_uploaded_file(new_pan)
+                            param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                            run_query("UPDATE customers SET pan_file = ?, pan_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            st.success("PAN document saved directly into database!")
+                            time.sleep(0.1)
+                            st.rerun()
 
-            # --- 3. SIGNATURE ---
-            st.write("---")
-            st.markdown("**3. Signature Document**")
-            if c[9]:
-                st.info(f"Existing Signature: `{os.path.basename(c[9])}`")
-                col1, col2 = st.columns(2)
-                try:
-                    file_bytes, filename = get_document_data(c[9], doc_type='signature', customer_id=cust_id_edit)
-                    if file_bytes:
-                        col1.download_button("📥 Download Signature", file_bytes, file_name=filename, key="dl_edit_sig", use_container_width=True)
-                except Exception:
-                    pass
-                if col2.button("🗑️ Delete & Clear Signature", key="del_edit_sig_btn", type="secondary", use_container_width=True):
-                    delete_document(c[9], doc_type='signature', customer_id=cust_id_edit)
-                    run_query("UPDATE customers SET signature_file = NULL, signature_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
-                    st.success("Signature document deleted successfully!")
-                    time.sleep(0.1)
-                    st.rerun()
-            else:
-                st.warning("No Signature document uploaded.")
-                new_sig = st.file_uploader("Upload Signature Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key="edit_upload_sig")
-                if new_sig:
-                    if st.button("📤 Upload Signature", key="up_edit_sig_btn", type="primary", use_container_width=True):
-                        saved_name, saved_bytes = save_uploaded_file(new_sig)
-                        param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
-                        run_query("UPDATE customers SET signature_file = ?, signature_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
-                        st.success("Signature document saved directly into database!")
+                # --- 3. SIGNATURE ---
+                st.write("---")
+                st.markdown("**3. Signature Document**")
+                if c[10]:
+                    st.info(f"Existing Signature: `{os.path.basename(c[10])}`")
+                    col1, col2 = st.columns(2)
+                    try:
+                        file_bytes, filename = get_document_data(c[10], doc_type='signature', customer_id=cust_id_edit)
+                        if file_bytes:
+                            col1.download_button("📥 Download Signature", file_bytes, file_name=filename, key=f"dl_edit_sig_{cust_id_edit}", use_container_width=True)
+                    except Exception:
+                        pass
+                    if col2.button("🗑️ Delete & Clear Signature", key=f"del_edit_sig_btn_{cust_id_edit}", type="secondary", use_container_width=True):
+                        delete_document(c[10], doc_type='signature', customer_id=cust_id_edit)
+                        run_query("UPDATE customers SET signature_file = NULL, signature_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        st.success("Signature document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
+                else:
+                    st.warning("No Signature document uploaded.")
+                    new_sig = st.file_uploader("Upload Signature Document (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"], key=f"edit_upload_sig_{cust_id_edit}")
+                    if new_sig:
+                        if st.button("📤 Upload Signature", key=f"up_edit_sig_btn_{cust_id_edit}", type="primary", use_container_width=True):
+                            saved_name, saved_bytes = save_uploaded_file(new_sig)
+                            param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
+                            run_query("UPDATE customers SET signature_file = ?, signature_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            st.success("Signature document saved directly into database!")
+                            time.sleep(0.1)
+                            st.rerun()
+
+                # --- 4. DANGER ZONE: DELETE CUSTOMER ---
+                st.write("---")
+                with st.expander("🚨 Danger Zone: Delete Customer Record", expanded=False):
+                    st.error(f"⚠️ **Warning**: Permanently delete customer **{c[0]}** (Customer ID: `#{cust_id_edit}`). This will permanently delete this customer profile along with their linked accounts, savings balances, loans, deposits, and documents.")
+                    confirm_del = st.checkbox(f"Yes, I confirm I want to permanently delete customer #{cust_id_edit} - {c[0]}", key=f"confirm_del_cust_{cust_id_edit}")
+                    if confirm_del:
+                        if st.button(f"🗑️ Permanently Delete Customer #{cust_id_edit}", type="primary", use_container_width=True, key=f"btn_delete_cust_{cust_id_edit}"):
+                            from database import delete_customer_cascade
+                            success, msg = delete_customer_cascade(cust_id_edit)
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(1.0)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to delete customer: {msg}")
+        else:
+            st.info("No customers found.")
 
 def render_kyc():
     st.title("✅ KYC Verification Panel")
@@ -807,7 +874,7 @@ def render_fixed_deposits():
 
 def render_recurring_deposits():
     st.title("🔄 Recurring Deposits Management")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Print Certificate / Ledger", "Close RD"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Print Certificate / Ledger", "Close RD", "✏️ Edit / Update RD"])
     
     with tab1:
         customers = run_query("SELECT id, name, street, city, state, pincode FROM customers")
@@ -954,12 +1021,17 @@ def render_recurring_deposits():
 
     with tab3:
         rds = run_query("""
-            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.payment_mode, r.maturity_amount
+            SELECT COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as acc_no, 
+                   c.name, COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme,
+                   r.monthly_amount, r.tenure_months, r.interest_rate, 
+                   r.installments_paid, COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
+                   COALESCE(r.maturity_date, '2026-12-20') as mat_date,
+                   r.maturity_amount, r.nominee, r.status
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             WHERE r.status = 'ACTIVE'
         """)
         if rds:
-            df_rds = pd.DataFrame(rds, columns=["RD ID", "Customer", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Installments", "Status", "Payment Mode", "Est. Maturity"])
+            df_rds = pd.DataFrame(rds, columns=["A/C No", "Customer Name", "Scheme", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Inst.", "Total Deposited (₹)", "Maturity Date", "Maturity Amount (₹)", "Nominee", "Status"])
             st.dataframe(df_rds, use_container_width=True)
         else:
             st.info("No active recurring deposits found.")
@@ -970,7 +1042,11 @@ def render_recurring_deposits():
             SELECT r.rd_id, c.name, c.street, c.city, c.state, c.pincode, 
                    r.monthly_amount, r.tenure_months, r.interest_rate, 
                    r.installments_paid, r.maturity_amount, r.nominee, 
-                   r.created_at, r.status, r.closed_date
+                   r.created_at, r.status, r.closed_date,
+                   COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as acc_no,
+                   COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
+                   COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name,
+                   COALESCE(r.maturity_date, '2026-12-20') as maturity_date
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             ORDER BY r.rd_id DESC
         """)
@@ -978,19 +1054,28 @@ def render_recurring_deposits():
             rd_print_dict = {}
             for r in all_rds:
                 status_display = "🔴 CLOSED" if r[13] == 'CLOSED' else "🟢 ACTIVE"
-                label = f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[6]:,.2f}) - {status_display}"
+                label = f"A/C: {r[15]} - {r[1]} ({r[17]} | Paid: {r[9]}/{r[7]} | Balance: ₹{r[16]:,.2f}) - {status_display}"
                 rd_print_dict[label] = r
             
             selected_rd_print = st.selectbox("Select RD Account for Printing/View", list(rd_print_dict.keys()), key="rd_print_select")
             rd_data = rd_print_dict[selected_rd_print]
             
-            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date = rd_data
+            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name, maturity_date = rd_data
             
             full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
-            total_deposited = monthly_amt * paid_inst
+            total_deposited = col_balance
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#2980b9"
             
+            years = int(tenure) // 12
+            months = int(tenure) % 12
+            if years > 0 and months > 0:
+                tenure_display_str = f"{tenure} MONTHS ({years} Years {months} Months)"
+            elif years > 0:
+                tenure_display_str = f"{tenure} MONTHS ({years} Years)"
+            else:
+                tenure_display_str = f"{tenure} MONTHS"
+
             rd_receipt_html = f"""
             <style>
               .rd-receipt {{
@@ -1027,8 +1112,12 @@ def render_recurring_deposits():
               </div>
               
               <div class="grid-row">
-                <div><b>RDR No. / A/c No:</b> RD-{rd_id:05d}</div>
+                <div><b>RDR No. / A/c No:</b> {rd_acc_no}</div>
+                <div><b>Scheme:</b> <span style="color:#1b4f72;font-weight:bold;">{scheme_name}</span></div>
+              </div>
+              <div class="grid-row">
                 <div><b>A/c Opening Date:</b> {created_at}</div>
+                <div><b>Maturity Date:</b> <span style="color:#27ae60;font-weight:bold;">{maturity_date}</span></div>
               </div>
               <div class="grid-row">
                 <div><b>Name:</b> {c_name}</div>
@@ -1043,13 +1132,17 @@ def render_recurring_deposits():
                 <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
               </div>
               <div class="grid-row">
-                <div><b>Tenure:</b> {tenure} MONTHS</div>
+                <div><b>Tenure:</b> {tenure_display_str}</div>
                 <div><b>Installments Paid:</b> {paid_inst} / {tenure}</div>
+              </div>
+              <div class="grid-row">
+                <div><b>Total Balance Deposited:</b> ₹{col_balance:,.2f}</div>
+                <div><b>Maturity Amount:</b> <span style="color:#1b4f72;font-weight:bold;">₹{maturity:,.2f}</span></div>
               </div>
               {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date}</div><div></div></div>' if status == 'CLOSED' else ''}
               
               <div class="box">
-                <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Estimated Maturity Amount: <b>₹{maturity:,.2f}</b>.
+                <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Total balance accumulated: <b>₹{col_balance:,.2f}</b>.
               </div>
 
               <table>
@@ -1063,10 +1156,10 @@ def render_recurring_deposits():
                 </tr>
                 <tr>
                   <td>{created_at}</td>
-                  <td>RD Account Opening & Installment 1</td>
+                  <td>RD Account Opening & Installments</td>
                   <td>-</td>
-                  <td>₹{monthly_amt:,.2f}</td>
-                  <td>₹{total_deposited:,.2f}</td>
+                  <td>₹{col_balance:,.2f}</td>
+                  <td>₹{col_balance:,.2f}</td>
                   <td>{paid_inst}</td>
                 </tr>
                 {f'<tr><td>{closed_date}</td><td>RD Closed / Maturity Payment</td><td>₹{maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>{paid_inst}</td></tr>' if status == 'CLOSED' else ''}
@@ -1085,9 +1178,9 @@ def render_recurring_deposits():
             
             rd_pdf_data = pdf_generator.generate_rd_pdf(rd_data)
             st.download_button(
-                label=f"📥 Download RD Certificate RD-{rd_id:05d} (PDF)",
+                label=f"📥 Download RD Certificate {rd_acc_no} (PDF)",
                 data=rd_pdf_data,
-                file_name=f"RD_Certificate_RD-{rd_id:05d}.pdf",
+                file_name=f"RD_Certificate_{rd_acc_no}.pdf",
                 mime="application/pdf",
                 key=f"download_rd_pdf_{rd_id}",
                 use_container_width=True
@@ -1141,6 +1234,163 @@ def render_recurring_deposits():
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
+
+    with tab6:
+        st.subheader("✏️ Edit & Correct Recurring Deposit Account")
+        st.caption("Enter the exact amount paid/deposited, tenure, and interest rate — maturity amount recalculates live on whatever amount you enter.")
+        
+        all_rds_edit = run_query("""
+            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, 
+                   r.installments_paid, r.nominee, r.status, r.created_at, r.maturity_amount,
+                   COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as rd_no,
+                   COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name,
+                   COALESCE(r.maturity_date, '2026-12-20') as maturity_date,
+                   COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as collected_balance,
+                   r.customer_id
+            FROM recurring_deposits r 
+            JOIN customers c ON r.customer_id = c.id
+            ORDER BY r.rd_id DESC
+        """)
+        
+        if all_rds_edit:
+            rd_edit_dict = {}
+            for r in all_rds_edit:
+                status_icon = "🔴 CLOSED" if r[7] == 'CLOSED' else "🟢 ACTIVE"
+                label = f"A/C: {r[10]} - {r[1]} ({r[11]} | Amount Paid: ₹{r[13]:,.2f} | Tenure: {r[3]}M) - {status_icon}"
+                rd_edit_dict[label] = r
+            
+            selected_edit_label = st.selectbox("Select RD Account to Edit", list(rd_edit_dict.keys()), key="rd_edit_select")
+            curr_rd = rd_edit_dict[selected_edit_label]
+            
+            c_rd_id, c_name, c_monthly, c_tenure, c_rate, c_paid, c_nominee, c_status, c_created, c_maturity, c_rd_no, c_scheme, c_mat_date, c_col_bal, c_cust_id = curr_rd
+            
+            st.markdown("---")
+            col_e1, col_e2 = st.columns(2)
+            
+            with col_e1:
+                edit_rd_no = st.text_input("RD Account Number", value=str(c_rd_no), key=f"edit_rd_no_{c_rd_id}")
+                edit_scheme = st.text_input("Scheme Name", value=str(c_scheme), key=f"edit_scheme_{c_rd_id}")
+                edit_col_balance = st.number_input(
+                    "💰 Total Amount Paid / Deposited (₹)", 
+                    min_value=0.0, 
+                    value=float(c_col_bal) if c_col_bal is not None else float(c_monthly * c_paid), 
+                    step=1000.0, 
+                    key=f"edit_col_bal_{c_rd_id}",
+                    help="Enter whatever total amount the customer has paid (e.g. ₹12,25,000.00)"
+                )
+                edit_monthly = st.number_input("Monthly Installment (₹)", min_value=0.0, value=float(c_monthly), step=500.0, key=f"edit_monthly_{c_rd_id}")
+            
+            with col_e2:
+                edit_tenure = st.number_input("Tenure (Months)", min_value=1, max_value=120, value=int(c_tenure), step=1, key=f"edit_tenure_{c_rd_id}")
+                edit_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(c_rate), step=0.25, key=f"edit_rate_{c_rd_id}")
+                edit_paid = st.number_input("Installments Paid Count", min_value=0, max_value=120, value=int(c_paid), step=1, key=f"edit_paid_{c_rd_id}")
+                edit_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_nominee_{c_rd_id}")
+            
+            col_e3, col_e4 = st.columns(2)
+            with col_e3:
+                edit_status = st.selectbox("Account Status", ["ACTIVE", "CLOSED"], index=0 if c_status == 'ACTIVE' else 1, key=f"edit_status_{c_rd_id}")
+                edit_created = st.text_input("A/c Opening Date (YYYY-MM-DD)", value=str(c_created) if c_created else datetime.now(IST).strftime("%Y-%m-%d"), key=f"edit_created_{c_rd_id}")
+            with col_e4:
+                edit_mat_date = st.text_input("Maturity Date (YYYY-MM-DD)", value=str(c_mat_date) if c_mat_date else "2026-12-20", key=f"edit_mat_date_{c_rd_id}")
+
+            # --- Live Automatic Recalculation Engine based on Amount Paid ---
+            # 1. Quarterly Compounded Formula (Banking / RBI Standard):
+            calc_qc_maturity = 0.0
+            if edit_col_balance > 0 and edit_tenure > 0 and edit_rate > 0:
+                i_qc = edit_rate / 400.0
+                p_slice = edit_col_balance / float(edit_tenure)
+                for k in range(1, int(edit_tenure) + 1):
+                    q_rem = (edit_tenure - k + 1) / 3.0
+                    calc_qc_maturity += p_slice * ((1.0 + i_qc) ** q_rem)
+                calc_qc_maturity = round(calc_qc_maturity, 2)
+            else:
+                calc_qc_maturity = float(edit_col_balance)
+            calc_qc_interest = max(0.0, calc_qc_maturity - edit_col_balance)
+
+            # 2. Standard RD Cumulative Formula: Amount Paid * (Rate / 100) * ((Tenure + 1) / 24)
+            calc_rd_interest = float(edit_col_balance * (edit_rate / 100.0) * ((edit_tenure + 1) / 24.0))
+            calc_rd_maturity = float(edit_col_balance + calc_rd_interest)
+            
+            st.markdown("---")
+            st.markdown("#### ⚡ Live Maturity Amount Selection")
+            
+            # Formulate options including existing stored certificate amount if available
+            calc_options = []
+            if c_maturity and float(c_maturity) > 0:
+                calc_options.append(f"📄 Keep Stored Certificate Amount: ₹{float(c_maturity):,.2f}")
+            calc_options.append(f"🏦 Quarterly Compounded Banking Formula (Maturity: ₹{calc_qc_maturity:,.2f} | Interest: ₹{calc_qc_interest:,.2f})")
+            calc_options.append(f"⚡ Standard Cumulative RD Formula (Maturity: ₹{calc_rd_maturity:,.2f} | Interest: ₹{calc_rd_interest:,.2f})")
+            calc_options.append("✍️ Enter Custom Manual Maturity Amount")
+            
+            calc_method = st.radio(
+                "Select Maturity Amount Calculation",
+                calc_options,
+                index=0,
+                key=f"calc_method_{c_rd_id}"
+            )
+            
+            if "Keep Stored Certificate" in calc_method:
+                final_maturity_amt = float(c_maturity)
+                final_interest = max(0.0, final_maturity_amt - edit_col_balance)
+            elif "Quarterly Compounded" in calc_method:
+                final_interest = calc_qc_interest
+                final_maturity_amt = calc_qc_maturity
+            elif "Standard Cumulative" in calc_method:
+                final_interest = calc_rd_interest
+                final_maturity_amt = calc_rd_maturity
+            else:
+                final_maturity_amt = st.number_input(
+                    "Enter Custom Maturity Amount (₹)",
+                    min_value=0.0,
+                    value=float(c_maturity) if c_maturity else calc_qc_maturity,
+                    step=1000.0,
+                    key=f"custom_mat_amt_{c_rd_id}"
+                )
+                final_interest = max(0.0, final_maturity_amt - edit_col_balance)
+            
+            m_col1, m_col2, m_col3 = st.columns(3)
+            m_col1.metric("💰 Amount Paid / Deposited", f"₹{edit_col_balance:,.2f}")
+            m_col2.metric("📈 Calculated Interest", f"₹{final_interest:,.2f}")
+            m_col3.metric("🎯 Total Maturity Amount", f"₹{final_maturity_amt:,.2f}")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            btn_col1, btn_col2 = st.columns([3, 1])
+            
+            with btn_col1:
+                if st.button("💾 Save & Update RD Account Changes", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
+                    run_query("""
+                        UPDATE recurring_deposits 
+                        SET monthly_amount = ?,
+                            tenure_months = ?,
+                            interest_rate = ?,
+                            installments_paid = ?,
+                            nominee = ?,
+                            status = ?,
+                            created_at = ?,
+                            maturity_amount = ?,
+                            rd_no = ?,
+                            scheme_name = ?,
+                            maturity_date = ?,
+                            collected_balance = ?
+                        WHERE rd_id = ?
+                    """, (edit_monthly, edit_tenure, edit_rate, edit_paid, edit_nominee, 
+                          edit_status, edit_created, final_maturity_amt, edit_rd_no, 
+                          edit_scheme, edit_mat_date, edit_col_balance, c_rd_id), fetch=False)
+                    
+                    st.success(f"✅ Recurring Deposit #{edit_rd_no} updated successfully! Amount Paid: ₹{edit_col_balance:,.2f} | Maturity: ₹{final_maturity_amt:,.2f}")
+                    time.sleep(0.1)
+                    st.rerun()
+            
+            with btn_col2:
+                with st.popover("🗑️ Delete RD"):
+                    st.error(f"Are you sure you want to delete RD #{edit_rd_no}?")
+                    if st.button("Confirm Delete Permanently", key=f"btn_del_rd_{c_rd_id}", type="primary", use_container_width=True):
+                        run_query("DELETE FROM recurring_deposits WHERE rd_id = ?", (c_rd_id,), fetch=False)
+                        st.success(f"🗑️ Recurring Deposit #{edit_rd_no} deleted successfully!")
+                        time.sleep(0.1)
+                        st.rerun()
+        else:
+            st.info("No Recurring Deposits available to edit.")
 
 
 def get_next_account_code(account_type):
@@ -1513,16 +1763,64 @@ def render_cash_book():
                             use_container_width=True
                         )
 
+def extract_party_details(particulars, acc_code, acc_name, cust_list):
+    if not particulars:
+        return 'N/A'
+    p = str(particulars).strip()
+    
+    # 1. Staff Salary & Benefits (EXP-104 or staff withdrawal names)
+    staff_names = ['SREEKALA J', 'SASIKUMARAN A', 'BINU B', 'KEERTHI R', 'SREEJITH RADHAKRISHNAN', 'LEKSHMI SK', 'SREEKALA', 'SASIKUMARAN', 'SREEJITH', 'BINU', 'KEERTHI']
+    if acc_code == 'EXP-104' or any(k in p.lower() for k in ['salary', 'salaries', 'staff']):
+        for sn in staff_names:
+            if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
+                return f"Staff Salary: {sn}"
+        return "Staff Salaries & Benefits"
+        
+    # 2. Match Registered Customers
+    for cid, cname, cacc in cust_list:
+        if cacc and len(str(cacc)) >= 4 and str(cacc) in p:
+            return f"{cname} (Acc: {cacc})"
+        c_parts = [part.strip() for part in re.split(r'[\s\.]+', cname) if len(part.strip()) >= 3 and part.upper() not in ('THE', 'AND', 'DOCTOR', 'FOR')]
+        for cp in c_parts:
+            if re.search(r'\b' + re.escape(cp) + r'\b', p, re.IGNORECASE):
+                acc_label = f" (Acc: {cacc})" if cacc else ""
+                return f"{cname}{acc_label}"
+                
+    # 3. Staff Field Collections / Staff UPI Deposits
+    for sn in staff_names:
+        if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
+            return f"Staff Field Agent: {sn}"
+            
+    # 4. Bank Charges / Processing
+    if any(k in p.lower() for k in ['charge', 'sms', 'pord', 'gst', 'consolidated chg', 'atm']):
+        return "Union Bank Processing / Service Charges"
+        
+    # 5. Cash Contra
+    if 'cash' in p.lower() or 'contra' in p.lower() or acc_code == 'AST-101':
+        return "Cash Drawer (Office Contra)"
+        
+    # 6. Extract UPI Member Name
+    upi_match = re.search(r'/CR/([^/]+)/', p, re.IGNORECASE)
+    if upi_match:
+        name_clean = upi_match.group(1).strip()
+        if name_clean and len(name_clean) > 1:
+            return f"Member: {name_clean}"
+            
+    # 7. Extract NEFT Party Name
+    neft_match = re.search(r'NEFT(?:O|-|:)?\s*([A-Za-z\s\.]+?)(?:\s+\d+|\s+HDFC|\s+SBIN|\s+CNRB|$)', p, re.IGNORECASE)
+    if neft_match:
+        n_clean = neft_match.group(1).strip()
+        if n_clean and len(n_clean) > 2:
+            return f"Party: {n_clean}"
+            
+    return p
+
 def render_bank_book():
     st.title("🏦 Bank Book Entries")
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book", "🖨️ Print BB Vouchers"])
     
     with tab1:
-        bank_accounts = [("AST-102", "Union Bank of India"), ("AST-103", "State Bank of India")]
-        bank_dict = {f"{b[0]} - {b[1]}": (b[0], b[1]) for b in bank_accounts}
-        selected_bank_str = st.selectbox("Select Bank", list(bank_dict.keys()), key="bank_select")
-        bank_code, bank_name = bank_dict[selected_bank_str]
-        
+        bank_code, bank_name = "AST-102", "Union Bank of India"
         current_balance = get_account_balance_from_jv(bank_code)
         st.info(f"🏦 **{bank_name} Current Balance:** ₹{current_balance:,.2f}")
         
@@ -1576,11 +1874,6 @@ def render_bank_book():
                             if current_union < amount:
                                 st.error(f"❌ Insufficient Union Bank Balance to transfer! Available: ₹{current_union:,.2f}")
                                 st.stop()
-                        elif account_code == 'AST-103':
-                            current_sbi = get_bank_balance("State Bank of India")
-                            if current_sbi < amount:
-                                st.error(f"❌ Insufficient SBI Balance to transfer! Available: ₹{current_sbi:,.2f}")
-                                st.stop()
                                 
                     from database import record_bank_book_transaction
                     success, res_val = record_bank_book_transaction(entry_type, amount, bank_name, bank_code, account_code, particulars, narration, tx_date)
@@ -1596,17 +1889,31 @@ def render_bank_book():
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_view_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to", format="DD-MM-YYYY")
         
-        entries = run_query("""
+        bb_query = """
             SELECT bb.id, bb.date, bb.voucher_no, 
-                   COALESCE(co.account_code || ' - ' || co.account_name, bb.account_code) as account_head,
-                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
+                   CASE 
+                       WHEN bb.debit_amount > 0 THEN bb.bank_name
+                       ELSE 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
+                   END as debit_side,
+                   CASE 
+                       WHEN bb.debit_amount > 0 THEN 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
+                       ELSE bb.bank_name
+                   END as credit_side,
+                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration,
+                   bb.account_code, co.account_name 
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
-            WHERE bb.date BETWEEN ? AND ? 
+            WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id DESC
-        """, (str(from_date), str(to_date)))
+        """
+        entries = run_query(bb_query, (str(from_date), str(to_date)))
         if entries:
-            df_bank = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
+            cust_list = run_query("SELECT id, name, COALESCE(account_no, '') FROM customers") or []
+            formatted_entries = []
+            for r in entries:
+                party = extract_party_details(r[5], r[11], r[12], cust_list)
+                formatted_entries.append((r[0], r[1], r[2], r[3], r[4], party, r[5], r[6], r[7], r[8], r[9], r[10]))
+            df_bank = pd.DataFrame(formatted_entries, columns=["ID", "Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
             del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
@@ -1638,34 +1945,36 @@ def render_bank_book():
             # row = (id, particulars, debit_amount, credit_amount, bank_name, narration, account_code, voucher_no, date)
             coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
-            coa_keys = list(coa_dict.keys())
             
-            curr_acc = row[6]
-            default_index = 0
-            for idx, k in enumerate(coa_keys):
-                if coa_dict[k] == curr_acc:
-                    default_index = idx
-                    break
-                    
+            # Find current key
+            current_head_key = next((k for k, v in coa_dict.items() if v == row[6]), list(coa_dict.keys())[0])
+            
             with st.form("edit_bank_form"):
-                new_part = st.text_input("Particulars", value=row[1])
-                curr_dr = row[2] if row[2] > 0 else row[3]
-                is_debit = row[2] > 0
-                new_type = st.selectbox("Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"], index=0 if is_debit else 1)
-                new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
-                new_acc_head = st.selectbox("Corresponding Account Head", coa_keys, index=default_index)
-                new_narration = st.text_area("Narration", value=row[5] if row[5] else "")
+                col_d, col_t, col_a = st.columns(3)
+                edit_date = col_d.date_input("Date", value=datetime.strptime(row[8], "%Y-%m-%d").date() if row[8] else date.today(), format="DD-MM-YYYY")
+                current_type = "DEBIT (Deposit)" if row[2] > 0 else "CREDIT (Withdrawal)"
+                new_type = col_t.selectbox("Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"], index=0 if "DEBIT" in current_type else 1)
+                current_val = float(row[2]) if row[2] > 0 else float(row[3])
+                new_amt = col_a.number_input("Amount (₹)", min_value=1.0, value=current_val, step=100.0)
                 
-                if st.form_submit_button("Update Bank Entry", use_container_width=True):
+                new_head = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_head_key) if current_head_key in coa_dict else 0)
+                new_part = st.text_input("Particulars", value=row[1])
+                new_narration = st.text_area("Narration", value=row[5] or "")
+                
+                if st.form_submit_button("Save Changes", use_container_width=True):
+                    new_acc_code = coa_dict[new_head]
                     d_amt = new_amt if "DEBIT" in new_type else 0.0
                     c_amt = new_amt if "CREDIT" in new_type else 0.0
-                    new_acc_code = coa_dict[new_acc_head]
-                    bank_name = row[4]
                     voucher_no = row[7]
-                    entry_date = row[8]
+                    bank_name = row[4]
+                    bank_code = "AST-102"
                     
-                    # 1. Find Bank Code based on name
-                    bank_code = "AST-102" if "Union" in bank_name else "AST-103"
+                    # 1. Check Cash Balance if adjusting deposit from Cash
+                    if new_acc_code == 'AST-101' and "DEBIT" in new_type:
+                        cur_cash = get_cash_balance()
+                        if cur_cash < new_amt:
+                            st.error(f"❌ Insufficient Cash Balance! Available: ₹{cur_cash:,.2f}")
+                            st.stop()
                     
                     # 2. Update the bank_book entry
                     run_query("""
@@ -1704,17 +2013,31 @@ def render_bank_book():
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_print_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to", format="DD-MM-YYYY")
         
-        entries = run_query("""
+        bb_print_query = """
             SELECT bb.date, bb.voucher_no, 
-                   COALESCE(co.account_code || ' - ' || co.account_name, bb.account_code) as account_head,
-                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration 
+                   CASE 
+                       WHEN bb.debit_amount > 0 THEN bb.bank_name
+                       ELSE 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
+                   END as debit_side,
+                   CASE 
+                       WHEN bb.debit_amount > 0 THEN 'Aarsha Nidhi - ' || COALESCE(co.account_name, bb.account_code)
+                       ELSE bb.bank_name
+                   END as credit_side,
+                   bb.particulars, bb.debit_amount, bb.credit_amount, bb.balance, bb.bank_name, bb.narration,
+                   bb.account_code, co.account_name 
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
-            WHERE bb.date BETWEEN ? AND ? 
+            WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id ASC
-        """, (str(from_date), str(to_date)))
+        """
+        entries = run_query(bb_print_query, (str(from_date), str(to_date)))
         if entries:
-            df_print = pd.DataFrame(entries, columns=["Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Bank", "Narration"])
+            cust_list = run_query("SELECT id, name, COALESCE(account_no, '') FROM customers") or []
+            formatted_print = []
+            for r in entries:
+                party = extract_party_details(r[4], r[10], r[11], cust_list)
+                formatted_print.append((r[0], r[1], r[2], r[3], party, r[4], r[5], r[6], r[7], r[8], r[9]))
+            df_print = pd.DataFrame(formatted_print, columns=["Date", "Voucher No", "Debit Side (Inflow)", "Credit Side (Outflow)", "Customer / Party Details", "Particulars", "Deposit (₹)", "Withdrawal (₹)", "Balance (₹)", "Bank", "Narration"])
             df_print_formatted = format_df_dates(df_print)
             st.dataframe(df_print_formatted, use_container_width=True)
             

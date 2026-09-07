@@ -431,6 +431,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS recurring_deposits (
                 rd_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
+                scheme_name TEXT DEFAULT 'SWAYAMVARA KSHEMANIDHI',
+                rd_no TEXT,
                 monthly_amount REAL,
                 tenure_months INTEGER,
                 interest_rate REAL,
@@ -439,8 +441,10 @@ def init_db():
                 status TEXT DEFAULT 'ACTIVE',
                 created_at TEXT,
                 payment_mode TEXT,
+                maturity_date TEXT,
                 closed_date TEXT,
                 maturity_amount REAL DEFAULT 0,
+                collected_balance REAL DEFAULT 0,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS chart_of_accounts (
@@ -496,17 +500,51 @@ def init_db():
             cursor.execute(tables_sql)
             try:
                 cursor.execute("""
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS dob TEXT;
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS gender TEXT;
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS adhar TEXT;
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS adhar_data BYTEA;
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS pan_data BYTEA;
                     ALTER TABLE customers ADD COLUMN IF NOT EXISTS signature_data BYTEA;
+                    ALTER TABLE customers ADD COLUMN IF NOT EXISTS account_no TEXT;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS account_number TEXT;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS account_type TEXT;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS balance REAL DEFAULT 0.0;
+                    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS created_at TEXT;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS account_no TEXT;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS balance REAL DEFAULT 0.0;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS interest_rate REAL DEFAULT 3.5;
+                    ALTER TABLE sb_accounts ADD COLUMN IF NOT EXISTS created_at TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_id TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_no TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS mode TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS narration TEXT;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS balance_after REAL;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id INTEGER;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS scheme_name TEXT;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS collected_balance DOUBLE PRECISION DEFAULT 0;
                 """)
             except Exception:
                 pass
         else:
             cursor.executescript(tables_sql)
-            for col in ["adhar_data", "pan_data", "signature_data"]:
+            for col in [("dob", "TEXT"), ("gender", "TEXT"), ("adhar", "TEXT"), ("account_no", "TEXT"), ("adhar_data", "BLOB"), ("pan_data", "BLOB"), ("signature_data", "BLOB")]:
                 try:
-                    cursor.execute(f"ALTER TABLE customers ADD COLUMN {col} BLOB;")
+                    cursor.execute(f"ALTER TABLE customers ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+            for col in [("tx_id", "TEXT"), ("account_no", "TEXT"), ("mode", "TEXT"), ("narration", "TEXT"), ("balance_after", "REAL"), ("account_id", "INTEGER")]:
+                try:
+                    cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+            for col in [("scheme_name", "TEXT"), ("rd_no", "TEXT"), ("maturity_date", "TEXT"), ("collected_balance", "REAL")]:
+                try:
+                    cursor.execute(f"ALTER TABLE recurring_deposits ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
 
@@ -623,41 +661,51 @@ def run_query(query, params=(), fetch=True, max_retries=3):
         print(f"Database error: {str(last_err)}")
     return None
 
-def sync_db_sequences():
+def sync_db_sequences(table_name=None, id_column='id'):
     """
-    Syncs all PostgreSQL auto-increment sequences (e.g. customers, cash_book, bank_book, jv)
-    to match the current MAX(id) in the table, preventing gaps after deletions.
+    Syncs PostgreSQL auto-increment sequences to match MAX(id) in a single fast roundtrip.
     """
     if not USING_SUPABASE:
         return
-    table_cols = [
-        ('customers', 'id'), ('journal_vouchers', 'jv_id'), ('jv_entries', 'entry_id'),
-        ('cash_book', 'id'), ('bank_book', 'id'), ('transactions', 'id'),
-        ('fixed_deposits', 'fd_id'), ('recurring_deposits', 'rd_id')
-    ]
+    
+    if table_name:
+        table_cols = [(table_name, id_column)]
+    else:
+        table_cols = [
+            ('customers', 'id'), ('journal_vouchers', 'jv_id'), ('jv_entries', 'entry_id'),
+            ('cash_book', 'id'), ('bank_book', 'id'), ('transactions', 'id'),
+            ('fixed_deposits', 'fd_id'), ('recurring_deposits', 'rd_id')
+        ]
+        
+    statements = []
     for tbl, col in table_cols:
-        try:
-            run_query(f"""
-                DO $$
-                DECLARE
-                    seq_name text;
-                    max_id bigint;
-                BEGIN
-                    seq_name := pg_get_serial_sequence('{tbl}', '{col}');
-                    IF seq_name IS NOT NULL THEN
-                        EXECUTE 'SELECT COALESCE(MAX({col}), 0) FROM {tbl}' INTO max_id;
-                        IF max_id = 0 THEN
-                            EXECUTE 'ALTER SEQUENCE ' || seq_name || ' RESTART WITH 1';
-                        ELSE
-                            EXECUTE 'SELECT setval(''' || seq_name || ''', ' || max_id || ', true)';
-                        END IF;
-                    END IF;
-                EXCEPTION WHEN OTHERS THEN
-                    NULL;
-                END $$;
-            """, fetch=False)
-        except Exception:
-            pass
+        statements.append(f"""
+            seq_name := pg_get_serial_sequence('{tbl}', '{col}');
+            IF seq_name IS NOT NULL THEN
+                EXECUTE 'SELECT COALESCE(MAX({col}), 0) FROM {tbl}' INTO max_id;
+                IF max_id = 0 THEN
+                    EXECUTE 'ALTER SEQUENCE ' || seq_name || ' RESTART WITH 1';
+                ELSE
+                    EXECUTE 'SELECT setval(''' || seq_name || ''', ' || max_id || ', true)';
+                END IF;
+            END IF;
+        """)
+        
+    combined_sql = f"""
+        DO $$
+        DECLARE
+            seq_name text;
+            max_id bigint;
+        BEGIN
+            {' '.join(statements)}
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END $$;
+    """
+    try:
+        run_query(combined_sql, fetch=False)
+    except Exception:
+        pass
 
 def save_uploaded_file(uploaded_file):
     """
@@ -751,6 +799,87 @@ def get_document_data(file_identifier, doc_type=None, customer_id=None):
         print(f"Error reading local file: {e}")
         
     return None, None
+
+def delete_customer_cascade(customer_id):
+    """
+    Safely deletes a customer and cascades all linked accounts, transactions,
+    loans, deposits, shares, and documents.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch customer details
+        cursor.execute(f"SELECT id, name, account_no, adhar_file, pan_file, signature_file FROM customers WHERE id = {placeholder}", (customer_id,))
+        cust_row = cursor.fetchone()
+        if not cust_row:
+            release_connection(conn)
+            return False, f"Customer with ID {customer_id} not found."
+        
+        c_id, c_name, c_acc, adh_f, pan_f, sig_f = cust_row
+        
+        # Helper to execute safe query with savepoints in Postgres
+        def safe_exec(sql, params):
+            try:
+                if USING_SUPABASE:
+                    cursor.execute("SAVEPOINT sp")
+                cursor.execute(sql, params)
+                if USING_SUPABASE:
+                    cursor.execute("RELEASE SAVEPOINT sp")
+            except Exception:
+                if USING_SUPABASE:
+                    cursor.execute("ROLLBACK TO SAVEPOINT sp")
+
+        # 2. Delete transactions linked to customer's accounts
+        cursor.execute(f"SELECT id FROM accounts WHERE customer_id = {placeholder}", (c_id,))
+        acc_ids = [r[0] for r in cursor.fetchall()]
+        for a_id in acc_ids:
+            safe_exec(f"DELETE FROM transactions WHERE account_id = {placeholder}", (a_id,))
+        safe_exec(f"DELETE FROM accounts WHERE customer_id = {placeholder}", (c_id,))
+            
+        # 3. Delete from sb_accounts
+        safe_exec(f"DELETE FROM sb_accounts WHERE customer_id = {placeholder}", (c_id,))
+        if c_acc:
+            safe_exec(f"DELETE FROM sb_accounts WHERE account_no = {placeholder}", (c_acc,))
+            
+        # 4. Delete loan repayments and loans
+        cursor.execute(f"SELECT id FROM personal_loans WHERE customer_id = {placeholder}", (c_id,))
+        pl_ids = [r[0] for r in cursor.fetchall()]
+        for pl_id in pl_ids:
+            safe_exec(f"DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder}", (pl_id,))
+        safe_exec(f"DELETE FROM loan_repayments WHERE customer_id = {placeholder}", (c_id,))
+        safe_exec(f"DELETE FROM personal_loans WHERE customer_id = {placeholder}", (c_id,))
+        
+        # 5. Delete daily loans, gold loans, FDs, RDs
+        safe_exec(f"DELETE FROM gold_loans WHERE customer_id = {placeholder}", (c_id,))
+        safe_exec(f"DELETE FROM fixed_deposits WHERE customer_id = {placeholder}", (c_id,))
+        safe_exec(f"DELETE FROM recurring_deposits WHERE customer_id = {placeholder}", (c_id,))
+            
+        # 6. Delete from customers table
+        cursor.execute(f"DELETE FROM customers WHERE id = {placeholder}", (c_id,))
+        
+        conn.commit()
+        release_connection(conn)
+        
+        # 7. Clean up local files if any
+        for fpath in [adh_f, pan_f, sig_f]:
+            if fpath and os.path.exists(fpath):
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+                    
+        return True, f"Customer #{c_id} ({c_name}) and all associated accounts were permanently deleted."
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            release_connection(conn)
+        return False, str(e)
 
 def get_account_balance_from_jv(account_code):
     try:

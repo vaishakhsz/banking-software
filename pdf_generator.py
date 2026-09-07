@@ -980,6 +980,15 @@ def generate_rd_pdf(rd_data):
     status_color = colors.red if status == 'CLOSED' else colors.blue
     elements.append(Paragraph(f"<font color='{status_color}'><b>{status_text}</b></font>", status_style))
     
+    years = int(tenure) // 12
+    months = int(tenure) % 12
+    if years > 0 and months > 0:
+        tenure_display = f"{tenure} MONTHS ({years}Y {months}M)"
+    elif years > 0:
+        tenure_display = f"{tenure} MONTHS ({years} Years)"
+    else:
+        tenure_display = f"{tenure} MONTHS"
+
     detail_data = [
         [Paragraph("<b>RDR No. / A/c No:</b>", detail_label), Paragraph(str(rd_acc_no), detail_value),
          Paragraph("<b>Scheme:</b>", detail_label), Paragraph(str(scheme_name), detail_value)],
@@ -990,7 +999,7 @@ def generate_rd_pdf(rd_data):
         [Paragraph("<b>Address:</b>", detail_label), Paragraph(str(full_address), detail_value),
          Paragraph("<b>Nominee:</b>", detail_label), Paragraph(nominee if nominee else 'N/A', detail_value)],
         [Paragraph("<b>Monthly Installment:</b>", detail_label), Paragraph(f"₹{monthly_amt:,.2f}", detail_value),
-         Paragraph("<b>Tenure:</b>", detail_label), Paragraph(f"{tenure} MONTHS (4Y 4M)", detail_value)],
+         Paragraph("<b>Tenure:</b>", detail_label), Paragraph(tenure_display, detail_value)],
         [Paragraph("<b>Installments Paid:</b>", detail_label), Paragraph(f"{paid_inst} / {tenure}", detail_value),
          Paragraph("<b>Total Deposited:</b>", detail_label), Paragraph(f"₹{total_deposited:,.2f}", detail_value)],
         [Paragraph("<b>Maturity Amount:</b>", detail_label), Paragraph(f"₹{maturity:,.2f}", detail_value),

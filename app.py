@@ -1838,7 +1838,7 @@ def render_fixed_deposits():
 
 def render_recurring_deposits():
     st.title("🔄 Recurring Deposits Management")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Print Certificate / Ledger", "Close RD"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Print Certificate / Ledger", "Close RD", "✏️ Edit / Update RD"])
     
     with tab1:
         customers = run_query("SELECT id, name, street, city, state, pincode FROM customers")
@@ -2031,6 +2031,15 @@ def render_recurring_deposits():
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#2980b9"
             
+            years = int(tenure) // 12
+            months = int(tenure) % 12
+            if years > 0 and months > 0:
+                tenure_display_str = f"{tenure} MONTHS ({years} Years {months} Months)"
+            elif years > 0:
+                tenure_display_str = f"{tenure} MONTHS ({years} Years)"
+            else:
+                tenure_display_str = f"{tenure} MONTHS"
+
             rd_receipt_html = f"""
             <style>
               .rd-receipt {{
@@ -2087,7 +2096,7 @@ def render_recurring_deposits():
                 <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
               </div>
               <div class="grid-row">
-                <div><b>Tenure:</b> {tenure} MONTHS (4 Years 4 Months)</div>
+                <div><b>Tenure:</b> {tenure_display_str}</div>
                 <div><b>Installments Paid:</b> {paid_inst} / {tenure}</div>
               </div>
               <div class="grid-row">
@@ -2189,6 +2198,163 @@ def render_recurring_deposits():
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
+
+    with tab6:
+        st.subheader("✏️ Edit & Correct Recurring Deposit Account")
+        st.caption("Enter the exact amount paid/deposited, tenure, and interest rate — maturity amount recalculates live on whatever amount you enter.")
+        
+        all_rds_edit = run_query("""
+            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, 
+                   r.installments_paid, r.nominee, r.status, r.created_at, r.maturity_amount,
+                   COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as rd_no,
+                   COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name,
+                   COALESCE(r.maturity_date, '2026-12-20') as maturity_date,
+                   COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as collected_balance,
+                   r.customer_id
+            FROM recurring_deposits r 
+            JOIN customers c ON r.customer_id = c.id
+            ORDER BY r.rd_id DESC
+        """)
+        
+        if all_rds_edit:
+            rd_edit_dict = {}
+            for r in all_rds_edit:
+                status_icon = "🔴 CLOSED" if r[7] == 'CLOSED' else "🟢 ACTIVE"
+                label = f"A/C: {r[10]} - {r[1]} ({r[11]} | Amount Paid: ₹{r[13]:,.2f} | Tenure: {r[3]}M) - {status_icon}"
+                rd_edit_dict[label] = r
+            
+            selected_edit_label = st.selectbox("Select RD Account to Edit", list(rd_edit_dict.keys()), key="rd_edit_select")
+            curr_rd = rd_edit_dict[selected_edit_label]
+            
+            c_rd_id, c_name, c_monthly, c_tenure, c_rate, c_paid, c_nominee, c_status, c_created, c_maturity, c_rd_no, c_scheme, c_mat_date, c_col_bal, c_cust_id = curr_rd
+            
+            st.markdown("---")
+            col_e1, col_e2 = st.columns(2)
+            
+            with col_e1:
+                edit_rd_no = st.text_input("RD Account Number", value=str(c_rd_no), key=f"edit_rd_no_{c_rd_id}")
+                edit_scheme = st.text_input("Scheme Name", value=str(c_scheme), key=f"edit_scheme_{c_rd_id}")
+                edit_col_balance = st.number_input(
+                    "💰 Total Amount Paid / Deposited (₹)", 
+                    min_value=0.0, 
+                    value=float(c_col_bal) if c_col_bal is not None else float(c_monthly * c_paid), 
+                    step=1000.0, 
+                    key=f"edit_col_bal_{c_rd_id}",
+                    help="Enter whatever total amount the customer has paid (e.g. ₹12,25,000.00)"
+                )
+                edit_monthly = st.number_input("Monthly Installment (₹)", min_value=0.0, value=float(c_monthly), step=500.0, key=f"edit_monthly_{c_rd_id}")
+            
+            with col_e2:
+                edit_tenure = st.number_input("Tenure (Months)", min_value=1, max_value=120, value=int(c_tenure), step=1, key=f"edit_tenure_{c_rd_id}")
+                edit_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(c_rate), step=0.25, key=f"edit_rate_{c_rd_id}")
+                edit_paid = st.number_input("Installments Paid Count", min_value=0, max_value=120, value=int(c_paid), step=1, key=f"edit_paid_{c_rd_id}")
+                edit_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_nominee_{c_rd_id}")
+            
+            col_e3, col_e4 = st.columns(2)
+            with col_e3:
+                edit_status = st.selectbox("Account Status", ["ACTIVE", "CLOSED"], index=0 if c_status == 'ACTIVE' else 1, key=f"edit_status_{c_rd_id}")
+                edit_created = st.text_input("A/c Opening Date (YYYY-MM-DD)", value=str(c_created) if c_created else datetime.now(IST).strftime("%Y-%m-%d"), key=f"edit_created_{c_rd_id}")
+            with col_e4:
+                edit_mat_date = st.text_input("Maturity Date (YYYY-MM-DD)", value=str(c_mat_date) if c_mat_date else "2026-12-20", key=f"edit_mat_date_{c_rd_id}")
+
+            # --- Live Automatic Recalculation Engine based on Amount Paid ---
+            # 1. Quarterly Compounded Formula (Banking / RBI Standard):
+            calc_qc_maturity = 0.0
+            if edit_col_balance > 0 and edit_tenure > 0 and edit_rate > 0:
+                i_qc = edit_rate / 400.0
+                p_slice = edit_col_balance / float(edit_tenure)
+                for k in range(1, int(edit_tenure) + 1):
+                    q_rem = (edit_tenure - k + 1) / 3.0
+                    calc_qc_maturity += p_slice * ((1.0 + i_qc) ** q_rem)
+                calc_qc_maturity = round(calc_qc_maturity, 2)
+            else:
+                calc_qc_maturity = float(edit_col_balance)
+            calc_qc_interest = max(0.0, calc_qc_maturity - edit_col_balance)
+
+            # 2. Standard RD Cumulative Formula: Amount Paid * (Rate / 100) * ((Tenure + 1) / 24)
+            calc_rd_interest = float(edit_col_balance * (edit_rate / 100.0) * ((edit_tenure + 1) / 24.0))
+            calc_rd_maturity = float(edit_col_balance + calc_rd_interest)
+            
+            st.markdown("---")
+            st.markdown("#### ⚡ Live Maturity Amount Selection")
+            
+            # Formulate options including existing stored certificate amount if available
+            calc_options = []
+            if c_maturity and float(c_maturity) > 0:
+                calc_options.append(f"📄 Keep Stored Certificate Amount: ₹{float(c_maturity):,.2f}")
+            calc_options.append(f"🏦 Quarterly Compounded Banking Formula (Maturity: ₹{calc_qc_maturity:,.2f} | Interest: ₹{calc_qc_interest:,.2f})")
+            calc_options.append(f"⚡ Standard Cumulative RD Formula (Maturity: ₹{calc_rd_maturity:,.2f} | Interest: ₹{calc_rd_interest:,.2f})")
+            calc_options.append("✍️ Enter Custom Manual Maturity Amount")
+            
+            calc_method = st.radio(
+                "Select Maturity Amount Calculation",
+                calc_options,
+                index=0,
+                key=f"calc_method_{c_rd_id}"
+            )
+            
+            if "Keep Stored Certificate" in calc_method:
+                final_maturity_amt = float(c_maturity)
+                final_interest = max(0.0, final_maturity_amt - edit_col_balance)
+            elif "Quarterly Compounded" in calc_method:
+                final_interest = calc_qc_interest
+                final_maturity_amt = calc_qc_maturity
+            elif "Standard Cumulative" in calc_method:
+                final_interest = calc_rd_interest
+                final_maturity_amt = calc_rd_maturity
+            else:
+                final_maturity_amt = st.number_input(
+                    "Enter Custom Maturity Amount (₹)",
+                    min_value=0.0,
+                    value=float(c_maturity) if c_maturity else calc_qc_maturity,
+                    step=1000.0,
+                    key=f"custom_mat_amt_{c_rd_id}"
+                )
+                final_interest = max(0.0, final_maturity_amt - edit_col_balance)
+            
+            m_col1, m_col2, m_col3 = st.columns(3)
+            m_col1.metric("💰 Amount Paid / Deposited", f"₹{edit_col_balance:,.2f}")
+            m_col2.metric("📈 Calculated Interest", f"₹{final_interest:,.2f}")
+            m_col3.metric("🎯 Total Maturity Amount", f"₹{final_maturity_amt:,.2f}")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            btn_col1, btn_col2 = st.columns([3, 1])
+            
+            with btn_col1:
+                if st.button("💾 Save & Update RD Account Changes", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
+                    run_query("""
+                        UPDATE recurring_deposits 
+                        SET monthly_amount = ?,
+                            tenure_months = ?,
+                            interest_rate = ?,
+                            installments_paid = ?,
+                            nominee = ?,
+                            status = ?,
+                            created_at = ?,
+                            maturity_amount = ?,
+                            rd_no = ?,
+                            scheme_name = ?,
+                            maturity_date = ?,
+                            collected_balance = ?
+                        WHERE rd_id = ?
+                    """, (edit_monthly, edit_tenure, edit_rate, edit_paid, edit_nominee, 
+                          edit_status, edit_created, final_maturity_amt, edit_rd_no, 
+                          edit_scheme, edit_mat_date, edit_col_balance, c_rd_id), fetch=False)
+                    
+                    st.success(f"✅ Recurring Deposit #{edit_rd_no} updated successfully! Amount Paid: ₹{edit_col_balance:,.2f} | Maturity: ₹{final_maturity_amt:,.2f}")
+                    time.sleep(0.1)
+                    st.rerun()
+            
+            with btn_col2:
+                with st.popover("🗑️ Delete RD"):
+                    st.error(f"Are you sure you want to delete RD #{edit_rd_no}?")
+                    if st.button("Confirm Delete Permanently", key=f"btn_del_rd_{c_rd_id}", type="primary", use_container_width=True):
+                        run_query("DELETE FROM recurring_deposits WHERE rd_id = ?", (c_rd_id,), fetch=False)
+                        st.success(f"🗑️ Recurring Deposit #{edit_rd_no} deleted successfully!")
+                        time.sleep(0.1)
+                        st.rerun()
+        else:
+            st.info("No Recurring Deposits available to edit.")
 
 
 def get_next_account_code(account_type):

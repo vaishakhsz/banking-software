@@ -1175,7 +1175,7 @@ def record_cash_book_transaction(entry_type, amount, account_code, particulars, 
     finally:
         release_connection(conn)
 
-def update_cash_book_transaction(edit_id, entry_type, amount, account_code, particulars, narration, voucher_no):
+def update_cash_book_transaction(edit_id, entry_type, amount, account_code, particulars, narration, voucher_no, tx_date=None):
     """
     Executes Cash Book update, JV header update, and JV entries regeneration
     in a SINGLE high-speed database transaction.
@@ -1190,11 +1190,18 @@ def update_cash_book_transaction(edit_id, entry_type, amount, account_code, part
         
         if USING_SUPABASE:
             # 1. Update Cash Book row
-            cursor.execute("""
-                UPDATE cash_book 
-                SET particulars = %s, debit_amount = %s, credit_amount = %s, account_code = %s, narration = %s 
-                WHERE id = %s
-            """, (particulars, dr_amt, cr_amt, account_code, narration, edit_id))
+            if tx_date:
+                cursor.execute("""
+                    UPDATE cash_book 
+                    SET date = %s, particulars = %s, debit_amount = %s, credit_amount = %s, account_code = %s, narration = %s 
+                    WHERE id = %s
+                """, (str(tx_date), particulars, dr_amt, cr_amt, account_code, narration, edit_id))
+            else:
+                cursor.execute("""
+                    UPDATE cash_book 
+                    SET particulars = %s, debit_amount = %s, credit_amount = %s, account_code = %s, narration = %s 
+                    WHERE id = %s
+                """, (particulars, dr_amt, cr_amt, account_code, narration, edit_id))
             
             # 2. Locate matching JV
             cursor.execute("SELECT jv_id FROM journal_vouchers WHERE narration LIKE %s", (f"%%{voucher_no}%%",))
@@ -1205,7 +1212,10 @@ def update_cash_book_transaction(edit_id, entry_type, amount, account_code, part
                 if narration and narration.strip():
                     full_narr += f" ({narration.strip()})"
                 jv_prefix = "Cash Receipt" if "DEBIT" in entry_type else "Cash Payment"
-                cursor.execute("UPDATE journal_vouchers SET narration = %s WHERE jv_id = %s", (f"{jv_prefix} [{voucher_no}]: {full_narr}", jv_id))
+                if tx_date:
+                    cursor.execute("UPDATE journal_vouchers SET voucher_date = %s, narration = %s WHERE jv_id = %s", (str(tx_date), f"{jv_prefix} [{voucher_no}]: {full_narr}", jv_id))
+                else:
+                    cursor.execute("UPDATE journal_vouchers SET narration = %s WHERE jv_id = %s", (f"{jv_prefix} [{voucher_no}]: {full_narr}", jv_id))
                 
                 # Regenerate entries
                 cursor.execute("DELETE FROM jv_entries WHERE jv_id = %s", (jv_id,))
@@ -1216,11 +1226,18 @@ def update_cash_book_transaction(edit_id, entry_type, amount, account_code, part
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, account_code, amount))
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-101', 0, %s)", (jv_id, amount))
         else:
-            cursor.execute("""
-                UPDATE cash_book 
-                SET particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
-                WHERE id = ?
-            """, (particulars, dr_amt, cr_amt, account_code, narration, edit_id))
+            if tx_date:
+                cursor.execute("""
+                    UPDATE cash_book 
+                    SET date = ?, particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
+                    WHERE id = ?
+                """, (str(tx_date), particulars, dr_amt, cr_amt, account_code, narration, edit_id))
+            else:
+                cursor.execute("""
+                    UPDATE cash_book 
+                    SET particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
+                    WHERE id = ?
+                """, (particulars, dr_amt, cr_amt, account_code, narration, edit_id))
             
             cursor.execute("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
             jv_row = cursor.fetchone()
@@ -1230,7 +1247,10 @@ def update_cash_book_transaction(edit_id, entry_type, amount, account_code, part
                 if narration and narration.strip():
                     full_narr += f" ({narration.strip()})"
                 jv_prefix = "Cash Receipt" if "DEBIT" in entry_type else "Cash Payment"
-                cursor.execute("UPDATE journal_vouchers SET narration = ? WHERE jv_id = ?", (f"{jv_prefix} [{voucher_no}]: {full_narr}", jv_id))
+                if tx_date:
+                    cursor.execute("UPDATE journal_vouchers SET voucher_date = ?, narration = ? WHERE jv_id = ?", (str(tx_date), f"{jv_prefix} [{voucher_no}]: {full_narr}", jv_id))
+                else:
+                    cursor.execute("UPDATE journal_vouchers SET narration = ? WHERE jv_id = ?", (f"{jv_prefix} [{voucher_no}]: {full_narr}", jv_id))
                 cursor.execute("DELETE FROM jv_entries WHERE jv_id = ?", (jv_id,))
                 if "DEBIT" in entry_type:
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', ?, 0)", (jv_id, amount))

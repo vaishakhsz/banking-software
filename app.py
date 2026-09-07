@@ -1552,8 +1552,7 @@ def render_cash_book():
 
                     if entry_type == "CREDIT (Payment)":
                         if current_cash_balance < amount:
-                            st.error(f"❌ Insufficient Cash Balance! Available: ₹{current_cash_balance:,.2f}")
-                            st.stop()
+                            st.warning(f"⚠️ Cash Balance Alert: Current Cash Balance is ₹{current_cash_balance:,.2f}. Recording this payment of ₹{amount:,.2f} will adjust the cash balance.")
                         if account_code == 'AST-101':
                             st.error("❌ Cannot transfer cash to itself!")
                             st.stop()
@@ -1882,17 +1881,15 @@ def render_bank_book():
                     
                     voucher_no = generate_bank_voucher_no()
                     if entry_type == "DEBIT (Deposit)":
-                        # This increases selected bank, but we must check if the funding source has enough balance
+                        # This increases selected bank; warn if recorded cash is lower
                         if account_code == 'AST-101':
                             current_cash = get_cash_balance()
                             if current_cash < amount:
-                                st.error(f"❌ Insufficient Cash Balance to deposit! Available: ₹{current_cash:,.2f}")
-                                st.stop()
+                                st.warning(f"⚠️ Cash Balance Alert: Recorded Cash in Hand is ₹{current_cash:,.2f}, which is less than the deposit amount ₹{amount:,.2f}. Cash balance will adjust accordingly.")
                         elif account_code == 'AST-102':
                             current_union = get_bank_balance("Union Bank of India")
                             if current_union < amount:
-                                st.error(f"❌ Insufficient Union Bank Balance to transfer! Available: ₹{current_union:,.2f}")
-                                st.stop()
+                                st.warning(f"⚠️ Union Bank Balance Alert: Available balance is ₹{current_union:,.2f}.")
                                 
                     from database import record_bank_book_transaction
                     success, res_val = record_bank_book_transaction(entry_type, amount, bank_name, bank_code, account_code, particulars, narration, tx_date)

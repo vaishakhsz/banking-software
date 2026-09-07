@@ -4313,9 +4313,6 @@ menu = st.sidebar.radio(
     "📋 MENU",
     [
         "📊 Dashboard",
-        "📅 Daily Collection Sheet",
-        "💼 Personal Loans",
-        "🪙 Gold Loans",
         "👥 Customer Management",
         "🔍 KYC Verification",
         "📅 Daily Collection Sheet",
@@ -4647,12 +4644,6 @@ st.markdown("""
 # Navigation routing
 if menu == "📊 Dashboard":
     render_dashboard()
-elif menu == "📅 Daily Collection Sheet":
-    render_daily_collection_sheet()
-elif menu == "💼 Personal Loans":
-    render_personal_loans()
-elif menu == "🪙 Gold Loans":
-    render_gold_loans()
 elif menu == "👥 Customer Management":
     render_customer_management()
 elif menu == "🔍 KYC Verification":

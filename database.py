@@ -570,6 +570,7 @@ def init_db():
             ("EXP-110", "Depreciation 40%", "Expense", "Operating Expenses"),
             ("EXP-111", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-112", "Bank Charges", "Expense", "Other Expenses"),
+            ("EXP-124", "Rent", "Expense", "Administrative Expenses"),
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
             ("AST-102", "Union Bank of India", "Asset", "Current Assets"),
             ("AST-103", "State Bank of India", "Asset", "Current Assets"),

@@ -1649,11 +1649,14 @@ def render_cash_book():
                     break
                     
             with st.form("edit_cash_form"):
-                new_part = st.text_input("Particulars", value=row[1])
+                col_d, col_t, col_a = st.columns(3)
+                edit_date = col_d.date_input("Date", value=datetime.strptime(row[7], "%Y-%m-%d").date() if row[7] else date.today(), format="DD-MM-YYYY")
                 curr_dr = row[2] if row[2] > 0 else row[3]
                 is_debit = row[2] > 0
-                new_type = st.selectbox("Type", ["DEBIT (Receipt)", "CREDIT (Payment)"], index=0 if is_debit else 1)
-                new_amt = st.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
+                new_type = col_t.selectbox("Type", ["DEBIT (Receipt)", "CREDIT (Payment)"], index=0 if is_debit else 1)
+                new_amt = col_a.number_input("Amount (₹)", min_value=1.0, value=float(curr_dr))
+                
+                new_part = st.text_input("Particulars", value=row[1])
                 new_acc_head = st.selectbox("Corresponding Account Head", coa_keys, index=default_index)
                 new_narration = st.text_area("Narration", value=row[4] if row[4] else "")
                 
@@ -1662,7 +1665,7 @@ def render_cash_book():
                     voucher_no = row[6]
                     
                     from database import update_cash_book_transaction
-                    success, res_val = update_cash_book_transaction(edit_id, new_type, new_amt, new_acc_code, new_part, new_narration, voucher_no)
+                    success, res_val = update_cash_book_transaction(edit_id, new_type, new_amt, new_acc_code, new_part, new_narration, voucher_no, tx_date=edit_date)
                     if success:
                         st.success("✅ Cash Entry and Ledger updated successfully!")
                         time.sleep(0.1)
@@ -2004,15 +2007,14 @@ def render_bank_book():
                     if new_acc_code == 'AST-101' and "DEBIT" in new_type:
                         cur_cash = get_cash_balance()
                         if cur_cash < new_amt:
-                            st.error(f"❌ Insufficient Cash Balance! Available: ₹{cur_cash:,.2f}")
-                            st.stop()
+                            st.warning(f"⚠️ Cash Balance Alert: Recorded Cash in Hand is ₹{cur_cash:,.2f}, which is less than the deposit amount ₹{new_amt:,.2f}. Balance will adjust accordingly.")
                     
-                    # 2. Update the bank_book entry
+                    # 2. Update the bank_book entry (including date!)
                     run_query("""
                         UPDATE bank_book 
-                        SET particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
+                        SET date = ?, particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
                         WHERE id = ?
-                    """, (new_part, d_amt, c_amt, new_acc_code, new_narration, edit_bank_id), fetch=False)
+                    """, (str(edit_date), new_part, d_amt, c_amt, new_acc_code, new_narration, edit_bank_id), fetch=False)
                     
                     # 3. Locate and update the related Journal Voucher
                     jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
@@ -2022,9 +2024,9 @@ def render_bank_book():
                         if new_narration.strip():
                             full_narration += f" ({new_narration.strip()})"
                         
-                        # Update JV header
+                        # Update JV header (including voucher_date!)
                         jv_prefix = "Bank Deposit" if "DEBIT" in new_type else "Bank Withdrawal"
-                        run_query("UPDATE journal_vouchers SET narration = ? WHERE jv_id = ?", (f"{jv_prefix} [{voucher_no}]: {full_narration} - {bank_name}", jv_id), fetch=False)
+                        run_query("UPDATE journal_vouchers SET voucher_date = ?, narration = ? WHERE jv_id = ?", (str(edit_date), f"{jv_prefix} [{voucher_no}]: {full_narration} - {bank_name}", jv_id), fetch=False)
                         
                         # Update JV entries (delete old ones and recreate to ensure perfect balance and account mapping)
                         run_query("DELETE FROM jv_entries WHERE jv_id = ?", (jv_id,), fetch=False)

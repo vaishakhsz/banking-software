@@ -593,6 +593,10 @@ def init_db():
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS collected_balance DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
                 """)
             except Exception:
                 pass
@@ -611,6 +615,15 @@ def init_db():
             for col in [("scheme_name", "TEXT"), ("rd_no", "TEXT"), ("maturity_date", "TEXT"), ("collected_balance", "REAL")]:
                 try:
                     cursor.execute(f"ALTER TABLE recurring_deposits ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+            for col in [("renewal_count", "INTEGER DEFAULT 0"), ("last_renewal_date", "TEXT")]:
+                try:
+                    cursor.execute(f"ALTER TABLE personal_loans ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute(f"ALTER TABLE gold_loans ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
 

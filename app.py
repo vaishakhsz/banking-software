@@ -812,9 +812,10 @@ def render_daily_collection_sheet():
 
 def render_personal_loans():
     st.title("💼 Personal & Micro Loan Management")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📝 New Loan & 1-Click Disbursal", 
         "💳 Collect Repayment / Installment", 
+        "🔄 Loan Renewal & Interest Rollover",
         "✏️ Edit / Delete Loan Sanction",
         "📋 Active Loan Register & Legal Tracker", 
         "🖨️ Loan Statement & Promissory Note"
@@ -925,8 +926,8 @@ def render_personal_loans():
                         loan_no, customer_id, sanction_date, principal_amount, interest_rate,
                         interest_type, tenure_days, tenure_months, total_interest, total_repayable,
                         installment_amount, outstanding_due, disbursal_mode, voucher_no,
-                        guarantor_name, guarantor_phone, purpose, status, remarks
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+                        guarantor_name, guarantor_phone, purpose, status, remarks, renewal_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0)
                 """, (
                     loan_no, selected_cust_id, str(sanction_date), principal, int_rate,
                     loan_scheme_name, tenure_days, tenure_months, tot_interest, tot_repayable,
@@ -1098,6 +1099,279 @@ def render_personal_loans():
             st.info("No active personal loans pending repayment.")
 
     with tab3:
+        st.subheader("🔄 Loan Renewal & Interest Reset / Rollover")
+        all_ren_loans = run_query("""
+            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.principal_amount, 
+                   pl.outstanding_due, pl.total_repayable, pl.total_interest, pl.sanction_date, 
+                   pl.tenure_days, pl.tenure_months, pl.interest_rate, pl.interest_type, 
+                   pl.customer_id, pl.status, COALESCE(pl.renewal_count, 0), pl.last_renewal_date,
+                   pl.guarantor_name, pl.guarantor_phone, pl.purpose, pl.remarks
+            FROM personal_loans pl
+            JOIN customers c ON pl.customer_id = c.id
+            ORDER BY pl.id DESC
+        """)
+        
+        if all_ren_loans:
+            r_loan_dict = {}
+            for r in all_ren_loans:
+                r_id, r_no, r_cname, r_cacc, r_princ, r_due, r_tot_rep, r_tot_int, r_sdate, r_tdays, r_tmonths, r_irate, r_itype, r_cid, r_stat, r_ren_cnt, r_last_ren, r_gname, r_gphone, r_purp, r_rem = r
+                ren_str = f" [Cycle #{r_ren_cnt}]" if r_ren_cnt > 0 else ""
+                label = f"#{r_no} - {r_cname} (Acc: {r_cacc} | Principal: ₹{float(r_princ):,.2f} | Due: ₹{float(r_due):,.2f} | Status: {r_stat}{ren_str})"
+                r_loan_dict[label] = r
+                
+            sel_ren_key = st.selectbox("1️⃣ Select Loan to Renew / Rollover", list(r_loan_dict.keys()), key="pl_ren_sel")
+            sel_r_data = r_loan_dict[sel_ren_key]
+            (cur_pl_id, cur_l_no, cur_cname, cur_cacc, cur_princ, cur_due, cur_tot_rep, cur_tot_int,
+             cur_sdate, cur_tdays, cur_tmonths, cur_irate, cur_itype, cur_cid, cur_stat,
+             cur_ren_cnt, cur_last_ren, cur_gname, cur_gphone, cur_purp, cur_rem) = sel_r_data
+             
+            # Calculate financial metrics for current loan
+            prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0), COALESCE(SUM(principal_component), 0), COALESCE(SUM(amount_paid), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (cur_pl_id,))
+            int_rec_so_far = float(prev_int_row[0][0]) if prev_int_row else 0.0
+            princ_rec_so_far = float(prev_int_row[0][1]) if prev_int_row else 0.0
+            tot_paid_so_far = float(prev_int_row[0][2]) if prev_int_row else 0.0
+            
+            tot_orig_int = float(cur_tot_int or 0.0)
+            tot_orig_rep = float(cur_tot_rep or (float(cur_princ) + tot_orig_int))
+            unearned_int_rem = max(0.0, round(tot_orig_int - int_rec_so_far, 2))
+            net_princ_rem = max(0.0, round(float(cur_due) - unearned_int_rem, 2))
+            
+            with st.container(border=True):
+                st.markdown(f"#### 👤 Borrower: **{cur_cname}** (Loan: `{cur_l_no}`, Acc: `{cur_cacc}`)")
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                sc1.metric("💵 Current Principal", f"₹{float(cur_princ):,.2f}")
+                sc2.metric("💳 Outstanding Total Due", f"₹{float(cur_due):,.2f}")
+                sc3.metric("📈 Unearned Interest in Suspense", f"₹{unearned_int_rem:,.2f}")
+                sc4.metric("🔄 Renewal History", f"Cycle #{cur_ren_cnt + 1}" if cur_ren_cnt > 0 else "First Renewal (Cycle #1)")
+                st.caption(f"📌 **Original Sanction:** {cur_sdate} | **Last Renewed:** {cur_last_ren or 'Never'} | **Status:** `{cur_stat}`")
+
+            st.markdown("### 2️⃣ Renewal & Rollover Strategy")
+            ren_mode = st.radio(
+                "Select Renewal Mode:",
+                [
+                    "🔄 Option A: Standard Term Renewal (Roll over base principal balance + Recalculate new interest)",
+                    "💼 Option B: Principal Top-Up + Renewal (Disburse extra cash to borrower + Rollover balance)",
+                    "💵 Option C: Settle Past Interest & Renew Principal (Borrower pays past interest today, balance renewed)"
+                ],
+                key="pl_ren_mode_radio"
+            )
+            
+            with st.form(f"personal_loan_renewal_form_{cur_pl_id}"):
+                col_rn1, col_rn2 = st.columns(2)
+                ren_date = col_rn1.date_input("Renewal Date", value=date.today(), format="DD-MM-YYYY")
+                
+                if "Top-Up" in ren_mode:
+                    topup_amount = col_rn2.number_input("Principal Top-Up Amount (Extra Cash Disbursed to Borrower ₹)", min_value=1000.0, value=10000.0, step=1000.0)
+                    interest_settle_amt = 0.0
+                elif "Settle Past Interest" in ren_mode:
+                    topup_amount = 0.0
+                    interest_settle_amt = col_rn2.number_input("Past Interest Amount Collected Today (₹)", min_value=0.0, value=float(unearned_int_rem), step=100.0)
+                else:
+                    topup_amount = 0.0
+                    interest_settle_amt = 0.0
+                    
+                # Starting base principal for renewed cycle
+                base_princ = net_princ_rem if unearned_int_rem > 0 else float(cur_due)
+                if base_princ <= 0 and topup_amount <= 0:
+                    base_princ = float(cur_princ)
+                
+                renewed_principal = round(base_princ + topup_amount, 2)
+                
+                st.markdown("### 3️⃣ New Loan Tenure & Interest Rate")
+                rn_col1, rn_col2, rn_col3 = st.columns(3)
+                new_scheme_choice = rn_col1.selectbox("New Repayment Mode", [
+                    "🟢 Flexible / Pay-Anytime (No Fixed EMI)",
+                    "🔵 Daily Micro Collection (e.g. 100 or 110 Days)",
+                    "🟣 Monthly Fixed EMI (e.g. 12 or 24 Months)",
+                    "🟡 Weekly Installments (e.g. 20 Weeks)"
+                ])
+                new_int_rate = rn_col2.number_input("New Annual Interest Rate (%)", min_value=0.0, value=float(cur_irate or 20.0), step=0.5)
+                
+                if "Daily" in new_scheme_choice:
+                    new_tenure_days = rn_col3.number_input("New Tenure (Days)", min_value=10, value=int(cur_tdays or 110), step=10)
+                    new_tenure_months = max(1, int(new_tenure_days / 30))
+                    new_scheme_name = f"Daily {new_tenure_days}-Day Micro Loan (Renewed)"
+                    new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_days / 365.0), 2)
+                    new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
+                    new_installment = round(new_tot_repayable / float(new_tenure_days), 2)
+                    new_inst_text = f"₹{new_installment:,.2f} / Day ({new_tenure_days} Days)"
+                elif "Monthly" in new_scheme_choice:
+                    new_tenure_months = rn_col3.number_input("New Tenure (Months)", min_value=1, value=int(cur_tmonths or 12), step=1)
+                    new_tenure_days = new_tenure_months * 30
+                    new_scheme_name = f"Monthly {new_tenure_months}-Month EMI Loan (Renewed)"
+                    new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_months / 12.0), 2)
+                    new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
+                    new_installment = round(new_tot_repayable / float(new_tenure_months), 2)
+                    new_inst_text = f"₹{new_installment:,.2f} / Month ({new_tenure_months} Months)"
+                elif "Weekly" in new_scheme_choice:
+                    new_tenure_weeks = rn_col3.number_input("New Tenure (Weeks)", min_value=2, value=20, step=1)
+                    new_tenure_days = new_tenure_weeks * 7
+                    new_tenure_months = max(1, int(new_tenure_weeks / 4))
+                    new_scheme_name = f"Weekly {new_tenure_weeks}-Week Loan (Renewed)"
+                    new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_weeks / 52.0), 2)
+                    new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
+                    new_installment = round(new_tot_repayable / float(new_tenure_weeks), 2)
+                    new_inst_text = f"₹{new_installment:,.2f} / Week ({new_tenure_weeks} Weeks)"
+                else:
+                    new_tenure_months = rn_col3.number_input("New Agreed Term (Months)", min_value=1, value=int(cur_tmonths or 12), step=1)
+                    new_tenure_days = new_tenure_months * 30
+                    new_scheme_name = "Flexible / Custom (Renewed)"
+                    new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_months / 12.0), 2)
+                    new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
+                    new_installment = 0.0
+                    new_inst_text = "Flexible (Pay Any Amount Anytime)"
+                
+                with st.container(border=True):
+                    st.markdown("#### 📊 Live Loan Renewal Breakdown")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("💵 Renewed Principal", f"₹{renewed_principal:,.2f}")
+                    m2.metric(f"📈 New Planned Interest ({new_int_rate}%)", f"₹{new_planned_interest:,.2f}")
+                    m3.metric("💳 New Total Repayable Due", f"₹{new_tot_repayable:,.2f}")
+                    m4.metric("📅 New Installment", new_inst_text)
+                    
+                st.markdown("### 4️⃣ Disbursal & Receipt Settlement Details")
+                rn_d1, rn_d2 = st.columns(2)
+                topup_disb_mode = rn_d1.selectbox("Top-Up Cash Disbursal From (if applicable):", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], key="pl_ren_disb_mode")
+                settle_pay_mode = rn_d2.selectbox("Interest Collection Mode (if applicable):", ["Cash in Hand (Office Drawer)", "Union Bank of India (UPI / NEFT)"], key="pl_ren_pay_mode")
+                
+                ren_remarks = st.text_input("Renewal Remarks / Notes", value=f"Loan Rollover & Term Renewal - Cycle #{cur_ren_cnt+1}")
+                
+                if st.form_submit_button("🔄 Confirm & Execute Loan Renewal", use_container_width=True):
+                    ren_voucher = f"RNW{ren_date.strftime('%Y%m%d')}{cur_pl_id:03d}"
+                    
+                    # 1. If Interest Settle collected:
+                    if interest_settle_amt > 0:
+                        int_pay_mode_code = 'AST-102' if "Union Bank" in settle_pay_mode else 'AST-101'
+                        part_int_settle = f"Interest Settlement on Renewal: {cur_cname} (Acc: {cur_cacc}) [{cur_l_no}]"
+                        
+                        if "Union Bank" in settle_pay_mode:
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                                VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'AST-108')
+                            """, (str(ren_date), ren_voucher, part_int_settle, interest_settle_amt, ren_remarks), fetch=False)
+                        else:
+                            run_query("""
+                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                                VALUES (?, ?, ?, ?, 0, 0, ?, 'AST-108')
+                            """, (str(ren_date), ren_voucher, part_int_settle, interest_settle_amt, ren_remarks), fetch=False)
+                            
+                        # Voucher: Cash/Bank Dr, AST-108 Cr
+                        post_automated_jv(
+                            f"Renewal Interest Collection [{ren_voucher}]: {part_int_settle}",
+                            int_pay_mode_code,
+                            'AST-108',
+                            interest_settle_amt,
+                            voucher_date=ren_date
+                        )
+                        # Realize earned interest: LIA-104 Dr, INC-101 Cr
+                        post_automated_jv(
+                            f"Renewal Interest Realization [{cur_l_no}]: {cur_cname} - ₹{interest_settle_amt:,.2f} earned interest recognized",
+                            'LIA-104',
+                            'INC-101',
+                            interest_settle_amt,
+                            voucher_date=ren_date
+                        )
+                        # Record in loan repayments
+                        run_query("""
+                            INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
+                            VALUES ('PERSONAL', ?, ?, ?, ?, 0, ?, ?, ?, ?)
+                        """, (cur_pl_id, cur_cid, str(ren_date), interest_settle_amt, interest_settle_amt, settle_pay_mode, ren_voucher, f"Interest Settle on Renewal ({cur_l_no})"), fetch=False)
+
+                    # 2. If Principal Top-Up disbursed:
+                    if topup_amount > 0:
+                        if "Cash" in topup_disb_mode:
+                            cur_cash = get_cash_balance()
+                            if cur_cash < topup_amount:
+                                st.error(f"❌ Insufficient Cash Balance in Drawer for Top-Up! Available: ₹{cur_cash:,.2f}")
+                                st.stop()
+                                
+                        topup_disb_code = 'AST-102' if "Union Bank" in topup_disb_mode else 'AST-101'
+                        part_topup = f"Loan Top-Up Disbursal: {cur_cname} (Acc: {cur_cacc}) [{cur_l_no}]"
+                        
+                        if "Union Bank" in topup_disb_mode:
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                                VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-108')
+                            """, (str(ren_date), ren_voucher, part_topup, topup_amount, ren_remarks), fetch=False)
+                        else:
+                            run_query("""
+                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                                VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-108')
+                            """, (str(ren_date), ren_voucher, part_topup, topup_amount, ren_remarks), fetch=False)
+                            
+                        # Voucher: AST-108 Dr, Cash/Bank Cr
+                        post_automated_jv(
+                            f"Loan Top-Up Disbursal [{ren_voucher}]: {part_topup}",
+                            'AST-108',
+                            topup_disb_code,
+                            topup_amount,
+                            voucher_date=ren_date
+                        )
+
+                    # 3. Book New Planned Interest in Double-Entry Accounts:
+                    # AST-108 (Party Loan A/c) Dr = new_planned_interest
+                    # LIA-104 (Unearned Interest Suspense Account) Cr = new_planned_interest
+                    if new_planned_interest > 0:
+                        post_automated_jv(
+                            f"Loan Renewal Interest Booking [{ren_voucher}]: {cur_l_no} - {cur_cname} (New Term Planned Interest: ₹{new_planned_interest:,.2f})",
+                            'AST-108',
+                            'LIA-104',
+                            new_planned_interest,
+                            voucher_date=ren_date
+                        )
+
+                    # 4. Update personal_loans table:
+                    new_ren_cnt = int(cur_ren_cnt or 0) + 1
+                    updated_remarks = f"{cur_rem or ''} | [Renewed Cycle #{new_ren_cnt} on {ren_date} (P: ₹{renewed_principal:,.2f}, I: ₹{new_planned_interest:,.2f})]".strip(" | ")
+                    
+                    run_query("""
+                        UPDATE personal_loans
+                        SET principal_amount = ?,
+                            interest_rate = ?,
+                            interest_type = ?,
+                            tenure_days = ?,
+                            tenure_months = ?,
+                            total_interest = ?,
+                            total_repayable = ?,
+                            installment_amount = ?,
+                            outstanding_due = ?,
+                            sanction_date = ?,
+                            renewal_count = ?,
+                            last_renewal_date = ?,
+                            status = 'ACTIVE',
+                            remarks = ?
+                        WHERE id = ?
+                    """, (
+                        renewed_principal,
+                        new_int_rate,
+                        new_scheme_name,
+                        new_tenure_days,
+                        new_tenure_months,
+                        new_planned_interest,
+                        new_tot_repayable,
+                        new_installment,
+                        new_tot_repayable,
+                        str(ren_date),
+                        new_ren_cnt,
+                        str(ren_date),
+                        updated_remarks,
+                        cur_pl_id
+                    ), fetch=False)
+
+                    # 5. Sync customer account passbook balance:
+                    acc_r = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (cur_cid,))
+                    if acc_r:
+                        a_id, a_bal = acc_r[0]
+                        run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_tot_repayable, a_id), fetch=False)
+                        run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"LOAN RENEWAL [{cur_l_no} Cycle #{new_ren_cnt}]", new_tot_repayable, new_tot_repayable, str(ren_date)), fetch=False)
+
+                    st.success(f"🎉 Loan **#{cur_l_no}** for **{cur_cname}** successfully renewed! (Cycle #{new_ren_cnt}) | New Repayable Due: **₹{new_tot_repayable:,.2f}**")
+                    time.sleep(1.0)
+                    st.rerun()
+        else:
+            st.info("No personal loan records found to renew.")
+
+    with tab4:
         st.subheader("✏️ Edit or Delete Loan Sanction")
         all_loans = run_query("""
             SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.principal_amount, pl.outstanding_due, pl.sanction_date, pl.status
@@ -1118,7 +1392,7 @@ def render_personal_loans():
                        pl.interest_type, pl.tenure_days, pl.tenure_months, pl.total_interest, pl.total_repayable,
                        pl.installment_amount, pl.outstanding_due, pl.disbursal_mode, pl.voucher_no,
                        pl.guarantor_name, pl.guarantor_phone, pl.purpose, pl.status, pl.remarks,
-                       c.name, COALESCE(c.account_no, 'N/A'), c.phone
+                       c.name, COALESCE(c.account_no, 'N/A'), c.phone, COALESCE(pl.renewal_count, 0), pl.last_renewal_date
                 FROM personal_loans pl
                 JOIN customers c ON pl.customer_id = c.id
                 WHERE pl.id = ?
@@ -1128,7 +1402,7 @@ def render_personal_loans():
                 row = l_data[0]
                 (l_no, c_id, s_date, princ, rate, i_type, t_days, t_months, t_int, t_rep,
                  inst_amt, out_due, d_mode, v_no, g_name, g_phone, purp, stat, rem,
-                 c_name, c_acc, c_phone) = row
+                 c_name, c_acc, c_phone, ren_cnt, last_ren) = row
                 
                 try:
                     s_date_obj = datetime.strptime(str(s_date)[:10], "%Y-%m-%d").date()
@@ -1136,7 +1410,7 @@ def render_personal_loans():
                     s_date_obj = date.today()
                 
                 with st.form(f"edit_loan_form_{sel_pl_id}"):
-                    st.markdown(f"#### 👤 Borrower: **{c_name}** (Acc: `{c_acc}` | ID: `#{c_id}`)")
+                    st.markdown(f"#### 👤 Borrower: **{c_name}** (Acc: `{c_acc}` | ID: `#{c_id}` | Renewals: `Cycle #{ren_cnt}`)")
                     
                     ec1, ec2, ec3 = st.columns(3)
                     new_l_no = ec1.text_input("Loan Number *", value=str(l_no))
@@ -1216,12 +1490,12 @@ def render_personal_loans():
         else:
             st.info("No personal loan records found to edit or manage.")
 
-    with tab4:
+    with tab5:
         st.subheader("📋 Active Personal Loans & Legal Tracker")
         status_filter = st.selectbox("Filter by Loan Status", ["ALL", "ACTIVE", "COURT_CASE", "POLICE_COMPLAINT", "CLOSED", "NOT_REMITTING"], key="pl_filter_st")
         
         q_pl = """
-            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.principal_amount, pl.installment_amount, pl.outstanding_due, pl.status, pl.remarks
+            SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.principal_amount, pl.installment_amount, pl.outstanding_due, COALESCE(pl.renewal_count, 0), pl.status, pl.remarks
             FROM personal_loans pl
             JOIN customers c ON pl.customer_id = c.id
         """
@@ -1231,7 +1505,7 @@ def render_personal_loans():
         
         pl_rows = run_query(q_pl)
         if pl_rows:
-            df_pl = pd.DataFrame(pl_rows, columns=["ID", "Loan No", "Customer Name", "Account No", "Principal (₹)", "Daily/Monthly Inst (₹)", "Outstanding Due (₹)", "Status", "Legal Remarks / Notes"])
+            df_pl = pd.DataFrame(pl_rows, columns=["ID", "Loan No", "Customer Name", "Account No", "Principal (₹)", "Daily/Monthly Inst (₹)", "Outstanding Due (₹)", "Renewal Cycle", "Status", "Legal Remarks / Notes"])
             
             tot_p = df_pl["Principal (₹)"].sum()
             tot_d = df_pl["Outstanding Due (₹)"].sum()
@@ -1253,7 +1527,7 @@ def render_personal_loans():
         else:
             st.info("No personal loan records found matching this filter.")
 
-    with tab5:
+    with tab6:
         st.subheader("🖨️ Loan Statement & Promissory Note (DP Note)")
         all_l = run_query("SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A') FROM personal_loans pl JOIN customers c ON pl.customer_id = c.id ORDER BY pl.id ASC")
         if all_l:
@@ -1262,7 +1536,10 @@ def render_personal_loans():
             sel_pr_id = l_options[sel_pr_label]
             
             pl_info = run_query("""
-                SELECT pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, pl.sanction_date, pl.principal_amount, pl.interest_rate, pl.total_repayable, pl.installment_amount, pl.outstanding_due, pl.guarantor_name, pl.guarantor_phone, pl.status, pl.remarks
+                SELECT pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, pl.sanction_date, 
+                       pl.principal_amount, pl.interest_rate, pl.total_repayable, pl.installment_amount, 
+                       pl.outstanding_due, pl.guarantor_name, pl.guarantor_phone, pl.status, pl.remarks,
+                       COALESCE(pl.renewal_count, 0), pl.last_renewal_date
                 FROM personal_loans pl
                 JOIN customers c ON pl.customer_id = c.id
                 WHERE pl.id = ?
@@ -1272,11 +1549,14 @@ def render_personal_loans():
                 p = pl_info[0]
                 with st.container(border=True):
                     c1, c2 = st.columns(2)
-                    c1.markdown(f"### **DEMAND PROMISSORY NOTE (DP NOTE)**\n**Loan No:** `{p[0]}`\n\n**Borrower:** {p[1]} (Acc: {p[2]})\n\n**Phone:** {p[3]}")
-                    c2.markdown(f"**Sanction Date:** {p[4]}\n\n**Principal Amount:** ₹{float(p[5]):,.2f}\n\n**Total Repayable:** ₹{float(p[7]):,.2f}\n\n**Status:** `{p[12]}`")
+                    ren_badge = f" | 🔄 **Renewal Cycle:** Cycle #{p[14]}" if int(p[14]) > 0 else ""
+                    c1.markdown(f"### **DEMAND PROMISSORY NOTE (DP NOTE)**\n**Loan No:** `{p[0]}`\n\n**Borrower:** {p[1]} (Acc: {p[2]})\n\n**Phone:** {p[3]}{ren_badge}")
+                    c2.markdown(f"**Sanction/Renewal Date:** {p[4]}\n\n**Principal Amount:** ₹{float(p[5]):,.2f}\n\n**Total Repayable:** ₹{float(p[7]):,.2f}\n\n**Status:** `{p[12]}`")
                     st.divider()
                     st.write(f"**Guarantor / Surety:** {p[10]} (Ph: {p[11]})")
                     st.write(f"**Remarks / Condition:** {p[13]}")
+                    if p[15]:
+                        st.caption(f"🗓️ **Last Renewed On:** {p[15]}")
                     
                 rep_txs = run_query("SELECT payment_date, voucher_no, amount_paid, payment_mode, narration FROM loan_repayments WHERE loan_type='PERSONAL' AND loan_id=? ORDER BY id ASC", (sel_pr_id,))
                 if rep_txs:
@@ -1289,9 +1569,10 @@ def render_personal_loans():
 
 def render_gold_loans():
     st.title("🪙 Gold & Jewel Loan Management")
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🪙 Jewel Appraisal & 1-Click Disbursal", 
         "💳 Monthly Interest & Part-Principal Receipt", 
+        "🔄 Jewel Loan Renewal & Pledge Rollover",
         "🏷️ Gold Vault Register & Safe Custody", 
         "🖨️ Pawn Ticket & Release Acknowledgment"
     ])
@@ -1363,8 +1644,8 @@ def render_gold_loans():
                         item_count, gross_weight, stone_deduction, net_weight, purity,
                         market_value, ltv_percent, principal_amount, interest_rate_monthly,
                         tenure_months, monthly_interest_due, outstanding_due, vault_packet_no,
-                        locker_no, appraiser_name, disbursal_mode, voucher_no, status, remarks
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '22K', ?, 75.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+                        locker_no, appraiser_name, disbursal_mode, voucher_no, status, remarks, renewal_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '22K', ?, 75.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0)
                 """, (
                     loan_no, selected_cust_id, str(sanction_date), gold_rate, ornament_desc,
                     item_count, gross_weight, stone_ded, net_weight,
@@ -1479,15 +1760,200 @@ def render_gold_loans():
             st.info("No active gold loans.")
 
     with tab3:
+        st.subheader("🔄 Gold / Jewel Loan Renewal & Pledge Rollover")
+        all_renewable_gl = run_query("""
+            SELECT gl.id, gl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), gl.vault_packet_no, 
+                   gl.locker_no, gl.net_weight, gl.gross_weight, gl.ornament_details, 
+                   gl.principal_amount, gl.outstanding_due, gl.interest_rate_monthly, 
+                   gl.monthly_interest_due, gl.sanction_date, gl.tenure_months, gl.market_value, 
+                   gl.customer_id, gl.status, COALESCE(gl.renewal_count, 0), gl.last_renewal_date,
+                   gl.gold_rate_per_gram, gl.appraiser_name, gl.remarks
+            FROM gold_loans gl
+            JOIN customers c ON gl.customer_id = c.id
+            WHERE gl.status = 'ACTIVE' OR gl.outstanding_due > 0
+            ORDER BY gl.id ASC
+        """)
+        
+        if all_renewable_gl:
+            gl_ren_dict = {}
+            for g in all_renewable_gl:
+                g_id, g_no, g_cname, g_cacc, g_pkt, g_lock, g_net, g_gross, g_orn, g_princ, g_due, g_irate, g_mint, g_sdate, g_tmonths, g_mval, g_cid, g_stat, g_ren_cnt, g_last_ren, g_grate, g_appr, g_rem = g
+                ren_tag = f" [Cycle #{g_ren_cnt}]" if g_ren_cnt > 0 else ""
+                label = f"#{g_no} - {g_cname} (Packet: {g_pkt} | Due: ₹{float(g_due):,.2f} | Gold: {float(g_net):.3f}g{ren_tag})"
+                gl_ren_dict[label] = g
+                
+            sel_gl_ren_key = st.selectbox("1️⃣ Select Active Gold Loan to Renew / Rollover", list(gl_ren_dict.keys()), key="gl_ren_sel")
+            sel_gl_data = gl_ren_dict[sel_gl_ren_key]
+            (c_gl_id, c_gl_no, c_gl_cname, c_gl_cacc, c_gl_pkt, c_gl_lock, c_gl_net, c_gl_gross,
+             c_gl_orn, c_gl_princ, c_gl_due, c_gl_irate, c_gl_mint, c_gl_sdate, c_gl_tmonths,
+             c_gl_mval, c_gl_cid, c_gl_stat, c_gl_ren_cnt, c_gl_last_ren, c_gl_grate, c_gl_appr, c_gl_rem) = sel_gl_data
+            
+            with st.container(border=True):
+                st.markdown(f"#### 🪙 Borrower: **{c_gl_cname}** (Loan: `{c_gl_no}`, Packet: `{c_gl_pkt}`, Locker: `{c_gl_lock}`)")
+                gc1, gc2, gc3, gc4 = st.columns(4)
+                gc1.metric("🔒 Pledged Net Gold", f"{float(c_gl_net):.3f} g")
+                gc2.metric("💵 Current Principal Due", f"₹{float(c_gl_due):,.2f}")
+                gc3.metric("📅 Monthly Interest Servicing", f"₹{float(c_gl_mint):,.2f}/mo")
+                gc4.metric("🔄 Renewal History", f"Cycle #{c_gl_ren_cnt + 1}" if c_gl_ren_cnt > 0 else "First Renewal (Cycle #1)")
+                st.caption(f"📌 **Ornaments:** {c_gl_orn} | **Sanction Date:** {c_gl_sdate} | **Last Renewed:** {c_gl_last_ren or 'Original Appraisal'}")
+
+            with st.form(f"gold_loan_renewal_form_{c_gl_id}"):
+                st.markdown("### 2️⃣ Jewel Re-Appraisal & Today's Market Rate")
+                col_gr1, col_gr2, col_gr3 = st.columns(3)
+                gl_ren_date = col_gr1.date_input("Renewal / Re-Appraisal Date", value=date.today(), format="DD-MM-YYYY")
+                today_gold_rate = col_gr2.number_input("Today's 22K Gold Rate (₹ / gram)", min_value=1000.0, value=float(c_gl_grate or 6500.0), step=50.0)
+                re_appraiser = col_gr3.text_input("Re-Appraiser Name", value=str(c_gl_appr or "Approved Nidhi Appraiser"))
+                
+                # Dynamic re-appraisal
+                updated_market_val = round(float(c_gl_net) * float(today_gold_rate), 2)
+                max_eligible_ren = round(updated_market_val * 0.75, 2)
+                
+                col_vm1, col_vm2 = st.columns(2)
+                col_vm1.info(f"💎 **Re-Appraised Market Value:** ₹{updated_market_val:,.2f}")
+                col_vm2.success(f"🎯 **Max Eligible Limit (75% LTV):** ₹{max_eligible_ren:,.2f}")
+
+                st.markdown("### 3️⃣ Interest Settlement & Principal Adjustment")
+                col_is1, col_is2, col_is3 = st.columns(3)
+                int_months_to_settle = col_is1.number_input("Number of Months Interest to Settle Today", min_value=0, value=int(c_gl_tmonths or 6), step=1)
+                suggested_int_settle = round(float(c_gl_mint) * int_months_to_settle, 2)
+                int_settled_today = col_is2.number_input("Interest Amount Collected Today (₹)", min_value=0.0, value=suggested_int_settle, step=100.0)
+                int_pay_mode = col_is3.selectbox("Interest Receipt Mode", ["Cash in Hand (Office Drawer)", "Union Bank of India (UPI / NEFT)"])
+
+                st.markdown("### 4️⃣ Renewed Principal & Term")
+                col_rp1, col_rp2, col_rp3 = st.columns(3)
+                renewed_gl_principal = col_rp1.number_input("Renewed Loan Principal (₹)", min_value=1000.0, max_value=float(max_eligible_ren), value=float(min(float(c_gl_due), max_eligible_ren)), step=1000.0)
+                new_gl_monthly_rate = col_rp2.number_input("Monthly Interest Rate (%)", min_value=0.5, value=float(c_gl_irate or 1.00), step=0.25)
+                new_gl_tenure_months = col_rp3.selectbox("Renewed Tenure (Months)", [6, 12, 3], index=0)
+
+                new_gl_monthly_interest = round(renewed_gl_principal * (new_gl_monthly_rate / 100.0), 2)
+                st.info(f"📅 **New Monthly Interest Due:** ₹{new_gl_monthly_interest:,.2f} / Month (Tenure: {new_gl_tenure_months} Months)")
+
+                # If borrower took top-up on gold loan:
+                topup_gl_diff = max(0.0, round(renewed_gl_principal - float(c_gl_due), 2))
+                if topup_gl_diff > 0:
+                    st.warning(f"💵 **Principal Top-Up Disbursal:** Borrower will receive additional ₹{topup_gl_diff:,.2f} in cash/bank.")
+                    topup_gl_disb_mode = st.selectbox("Disburse Additional Principal From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], key="gl_topup_disb_mode")
+                else:
+                    topup_gl_disb_mode = None
+
+                gl_ren_remarks = st.text_input("Renewal Remarks / Condition", value=f"Gold Loan Pledge Renewed - Cycle #{c_gl_ren_cnt+1}")
+
+                if st.form_submit_button("🔄 Confirm & Renew Gold Loan Pledge", use_container_width=True):
+                    gl_ren_voucher = f"RGL{gl_ren_date.strftime('%Y%m%d')}{c_gl_id:03d}"
+
+                    # 1. Post Interest Collection:
+                    if int_settled_today > 0:
+                        part_gl_int = f"Gold Loan Interest Settlement on Renewal: {c_gl_cname} (Acc: {c_gl_cacc}) [{c_gl_no}]"
+                        bank_or_cash_code = 'AST-102' if "Union Bank" in int_pay_mode else 'AST-101'
+                        
+                        if "Union Bank" in int_pay_mode:
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                                VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'INC-111')
+                            """, (str(gl_ren_date), gl_ren_voucher, part_gl_int, int_settled_today, gl_ren_remarks), fetch=False)
+                        else:
+                            run_query("""
+                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                                VALUES (?, ?, ?, ?, 0, 0, ?, 'INC-111')
+                            """, (str(gl_ren_date), gl_ren_voucher, part_gl_int, int_settled_today, gl_ren_remarks), fetch=False)
+
+                        # Post JV: Bank/Cash Dr, INC-111 Cr
+                        post_automated_jv(
+                            f"Gold Loan Interest Realization [{gl_ren_voucher}]: {part_gl_int}",
+                            bank_or_cash_code,
+                            'INC-111',
+                            int_settled_today,
+                            voucher_date=gl_ren_date
+                        )
+                        # Record in loan_repayments
+                        run_query("""
+                            INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
+                            VALUES ('GOLD', ?, ?, ?, ?, 0, ?, ?, ?, ?)
+                        """, (c_gl_id, c_gl_cid, str(gl_ren_date), int_settled_today, int_settled_today, int_pay_mode, gl_ren_voucher, f"Interest Settle on Renewal ({c_gl_no})"), fetch=False)
+
+                    # 2. Post Principal Top-Up if applicable:
+                    if topup_gl_diff > 0:
+                        if "Cash" in topup_gl_disb_mode:
+                            cur_cash = get_cash_balance()
+                            if cur_cash < topup_gl_diff:
+                                st.error(f"❌ Insufficient Cash Balance in Drawer for Top-Up! Available: ₹{cur_cash:,.2f}")
+                                st.stop()
+
+                        topup_code = 'AST-102' if "Union Bank" in topup_gl_disb_mode else 'AST-101'
+                        part_gl_topup = f"Gold Loan Top-Up Disbursal: {c_gl_cname} (Acc: {c_gl_cacc}) [{c_gl_no} | {c_gl_pkt}]"
+                        
+                        if "Union Bank" in topup_gl_disb_mode:
+                            run_query("""
+                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                                VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-110')
+                            """, (str(gl_ren_date), gl_ren_voucher, part_gl_topup, topup_gl_diff, gl_ren_remarks), fetch=False)
+                        else:
+                            run_query("""
+                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                                VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-110')
+                            """, (str(gl_ren_date), gl_ren_voucher, part_gl_topup, topup_gl_diff, gl_ren_remarks), fetch=False)
+
+                        # Top-Up JV: AST-110 Dr, Cash/Bank Cr
+                        post_automated_jv(
+                            f"Gold Loan Top-Up Disbursal [{gl_ren_voucher}]: {part_gl_topup}",
+                            'AST-110',
+                            topup_code,
+                            topup_gl_diff,
+                            voucher_date=gl_ren_date
+                        )
+
+                    # 3. Update gold_loans table:
+                    new_gl_ren_cnt = int(c_gl_ren_cnt or 0) + 1
+                    updated_gl_remarks = f"{c_gl_rem or ''} | [Pledge Renewed Cycle #{new_gl_ren_cnt} on {gl_ren_date} (Val: ₹{updated_market_val:,.2f}, P: ₹{renewed_gl_principal:,.2f})]".strip(" | ")
+
+                    run_query("""
+                        UPDATE gold_loans
+                        SET gold_rate_per_gram = ?,
+                            market_value = ?,
+                            principal_amount = ?,
+                            interest_rate_monthly = ?,
+                            tenure_months = ?,
+                            monthly_interest_due = ?,
+                            outstanding_due = ?,
+                            sanction_date = ?,
+                            appraiser_name = ?,
+                            renewal_count = ?,
+                            last_renewal_date = ?,
+                            status = 'ACTIVE',
+                            remarks = ?
+                        WHERE id = ?
+                    """, (
+                        today_gold_rate,
+                        updated_market_val,
+                        renewed_gl_principal,
+                        new_gl_monthly_rate,
+                        new_gl_tenure_months,
+                        new_gl_monthly_interest,
+                        renewed_gl_principal,
+                        str(gl_ren_date),
+                        re_appraiser,
+                        new_gl_ren_cnt,
+                        str(gl_ren_date),
+                        updated_gl_remarks,
+                        c_gl_id
+                    ), fetch=False)
+
+                    st.success(f"🪙 Gold Loan **#{c_gl_no}** for **{c_gl_cname}** successfully renewed! (Cycle #{new_gl_ren_cnt}) | New Valuation: **₹{updated_market_val:,.2f}** | Monthly Interest: **₹{new_gl_monthly_interest:,.2f}/mo**")
+                    time.sleep(1.0)
+                    st.rerun()
+        else:
+            st.info("No active gold loans found to renew.")
+
+    with tab4:
         st.subheader("🏷️ Gold Safe Vault & Packet Register")
         gl_rows = run_query("""
-            SELECT gl.id, gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, gl.ornament_details, gl.net_weight, gl.market_value, gl.principal_amount, gl.outstanding_due, gl.status
+            SELECT gl.id, gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, gl.ornament_details, gl.net_weight, gl.market_value, gl.principal_amount, gl.outstanding_due, COALESCE(gl.renewal_count, 0), gl.status
             FROM gold_loans gl
             JOIN customers c ON gl.customer_id = c.id
             ORDER BY gl.id ASC
         """)
         if gl_rows:
-            df_gl = pd.DataFrame(gl_rows, columns=["ID", "Loan No", "Packet No", "Locker", "Customer Name", "Ornaments", "Net Wt (g)", "Market Value (₹)", "Principal (₹)", "Outstanding Due (₹)", "Status"])
+            df_gl = pd.DataFrame(gl_rows, columns=["ID", "Loan No", "Packet No", "Locker", "Customer Name", "Ornaments", "Net Wt (g)", "Market Value (₹)", "Principal (₹)", "Outstanding Due (₹)", "Renewal Cycle", "Status"])
             
             tot_wt = df_gl[df_gl["Status"] == "ACTIVE"]["Net Wt (g)"].sum()
             tot_gl_due = df_gl[df_gl["Status"] == "ACTIVE"]["Outstanding Due (₹)"].sum()
@@ -1507,7 +1973,7 @@ def render_gold_loans():
             with col_p:
                 st.download_button("📄 Download Vault Register PDF", pdf_generator.create_pdf_report("Gold Vault Register", df_gl), "gold_vault_register.pdf", "application/pdf", use_container_width=True)
 
-    with tab4:
+    with tab5:
         st.subheader("🖨️ Pawn Ticket & Security Vault Tag")
         all_gl = run_query("SELECT gl.id, gl.loan_no, gl.vault_packet_no, c.name FROM gold_loans gl JOIN customers c ON gl.customer_id = c.id ORDER BY gl.id ASC")
         if all_gl:
@@ -1516,7 +1982,10 @@ def render_gold_loans():
             sel_gl_pr_id = gl_opts[sel_gl_pr_label]
             
             gl_pr_info = run_query("""
-                SELECT gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, gl.sanction_date, gl.ornament_details, gl.item_count, gl.gross_weight, gl.net_weight, gl.market_value, gl.principal_amount, gl.interest_rate_monthly, gl.monthly_interest_due, gl.outstanding_due, gl.status
+                SELECT gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, 
+                       gl.sanction_date, gl.ornament_details, gl.item_count, gl.gross_weight, gl.net_weight, 
+                       gl.market_value, gl.principal_amount, gl.interest_rate_monthly, gl.monthly_interest_due, 
+                       gl.outstanding_due, gl.status, COALESCE(gl.renewal_count, 0), gl.last_renewal_date
                 FROM gold_loans gl
                 JOIN customers c ON gl.customer_id = c.id
                 WHERE gl.id = ?
@@ -1526,11 +1995,14 @@ def render_gold_loans():
                 g = gl_pr_info[0]
                 with st.container(border=True):
                     c1, c2 = st.columns(2)
-                    c1.markdown(f"### 🪙 **GOLD LOAN PAWN TICKET**\n**Loan No:** `{g[0]}` | **Packet:** `{g[1]}` | **Locker:** `{g[2]}`\n\n**Borrower:** {g[3]} (Acc: {g[4]})\n\n**Phone:** {g[5]}")
-                    c2.markdown(f"**Sanction Date:** {g[6]}\n\n**Principal Loan:** ₹{float(g[12]):,.2f}\n\n**Monthly Interest (1%):** ₹{float(g[14]):,.2f}\n\n**Status:** `{g[16]}`")
+                    ren_gl_badge = f" | 🔄 **Renewal Cycle:** Cycle #{g[17]}" if int(g[17]) > 0 else ""
+                    c1.markdown(f"### 🪙 **GOLD LOAN PAWN TICKET**\n**Loan No:** `{g[0]}` | **Packet:** `{g[1]}` | **Locker:** `{g[2]}`\n\n**Borrower:** {g[3]} (Acc: {g[4]})\n\n**Phone:** {g[5]}{ren_gl_badge}")
+                    c2.markdown(f"**Sanction/Renewal Date:** {g[6]}\n\n**Principal Loan:** ₹{float(g[12]):,.2f}\n\n**Monthly Interest (1%):** ₹{float(g[14]):,.2f}\n\n**Status:** `{g[16]}`")
                     st.divider()
                     st.write(f"**Pledged Jewels:** {g[7]} (Count: {g[8]})")
                     st.write(f"**Gross Wt:** {float(g[9]):.3f}g | **Net Wt:** {float(g[10]):.3f}g | **Market Value:** ₹{float(g[11]):,.2f}")
+                    if g[18]:
+                        st.caption(f"🗓️ **Last Renewed On:** {g[18]}")
 
 
 def render_sb_accounts():

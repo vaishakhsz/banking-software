@@ -18,13 +18,20 @@ import plotly.graph_objects as go
 import pytz
 
 # Import database layer
-from database import (
-    IST, DB_NAME, USING_SUPABASE, run_query, save_uploaded_file, 
-    get_account_balance_from_jv, get_cash_balance, get_bank_balance,
-    generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
-    post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
-    get_connection, release_connection, sync_db_sequences
-)
+try:
+    from database import (
+        IST, DB_NAME, USING_SUPABASE, run_query, save_uploaded_file, 
+        get_account_balance_from_jv, get_cash_balance, get_bank_balance,
+        generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
+        post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
+        get_connection, release_connection, sync_db_sequences
+    )
+except Exception as _db_imp_err:
+    import traceback
+    st.error(f"⚠️ Critical Database Module Loading Error: {str(_db_imp_err)}")
+    st.code(traceback.format_exc())
+    raise _db_imp_err
+
 import pdf_generator
 
 # Define IST timezone

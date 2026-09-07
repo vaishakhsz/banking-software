@@ -34,20 +34,25 @@ supabase_anon_key = None
 
 try:
     import streamlit as st
-    if "SUPABASE_URL" in st.secrets:
-        supabase_url = st.secrets["SUPABASE_URL"]
-    elif "DATABASE_URL" in st.secrets:
-        supabase_url = st.secrets["DATABASE_URL"]
-    elif "postgres_url" in st.secrets:
-        supabase_url = st.secrets["postgres_url"]
-    elif "POSTGRES_URL" in st.secrets:
-        supabase_url = st.secrets["POSTGRES_URL"]
-    
-    if not supabase_url and "connections" in st.secrets and "supabase" in st.secrets["connections"]:
-        sub = st.secrets["connections"]["supabase"]
-        if isinstance(sub, dict) and "url" in sub:
-            supabase_url = sub["url"]
-except Exception:
+    secrets_obj = getattr(st, "secrets", None)
+    if secrets_obj is not None:
+        try:
+            if "SUPABASE_URL" in secrets_obj:
+                supabase_url = secrets_obj["SUPABASE_URL"]
+            elif "DATABASE_URL" in secrets_obj:
+                supabase_url = secrets_obj["DATABASE_URL"]
+            elif "postgres_url" in secrets_obj:
+                supabase_url = secrets_obj["postgres_url"]
+            elif "POSTGRES_URL" in secrets_obj:
+                supabase_url = secrets_obj["POSTGRES_URL"]
+            
+            if not supabase_url and "connections" in secrets_obj and "supabase" in secrets_obj["connections"]:
+                sub = secrets_obj["connections"]["supabase"]
+                if isinstance(sub, dict) and "url" in sub:
+                    supabase_url = sub["url"]
+        except (Exception, BaseException):
+            pass
+except (Exception, BaseException):
     pass
 
 DEFAULT_DB_URL = "postgresql://neondb_owner:npg_WBjT5wU1lrzy@ep-shiny-snow-azpqiece-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"

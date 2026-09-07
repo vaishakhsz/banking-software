@@ -4318,6 +4318,9 @@ menu = st.sidebar.radio(
         "🪙 Gold Loans",
         "👥 Customer Management",
         "🔍 KYC Verification",
+        "📅 Daily Collection Sheet",
+        "💼 Personal Loans",
+        "🪙 Gold Loans",
         "💰 SB Accounts",
         "📈 Fixed Deposits (FD)",
         "⏳ Recurring Deposits (RD)",
@@ -4340,6 +4343,7 @@ def generate_sql_backup():
     """Generate a single SQL script containing all database tables and rows"""
     tables = [
         'customers', 'sb_accounts', 'fixed_deposits', 'recurring_deposits', 
+        'personal_loans', 'gold_loans', 'loan_repayments',
         'chart_of_accounts', 'journal_vouchers', 'jv_entries', 'cash_book', 
         'bank_book', 'transactions'
     ]
@@ -4653,6 +4657,12 @@ elif menu == "👥 Customer Management":
     render_customer_management()
 elif menu == "🔍 KYC Verification":
     render_kyc()
+elif menu == "📅 Daily Collection Sheet":
+    render_daily_collection_sheet()
+elif menu == "💼 Personal Loans":
+    render_personal_loans()
+elif menu == "🪙 Gold Loans":
+    render_gold_loans()
 elif menu == "💰 SB Accounts":
     render_sb_accounts()
 elif menu == "📈 Fixed Deposits (FD)":

@@ -1503,3 +1503,66 @@ def record_sb_transaction(account_no, tx_type, amount, pay_mode, chosen_asset_co
         release_connection(conn)
 
 
+# ----------------------------------------------------
+# RECURRING DEPOSIT (RD) FINANCIAL CALCULATIONS
+# Standard Indian Banking / RBI / IBA Quarterly Compounding
+# ----------------------------------------------------
+def calculate_rd_maturity(monthly_amount: float, interest_rate: float, tenure_months: int):
+    """
+    Calculate Recurring Deposit Maturity using standard RBI / Banking Quarterly Compounding formula.
+    Each monthly installment k (1 to tenure_months) earns compound interest for the remaining duration:
+    remaining_months = tenure_months - k + 1
+    A_k = P * (1 + R / 400) ** (remaining_months / 3)
+    
+    Returns:
+        (total_deposit, maturity_amount, total_interest)
+    """
+    try:
+        monthly_amount = float(monthly_amount)
+        interest_rate = float(interest_rate)
+        tenure_months = int(tenure_months)
+    except (ValueError, TypeError):
+        return 0.0, 0.0, 0.0
+
+    if monthly_amount <= 0 or tenure_months <= 0:
+        return 0.0, 0.0, 0.0
+
+    total_deposit = round(monthly_amount * tenure_months, 2)
+    if interest_rate <= 0:
+        return total_deposit, total_deposit, 0.0
+
+    i = interest_rate / 400.0
+    maturity_amount = sum(monthly_amount * ((1.0 + i) ** ((tenure_months - k + 1) / 3.0)) for k in range(1, tenure_months + 1))
+    maturity_amount = round(maturity_amount, 2)
+    total_interest = round(maturity_amount - total_deposit, 2)
+    return total_deposit, maturity_amount, total_interest
+
+
+def calculate_rd_accrued_value(monthly_amount: float, interest_rate: float, installments_paid: int):
+    """
+    Calculate current accrued balance / value for the installments paid so far (e.g. for premature closure or current standing value).
+    Returns:
+        (total_paid, accrued_amount, interest_earned)
+    """
+    try:
+        monthly_amount = float(monthly_amount)
+        interest_rate = float(interest_rate)
+        installments_paid = int(installments_paid)
+    except (ValueError, TypeError):
+        return 0.0, 0.0, 0.0
+
+    if monthly_amount <= 0 or installments_paid <= 0:
+        return 0.0, 0.0, 0.0
+
+    total_paid = round(monthly_amount * installments_paid, 2)
+    if interest_rate <= 0:
+        return total_paid, total_paid, 0.0
+
+    i = interest_rate / 400.0
+    accrued_amount = sum(monthly_amount * ((1.0 + i) ** ((installments_paid - k + 1) / 3.0)) for k in range(1, installments_paid + 1))
+    accrued_amount = round(accrued_amount, 2)
+    interest_earned = round(accrued_amount - total_paid, 2)
+    return total_paid, accrued_amount, interest_earned
+
+
+

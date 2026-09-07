@@ -18,6 +18,8 @@ import plotly.graph_objects as go
 import pytz
 
 # Import database layer
+import importlib
+import database
 from database import (
     IST, DB_NAME, USING_SUPABASE, run_query, save_uploaded_file, 
     get_account_balance_from_jv, get_cash_balance, get_bank_balance,
@@ -25,6 +27,48 @@ from database import (
     get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
     get_connection, release_connection, sync_db_sequences
 )
+
+try:
+    from database import calculate_rd_maturity, calculate_rd_accrued_value
+except ImportError:
+    try:
+        importlib.reload(database)
+        from database import calculate_rd_maturity, calculate_rd_accrued_value
+    except ImportError:
+        def calculate_rd_maturity(monthly_amount: float, interest_rate: float, tenure_months: int):
+            try:
+                monthly_amount = float(monthly_amount)
+                interest_rate = float(interest_rate)
+                tenure_months = int(tenure_months)
+            except (ValueError, TypeError):
+                return 0.0, 0.0, 0.0
+            if monthly_amount <= 0 or tenure_months <= 0:
+                return 0.0, 0.0, 0.0
+            total_deposit = round(monthly_amount * tenure_months, 2)
+            if interest_rate <= 0:
+                return total_deposit, total_deposit, 0.0
+            i = interest_rate / 400.0
+            maturity_amount = sum(monthly_amount * ((1.0 + i) ** ((tenure_months - k + 1) / 3.0)) for k in range(1, tenure_months + 1))
+            maturity_amount = round(maturity_amount, 2)
+            return total_deposit, maturity_amount, round(maturity_amount - total_deposit, 2)
+
+        def calculate_rd_accrued_value(monthly_amount: float, interest_rate: float, installments_paid: int):
+            try:
+                monthly_amount = float(monthly_amount)
+                interest_rate = float(interest_rate)
+                installments_paid = int(installments_paid)
+            except (ValueError, TypeError):
+                return 0.0, 0.0, 0.0
+            if monthly_amount <= 0 or installments_paid <= 0:
+                return 0.0, 0.0, 0.0
+            total_paid = round(monthly_amount * installments_paid, 2)
+            if interest_rate <= 0:
+                return total_paid, total_paid, 0.0
+            i = interest_rate / 400.0
+            accrued_amount = sum(monthly_amount * ((1.0 + i) ** ((installments_paid - k + 1) / 3.0)) for k in range(1, installments_paid + 1))
+            accrued_amount = round(accrued_amount, 2)
+            return total_paid, accrued_amount, round(accrued_amount - total_paid, 2)
+
 import pdf_generator
 
 # Define IST timezone
@@ -904,11 +948,9 @@ def render_recurring_deposits():
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
-            total_deposits = monthly_amt * tenure
-            approx_interest = total_deposits * (interest_rate / 100) * (tenure / 24)
-            approx_maturity = total_deposits + approx_interest
+            total_deposits, approx_maturity, approx_interest = calculate_rd_maturity(monthly_amt, interest_rate, tenure)
             
-            st.info(f"**Estimated Maturity:** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
+            st.info(f"**Estimated Maturity (Quarterly Compounded):** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
             
             if st.button("Open RD Account", use_container_width=True):
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -917,8 +959,8 @@ def render_recurring_deposits():
                     st.stop()
                 
                 run_query("""
-                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount)
-                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?)
+                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance)
+                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?, 0)
                 """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
                       datetime.now(IST).strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
                 
@@ -930,7 +972,7 @@ def render_recurring_deposits():
                     rd_id_result = run_query("SELECT last_insert_rowid()")
                 if rd_id_result and jv_result:
                     rd_id = rd_id_result[0][0]
-                    run_query("UPDATE recurring_deposits SET installments_paid=1 WHERE rd_id=?", (rd_id,), fetch=False)
+                    run_query("UPDATE recurring_deposits SET installments_paid=1, collected_balance=? WHERE rd_id=?", (monthly_amt, rd_id), fetch=False)
                     
                     today = datetime.now(IST).strftime("%Y-%m-%d")
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -991,7 +1033,8 @@ def render_recurring_deposits():
                 
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
-                    run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
+                    new_collected = float(new_paid * monthly_amt)
+                    run_query("UPDATE recurring_deposits SET installments_paid=?, collected_balance=? WHERE rd_id=?", (new_paid, new_collected, rd_id), fetch=False)
                     
                     jv_result = post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
                     
@@ -1203,11 +1246,9 @@ def render_recurring_deposits():
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt, interest_rate = selected_rd
             
             if paid_inst < tenure_m:
-                st.warning(f"⚠️ Only {paid_inst} out of {tenure_m} installments paid. Early closure will reduce maturity amount.")
-                total_paid = monthly_amt * paid_inst
-                prorated_interest = total_paid * (interest_rate / 100) * (paid_inst / 24)
-                prorated_maturity = total_paid + prorated_interest
-                st.info(f"**Prorated Maturity Amount:** ₹{prorated_maturity:,.2f}")
+                st.warning(f"⚠️ Only {paid_inst} out of {tenure_m} installments paid. Early closure will calculate quarterly compounded interest on installments paid so far.")
+                total_paid, prorated_maturity, prorated_interest = calculate_rd_accrued_value(monthly_amt, interest_rate, paid_inst)
+                st.info(f"**Prorated Maturity Amount (Quarterly Compounded):** ₹{prorated_maturity:,.2f} (Principal: ₹{total_paid:,.2f} + Interest: ₹{prorated_interest:,.2f})")
                 maturity_amount_to_pay = prorated_maturity
             else:
                 maturity_amount_to_pay = maturity_amt
@@ -1293,33 +1334,23 @@ def render_recurring_deposits():
             with col_e4:
                 edit_mat_date = st.text_input("Maturity Date (YYYY-MM-DD)", value=str(c_mat_date) if c_mat_date else "2026-12-20", key=f"edit_mat_date_{c_rd_id}")
 
-            # --- Live Automatic Recalculation Engine based on Amount Paid ---
-            # 1. Quarterly Compounded Formula (Banking / RBI Standard):
-            calc_qc_maturity = 0.0
-            if edit_col_balance > 0 and edit_tenure > 0 and edit_rate > 0:
-                i_qc = edit_rate / 400.0
-                p_slice = edit_col_balance / float(edit_tenure)
-                for k in range(1, int(edit_tenure) + 1):
-                    q_rem = (edit_tenure - k + 1) / 3.0
-                    calc_qc_maturity += p_slice * ((1.0 + i_qc) ** q_rem)
-                calc_qc_maturity = round(calc_qc_maturity, 2)
-            else:
-                calc_qc_maturity = float(edit_col_balance)
-            calc_qc_interest = max(0.0, calc_qc_maturity - edit_col_balance)
-
-            # 2. Standard RD Cumulative Formula: Amount Paid * (Rate / 100) * ((Tenure + 1) / 24)
-            calc_rd_interest = float(edit_col_balance * (edit_rate / 100.0) * ((edit_tenure + 1) / 24.0))
-            calc_rd_maturity = float(edit_col_balance + calc_rd_interest)
+            # --- Live Automatic Recalculation Engine ---
+            # 1. Full Tenure Maturity (Quarterly Compounded Banking / RBI Standard):
+            calc_full_dep, calc_full_maturity, calc_full_interest = calculate_rd_maturity(edit_monthly, edit_rate, int(edit_tenure))
+            
+            # 2. Accrued Value for Installments Paid to Date:
+            calc_acc_paid, calc_acc_maturity, calc_acc_interest = calculate_rd_accrued_value(edit_monthly, edit_rate, int(edit_paid))
             
             st.markdown("---")
             st.markdown("#### ⚡ Live Maturity Amount Selection")
             
-            # Formulate options including existing stored certificate amount if available
+            # Formulate options
             calc_options = []
-            if c_maturity and float(c_maturity) > 0:
-                calc_options.append(f"📄 Keep Stored Certificate Amount: ₹{float(c_maturity):,.2f}")
-            calc_options.append(f"🏦 Quarterly Compounded Banking Formula (Maturity: ₹{calc_qc_maturity:,.2f} | Interest: ₹{calc_qc_interest:,.2f})")
-            calc_options.append(f"⚡ Standard Cumulative RD Formula (Maturity: ₹{calc_rd_maturity:,.2f} | Interest: ₹{calc_rd_interest:,.2f})")
+            calc_options.append(f"🏦 Full Tenure Banking Maturity: ₹{calc_full_maturity:,.2f} (Deposits: ₹{calc_full_dep:,.2f} + Interest: ₹{calc_full_interest:,.2f})")
+            if edit_paid < edit_tenure and edit_paid > 0:
+                calc_options.append(f"📊 Accrued Value for {int(edit_paid)} Paid Installments: ₹{calc_acc_maturity:,.2f} (Paid: ₹{calc_acc_paid:,.2f} + Interest: ₹{calc_acc_interest:,.2f})")
+            if c_maturity and float(c_maturity) > 0 and round(float(c_maturity), 2) != calc_full_maturity:
+                calc_options.append(f"📄 Keep Currently Stored Amount: ₹{float(c_maturity):,.2f}")
             calc_options.append("✍️ Enter Custom Manual Maturity Amount")
             
             calc_method = st.radio(
@@ -1329,27 +1360,31 @@ def render_recurring_deposits():
                 key=f"calc_method_{c_rd_id}"
             )
             
-            if "Keep Stored Certificate" in calc_method:
+            if "Full Tenure Banking Maturity" in calc_method:
+                final_maturity_amt = calc_full_maturity
+                final_interest = calc_full_interest
+                disp_principal = calc_full_dep
+            elif "Accrued Value" in calc_method:
+                final_maturity_amt = calc_acc_maturity
+                final_interest = calc_acc_interest
+                disp_principal = calc_acc_paid
+            elif "Keep Currently Stored" in calc_method:
                 final_maturity_amt = float(c_maturity)
                 final_interest = max(0.0, final_maturity_amt - edit_col_balance)
-            elif "Quarterly Compounded" in calc_method:
-                final_interest = calc_qc_interest
-                final_maturity_amt = calc_qc_maturity
-            elif "Standard Cumulative" in calc_method:
-                final_interest = calc_rd_interest
-                final_maturity_amt = calc_rd_maturity
+                disp_principal = edit_col_balance
             else:
                 final_maturity_amt = st.number_input(
                     "Enter Custom Maturity Amount (₹)",
                     min_value=0.0,
-                    value=float(c_maturity) if c_maturity else calc_qc_maturity,
+                    value=float(c_maturity) if c_maturity else calc_full_maturity,
                     step=1000.0,
                     key=f"custom_mat_amt_{c_rd_id}"
                 )
                 final_interest = max(0.0, final_maturity_amt - edit_col_balance)
+                disp_principal = edit_col_balance
             
             m_col1, m_col2, m_col3 = st.columns(3)
-            m_col1.metric("💰 Amount Paid / Deposited", f"₹{edit_col_balance:,.2f}")
+            m_col1.metric("💰 Expected / Paid Principal", f"₹{disp_principal:,.2f}")
             m_col2.metric("📈 Calculated Interest", f"₹{final_interest:,.2f}")
             m_col3.metric("🎯 Total Maturity Amount", f"₹{final_maturity_amt:,.2f}")
             
@@ -1358,6 +1393,7 @@ def render_recurring_deposits():
             
             with btn_col1:
                 if st.button("💾 Save & Update RD Account Changes", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
+                    closed_date_val = None if edit_status == 'ACTIVE' else datetime.now(IST).strftime("%Y-%m-%d")
                     run_query("""
                         UPDATE recurring_deposits 
                         SET monthly_amount = ?,
@@ -1371,11 +1407,12 @@ def render_recurring_deposits():
                             rd_no = ?,
                             scheme_name = ?,
                             maturity_date = ?,
-                            collected_balance = ?
+                            collected_balance = ?,
+                            closed_date = ?
                         WHERE rd_id = ?
                     """, (edit_monthly, edit_tenure, edit_rate, edit_paid, edit_nominee, 
                           edit_status, edit_created, final_maturity_amt, edit_rd_no, 
-                          edit_scheme, edit_mat_date, edit_col_balance, c_rd_id), fetch=False)
+                          edit_scheme, edit_mat_date, edit_col_balance, closed_date_val, c_rd_id), fetch=False)
                     
                     st.success(f"✅ Recurring Deposit #{edit_rd_no} updated successfully! Amount Paid: ₹{edit_col_balance:,.2f} | Maturity: ₹{final_maturity_amt:,.2f}")
                     time.sleep(0.1)

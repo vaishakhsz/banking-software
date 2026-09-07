@@ -50,7 +50,7 @@ try:
 except Exception:
     pass
 
-DEFAULT_DB_URL = "postgresql://neondb_owner:npg_WBjT5wU1lrzy@ep-shiny-snow-azpqiece-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+DEFAULT_DB_URL = "postgresql://neondb_owner:npg_WBjT5wU1lrzy@ep-restless-haze-azsi5s6f-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 if not supabase_url:
     supabase_url = os.getenv("SUPABASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or DEFAULT_DB_URL

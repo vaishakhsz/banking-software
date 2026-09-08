@@ -772,15 +772,18 @@ def render_daily_collection_sheet():
                     new_due = max(0.0, float(l_due) - float(coll_amt))
                     new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
                     
-                    # Compute proportional interest and principal split
+                    # Compute proportional interest and principal split for active term
                     p_info = run_query("SELECT principal_amount, total_repayable FROM personal_loans WHERE id = ?", (l_id,))
                     l_princ = float(p_info[0][0]) if p_info else float(coll_amt)
                     l_tot_rep = float(p_info[0][1]) if p_info else float(coll_amt)
                     tot_loan_int = max(0.0, round(l_tot_rep - l_princ, 2))
                     
-                    prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (l_id,))
-                    prev_int_rec = float(prev_int_row[0][0]) if prev_int_row else 0.0
-                    rem_int_to_rec = max(0.0, round(tot_loan_int - prev_int_rec, 2))
+                    cycle_paid_so_far = max(0.0, round(l_tot_rep - float(l_due), 2))
+                    if l_tot_rep > 0 and tot_loan_int > 0:
+                        cycle_int_rec = round(cycle_paid_so_far * (tot_loan_int / l_tot_rep), 2)
+                    else:
+                        cycle_int_rec = 0.0
+                    rem_int_to_rec = max(0.0, round(tot_loan_int - cycle_int_rec, 2))
                     
                     if l_tot_rep > 0 and tot_loan_int > 0:
                         prop_int = round(float(coll_amt) * (tot_loan_int / l_tot_rep), 2)
@@ -1099,14 +1102,20 @@ def render_personal_loans():
                     new_due = max(0.0, round(float(l_due) - float(amt_paid), 2))
                     new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
                     
-                    # Compute proportional interest and principal split
+                    # Compute proportional interest and principal split for active term
                     tot_loan_int = max(0.0, round(float(l_tot_rep) - float(l_princ), 2))
-                    prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (l_id,))
-                    prev_int_rec = float(prev_int_row[0][0]) if prev_int_row else 0.0
-                    rem_int_to_rec = max(0.0, round(tot_loan_int - prev_int_rec, 2))
+                    tot_rep_val = float(l_tot_rep)
+                    cur_due_val = float(l_due)
                     
-                    if float(l_tot_rep) > 0 and tot_loan_int > 0:
-                        prop_int = round(float(amt_paid) * (tot_loan_int / float(l_tot_rep)), 2)
+                    cycle_paid_so_far = max(0.0, round(tot_rep_val - cur_due_val, 2))
+                    if tot_rep_val > 0 and tot_loan_int > 0:
+                        cycle_int_rec = round(cycle_paid_so_far * (tot_loan_int / tot_rep_val), 2)
+                    else:
+                        cycle_int_rec = 0.0
+                    rem_int_to_rec = max(0.0, round(tot_loan_int - cycle_int_rec, 2))
+                    
+                    if tot_rep_val > 0 and tot_loan_int > 0:
+                        prop_int = round(float(amt_paid) * (tot_loan_int / tot_rep_val), 2)
                         if new_due <= 0:
                             int_portion = rem_int_to_rec
                         else:
@@ -1195,16 +1204,22 @@ def render_personal_loans():
              cur_sdate, cur_tdays, cur_tmonths, cur_irate, cur_itype, cur_cid, cur_stat,
              cur_ren_cnt, cur_last_ren, cur_gname, cur_gphone, cur_purp, cur_rem) = sel_r_data
              
-            # Calculate financial metrics for current loan
-            prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0), COALESCE(SUM(principal_component), 0), COALESCE(SUM(amount_paid), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (cur_pl_id,))
-            int_rec_so_far = float(prev_int_row[0][0]) if prev_int_row else 0.0
-            princ_rec_so_far = float(prev_int_row[0][1]) if prev_int_row else 0.0
-            tot_paid_so_far = float(prev_int_row[0][2]) if prev_int_row else 0.0
-            
+            # Calculate financial metrics for current loan (cleanly scoped to active term/cycle)
             tot_orig_int = float(cur_tot_int or 0.0)
             tot_orig_rep = float(cur_tot_rep or (float(cur_princ) + tot_orig_int))
-            unearned_int_rem = max(0.0, round(tot_orig_int - int_rec_so_far, 2))
-            net_princ_rem = max(0.0, round(float(cur_due) - unearned_int_rem, 2))
+            cur_due_val = float(cur_due)
+            
+            # Amount repaid during active cycle:
+            cycle_paid_so_far = max(0.0, round(tot_orig_rep - cur_due_val, 2))
+            if tot_orig_rep > 0 and tot_orig_int > 0:
+                cycle_int_rec = round(cycle_paid_so_far * (tot_orig_int / tot_orig_rep), 2)
+            else:
+                cycle_int_rec = 0.0
+                
+            unearned_int_rem = max(0.0, round(tot_orig_int - cycle_int_rec, 2))
+            net_princ_rem = max(0.0, round(cur_due_val - unearned_int_rem, 2))
+            if net_princ_rem <= 0 and cur_due_val > 0 and unearned_int_rem <= 0:
+                net_princ_rem = cur_due_val
             
             with st.container(border=True):
                 st.markdown(f"#### 👤 Borrower: **{cur_cname}** (Loan: `{cur_l_no}`, Acc: `{cur_cacc}`)")
@@ -1241,10 +1256,7 @@ def render_personal_loans():
                     interest_settle_amt = 0.0
                     
                 # Starting base principal for renewed cycle
-                base_princ = net_princ_rem if unearned_int_rem > 0 else float(cur_due)
-                if base_princ <= 0 and topup_amount <= 0:
-                    base_princ = float(cur_princ)
-                
+                base_princ = net_princ_rem if net_princ_rem > 0 else float(cur_princ)
                 renewed_principal = round(base_princ + topup_amount, 2)
                 
                 st.markdown("### 3️⃣ New Loan Tenure & Interest Rate")

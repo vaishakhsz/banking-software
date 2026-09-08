@@ -3300,102 +3300,82 @@ def extract_party_details(particulars, acc_code, acc_name, cust_list):
     p = str(particulars).strip()
     
     # 1. Staff Salary & Benefits (EXP-104 or staff withdrawal names)
-    staff_names = ['SREEKALA J', 'SASIKUMARAN A', 'BINU B', 'KEERTHI R', 'SREEJITH RADHAKRISHNAN', 'LEKSHMI SK', 'SREEKALA', 'SASIKUMARAN', 'SREEJITH', 'BINU', 'KEERTHI']
+    staff_names = ['SREEKALA J', 'SASIKUMARAN A', 'BINU B', 'KEERTHI R', 'SREEJITH RADHAKRISHNAN', 'LEKSHMI SK', 'SREEKALA', 'SASIKUMARAN', 'SREEJITH', 'BINU', 'KEERTHI', 'LEKSHMI']
     if acc_code == 'EXP-104' or any(k in p.lower() for k in ['salary', 'salaries', 'staff']):
         for sn in staff_names:
             if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
                 return f"Staff Salary: {sn}"
         return "Staff Salaries & Benefits"
+
+    # 2. Professional Charges / CA Fees
+    if acc_code == 'EXP-106' or 'ca fees' in p.lower() or 'professional' in p.lower() or 'audit' in p.lower():
+        m_ca = re.search(r'([A-Za-z\.\s]+?)\s*[-:]\s*CA\s*Fees', p, re.IGNORECASE)
+        if m_ca:
+            return f"CA Professional Charges: {m_ca.group(1).strip()}"
+        return "CA / Professional Charges"
+
+    # 3. Cash Contra / Drawer
+    if 'cash' in p.lower() or 'contra' in p.lower() or acc_code == 'AST-101':
+        return "Cash Drawer (Office Contra)"
         
-    # 2. Exact Account Number Match (100% certainty)
+    # 4. Bank Charges & Taxes
+    if any(k in p.lower() for k in ['sms charge', 'sms charges', 'bank charge', 'bank charges', 'pord', 'gst', 'consolidated chg', 'atm charge', 'transaction charge']):
+        return "Union Bank Processing / Service Charges"
+
+    # 5. Office Rent
+    if acc_code == 'EXP-105' or 'rent' in p.lower():
+        return "Office Rent"
+
+    # 6. Opening Balance
+    if 'opening' in p.lower():
+        return "Opening Balance"
+        
+    # 7. Exact Customer Account Number Match (100% certainty)
     for cid, cname, cacc in cust_list:
-        if cacc and len(str(cacc)) >= 4 and str(cacc) in p:
+        if cacc and len(str(cacc).strip()) >= 4 and str(cacc).strip() in p:
             return f"{cname} (Acc: {cacc})"
             
-    # 3. Best Full-Name Match across all customers (prioritize longest exact/core match)
-    best_match = None
-    best_score = 0
+    # 8. Full Customer Name Matching (Strict - NO single-word loose matching)
     sorted_cust = sorted(cust_list, key=lambda c: len(c[1]), reverse=True)
-    
-    COMMON_SURNAMES = {
-        'KUMAR', 'NAIR', 'PILLAI', 'MENON', 'SHARMA', 'SINGH', 'VARMA', 'DAS', 
-        'BABU', 'DEVI', 'AMMA', 'BHAI', 'RAO', 'REDDY', 'GUPTA', 'KHAN', 
-        'JOSEPH', 'THOMAS', 'GEORGE', 'MATHEW', 'KUMARI', 'LAL', 'CHANDRAN', 
-        'PRASAD', 'UNNI', 'NATH', 'ROY', 'THE', 'AND', 'DOCTOR', 'FOR'
-    }
-    
     for cid, cname, cacc in sorted_cust:
         if not cname:
             continue
         c_clean = re.sub(r'\s+', ' ', cname).strip()
-        core_name = re.sub(r'(?:^|(?<=\s))[A-Za-z](?:\.|\s|$)', '', c_clean).strip()
+        core_words = [w for w in re.split(r'[\s\.]+', c_clean) if len(w) > 1]
         
-        # Check full name with initials
+        # Exact full name match (e.g. "RANJITH R", "PRASAD U")
         if len(c_clean) >= 4 and re.search(r'\b' + re.escape(c_clean) + r'\b', p, re.IGNORECASE):
-            score = len(c_clean) * 10
-            if score > best_score:
-                best_score = score
-                acc_label = f" (Acc: {cacc})" if cacc else ""
-                best_match = f"{cname}{acc_label}"
-                continue
-                
-        # Check core name without single-letter initials
-        if len(core_name) >= 5 and re.search(r'\b' + re.escape(core_name) + r'\b', p, re.IGNORECASE):
-            score = len(core_name) * 8
-            if score > best_score:
-                best_score = score
-                acc_label = f" (Acc: {cacc})" if cacc else ""
-                best_match = f"{cname}{acc_label}"
-                continue
-
-        # Check collapsed space name (e.g. "AJAYAKUMAR" matching "AJAYA KUMAR")
-        squashed_core = core_name.replace(" ", "")
-        if len(squashed_core) >= 5 and re.search(r'\b' + re.escape(squashed_core) + r'\b', p, re.IGNORECASE):
-            score = len(squashed_core) * 7
-            if score > best_score:
-                best_score = score
-                acc_label = f" (Acc: {cacc})" if cacc else ""
-                best_match = f"{cname}{acc_label}"
-                continue
-
-    if best_match:
-        return best_match
-
-    # 4. Distinct First/Given Name match (Ignore common surnames like KUMAR, NAIR, etc.)
-    for cid, cname, cacc in sorted_cust:
-        tokens = [t.strip().upper() for t in re.split(r'[\s\.]+', cname) if len(t.strip()) >= 4 and t.strip().upper() not in COMMON_SURNAMES]
-        matched = [t for t in tokens if re.search(r'\b' + re.escape(t) + r'\b', p, re.IGNORECASE)]
-        if matched:
-            score = sum(len(t) for t in matched)
-            if score > best_score:
-                best_score = score
-                acc_label = f" (Acc: {cacc})" if cacc else ""
-                best_match = f"{cname}{acc_label}"
-
-    if best_match:
-        return best_match
-                
-    # 5. Staff Field Collections / Staff UPI Deposits
-    for sn in staff_names:
-        if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
-            return f"Staff Field Agent: {sn}"
+            acc_label = f" (Acc: {cacc})" if cacc else ""
+            return f"{cname}{acc_label}"
             
-    # 6. Bank Charges / Processing
-    if any(k in p.lower() for k in ['charge', 'sms', 'pord', 'gst', 'consolidated chg', 'atm']):
-        return "Union Bank Processing / Service Charges"
-        
-    # 7. Cash Contra
-    if 'cash' in p.lower() or 'contra' in p.lower() or acc_code == 'AST-101':
-        return "Cash Drawer (Office Contra)"
-        
-    # 8. Extract UPI Member Name
+        # Core full name match with at least 2 full words (e.g. "AJAYA KUMAR")
+        if len(core_words) >= 2:
+            core_phrase = " ".join(core_words)
+            if len(core_phrase) >= 6 and re.search(r'\b' + re.escape(core_phrase) + r'\b', p, re.IGNORECASE):
+                acc_label = f" (Acc: {cacc})" if cacc else ""
+                return f"{cname}{acc_label}"
+
+    # 9. Clean Literal Party Extraction from Particulars (e.g. Deposit Santhosh Kumar -> Santhosh Kumar)
+    m_dep = re.search(r'(?:Saving(?:s)?\s*Deposit(?:\s*&\s*Processing\s*Charge)?|Deposit\s+Suspended|Deposit)\s*[-:\s]+([A-Za-z\s\.]+?)(?:\s*[-:]|\s*$)', p, re.IGNORECASE)
+    if m_dep:
+        extracted = m_dep.group(1).strip()
+        if len(extracted) >= 3 and extracted.lower() not in ['cash', 'liquid', 'savings deposit', 'bank charge', 'office rent', 'opening balance']:
+            return extracted
+
+    m_tail = re.search(r'[-:]\s*([A-Za-z\s\.]+)$', p)
+    if m_tail:
+        extracted = m_tail.group(1).strip()
+        if len(extracted) >= 3 and extracted.lower() not in ['savings deposit', 'bank charge', 'office rent', 'professional charges']:
+            return extracted
+
+    # 10. UPI Member Name
     upi_match = re.search(r'/CR/([^/]+)/', p, re.IGNORECASE)
     if upi_match:
         name_clean = upi_match.group(1).strip()
         if name_clean and len(name_clean) > 1:
             return f"Member: {name_clean}"
             
-    # 9. Extract NEFT Party Name
+    # 11. NEFT Party Name
     neft_match = re.search(r'NEFT(?:O|-|:)?\s*([A-Za-z\s\.]+?)(?:\s+\d+|\s+HDFC|\s+SBIN|\s+CNRB|$)', p, re.IGNORECASE)
     if neft_match:
         n_clean = neft_match.group(1).strip()

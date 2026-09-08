@@ -34,20 +34,25 @@ supabase_anon_key = None
 
 try:
     import streamlit as st
-    if "SUPABASE_URL" in st.secrets:
-        supabase_url = st.secrets["SUPABASE_URL"]
-    elif "DATABASE_URL" in st.secrets:
-        supabase_url = st.secrets["DATABASE_URL"]
-    elif "postgres_url" in st.secrets:
-        supabase_url = st.secrets["postgres_url"]
-    elif "POSTGRES_URL" in st.secrets:
-        supabase_url = st.secrets["POSTGRES_URL"]
-    
-    if not supabase_url and "connections" in st.secrets and "supabase" in st.secrets["connections"]:
-        sub = st.secrets["connections"]["supabase"]
-        if isinstance(sub, dict) and "url" in sub:
-            supabase_url = sub["url"]
-except Exception:
+    secrets_obj = getattr(st, "secrets", None)
+    if secrets_obj is not None:
+        try:
+            if "SUPABASE_URL" in secrets_obj:
+                supabase_url = secrets_obj["SUPABASE_URL"]
+            elif "DATABASE_URL" in secrets_obj:
+                supabase_url = secrets_obj["DATABASE_URL"]
+            elif "postgres_url" in secrets_obj:
+                supabase_url = secrets_obj["postgres_url"]
+            elif "POSTGRES_URL" in secrets_obj:
+                supabase_url = secrets_obj["POSTGRES_URL"]
+            
+            if not supabase_url and "connections" in secrets_obj and "supabase" in secrets_obj["connections"]:
+                sub = secrets_obj["connections"]["supabase"]
+                if isinstance(sub, dict) and "url" in sub:
+                    supabase_url = sub["url"]
+        except (Exception, BaseException):
+            pass
+except (Exception, BaseException):
     pass
 
 DEFAULT_DB_URL = "postgresql://neondb_owner:npg_WBjT5wU1lrzy@ep-restless-haze-azsi5s6f-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
@@ -495,6 +500,65 @@ def init_db():
                 narration TEXT,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS personal_loans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_no TEXT,
+                customer_id INTEGER,
+                sanction_date TEXT,
+                principal_amount REAL,
+                interest_rate REAL,
+                interest_type TEXT,
+                tenure_days INTEGER,
+                tenure_months INTEGER,
+                total_interest REAL,
+                total_repayable REAL,
+                installment_amount REAL,
+                outstanding_due REAL,
+                disbursal_mode TEXT,
+                voucher_no TEXT,
+                guarantor_name TEXT,
+                guarantor_phone TEXT,
+                purpose TEXT,
+                status TEXT,
+                remarks TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS gold_loans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_no TEXT,
+                customer_id INTEGER,
+                sanction_date TEXT,
+                principal_amount REAL,
+                interest_rate REAL,
+                tenure_months INTEGER,
+                total_interest REAL,
+                total_repayable REAL,
+                monthly_interest REAL,
+                outstanding_due REAL,
+                disbursal_mode TEXT,
+                voucher_no TEXT,
+                gold_weight_gross REAL,
+                gold_weight_net REAL,
+                gold_purity TEXT,
+                gold_items_description TEXT,
+                status TEXT,
+                remarks TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS loan_repayments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_type TEXT,
+                loan_id INTEGER,
+                customer_id INTEGER,
+                payment_date TEXT,
+                amount_paid REAL,
+                principal_component REAL,
+                interest_component REAL,
+                payment_mode TEXT,
+                voucher_no TEXT,
+                narration TEXT,
+                created_at TEXT
+            );
         """
         
         if USING_SUPABASE:
@@ -529,6 +593,10 @@ def init_db():
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS collected_balance DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
                 """)
             except Exception:
                 pass
@@ -547,6 +615,15 @@ def init_db():
             for col in [("scheme_name", "TEXT"), ("rd_no", "TEXT"), ("maturity_date", "TEXT"), ("collected_balance", "REAL")]:
                 try:
                     cursor.execute(f"ALTER TABLE recurring_deposits ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+            for col in [("renewal_count", "INTEGER DEFAULT 0"), ("last_renewal_date", "TEXT")]:
+                try:
+                    cursor.execute(f"ALTER TABLE personal_loans ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute(f"ALTER TABLE gold_loans ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
 
@@ -570,7 +647,8 @@ def init_db():
             ("EXP-110", "Depreciation 40%", "Expense", "Operating Expenses"),
             ("EXP-111", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-112", "Bank Charges", "Expense", "Other Expenses"),
-            ("EXP-124", "Rent", "Expense", "Administrative Expenses"),
+            ("EXP-120", "Waste/Plastic Collection Charges", "Expense", "Operating Expenses"),
+            ("EXP-124", "Rent ", "Expense", "Operating Expenses"),
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
             ("AST-102", "Union Bank of India", "Asset", "Current Assets"),
             ("AST-103", "State Bank of India", "Asset", "Current Assets"),
@@ -578,9 +656,13 @@ def init_db():
             ("AST-105", "Fixed Asset Furniture & Fixtures", "Asset", "Non Current Assets"),
             ("AST-106", "Office Equipments", "Asset", "Non Current Assets"),  
             ("AST-107", "Building", "Asset", "Non Current Assets"),
+            ("AST-108", "Loan Principal Control", "Asset", "Loans & Advances"),
+            ("AST-110", "Gold Loan Advances", "Asset", "Loans & Advances"),
             ("LIA-101", "SB Deposits Control", "Liability", "Deposits"),
             ("LIA-102", "FD Deposits Control", "Liability", "Deposits"),
             ("LIA-103", "RD Deposits Control", "Liability", "Deposits"),
+            ("LIA-104", "Unearned Interest Suspense Account", "Liability", "Deferred Income"),
+            ("INC-111", "Gold Loan Interest Income", "Income", "Primary Revenue"),
             ("EQT-101", "Capital Account", "Equity", "Capital"),
             ("EQT-102", "Retained Earnings", "Equity", "Reserves"),
             ("EQT-103", "Income Summary", "Equity", "Temporary")
@@ -988,6 +1070,57 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
     except Exception as e:
         import streamlit as st
         st.error(f"Error posting journal voucher: {str(e)}")
+        if conn is not None and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return None
+    finally:
+        release_connection(conn)
+
+def post_compound_jv(narration, debit_entries, credit_entries, voucher_date=None):
+    """
+    debit_entries: list of (account_code, amount)
+    credit_entries: list of (account_code, amount)
+    """
+    if voucher_date is None:
+        target_date = str(date.today())
+    else:
+        target_date = str(voucher_date)
+        
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        if USING_SUPABASE:
+            cursor.execute("""
+                INSERT INTO journal_vouchers (voucher_date, narration, status) 
+                VALUES (%s, %s, 'POSTED') RETURNING jv_id
+            """, (target_date, narration))
+            jv_id = cursor.fetchone()[0]
+            for acc, amt in debit_entries:
+                if amt > 0:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, acc, amt))
+            for acc, amt in credit_entries:
+                if amt > 0:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, acc, amt))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (target_date, narration))
+            jv_id = cursor.lastrowid
+            for acc, amt in debit_entries:
+                if amt > 0:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, acc, amt))
+            for acc, amt in credit_entries:
+                if amt > 0:
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc, amt))
+        
+        conn.commit()
+        return jv_id
+    except Exception as e:
+        import streamlit as st
+        st.error(f"Error posting compound journal voucher: {str(e)}")
         if conn is not None and USING_SUPABASE:
             try:
                 conn.rollback()

@@ -80,24 +80,51 @@ import pdf_generator
 # Define IST timezone
 IST = pytz.timezone('Asia/Kolkata')
 
+# Configure Pandas global display options to prevent truncation
+pd.set_option('display.max_colwidth', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 1000)
+
 def format_df_dates(df):
-    """Automatically formats any date-like columns in a DataFrame to DD-MM-YYYY format for display"""
+    """Automatically formats date-like columns to DD-MM-YYYY and numeric amount columns to full currency strings (₹xx,xxx.xx) to prevent ellipsis or scientific notation"""
     if df is None or df.empty:
         return df
     df_copy = df.copy()
-    date_cols = ["Date", "Created Date", "Registered Date", "date", "created_date", "registered_date", "Joined", "Registered", "Created"]
+    
+    # 1. Format Dates
+    date_cols = ["Date", "Created Date", "Registered Date", "date", "created_date", "registered_date", "Joined", "Registered", "Created", "Voucher Date", "voucher_date", "Payment Date", "Sanction Date", "Maturity Date"]
     for col in df_copy.columns:
-        if col in date_cols:
+        if col in date_cols or ("date" in str(col).lower() and "update" not in str(col).lower()):
             try:
-                # Convert to datetime and then format
                 series_dt = pd.to_datetime(df_copy[col], errors='coerce')
-                # Only format rows that were successfully parsed
                 formatted = series_dt.dt.strftime('%d-%m-%Y')
-                # Fallback to original string if parsing failed
                 df_copy[col] = formatted.fillna(df_copy[col])
             except Exception:
                 pass
+
+    # 2. Format Amount / Currency columns so full numbers display properly without '...' or scientific notation
+    amount_keywords = ["(₹)", "amount", "balance", "principal", "due", "debit", "credit", "deposit", "withdrawal", "interest", "maturity", "target", "collected", "repaid", "paid"]
+    for col in df_copy.columns:
+        col_lower = str(col).lower()
+        if any(k in col_lower for k in amount_keywords) and "rate" not in col_lower and "count" not in col_lower and "no" not in col_lower and "id" not in col_lower and "code" not in col_lower and "date" not in col_lower and "status" not in col_lower:
+            try:
+                def _fmt_val(v):
+                    if pd.isnull(v) or v == "" or v == "-":
+                        return "-"
+                    try:
+                        fv = float(v)
+                        return f"₹{fv:,.2f}"
+                    except (ValueError, TypeError):
+                        return str(v)
+                
+                num_check = pd.to_numeric(df_copy[col], errors='coerce')
+                if num_check.notnull().any():
+                    df_copy[col] = df_copy[col].apply(_fmt_val)
+            except Exception:
+                pass
+
     return df_copy
+
 
 # --- CORE VIEWS ---
 
@@ -5175,6 +5202,57 @@ st.markdown("""
         background-color: #222222 !important;
         border-color: #222222 !important;
         color: #ffffff !important;
+    }
+
+    /* ======================================================== */
+    /* ANTI-TRUNCATION & FULL-FIGURE DISPLAY FIXES              */
+    /* ======================================================== */
+    /* 1. Prevent Metric truncation with ellipsis (...) */
+    [data-testid="stMetricValue"] {
+        font-size: 1.35rem !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-break: break-word !important;
+        line-height: 1.25 !important;
+    }
+    [data-testid="stMetricValue"] > div {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+    }
+    [data-testid="stMetricLabel"] {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+        line-height: 1.2 !important;
+    }
+    
+    /* 2. Prevent Selectbox / Dropdown option truncation */
+    div[data-baseweb="select"] span {
+        white-space: normal !important;
+        text-overflow: clip !important;
+        overflow: visible !important;
+    }
+    div[role="listbox"] li {
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
+    
+    /* 3. Ensure Dataframe tables show full contents cleanly without cutoff */
+    [data-testid="stDataFrame"] {
+        width: 100% !important;
+    }
+    [data-testid="stDataFrame"] div[data-testid="glide-data-grid"] {
+        width: 100% !important;
+    }
+    
+    /* 4. Table cell word wrapping and visibility */
+    div[data-testid="stTable"] td, div[data-testid="stTable"] th {
+        white-space: normal !important;
+        word-break: break-word !important;
     }
 </style>
 <div class="company-header">

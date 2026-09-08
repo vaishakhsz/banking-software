@@ -933,7 +933,7 @@ def render_personal_loans():
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_days / 365.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_days), 2)
-                inst_text = f"₹{installment:,.2f} / Day ({tenure_days} Days)"
+                inst_text = f"₹{installment:,.2f} / Day ({tenure_days}d)"
             elif "Monthly" in repay_mode:
                 col_t1, col_t2 = st.columns(2)
                 tenure_months = col_t1.number_input("Tenure (Number of Months)", min_value=1, value=12, step=1)
@@ -942,7 +942,7 @@ def render_personal_loans():
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_months), 2)
-                inst_text = f"₹{installment:,.2f} / Month ({tenure_months} Months)"
+                inst_text = f"₹{installment:,.2f} / Mo ({tenure_months}m)"
             elif "Weekly" in repay_mode:
                 col_t1, col_t2 = st.columns(2)
                 tenure_weeks = col_t1.number_input("Tenure (Number of Weeks)", min_value=2, value=20, step=1)
@@ -952,7 +952,7 @@ def render_personal_loans():
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_weeks / 52.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_weeks), 2)
-                inst_text = f"₹{installment:,.2f} / Week ({tenure_weeks} Weeks)"
+                inst_text = f"₹{installment:,.2f} / Wk ({tenure_weeks}w)"
             else:
                 # Flexible / Custom (No Fixed EMI)
                 col_t1, col_t2 = st.columns(2)
@@ -962,15 +962,15 @@ def render_personal_loans():
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = 0.0
-                inst_text = "Flexible (Pay Any Amount Anytime)"
+                inst_text = "Flexible (Anytime)"
                 
             with st.container(border=True):
                 st.markdown("#### 📊 Live Loan Breakdown")
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("💵 Principal Cash", f"₹{principal:,.2f}")
-                m2.metric(f"📈 Total Interest ({int_rate}%)", f"₹{tot_interest:,.2f}")
-                m3.metric("💳 Total Repayable Due", f"₹{tot_repayable:,.2f}")
-                m4.metric("📅 Repayment Mode", inst_text)
+                m1.metric("💵 Principal", f"₹{principal:,.2f}")
+                m2.metric(f"📈 Interest ({int_rate}%)", f"₹{tot_interest:,.2f}")
+                m3.metric("💳 Total Due", f"₹{tot_repayable:,.2f}")
+                m4.metric("📅 Repayment", inst_text)
                 
             st.markdown("### 4️⃣ Disbursal Account & Surety Details")
             col_d1, col_d2 = st.columns(2)
@@ -1079,10 +1079,10 @@ def render_personal_loans():
             with st.container(border=True):
                 st.markdown(f"#### 👤 Borrower: **{l_cname}** (Loan: `{l_no}`, Acc: `{l_cacc}`)")
                 sc1, sc2, sc3, sc4 = st.columns(4)
-                sc1.metric("💵 Principal Loan", f"₹{float(l_princ):,.2f}")
+                sc1.metric("💵 Principal", f"₹{float(l_princ):,.2f}")
                 sc2.metric("💳 Total Repayable", f"₹{float(l_tot_rep):,.2f}")
-                sc3.metric("🟢 Already Repaid", f"₹{already_paid:,.2f}")
-                sc4.metric("🔴 Outstanding Due Balance", f"₹{float(l_due):,.2f}")
+                sc3.metric("🟢 Repaid So Far", f"₹{already_paid:,.2f}")
+                sc4.metric("🔴 Outstanding Due", f"₹{float(l_due):,.2f}")
                 st.caption(f"📌 **Repayment Scheme:** {l_scheme} | **Suggested Installment:** {'₹{:,.2f}'.format(float(l_inst)) if float(l_inst) > 0 else 'Flexible / Pay Any Amount'}")
             
             with st.form("loan_repayment_form"):
@@ -1225,10 +1225,10 @@ def render_personal_loans():
                 st.markdown(f"#### 👤 Borrower: **{cur_cname}** (Loan: `{cur_l_no}`, Acc: `{cur_cacc}`)")
                 sc1, sc2, sc3, sc4 = st.columns(4)
                 sc1.metric("💵 Current Principal", f"₹{float(cur_princ):,.2f}")
-                sc2.metric("💳 Outstanding Total Due", f"₹{float(cur_due):,.2f}")
-                sc3.metric("📈 Unearned Interest in Suspense", f"₹{unearned_int_rem:,.2f}")
-                sc4.metric("🔄 Renewal History", f"Cycle #{cur_ren_cnt + 1}" if cur_ren_cnt > 0 else "First Renewal (Cycle #1)")
-                st.caption(f"📌 **Original Sanction:** {cur_sdate} | **Last Renewed:** {cur_last_ren or 'Never'} | **Status:** `{cur_stat}`")
+                sc2.metric("💳 Outstanding Due", f"₹{float(cur_due):,.2f}")
+                sc3.metric("📈 Unearned Interest", f"₹{unearned_int_rem:,.2f}")
+                sc4.metric("🔄 Renewal History", f"Cycle #{cur_ren_cnt + 1}" if cur_ren_cnt > 0 else "Cycle #1 (Initial)")
+                st.caption(f"📌 **Sanctioned:** {cur_sdate} | **Last Renewed:** {cur_last_ren or 'Never'} | **Status:** `{cur_stat}`")
 
             st.markdown("### 2️⃣ Renewal & Rollover Strategy")
             ren_mode = st.radio(
@@ -1276,7 +1276,7 @@ def render_personal_loans():
                     new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_days / 365.0), 2)
                     new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
                     new_installment = round(new_tot_repayable / float(new_tenure_days), 2)
-                    new_inst_text = f"₹{new_installment:,.2f} / Day ({new_tenure_days} Days)"
+                    new_inst_text = f"₹{new_installment:,.2f} / Day ({new_tenure_days}d)"
                 elif "Monthly" in new_scheme_choice:
                     new_tenure_months = rn_col3.number_input("New Tenure (Months)", min_value=1, value=int(cur_tmonths or 12), step=1)
                     new_tenure_days = new_tenure_months * 30
@@ -1284,7 +1284,7 @@ def render_personal_loans():
                     new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_months / 12.0), 2)
                     new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
                     new_installment = round(new_tot_repayable / float(new_tenure_months), 2)
-                    new_inst_text = f"₹{new_installment:,.2f} / Month ({new_tenure_months} Months)"
+                    new_inst_text = f"₹{new_installment:,.2f} / Mo ({new_tenure_months}m)"
                 elif "Weekly" in new_scheme_choice:
                     new_tenure_weeks = rn_col3.number_input("New Tenure (Weeks)", min_value=2, value=20, step=1)
                     new_tenure_days = new_tenure_weeks * 7
@@ -1293,7 +1293,7 @@ def render_personal_loans():
                     new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_weeks / 52.0), 2)
                     new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
                     new_installment = round(new_tot_repayable / float(new_tenure_weeks), 2)
-                    new_inst_text = f"₹{new_installment:,.2f} / Week ({new_tenure_weeks} Weeks)"
+                    new_inst_text = f"₹{new_installment:,.2f} / Wk ({new_tenure_weeks}w)"
                 else:
                     new_tenure_months = rn_col3.number_input("New Agreed Term (Months)", min_value=1, value=int(cur_tmonths or 12), step=1)
                     new_tenure_days = new_tenure_months * 30
@@ -1301,15 +1301,15 @@ def render_personal_loans():
                     new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_months / 12.0), 2)
                     new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
                     new_installment = 0.0
-                    new_inst_text = "Flexible (Pay Any Amount Anytime)"
+                    new_inst_text = "Flexible (Anytime)"
                 
                 with st.container(border=True):
                     st.markdown("#### 📊 Live Loan Renewal Breakdown")
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("💵 Renewed Principal", f"₹{renewed_principal:,.2f}")
-                    m2.metric(f"📈 New Planned Interest ({new_int_rate}%)", f"₹{new_planned_interest:,.2f}")
-                    m3.metric("💳 New Total Repayable Due", f"₹{new_tot_repayable:,.2f}")
-                    m4.metric("📅 New Installment", new_inst_text)
+                    m2.metric(f"📈 New Interest ({new_int_rate}%)", f"₹{new_planned_interest:,.2f}")
+                    m3.metric("💳 Total Due", f"₹{new_tot_repayable:,.2f}")
+                    m4.metric("📅 Installment", new_inst_text)
                     
                 st.markdown("### 4️⃣ Disbursal & Receipt Settlement Details")
                 rn_d1, rn_d2 = st.columns(2)
@@ -1874,9 +1874,9 @@ def render_gold_loans():
                 st.markdown(f"#### 🪙 Borrower: **{c_gl_cname}** (Loan: `{c_gl_no}`, Packet: `{c_gl_pkt}`, Locker: `{c_gl_lock}`)")
                 gc1, gc2, gc3, gc4 = st.columns(4)
                 gc1.metric("🔒 Pledged Net Gold", f"{float(c_gl_net):.3f} g")
-                gc2.metric("💵 Current Principal Due", f"₹{float(c_gl_due):,.2f}")
-                gc3.metric("📅 Monthly Interest Servicing", f"₹{float(c_gl_mint):,.2f}/mo")
-                gc4.metric("🔄 Renewal History", f"Cycle #{c_gl_ren_cnt + 1}" if c_gl_ren_cnt > 0 else "First Renewal (Cycle #1)")
+                gc2.metric("💵 Principal Due", f"₹{float(c_gl_due):,.2f}")
+                gc3.metric("📅 Monthly Interest", f"₹{float(c_gl_mint):,.2f}/mo")
+                gc4.metric("🔄 Renewal History", f"Cycle #{c_gl_ren_cnt + 1}" if c_gl_ren_cnt > 0 else "Cycle #1 (Initial)")
                 st.caption(f"📌 **Ornaments:** {c_gl_orn} | **Sanction Date:** {c_gl_sdate} | **Last Renewed:** {c_gl_last_ren or 'Original Appraisal'}")
 
             with st.form(f"gold_loan_renewal_form_{c_gl_id}"):
@@ -5217,29 +5217,50 @@ st.markdown("""
     }
 
     /* ======================================================== */
-    /* ANTI-TRUNCATION & FULL-FIGURE DISPLAY FIXES              */
+    /* ANTI-TRUNCATION & BORDER CONTAINMENT DISPLAY FIXES       */
     /* ======================================================== */
-    /* 1. Prevent Metric truncation with ellipsis (...) */
+    /* 1. Prevent border overflow and enforce clean container containment */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        overflow: hidden !important;
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stVerticalBlockBorderWrapper"] > div {
+        overflow: hidden !important;
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stMetric"] {
+        overflow: hidden !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
     [data-testid="stMetricValue"] {
-        font-size: 1.35rem !important;
+        font-size: clamp(1.05rem, 1.6vw, 1.25rem) !important;
         white-space: normal !important;
-        overflow: visible !important;
-        text-overflow: clip !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
         word-break: break-word !important;
         line-height: 1.25 !important;
+        max-width: 100% !important;
     }
     [data-testid="stMetricValue"] > div {
         white-space: normal !important;
-        overflow: visible !important;
-        text-overflow: clip !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
+        word-break: break-word !important;
+        max-width: 100% !important;
     }
     [data-testid="stMetricLabel"] {
         white-space: normal !important;
-        overflow: visible !important;
-        text-overflow: clip !important;
-        font-size: 0.88rem !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
+        word-break: break-word !important;
+        font-size: 0.82rem !important;
         font-weight: 600 !important;
         line-height: 1.2 !important;
+        max-width: 100% !important;
     }
     
     /* 2. Prevent Selectbox / Dropdown option truncation */

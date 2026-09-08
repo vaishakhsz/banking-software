@@ -2262,7 +2262,7 @@ def render_fixed_deposits():
             <div class="fd-receipt">
               <div class="header">
                 <h2>AARSHA NIDHI LIMITED</h2>
-                <p>6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+                <p>6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
                 <p>CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
               </div>
               <div style="text-align:center;">
@@ -2613,7 +2613,7 @@ def render_recurring_deposits():
             <div class="rd-receipt">
               <div class="header">
                 <h2>AARSHA NIDHI LIMITED</h2>
-                <p>6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+                <p>6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
                 <p>CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
               </div>
               <div style="text-align:center;">
@@ -4554,7 +4554,7 @@ if not get_login_status():
         st.markdown("""
         <div style="text-align: center; background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); padding: 30px 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin-bottom: 20px; color: white;">
             <h1 style="color: white !important; font-size: 26px; margin: 5px 0; font-weight: 800; letter-spacing: 0.8px; text-shadow: 0 2px 4px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; gap: 10px;">🏦 AARSHA NIDHI  LIMITED</h1>
-            <p style="color: #cbd5e1 !important; font-size: 11px; margin: 8px 0 5px 0; font-weight: 500; opacity: 0.9;">📍 6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+            <p style="color: #cbd5e1 !important; font-size: 11px; margin: 8px 0 5px 0; font-weight: 500; opacity: 0.9;">📍 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
             <p style="color: #cbd5e1 !important; font-size: 10px; margin: 5px 0; opacity: 0.8;">📄 CIN: U65990KL22021PLN069978 | 📞 Ph: 0471-2994535</p>
         </div>
         <div style="text-align: center; margin-bottom: 15px;">
@@ -5149,7 +5149,7 @@ st.markdown("""
         <div style="font-size: 32px;">🏦</div>
         <div>
             <h1>AARSHA NIDHI LIMITED</h1>
-            <div class="sub">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
+            <div class="sub">6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
         </div>
     </div>
     <div class="contact">

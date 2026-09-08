@@ -86,12 +86,11 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
 
 def format_df_dates(df):
-    """Automatically formats date-like columns to DD-MM-YYYY and numeric amount columns to full currency strings (₹xx,xxx.xx) to prevent ellipsis or scientific notation"""
+    """Automatically formats date-like columns to DD-MM-YYYY format for display"""
     if df is None or df.empty:
         return df
     df_copy = df.copy()
     
-    # 1. Format Dates
     date_cols = ["Date", "Created Date", "Registered Date", "date", "created_date", "registered_date", "Joined", "Registered", "Created", "Voucher Date", "voucher_date", "Payment Date", "Sanction Date", "Maturity Date"]
     for col in df_copy.columns:
         if col in date_cols or ("date" in str(col).lower() and "update" not in str(col).lower()):
@@ -99,27 +98,6 @@ def format_df_dates(df):
                 series_dt = pd.to_datetime(df_copy[col], errors='coerce')
                 formatted = series_dt.dt.strftime('%d-%m-%Y')
                 df_copy[col] = formatted.fillna(df_copy[col])
-            except Exception:
-                pass
-
-    # 2. Format Amount / Currency columns so full numbers display properly without '...' or scientific notation
-    amount_keywords = ["(₹)", "amount", "balance", "principal", "due", "debit", "credit", "deposit", "withdrawal", "interest", "maturity", "target", "collected", "repaid", "paid"]
-    for col in df_copy.columns:
-        col_lower = str(col).lower()
-        if any(k in col_lower for k in amount_keywords) and "rate" not in col_lower and "count" not in col_lower and "no" not in col_lower and "id" not in col_lower and "code" not in col_lower and "date" not in col_lower and "status" not in col_lower:
-            try:
-                def _fmt_val(v):
-                    if pd.isnull(v) or v == "" or v == "-":
-                        return "-"
-                    try:
-                        fv = float(v)
-                        return f"₹{fv:,.2f}"
-                    except (ValueError, TypeError):
-                        return str(v)
-                
-                num_check = pd.to_numeric(df_copy[col], errors='coerce')
-                if num_check.notnull().any():
-                    df_copy[col] = df_copy[col].apply(_fmt_val)
             except Exception:
                 pass
 
@@ -4401,9 +4379,26 @@ def render_financial_statements():
             
             # Format display data
             df_display = format_df_dates(df_ledger.copy())
-            df_display["Debit (₹)"] = df_display["Debit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
-            df_display["Credit (₹)"] = df_display["Credit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
-            df_display["Balance (₹)"] = df_display["Balance (₹)"].apply(lambda x: f"₹{x:,.2f}")
+            def _fmt_money(v):
+                if pd.isnull(v) or v == "" or v == "-":
+                    return "-"
+                try:
+                    val = float(str(v).replace("₹", "").replace(",", ""))
+                    return f"₹{val:,.2f}" if val > 0 else "-"
+                except (ValueError, TypeError):
+                    return str(v)
+            def _fmt_bal(v):
+                if pd.isnull(v) or v == "" or v == "-":
+                    return "-"
+                try:
+                    val = float(str(v).replace("₹", "").replace(",", ""))
+                    return f"₹{val:,.2f}"
+                except (ValueError, TypeError):
+                    return str(v)
+                    
+            df_display["Debit (₹)"] = df_display["Debit (₹)"].apply(_fmt_money)
+            df_display["Credit (₹)"] = df_display["Credit (₹)"].apply(_fmt_money)
+            df_display["Balance (₹)"] = df_display["Balance (₹)"].apply(_fmt_bal)
             df_display["Balance (₹)"] = df_display["Balance (₹)"] + " (" + df_display["Type"] + ")"
             df_display.drop(columns=["Type"], inplace=True)
             
@@ -4412,9 +4407,9 @@ def render_financial_statements():
             
             # Export to PDF
             df_pdf = format_df_dates(df_ledger.copy())
-            df_pdf["Debit (₹)"] = df_pdf["Debit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
-            df_pdf["Credit (₹)"] = df_pdf["Credit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
-            df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"].apply(lambda x: f"₹{x:,.2f}")
+            df_pdf["Debit (₹)"] = df_pdf["Debit (₹)"].apply(_fmt_money)
+            df_pdf["Credit (₹)"] = df_pdf["Credit (₹)"].apply(_fmt_money)
+            df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"].apply(_fmt_bal)
             df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"] + " (" + df_pdf["Type"] + ")"
             df_pdf.drop(columns=["Type"], inplace=True)
             

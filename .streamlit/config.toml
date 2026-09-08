@@ -1,0 +1,14 @@
+[client]
+showErrorDetails = "full"
+
+[theme]
+primaryColor = "#1f4e78"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f4f8"
+textColor = "#262730"
+font = "sans serif"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false

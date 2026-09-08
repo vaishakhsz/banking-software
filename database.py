@@ -55,7 +55,7 @@ try:
 except (Exception, BaseException):
     pass
 
-DEFAULT_DB_URL = "postgresql://neondb_owner:npg_WBjT5wU1lrzy@ep-shiny-snow-azpqiece-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+DEFAULT_DB_URL = "postgresql://neondb_owner:npg_WBjT5wU1lrzy@ep-restless-haze-azsi5s6f-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 if not supabase_url:
     supabase_url = os.getenv("SUPABASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or DEFAULT_DB_URL
@@ -500,6 +500,65 @@ def init_db():
                 narration TEXT,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS personal_loans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_no TEXT,
+                customer_id INTEGER,
+                sanction_date TEXT,
+                principal_amount REAL,
+                interest_rate REAL,
+                interest_type TEXT,
+                tenure_days INTEGER,
+                tenure_months INTEGER,
+                total_interest REAL,
+                total_repayable REAL,
+                installment_amount REAL,
+                outstanding_due REAL,
+                disbursal_mode TEXT,
+                voucher_no TEXT,
+                guarantor_name TEXT,
+                guarantor_phone TEXT,
+                purpose TEXT,
+                status TEXT,
+                remarks TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS gold_loans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_no TEXT,
+                customer_id INTEGER,
+                sanction_date TEXT,
+                principal_amount REAL,
+                interest_rate REAL,
+                tenure_months INTEGER,
+                total_interest REAL,
+                total_repayable REAL,
+                monthly_interest REAL,
+                outstanding_due REAL,
+                disbursal_mode TEXT,
+                voucher_no TEXT,
+                gold_weight_gross REAL,
+                gold_weight_net REAL,
+                gold_purity TEXT,
+                gold_items_description TEXT,
+                status TEXT,
+                remarks TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS loan_repayments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_type TEXT,
+                loan_id INTEGER,
+                customer_id INTEGER,
+                payment_date TEXT,
+                amount_paid REAL,
+                principal_component REAL,
+                interest_component REAL,
+                payment_mode TEXT,
+                voucher_no TEXT,
+                narration TEXT,
+                created_at TEXT
+            );
         """
         
         if USING_SUPABASE:
@@ -534,6 +593,10 @@ def init_db():
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS collected_balance DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
                 """)
             except Exception:
                 pass
@@ -552,6 +615,15 @@ def init_db():
             for col in [("scheme_name", "TEXT"), ("rd_no", "TEXT"), ("maturity_date", "TEXT"), ("collected_balance", "REAL")]:
                 try:
                     cursor.execute(f"ALTER TABLE recurring_deposits ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+            for col in [("renewal_count", "INTEGER DEFAULT 0"), ("last_renewal_date", "TEXT")]:
+                try:
+                    cursor.execute(f"ALTER TABLE personal_loans ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute(f"ALTER TABLE gold_loans ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
 
@@ -575,6 +647,8 @@ def init_db():
             ("EXP-110", "Depreciation 40%", "Expense", "Operating Expenses"),
             ("EXP-111", "Printing & Stationary", "Expense", "Administrative Expenses"),
             ("EXP-112", "Bank Charges", "Expense", "Other Expenses"),
+            ("EXP-120", "Waste/Plastic Collection Charges", "Expense", "Operating Expenses"),
+            ("EXP-124", "Rent ", "Expense", "Operating Expenses"),
             ("AST-101", "Cash in Hand", "Asset", "Current Assets"),
             ("AST-102", "Union Bank of India", "Asset", "Current Assets"),
             ("AST-103", "State Bank of India", "Asset", "Current Assets"),

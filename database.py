@@ -595,8 +595,23 @@ def init_db():
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS collected_balance DOUBLE PRECISION DEFAULT 0;
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS guarantor_relation TEXT;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS vault_packet_no TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_rate_per_gram DOUBLE PRECISION DEFAULT 6500;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS ornament_details TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS item_count INTEGER DEFAULT 1;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS stone_deduction DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS purity TEXT DEFAULT '22K';
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS market_value DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS ltv_percent DOUBLE PRECISION DEFAULT 75;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS interest_rate_monthly DOUBLE PRECISION DEFAULT 1.0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS monthly_interest_due DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS outstanding_due DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS closure_date TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
                 """)
             except Exception:
                 pass

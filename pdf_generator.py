@@ -8,6 +8,14 @@ from reportlab.lib import colors
 from reportlab.lib.units import mm
 from database import IST, get_account_name
 
+try:
+    import streamlit as st
+    cache_data = st.cache_data(show_spinner=False)
+except Exception:
+    def cache_data(f):
+        return f
+
+@cache_data
 def create_pdf_report(title, df):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), 
@@ -174,6 +182,7 @@ def create_pdf_report(title, df):
     buffer.seek(0)
     return buffer.getvalue()
 
+@cache_data
 def create_csv_report(title, df, from_date=None, to_date=None):
     """
     Exports a professional CSV report matching the PDF header, title, date range,
@@ -244,6 +253,7 @@ def create_csv_report(title, df, from_date=None, to_date=None):
         
     return buffer.getvalue().encode('utf-8-sig')
 
+@cache_data
 def create_excel_report(title, df, from_date=None, to_date=None):
     """
     Exports a fully-styled Excel (.xlsx) report matching the PDF design 100%:
@@ -1184,6 +1194,7 @@ def extract_or_build_ledger_rows(loan_data, repayments_df=None):
         return rows
 
 
+@cache_data
 def create_loan_passbook_excel(loan_data, schedule_df, repayments_df=None):
     """
     Exports a styled Excel (.xlsx) Loan Passbook & Statement:
@@ -1478,6 +1489,7 @@ def create_loan_passbook_excel(loan_data, schedule_df, repayments_df=None):
     return buffer.getvalue()
 
 
+@cache_data
 def create_loan_passbook_pdf(loan_data, schedule_df, repayments_df=None):
     """
     Generates a high-quality PDF Loan Passbook & Statement:
@@ -1715,6 +1727,7 @@ def create_loan_passbook_pdf(loan_data, schedule_df, repayments_df=None):
     return buffer.getvalue()
 
 
+@cache_data
 def create_loan_agreement_pdf(loan_data, schedule_df):
     """
     Generates an official Legal Loan Agreement, Surety Undertaking Deed & Demand Promissory Note PDF.
@@ -1926,6 +1939,7 @@ def create_loan_agreement_pdf(loan_data, schedule_df):
     return buffer.getvalue()
 
 
+@cache_data
 def create_gold_loan_passbook_excel(loan_data, schedule_df, repayments_df=None):
     """
     Generates a Gold Loan Passbook in Microsoft Excel (.xlsx) format:
@@ -2233,6 +2247,7 @@ def create_gold_loan_passbook_excel(loan_data, schedule_df, repayments_df=None):
     return buffer.getvalue()
 
 
+@cache_data
 def create_gold_loan_agreement_pdf(loan_data, schedule_df=None):
     """
     Generates an official Gold Loan Pawn Deed, Pledge Agreement & Demand Promissory Note PDF.
@@ -2438,6 +2453,7 @@ def create_gold_loan_agreement_pdf(loan_data, schedule_df=None):
     return buffer.getvalue()
 
 
+@cache_data
 def create_gold_loan_passbook_pdf(loan_data, schedule_df, repayments_df=None):
     """
     Generates a high-resolution printable Gold Loan Passbook & Statement PDF:

@@ -1768,105 +1768,107 @@ def render_gold_loans():
             })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (Rs.)", "INTEREST (Rs.)", "EMI AMOUNT (Rs.)"]]
             st.dataframe(format_df_dates(df_prev_display), use_container_width=True)
 
-        st.markdown("### 4️⃣ Automated 1-Click Disbursal Mode")
-        disb_mode = st.radio("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], horizontal=True, key="gl_disb_mode")
-        remarks = st.text_input("Remarks / Condition", value="Gold Pledged in Safe Vault", key="gl_rem_inp")
-        
-        if st.button("🪙 Confirm Appraisal & Disburse Gold Loan", use_container_width=True, type="primary", key="btn_disb_gl"):
-            loan_no = f"GL-2026-{cur_gl_cnt:04d}"
-            voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{cur_gl_cnt:03d}"
+        with st.form("new_gold_loan_disbursal_form"):
+            st.markdown("### 4️⃣ Automated 1-Click Disbursal Mode")
+            col_dm1, col_dm2 = st.columns(2)
+            disb_mode = col_dm1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0)
+            remarks = col_dm2.text_input("Remarks / Condition Notes", value="Gold Pledged in Safe Vault")
             
-            if "Cash" in disb_mode:
-                cur_cash = get_cash_balance()
-                if cur_cash < principal:
-                    st.error(f"❌ Insufficient Cash Balance in Drawer! Available: ₹{cur_cash:,.2f}")
-                    st.stop()
+            if st.form_submit_button("🪙 Confirm Appraisal & Disburse Gold Loan", use_container_width=True, type="primary"):
+                loan_no = f"GL-2026-{cur_gl_cnt:04d}"
+                voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{cur_gl_cnt:03d}"
+                
+                if "Cash" in disb_mode:
+                    cur_cash = get_cash_balance()
+                    if cur_cash < principal:
+                        st.error(f"❌ Insufficient Cash Balance in Drawer! Available: ₹{cur_cash:,.2f}")
+                        st.stop()
+                        
+                gl_schedule = generate_loan_schedule(sanction_date, principal, tot_interest, tenure_months=tenure_months, loan_type='GOLD')
+                loan_from = gl_schedule[0]["from_date"] if gl_schedule else str(sanction_date)
+                loan_to = gl_schedule[-1]["to_date"] if gl_schedule else str(sanction_date)
+                first_due = gl_schedule[0]["due_date"] if gl_schedule else str(sanction_date)
+                last_due = gl_schedule[-1]["due_date"] if gl_schedule else str(sanction_date)
+                
+                # Process uploaded image
+                img_name, img_bytes = save_uploaded_file(gl_disb_photo) if gl_disb_photo else (None, None)
+                import psycopg2
+                img_param = psycopg2.Binary(img_bytes) if (USING_SUPABASE and img_bytes) else img_bytes
+                
+                new_gl_row = run_query("""
+                    INSERT INTO gold_loans (
+                        loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
+                        item_count, gross_weight, stone_deduction, net_weight, purity,
+                        market_value, ltv_percent, principal_amount, interest_rate,
+                        interest_rate_monthly, tenure_months, total_interest, total_repayable,
+                        installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
+                        loan_from_date, loan_to_date, first_emi_due, last_emi_due,
+                        outstanding_due, vault_packet_no, locker_no, appraiser_name,
+                        disbursal_mode, voucher_no, status, remarks, renewal_count,
+                        gold_image_file, gold_image_data
+                    ) VALUES (
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, '22K',
+                        ?, 75.00, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, 'ACTIVE', ?, 0,
+                        ?, ?
+                    ) RETURNING id
+                """, (
+                    loan_no, selected_cust_id, str(sanction_date), gold_rate, ornament_desc,
+                    item_count, gross_weight, stone_ded, net_weight,
+                    market_val, principal, int_rate,
+                    round(int_rate / 12.0, 2), tenure_months, tot_interest, tot_repayable,
+                    installment, p_emi, i_emi, i_emi,
+                    loan_from, loan_to, first_due, last_due,
+                    tot_repayable, packet_no, locker_no, appraiser_name,
+                    disb_mode, voucher_no, remarks,
+                    img_name, img_param
+                ))
+                
+                new_gl_id = new_gl_row[0][0] if new_gl_row else run_query("SELECT id FROM gold_loans WHERE loan_no = ?", (loan_no,))[0][0]
+                
+                batch_insert_loan_schedules('GOLD', new_gl_id, loan_no, gl_schedule, sanction_date)
                     
-            gl_schedule = generate_loan_schedule(sanction_date, principal, tot_interest, tenure_months=tenure_months, loan_type='GOLD')
-            loan_from = gl_schedule[0]["from_date"] if gl_schedule else str(sanction_date)
-            loan_to = gl_schedule[-1]["to_date"] if gl_schedule else str(sanction_date)
-            first_due = gl_schedule[0]["due_date"] if gl_schedule else str(sanction_date)
-            last_due = gl_schedule[-1]["due_date"] if gl_schedule else str(sanction_date)
+                part_text = f"Gold Loan Disbursal: {selected_cust_name} (Acc: {selected_cust_acc}) [{loan_no} | {packet_no}]"
             
-            # Process uploaded image
-            img_name, img_bytes = save_uploaded_file(gl_disb_photo) if gl_disb_photo else (None, None)
-            import psycopg2
-            img_param = psycopg2.Binary(img_bytes) if (USING_SUPABASE and img_bytes) else img_bytes
-            
-            new_gl_row = run_query("""
-                INSERT INTO gold_loans (
-                    loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
-                    item_count, gross_weight, stone_deduction, net_weight, purity,
-                    market_value, ltv_percent, principal_amount, interest_rate,
-                    interest_rate_monthly, tenure_months, total_interest, total_repayable,
-                    installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
-                    loan_from_date, loan_to_date, first_emi_due, last_emi_due,
-                    outstanding_due, vault_packet_no, locker_no, appraiser_name,
-                    disbursal_mode, voucher_no, status, remarks, renewal_count,
-                    gold_image_file, gold_image_data
-                ) VALUES (
-                    ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, '22K',
-                    ?, 75.00, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, 'ACTIVE', ?, 0,
-                    ?, ?
-                ) RETURNING id
-            """, (
-                loan_no, selected_cust_id, str(sanction_date), gold_rate, ornament_desc,
-                item_count, gross_weight, stone_ded, net_weight,
-                market_val, principal, int_rate,
-                round(int_rate / 12.0, 2), tenure_months, tot_interest, tot_repayable,
-                installment, p_emi, i_emi, i_emi,
-                loan_from, loan_to, first_due, last_due,
-                tot_repayable, packet_no, locker_no, appraiser_name,
-                disb_mode, voucher_no, remarks,
-                img_name, img_param
-            ))
-            
-            new_gl_id = new_gl_row[0][0] if new_gl_row else run_query("SELECT id FROM gold_loans WHERE loan_no = ?", (loan_no,))[0][0]
-            
-            batch_insert_loan_schedules('GOLD', new_gl_id, loan_no, gl_schedule, sanction_date)
+                bank_or_cash_code = 'AST-102' if "Union Bank" in disb_mode else 'AST-101'
+                if "Union Bank" in disb_mode:
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-110')
+                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                else:
+                    run_query("""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-110')
+                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
                 
-            part_text = f"Gold Loan Disbursal: {selected_cust_name} (Acc: {selected_cust_acc}) [{loan_no} | {packet_no}]"
-            
-            bank_or_cash_code = 'AST-102' if "Union Bank" in disb_mode else 'AST-101'
-            if "Union Bank" in disb_mode:
-                run_query("""
-                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                    VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-110')
-                """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
-            else:
-                run_query("""
-                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                    VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-110')
-                """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
-            
-            cr_entries = [(bank_or_cash_code, principal)]
-            if tot_interest > 0:
-                cr_entries.append(('LIA-104', tot_interest))
-            post_compound_jv(
-                f"Gold Loan Disbursal [{voucher_no}]: {part_text} (Principal: ₹{principal:,.2f} + Planned Interest: ₹{tot_interest:,.2f} = Total Due: ₹{tot_repayable:,.2f})",
-                [('AST-110', tot_repayable)],
-                cr_entries,
-                voucher_date=sanction_date
-            )
-                
-            acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
-            if acc_row:
-                acc_id, old_bal = acc_row[0]
-                new_bal = float(old_bal) + float(tot_repayable)
-                run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_bal, acc_id), fetch=False)
-                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"GOLD LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, new_bal, str(sanction_date)), fetch=False)
-            else:
-                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, tot_repayable, str(sanction_date)), fetch=False)
-                
-            st.success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Monthly EMI: **₹{installment:,.2f}/mo**")
-            time.sleep(1.0)
-            st.rerun()
+                cr_entries = [(bank_or_cash_code, principal)]
+                if tot_interest > 0:
+                    cr_entries.append(('LIA-104', tot_interest))
+                post_compound_jv(
+                    f"Gold Loan Disbursal [{voucher_no}]: {part_text} (Principal: ₹{principal:,.2f} + Planned Interest: ₹{tot_interest:,.2f} = Total Due: ₹{tot_repayable:,.2f})",
+                    [('AST-110', tot_repayable)],
+                    cr_entries,
+                    voucher_date=sanction_date
+                )
+                    
+                acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
+                if acc_row:
+                    acc_id, old_bal = acc_row[0]
+                    new_bal = float(old_bal) + float(tot_repayable)
+                    run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_bal, acc_id), fetch=False)
+                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"GOLD LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, new_bal, str(sanction_date)), fetch=False)
+                else:
+                    run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, tot_repayable, str(sanction_date)), fetch=False)
+                    
+                st.success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Monthly EMI: **₹{installment:,.2f}/mo**")
+                time.sleep(1.0)
+                st.rerun()
 
     with tab2:
         st.subheader("💳 Collect Gold Loan Installment / Repayment")

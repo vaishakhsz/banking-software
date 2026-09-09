@@ -32,29 +32,77 @@ except Exception as _db_imp_err:
     st.code(traceback.format_exc())
     raise _db_imp_err
 
+try:
+    from database import calculate_rd_maturity, calculate_rd_accrued_value
+except ImportError:
+    import importlib
+    import database
+    try:
+        importlib.reload(database)
+        from database import calculate_rd_maturity, calculate_rd_accrued_value
+    except ImportError:
+        def calculate_rd_maturity(monthly_amount: float, interest_rate: float, tenure_months: int):
+            try:
+                monthly_amount = float(monthly_amount)
+                interest_rate = float(interest_rate)
+                tenure_months = int(tenure_months)
+            except (ValueError, TypeError):
+                return 0.0, 0.0, 0.0
+            if monthly_amount <= 0 or tenure_months <= 0:
+                return 0.0, 0.0, 0.0
+            total_deposit = round(monthly_amount * tenure_months, 2)
+            if interest_rate <= 0:
+                return total_deposit, total_deposit, 0.0
+            i = interest_rate / 400.0
+            maturity_amount = sum(monthly_amount * ((1.0 + i) ** ((tenure_months - k + 1) / 3.0)) for k in range(1, tenure_months + 1))
+            maturity_amount = round(maturity_amount, 2)
+            return total_deposit, maturity_amount, round(maturity_amount - total_deposit, 2)
+
+        def calculate_rd_accrued_value(monthly_amount: float, interest_rate: float, installments_paid: int):
+            try:
+                monthly_amount = float(monthly_amount)
+                interest_rate = float(interest_rate)
+                installments_paid = int(installments_paid)
+            except (ValueError, TypeError):
+                return 0.0, 0.0, 0.0
+            if monthly_amount <= 0 or installments_paid <= 0:
+                return 0.0, 0.0, 0.0
+            total_paid = round(monthly_amount * installments_paid, 2)
+            if interest_rate <= 0:
+                return total_paid, total_paid, 0.0
+            i = interest_rate / 400.0
+            accrued_amount = sum(monthly_amount * ((1.0 + i) ** ((installments_paid - k + 1) / 3.0)) for k in range(1, installments_paid + 1))
+            accrued_amount = round(accrued_amount, 2)
+            return total_paid, accrued_amount, round(accrued_amount - total_paid, 2)
+
 import pdf_generator
 
 # Define IST timezone
 IST = pytz.timezone('Asia/Kolkata')
 
+# Configure Pandas global display options to prevent truncation
+pd.set_option('display.max_colwidth', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 1000)
+
 def format_df_dates(df):
-    """Automatically formats any date-like columns in a DataFrame to DD-MM-YYYY format for display"""
+    """Automatically formats date-like columns to DD-MM-YYYY format for display"""
     if df is None or df.empty:
         return df
     df_copy = df.copy()
-    date_cols = ["Date", "Created Date", "Registered Date", "date", "created_date", "registered_date", "Joined", "Registered", "Created"]
+    
+    date_cols = ["Date", "Created Date", "Registered Date", "date", "created_date", "registered_date", "Joined", "Registered", "Created", "Voucher Date", "voucher_date", "Payment Date", "Sanction Date", "Maturity Date"]
     for col in df_copy.columns:
-        if col in date_cols:
+        if col in date_cols or ("date" in str(col).lower() and "update" not in str(col).lower()):
             try:
-                # Convert to datetime and then format
                 series_dt = pd.to_datetime(df_copy[col], errors='coerce')
-                # Only format rows that were successfully parsed
                 formatted = series_dt.dt.strftime('%d-%m-%Y')
-                # Fallback to original string if parsing failed
                 df_copy[col] = formatted.fillna(df_copy[col])
             except Exception:
                 pass
+
     return df_copy
+
 
 # --- CORE VIEWS ---
 
@@ -702,15 +750,18 @@ def render_daily_collection_sheet():
                     new_due = max(0.0, float(l_due) - float(coll_amt))
                     new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
                     
-                    # Compute proportional interest and principal split
+                    # Compute proportional interest and principal split for active term
                     p_info = run_query("SELECT principal_amount, total_repayable FROM personal_loans WHERE id = ?", (l_id,))
                     l_princ = float(p_info[0][0]) if p_info else float(coll_amt)
                     l_tot_rep = float(p_info[0][1]) if p_info else float(coll_amt)
                     tot_loan_int = max(0.0, round(l_tot_rep - l_princ, 2))
                     
-                    prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (l_id,))
-                    prev_int_rec = float(prev_int_row[0][0]) if prev_int_row else 0.0
-                    rem_int_to_rec = max(0.0, round(tot_loan_int - prev_int_rec, 2))
+                    cycle_paid_so_far = max(0.0, round(l_tot_rep - float(l_due), 2))
+                    if l_tot_rep > 0 and tot_loan_int > 0:
+                        cycle_int_rec = round(cycle_paid_so_far * (tot_loan_int / l_tot_rep), 2)
+                    else:
+                        cycle_int_rec = 0.0
+                    rem_int_to_rec = max(0.0, round(tot_loan_int - cycle_int_rec, 2))
                     
                     if l_tot_rep > 0 and tot_loan_int > 0:
                         prop_int = round(float(coll_amt) * (tot_loan_int / l_tot_rep), 2)
@@ -860,7 +911,7 @@ def render_personal_loans():
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_days / 365.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_days), 2)
-                inst_text = f"₹{installment:,.2f} / Day ({tenure_days} Days)"
+                inst_text = f"₹{installment:,.2f} / Day ({tenure_days}d)"
             elif "Monthly" in repay_mode:
                 col_t1, col_t2 = st.columns(2)
                 tenure_months = col_t1.number_input("Tenure (Number of Months)", min_value=1, value=12, step=1)
@@ -869,7 +920,7 @@ def render_personal_loans():
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_months), 2)
-                inst_text = f"₹{installment:,.2f} / Month ({tenure_months} Months)"
+                inst_text = f"₹{installment:,.2f} / Mo ({tenure_months}m)"
             elif "Weekly" in repay_mode:
                 col_t1, col_t2 = st.columns(2)
                 tenure_weeks = col_t1.number_input("Tenure (Number of Weeks)", min_value=2, value=20, step=1)
@@ -879,7 +930,7 @@ def render_personal_loans():
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_weeks / 52.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = round(tot_repayable / float(tenure_weeks), 2)
-                inst_text = f"₹{installment:,.2f} / Week ({tenure_weeks} Weeks)"
+                inst_text = f"₹{installment:,.2f} / Wk ({tenure_weeks}w)"
             else:
                 # Flexible / Custom (No Fixed EMI)
                 col_t1, col_t2 = st.columns(2)
@@ -889,15 +940,15 @@ def render_personal_loans():
                 tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
                 tot_repayable = round(principal + tot_interest, 2)
                 installment = 0.0
-                inst_text = "Flexible (Pay Any Amount Anytime)"
+                inst_text = "Flexible (Anytime)"
                 
             with st.container(border=True):
                 st.markdown("#### 📊 Live Loan Breakdown")
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("💵 Principal Cash", f"₹{principal:,.2f}")
-                m2.metric(f"📈 Total Interest ({int_rate}%)", f"₹{tot_interest:,.2f}")
-                m3.metric("💳 Total Repayable Due", f"₹{tot_repayable:,.2f}")
-                m4.metric("📅 Repayment Mode", inst_text)
+                m1.metric("💵 Principal", f"₹{principal:,.2f}")
+                m2.metric(f"📈 Interest ({int_rate}%)", f"₹{tot_interest:,.2f}")
+                m3.metric("💳 Total Due", f"₹{tot_repayable:,.2f}")
+                m4.metric("📅 Repayment", inst_text)
                 
             st.markdown("### 4️⃣ Disbursal Account & Surety Details")
             col_d1, col_d2 = st.columns(2)
@@ -1006,10 +1057,10 @@ def render_personal_loans():
             with st.container(border=True):
                 st.markdown(f"#### 👤 Borrower: **{l_cname}** (Loan: `{l_no}`, Acc: `{l_cacc}`)")
                 sc1, sc2, sc3, sc4 = st.columns(4)
-                sc1.metric("💵 Principal Loan", f"₹{float(l_princ):,.2f}")
+                sc1.metric("💵 Principal", f"₹{float(l_princ):,.2f}")
                 sc2.metric("💳 Total Repayable", f"₹{float(l_tot_rep):,.2f}")
-                sc3.metric("🟢 Already Repaid", f"₹{already_paid:,.2f}")
-                sc4.metric("🔴 Outstanding Due Balance", f"₹{float(l_due):,.2f}")
+                sc3.metric("🟢 Repaid So Far", f"₹{already_paid:,.2f}")
+                sc4.metric("🔴 Outstanding Due", f"₹{float(l_due):,.2f}")
                 st.caption(f"📌 **Repayment Scheme:** {l_scheme} | **Suggested Installment:** {'₹{:,.2f}'.format(float(l_inst)) if float(l_inst) > 0 else 'Flexible / Pay Any Amount'}")
             
             with st.form("loan_repayment_form"):
@@ -1029,14 +1080,20 @@ def render_personal_loans():
                     new_due = max(0.0, round(float(l_due) - float(amt_paid), 2))
                     new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
                     
-                    # Compute proportional interest and principal split
+                    # Compute proportional interest and principal split for active term
                     tot_loan_int = max(0.0, round(float(l_tot_rep) - float(l_princ), 2))
-                    prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (l_id,))
-                    prev_int_rec = float(prev_int_row[0][0]) if prev_int_row else 0.0
-                    rem_int_to_rec = max(0.0, round(tot_loan_int - prev_int_rec, 2))
+                    tot_rep_val = float(l_tot_rep)
+                    cur_due_val = float(l_due)
                     
-                    if float(l_tot_rep) > 0 and tot_loan_int > 0:
-                        prop_int = round(float(amt_paid) * (tot_loan_int / float(l_tot_rep)), 2)
+                    cycle_paid_so_far = max(0.0, round(tot_rep_val - cur_due_val, 2))
+                    if tot_rep_val > 0 and tot_loan_int > 0:
+                        cycle_int_rec = round(cycle_paid_so_far * (tot_loan_int / tot_rep_val), 2)
+                    else:
+                        cycle_int_rec = 0.0
+                    rem_int_to_rec = max(0.0, round(tot_loan_int - cycle_int_rec, 2))
+                    
+                    if tot_rep_val > 0 and tot_loan_int > 0:
+                        prop_int = round(float(amt_paid) * (tot_loan_int / tot_rep_val), 2)
                         if new_due <= 0:
                             int_portion = rem_int_to_rec
                         else:
@@ -1125,25 +1182,31 @@ def render_personal_loans():
              cur_sdate, cur_tdays, cur_tmonths, cur_irate, cur_itype, cur_cid, cur_stat,
              cur_ren_cnt, cur_last_ren, cur_gname, cur_gphone, cur_purp, cur_rem) = sel_r_data
              
-            # Calculate financial metrics for current loan
-            prev_int_row = run_query("SELECT COALESCE(SUM(interest_component), 0), COALESCE(SUM(principal_component), 0), COALESCE(SUM(amount_paid), 0) FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (cur_pl_id,))
-            int_rec_so_far = float(prev_int_row[0][0]) if prev_int_row else 0.0
-            princ_rec_so_far = float(prev_int_row[0][1]) if prev_int_row else 0.0
-            tot_paid_so_far = float(prev_int_row[0][2]) if prev_int_row else 0.0
-            
+            # Calculate financial metrics for current loan (cleanly scoped to active term/cycle)
             tot_orig_int = float(cur_tot_int or 0.0)
             tot_orig_rep = float(cur_tot_rep or (float(cur_princ) + tot_orig_int))
-            unearned_int_rem = max(0.0, round(tot_orig_int - int_rec_so_far, 2))
-            net_princ_rem = max(0.0, round(float(cur_due) - unearned_int_rem, 2))
+            cur_due_val = float(cur_due)
+            
+            # Amount repaid during active cycle:
+            cycle_paid_so_far = max(0.0, round(tot_orig_rep - cur_due_val, 2))
+            if tot_orig_rep > 0 and tot_orig_int > 0:
+                cycle_int_rec = round(cycle_paid_so_far * (tot_orig_int / tot_orig_rep), 2)
+            else:
+                cycle_int_rec = 0.0
+                
+            unearned_int_rem = max(0.0, round(tot_orig_int - cycle_int_rec, 2))
+            net_princ_rem = max(0.0, round(cur_due_val - unearned_int_rem, 2))
+            if net_princ_rem <= 0 and cur_due_val > 0 and unearned_int_rem <= 0:
+                net_princ_rem = cur_due_val
             
             with st.container(border=True):
                 st.markdown(f"#### 👤 Borrower: **{cur_cname}** (Loan: `{cur_l_no}`, Acc: `{cur_cacc}`)")
                 sc1, sc2, sc3, sc4 = st.columns(4)
                 sc1.metric("💵 Current Principal", f"₹{float(cur_princ):,.2f}")
-                sc2.metric("💳 Outstanding Total Due", f"₹{float(cur_due):,.2f}")
-                sc3.metric("📈 Unearned Interest in Suspense", f"₹{unearned_int_rem:,.2f}")
-                sc4.metric("🔄 Renewal History", f"Cycle #{cur_ren_cnt + 1}" if cur_ren_cnt > 0 else "First Renewal (Cycle #1)")
-                st.caption(f"📌 **Original Sanction:** {cur_sdate} | **Last Renewed:** {cur_last_ren or 'Never'} | **Status:** `{cur_stat}`")
+                sc2.metric("💳 Outstanding Due", f"₹{float(cur_due):,.2f}")
+                sc3.metric("📈 Unearned Interest", f"₹{unearned_int_rem:,.2f}")
+                sc4.metric("🔄 Renewal History", f"Cycle #{cur_ren_cnt + 1}" if cur_ren_cnt > 0 else "Cycle #1 (Initial)")
+                st.caption(f"📌 **Sanctioned:** {cur_sdate} | **Last Renewed:** {cur_last_ren or 'Never'} | **Status:** `{cur_stat}`")
 
             st.markdown("### 2️⃣ Renewal & Rollover Strategy")
             ren_mode = st.radio(
@@ -1171,10 +1234,7 @@ def render_personal_loans():
                     interest_settle_amt = 0.0
                     
                 # Starting base principal for renewed cycle
-                base_princ = net_princ_rem if unearned_int_rem > 0 else float(cur_due)
-                if base_princ <= 0 and topup_amount <= 0:
-                    base_princ = float(cur_princ)
-                
+                base_princ = net_princ_rem if net_princ_rem > 0 else float(cur_princ)
                 renewed_principal = round(base_princ + topup_amount, 2)
                 
                 st.markdown("### 3️⃣ New Loan Tenure & Interest Rate")
@@ -1194,7 +1254,7 @@ def render_personal_loans():
                     new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_days / 365.0), 2)
                     new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
                     new_installment = round(new_tot_repayable / float(new_tenure_days), 2)
-                    new_inst_text = f"₹{new_installment:,.2f} / Day ({new_tenure_days} Days)"
+                    new_inst_text = f"₹{new_installment:,.2f} / Day ({new_tenure_days}d)"
                 elif "Monthly" in new_scheme_choice:
                     new_tenure_months = rn_col3.number_input("New Tenure (Months)", min_value=1, value=int(cur_tmonths or 12), step=1)
                     new_tenure_days = new_tenure_months * 30
@@ -1202,7 +1262,7 @@ def render_personal_loans():
                     new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_months / 12.0), 2)
                     new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
                     new_installment = round(new_tot_repayable / float(new_tenure_months), 2)
-                    new_inst_text = f"₹{new_installment:,.2f} / Month ({new_tenure_months} Months)"
+                    new_inst_text = f"₹{new_installment:,.2f} / Mo ({new_tenure_months}m)"
                 elif "Weekly" in new_scheme_choice:
                     new_tenure_weeks = rn_col3.number_input("New Tenure (Weeks)", min_value=2, value=20, step=1)
                     new_tenure_days = new_tenure_weeks * 7
@@ -1211,7 +1271,7 @@ def render_personal_loans():
                     new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_weeks / 52.0), 2)
                     new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
                     new_installment = round(new_tot_repayable / float(new_tenure_weeks), 2)
-                    new_inst_text = f"₹{new_installment:,.2f} / Week ({new_tenure_weeks} Weeks)"
+                    new_inst_text = f"₹{new_installment:,.2f} / Wk ({new_tenure_weeks}w)"
                 else:
                     new_tenure_months = rn_col3.number_input("New Agreed Term (Months)", min_value=1, value=int(cur_tmonths or 12), step=1)
                     new_tenure_days = new_tenure_months * 30
@@ -1219,15 +1279,15 @@ def render_personal_loans():
                     new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_months / 12.0), 2)
                     new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
                     new_installment = 0.0
-                    new_inst_text = "Flexible (Pay Any Amount Anytime)"
+                    new_inst_text = "Flexible (Anytime)"
                 
                 with st.container(border=True):
                     st.markdown("#### 📊 Live Loan Renewal Breakdown")
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("💵 Renewed Principal", f"₹{renewed_principal:,.2f}")
-                    m2.metric(f"📈 New Planned Interest ({new_int_rate}%)", f"₹{new_planned_interest:,.2f}")
-                    m3.metric("💳 New Total Repayable Due", f"₹{new_tot_repayable:,.2f}")
-                    m4.metric("📅 New Installment", new_inst_text)
+                    m2.metric(f"📈 New Interest ({new_int_rate}%)", f"₹{new_planned_interest:,.2f}")
+                    m3.metric("💳 Total Due", f"₹{new_tot_repayable:,.2f}")
+                    m4.metric("📅 Installment", new_inst_text)
                     
                 st.markdown("### 4️⃣ Disbursal & Receipt Settlement Details")
                 rn_d1, rn_d2 = st.columns(2)
@@ -1792,9 +1852,9 @@ def render_gold_loans():
                 st.markdown(f"#### 🪙 Borrower: **{c_gl_cname}** (Loan: `{c_gl_no}`, Packet: `{c_gl_pkt}`, Locker: `{c_gl_lock}`)")
                 gc1, gc2, gc3, gc4 = st.columns(4)
                 gc1.metric("🔒 Pledged Net Gold", f"{float(c_gl_net):.3f} g")
-                gc2.metric("💵 Current Principal Due", f"₹{float(c_gl_due):,.2f}")
-                gc3.metric("📅 Monthly Interest Servicing", f"₹{float(c_gl_mint):,.2f}/mo")
-                gc4.metric("🔄 Renewal History", f"Cycle #{c_gl_ren_cnt + 1}" if c_gl_ren_cnt > 0 else "First Renewal (Cycle #1)")
+                gc2.metric("💵 Principal Due", f"₹{float(c_gl_due):,.2f}")
+                gc3.metric("📅 Monthly Interest", f"₹{float(c_gl_mint):,.2f}/mo")
+                gc4.metric("🔄 Renewal History", f"Cycle #{c_gl_ren_cnt + 1}" if c_gl_ren_cnt > 0 else "Cycle #1 (Initial)")
                 st.caption(f"📌 **Ornaments:** {c_gl_orn} | **Sanction Date:** {c_gl_sdate} | **Last Renewed:** {c_gl_last_ren or 'Original Appraisal'}")
 
             with st.form(f"gold_loan_renewal_form_{c_gl_id}"):
@@ -2262,7 +2322,7 @@ def render_fixed_deposits():
             <div class="fd-receipt">
               <div class="header">
                 <h2>AARSHA NIDHI LIMITED</h2>
-                <p>6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+                <p>6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
                 <p>CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
               </div>
               <div style="text-align:center;">
@@ -2410,15 +2470,9 @@ def render_recurring_deposits():
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
-            total_deposits = monthly_amt * tenure
-            i_qc = interest_rate / 400.0
-            approx_maturity = 0.0
-            for k in range(1, int(tenure) + 1):
-                approx_maturity += monthly_amt * ((1.0 + i_qc) ** ((tenure - k + 1) / 3.0))
-            approx_maturity = round(approx_maturity, 2)
-            approx_interest = round(approx_maturity - total_deposits, 2)
+            total_deposits, approx_maturity, approx_interest = calculate_rd_maturity(monthly_amt, interest_rate, tenure)
             
-            st.info(f"**Estimated Maturity (Quarterly Compounding):** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
+            st.info(f"**Estimated Maturity (Quarterly Compounded):** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
             
             if st.button("Open RD Account", use_container_width=True):
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -2427,8 +2481,8 @@ def render_recurring_deposits():
                     st.stop()
                 
                 run_query("""
-                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount)
-                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?)
+                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance)
+                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?, 0)
                 """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
                       datetime.now(IST).strftime("%Y-%m-%d"), payment_mode, approx_maturity), fetch=False)
                 
@@ -2440,7 +2494,7 @@ def render_recurring_deposits():
                     rd_id_result = run_query("SELECT last_insert_rowid()")
                 if rd_id_result and jv_result:
                     rd_id = rd_id_result[0][0]
-                    run_query("UPDATE recurring_deposits SET installments_paid=1 WHERE rd_id=?", (rd_id,), fetch=False)
+                    run_query("UPDATE recurring_deposits SET installments_paid=1, collected_balance=? WHERE rd_id=?", (monthly_amt, rd_id), fetch=False)
                     
                     today = datetime.now(IST).strftime("%Y-%m-%d")
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -2501,7 +2555,8 @@ def render_recurring_deposits():
                 
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
-                    run_query("UPDATE recurring_deposits SET installments_paid=? WHERE rd_id=?", (new_paid, rd_id), fetch=False)
+                    new_collected = float(new_paid * monthly_amt)
+                    run_query("UPDATE recurring_deposits SET installments_paid=?, collected_balance=? WHERE rd_id=?", (new_paid, new_collected, rd_id), fetch=False)
                     
                     jv_result = post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt)
                     
@@ -2613,7 +2668,7 @@ def render_recurring_deposits():
             <div class="rd-receipt">
               <div class="header">
                 <h2>AARSHA NIDHI LIMITED</h2>
-                <p>6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+                <p>6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
                 <p>CIN: U65990KL22021PLN069978 | Ph: 0471-2994535</p>
               </div>
               <div style="text-align:center;">
@@ -2713,11 +2768,9 @@ def render_recurring_deposits():
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt, interest_rate = selected_rd
             
             if paid_inst < tenure_m:
-                st.warning(f"⚠️ Only {paid_inst} out of {tenure_m} installments paid. Early closure will reduce maturity amount.")
-                total_paid = monthly_amt * paid_inst
-                prorated_interest = total_paid * (interest_rate / 100) * (paid_inst / 24)
-                prorated_maturity = total_paid + prorated_interest
-                st.info(f"**Prorated Maturity Amount:** ₹{prorated_maturity:,.2f}")
+                st.warning(f"⚠️ Only {paid_inst} out of {tenure_m} installments paid. Early closure will calculate quarterly compounded interest on installments paid so far.")
+                total_paid, prorated_maturity, prorated_interest = calculate_rd_accrued_value(monthly_amt, interest_rate, paid_inst)
+                st.info(f"**Prorated Maturity Amount (Quarterly Compounded):** ₹{prorated_maturity:,.2f} (Principal: ₹{total_paid:,.2f} + Interest: ₹{prorated_interest:,.2f})")
                 maturity_amount_to_pay = prorated_maturity
             else:
                 maturity_amount_to_pay = maturity_amt
@@ -2803,33 +2856,23 @@ def render_recurring_deposits():
             with col_e4:
                 edit_mat_date = st.text_input("Maturity Date (YYYY-MM-DD)", value=str(c_mat_date) if c_mat_date else "2026-12-20", key=f"edit_mat_date_{c_rd_id}")
 
-            # --- Live Automatic Recalculation Engine based on Amount Paid ---
-            # 1. Quarterly Compounded Formula (Banking / RBI Standard):
-            calc_qc_maturity = 0.0
-            if edit_col_balance > 0 and edit_tenure > 0 and edit_rate > 0:
-                i_qc = edit_rate / 400.0
-                p_slice = edit_col_balance / float(edit_tenure)
-                for k in range(1, int(edit_tenure) + 1):
-                    q_rem = (edit_tenure - k + 1) / 3.0
-                    calc_qc_maturity += p_slice * ((1.0 + i_qc) ** q_rem)
-                calc_qc_maturity = round(calc_qc_maturity, 2)
-            else:
-                calc_qc_maturity = float(edit_col_balance)
-            calc_qc_interest = max(0.0, calc_qc_maturity - edit_col_balance)
-
-            # 2. Standard RD Cumulative Formula: Amount Paid * (Rate / 100) * ((Tenure + 1) / 24)
-            calc_rd_interest = float(edit_col_balance * (edit_rate / 100.0) * ((edit_tenure + 1) / 24.0))
-            calc_rd_maturity = float(edit_col_balance + calc_rd_interest)
+            # --- Live Automatic Recalculation Engine ---
+            # 1. Full Tenure Maturity (Quarterly Compounded Banking / RBI Standard):
+            calc_full_dep, calc_full_maturity, calc_full_interest = calculate_rd_maturity(edit_monthly, edit_rate, int(edit_tenure))
+            
+            # 2. Accrued Value for Installments Paid to Date:
+            calc_acc_paid, calc_acc_maturity, calc_acc_interest = calculate_rd_accrued_value(edit_monthly, edit_rate, int(edit_paid))
             
             st.markdown("---")
             st.markdown("#### ⚡ Live Maturity Amount Selection")
             
-            # Formulate options including existing stored certificate amount if available
+            # Formulate options
             calc_options = []
-            if c_maturity and float(c_maturity) > 0:
-                calc_options.append(f"📄 Keep Stored Certificate Amount: ₹{float(c_maturity):,.2f}")
-            calc_options.append(f"🏦 Quarterly Compounded Banking Formula (Maturity: ₹{calc_qc_maturity:,.2f} | Interest: ₹{calc_qc_interest:,.2f})")
-            calc_options.append(f"⚡ Standard Cumulative RD Formula (Maturity: ₹{calc_rd_maturity:,.2f} | Interest: ₹{calc_rd_interest:,.2f})")
+            calc_options.append(f"🏦 Full Tenure Banking Maturity: ₹{calc_full_maturity:,.2f} (Deposits: ₹{calc_full_dep:,.2f} + Interest: ₹{calc_full_interest:,.2f})")
+            if edit_paid < edit_tenure and edit_paid > 0:
+                calc_options.append(f"📊 Accrued Value for {int(edit_paid)} Paid Installments: ₹{calc_acc_maturity:,.2f} (Paid: ₹{calc_acc_paid:,.2f} + Interest: ₹{calc_acc_interest:,.2f})")
+            if c_maturity and float(c_maturity) > 0 and round(float(c_maturity), 2) != calc_full_maturity:
+                calc_options.append(f"📄 Keep Currently Stored Amount: ₹{float(c_maturity):,.2f}")
             calc_options.append("✍️ Enter Custom Manual Maturity Amount")
             
             calc_method = st.radio(
@@ -2839,27 +2882,31 @@ def render_recurring_deposits():
                 key=f"calc_method_{c_rd_id}"
             )
             
-            if "Keep Stored Certificate" in calc_method:
+            if "Full Tenure Banking Maturity" in calc_method:
+                final_maturity_amt = calc_full_maturity
+                final_interest = calc_full_interest
+                disp_principal = calc_full_dep
+            elif "Accrued Value" in calc_method:
+                final_maturity_amt = calc_acc_maturity
+                final_interest = calc_acc_interest
+                disp_principal = calc_acc_paid
+            elif "Keep Currently Stored" in calc_method:
                 final_maturity_amt = float(c_maturity)
                 final_interest = max(0.0, final_maturity_amt - edit_col_balance)
-            elif "Quarterly Compounded" in calc_method:
-                final_interest = calc_qc_interest
-                final_maturity_amt = calc_qc_maturity
-            elif "Standard Cumulative" in calc_method:
-                final_interest = calc_rd_interest
-                final_maturity_amt = calc_rd_maturity
+                disp_principal = edit_col_balance
             else:
                 final_maturity_amt = st.number_input(
                     "Enter Custom Maturity Amount (₹)",
                     min_value=0.0,
-                    value=float(c_maturity) if c_maturity else calc_qc_maturity,
+                    value=float(c_maturity) if c_maturity else calc_full_maturity,
                     step=1000.0,
                     key=f"custom_mat_amt_{c_rd_id}"
                 )
                 final_interest = max(0.0, final_maturity_amt - edit_col_balance)
+                disp_principal = edit_col_balance
             
             m_col1, m_col2, m_col3 = st.columns(3)
-            m_col1.metric("💰 Amount Paid / Deposited", f"₹{edit_col_balance:,.2f}")
+            m_col1.metric("💰 Expected / Paid Principal", f"₹{disp_principal:,.2f}")
             m_col2.metric("📈 Calculated Interest", f"₹{final_interest:,.2f}")
             m_col3.metric("🎯 Total Maturity Amount", f"₹{final_maturity_amt:,.2f}")
             
@@ -2868,6 +2915,7 @@ def render_recurring_deposits():
             
             with btn_col1:
                 if st.button("💾 Save & Update RD Account Changes", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
+                    closed_date_val = None if edit_status == 'ACTIVE' else datetime.now(IST).strftime("%Y-%m-%d")
                     run_query("""
                         UPDATE recurring_deposits 
                         SET monthly_amount = ?,
@@ -2881,11 +2929,12 @@ def render_recurring_deposits():
                             rd_no = ?,
                             scheme_name = ?,
                             maturity_date = ?,
-                            collected_balance = ?
+                            collected_balance = ?,
+                            closed_date = ?
                         WHERE rd_id = ?
                     """, (edit_monthly, edit_tenure, edit_rate, edit_paid, edit_nominee, 
                           edit_status, edit_created, final_maturity_amt, edit_rd_no, 
-                          edit_scheme, edit_mat_date, edit_col_balance, c_rd_id), fetch=False)
+                          edit_scheme, edit_mat_date, edit_col_balance, closed_date_val, c_rd_id), fetch=False)
                     
                     st.success(f"✅ Recurring Deposit #{edit_rd_no} updated successfully! Amount Paid: ₹{edit_col_balance:,.2f} | Maturity: ₹{final_maturity_amt:,.2f}")
                     time.sleep(0.1)
@@ -3300,44 +3349,82 @@ def extract_party_details(particulars, acc_code, acc_name, cust_list):
     p = str(particulars).strip()
     
     # 1. Staff Salary & Benefits (EXP-104 or staff withdrawal names)
-    staff_names = ['SREEKALA J', 'SASIKUMARAN A', 'BINU B', 'KEERTHI R', 'SREEJITH RADHAKRISHNAN', 'LEKSHMI SK', 'SREEKALA', 'SASIKUMARAN', 'SREEJITH', 'BINU', 'KEERTHI']
+    staff_names = ['SREEKALA J', 'SASIKUMARAN A', 'BINU B', 'KEERTHI R', 'SREEJITH RADHAKRISHNAN', 'LEKSHMI SK', 'SREEKALA', 'SASIKUMARAN', 'SREEJITH', 'BINU', 'KEERTHI', 'LEKSHMI']
     if acc_code == 'EXP-104' or any(k in p.lower() for k in ['salary', 'salaries', 'staff']):
         for sn in staff_names:
             if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
                 return f"Staff Salary: {sn}"
         return "Staff Salaries & Benefits"
-        
-    # 2. Match Registered Customers
-    for cid, cname, cacc in cust_list:
-        if cacc and len(str(cacc)) >= 4 and str(cacc) in p:
-            return f"{cname} (Acc: {cacc})"
-        c_parts = [part.strip() for part in re.split(r'[\s\.]+', cname) if len(part.strip()) >= 3 and part.upper() not in ('THE', 'AND', 'DOCTOR', 'FOR')]
-        for cp in c_parts:
-            if re.search(r'\b' + re.escape(cp) + r'\b', p, re.IGNORECASE):
-                acc_label = f" (Acc: {cacc})" if cacc else ""
-                return f"{cname}{acc_label}"
-                
-    # 3. Staff Field Collections / Staff UPI Deposits
-    for sn in staff_names:
-        if re.search(r'\b' + re.escape(sn) + r'\b', p, re.IGNORECASE):
-            return f"Staff Field Agent: {sn}"
-            
-    # 4. Bank Charges / Processing
-    if any(k in p.lower() for k in ['charge', 'sms', 'pord', 'gst', 'consolidated chg', 'atm']):
-        return "Union Bank Processing / Service Charges"
-        
-    # 5. Cash Contra
+
+    # 2. Professional Charges / CA Fees
+    if acc_code == 'EXP-106' or 'ca fees' in p.lower() or 'professional' in p.lower() or 'audit' in p.lower():
+        m_ca = re.search(r'([A-Za-z\.\s]+?)\s*[-:]\s*CA\s*Fees', p, re.IGNORECASE)
+        if m_ca:
+            return f"CA Professional Charges: {m_ca.group(1).strip()}"
+        return "CA / Professional Charges"
+
+    # 3. Cash Contra / Drawer
     if 'cash' in p.lower() or 'contra' in p.lower() or acc_code == 'AST-101':
         return "Cash Drawer (Office Contra)"
         
-    # 6. Extract UPI Member Name
+    # 4. Bank Charges & Taxes
+    if any(k in p.lower() for k in ['sms charge', 'sms charges', 'bank charge', 'bank charges', 'pord', 'gst', 'consolidated chg', 'atm charge', 'transaction charge']):
+        return "Union Bank Processing / Service Charges"
+
+    # 5. Office Rent
+    if acc_code == 'EXP-105' or 'rent' in p.lower():
+        return "Office Rent"
+
+    # 6. Opening Balance
+    if 'opening' in p.lower():
+        return "Opening Balance"
+        
+    # 7. Exact Customer Account Number Match (100% certainty)
+    for cid, cname, cacc in cust_list:
+        if cacc and len(str(cacc).strip()) >= 4 and str(cacc).strip() in p:
+            return f"{cname} (Acc: {cacc})"
+            
+    # 8. Full Customer Name Matching (Strict - NO single-word loose matching)
+    sorted_cust = sorted(cust_list, key=lambda c: len(c[1]), reverse=True)
+    for cid, cname, cacc in sorted_cust:
+        if not cname:
+            continue
+        c_clean = re.sub(r'\s+', ' ', cname).strip()
+        core_words = [w for w in re.split(r'[\s\.]+', c_clean) if len(w) > 1]
+        
+        # Exact full name match (e.g. "RANJITH R", "PRASAD U")
+        if len(c_clean) >= 4 and re.search(r'\b' + re.escape(c_clean) + r'\b', p, re.IGNORECASE):
+            acc_label = f" (Acc: {cacc})" if cacc else ""
+            return f"{cname}{acc_label}"
+            
+        # Core full name match with at least 2 full words (e.g. "AJAYA KUMAR")
+        if len(core_words) >= 2:
+            core_phrase = " ".join(core_words)
+            if len(core_phrase) >= 6 and re.search(r'\b' + re.escape(core_phrase) + r'\b', p, re.IGNORECASE):
+                acc_label = f" (Acc: {cacc})" if cacc else ""
+                return f"{cname}{acc_label}"
+
+    # 9. Clean Literal Party Extraction from Particulars (e.g. Deposit Santhosh Kumar -> Santhosh Kumar)
+    m_dep = re.search(r'(?:Saving(?:s)?\s*Deposit(?:\s*&\s*Processing\s*Charge)?|Deposit\s+Suspended|Deposit)\s*[-:\s]+([A-Za-z\s\.]+?)(?:\s*[-:]|\s*$)', p, re.IGNORECASE)
+    if m_dep:
+        extracted = m_dep.group(1).strip()
+        if len(extracted) >= 3 and extracted.lower() not in ['cash', 'liquid', 'savings deposit', 'bank charge', 'office rent', 'opening balance']:
+            return extracted
+
+    m_tail = re.search(r'[-:]\s*([A-Za-z\s\.]+)$', p)
+    if m_tail:
+        extracted = m_tail.group(1).strip()
+        if len(extracted) >= 3 and extracted.lower() not in ['savings deposit', 'bank charge', 'office rent', 'professional charges']:
+            return extracted
+
+    # 10. UPI Member Name
     upi_match = re.search(r'/CR/([^/]+)/', p, re.IGNORECASE)
     if upi_match:
         name_clean = upi_match.group(1).strip()
         if name_clean and len(name_clean) > 1:
             return f"Member: {name_clean}"
             
-    # 7. Extract NEFT Party Name
+    # 11. NEFT Party Name
     neft_match = re.search(r'NEFT(?:O|-|:)?\s*([A-Za-z\s\.]+?)(?:\s+\d+|\s+HDFC|\s+SBIN|\s+CNRB|$)', p, re.IGNORECASE)
     if neft_match:
         n_clean = neft_match.group(1).strip()
@@ -3345,6 +3432,7 @@ def extract_party_details(particulars, acc_code, acc_name, cust_list):
             return f"Party: {n_clean}"
             
     return p
+
 
 def render_bank_book():
     st.title("🏦 Bank Book Entries")
@@ -4291,9 +4379,26 @@ def render_financial_statements():
             
             # Format display data
             df_display = format_df_dates(df_ledger.copy())
-            df_display["Debit (₹)"] = df_display["Debit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
-            df_display["Credit (₹)"] = df_display["Credit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
-            df_display["Balance (₹)"] = df_display["Balance (₹)"].apply(lambda x: f"₹{x:,.2f}")
+            def _fmt_money(v):
+                if pd.isnull(v) or v == "" or v == "-":
+                    return "-"
+                try:
+                    val = float(str(v).replace("₹", "").replace(",", ""))
+                    return f"₹{val:,.2f}" if val > 0 else "-"
+                except (ValueError, TypeError):
+                    return str(v)
+            def _fmt_bal(v):
+                if pd.isnull(v) or v == "" or v == "-":
+                    return "-"
+                try:
+                    val = float(str(v).replace("₹", "").replace(",", ""))
+                    return f"₹{val:,.2f}"
+                except (ValueError, TypeError):
+                    return str(v)
+                    
+            df_display["Debit (₹)"] = df_display["Debit (₹)"].apply(_fmt_money)
+            df_display["Credit (₹)"] = df_display["Credit (₹)"].apply(_fmt_money)
+            df_display["Balance (₹)"] = df_display["Balance (₹)"].apply(_fmt_bal)
             df_display["Balance (₹)"] = df_display["Balance (₹)"] + " (" + df_display["Type"] + ")"
             df_display.drop(columns=["Type"], inplace=True)
             
@@ -4302,9 +4407,9 @@ def render_financial_statements():
             
             # Export to PDF
             df_pdf = format_df_dates(df_ledger.copy())
-            df_pdf["Debit (₹)"] = df_pdf["Debit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
-            df_pdf["Credit (₹)"] = df_pdf["Credit (₹)"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "-")
-            df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"].apply(lambda x: f"₹{x:,.2f}")
+            df_pdf["Debit (₹)"] = df_pdf["Debit (₹)"].apply(_fmt_money)
+            df_pdf["Credit (₹)"] = df_pdf["Credit (₹)"].apply(_fmt_money)
+            df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"].apply(_fmt_bal)
             df_pdf["Balance (₹)"] = df_pdf["Balance (₹)"] + " (" + df_pdf["Type"] + ")"
             df_pdf.drop(columns=["Type"], inplace=True)
             
@@ -4516,7 +4621,7 @@ if not get_login_status():
         st.markdown("""
         <div style="text-align: center; background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); padding: 30px 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin-bottom: 20px; color: white;">
             <h1 style="color: white !important; font-size: 26px; margin: 5px 0; font-weight: 800; letter-spacing: 0.8px; text-shadow: 0 2px 4px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; gap: 10px;">🏦 AARSHA NIDHI  LIMITED</h1>
-            <p style="color: #cbd5e1 !important; font-size: 11px; margin: 8px 0 5px 0; font-weight: 500; opacity: 0.9;">📍 6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+            <p style="color: #cbd5e1 !important; font-size: 11px; margin: 8px 0 5px 0; font-weight: 500; opacity: 0.9;">📍 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
             <p style="color: #cbd5e1 !important; font-size: 10px; margin: 5px 0; opacity: 0.8;">📄 CIN: U65990KL22021PLN069978 | 📞 Ph: 0471-2994535</p>
         </div>
         <div style="text-align: center; margin-bottom: 15px;">
@@ -5105,13 +5210,85 @@ st.markdown("""
         border-color: #222222 !important;
         color: #ffffff !important;
     }
+
+    /* ======================================================== */
+    /* ANTI-TRUNCATION & BORDER CONTAINMENT DISPLAY FIXES       */
+    /* ======================================================== */
+    /* 1. Prevent border overflow and enforce clean container containment */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        overflow: hidden !important;
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stVerticalBlockBorderWrapper"] > div {
+        overflow: hidden !important;
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stMetric"] {
+        overflow: hidden !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: clamp(1.05rem, 1.6vw, 1.25rem) !important;
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
+        word-break: break-word !important;
+        line-height: 1.25 !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stMetricValue"] > div {
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
+        word-break: break-word !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stMetricLabel"] {
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
+        word-break: break-word !important;
+        font-size: 0.82rem !important;
+        font-weight: 600 !important;
+        line-height: 1.2 !important;
+        max-width: 100% !important;
+    }
+    
+    /* 2. Prevent Selectbox / Dropdown option truncation */
+    div[data-baseweb="select"] span {
+        white-space: normal !important;
+        text-overflow: clip !important;
+        overflow: visible !important;
+    }
+    div[role="listbox"] li {
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
+    
+    /* 3. Ensure Dataframe tables show full contents cleanly without cutoff */
+    [data-testid="stDataFrame"] {
+        width: 100% !important;
+    }
+    [data-testid="stDataFrame"] div[data-testid="glide-data-grid"] {
+        width: 100% !important;
+    }
+    
+    /* 4. Table cell word wrapping and visibility */
+    div[data-testid="stTable"] td, div[data-testid="stTable"] th {
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
 </style>
 <div class="company-header">
     <div class="brand">
         <div style="font-size: 32px;">🏦</div>
         <div>
             <h1>AARSHA NIDHI LIMITED</h1>
-            <div class="sub">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
+            <div class="sub">6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
         </div>
     </div>
     <div class="contact">

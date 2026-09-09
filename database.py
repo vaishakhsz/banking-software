@@ -691,6 +691,9 @@ def init_db():
         else:
             cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
 
+        if USING_SUPABASE:
+            sync_postgres_sequences(conn)
+
         conn.commit()
         DB_INITIALIZED = True
         DB_INIT_ERROR = None
@@ -701,6 +704,65 @@ def init_db():
         return False
     finally:
         release_connection(conn)
+
+def sync_postgres_sequences(conn=None):
+    """
+    Ensures all PostgreSQL auto-increment sequences (SERIAL/BIGSERIAL) are 
+    advanced to match or exceed the maximum ID present in each table.
+    Prevents 'duplicate key value violates unique constraint' errors permanently.
+    """
+    if not USING_SUPABASE:
+        return
+        
+    should_close = False
+    if conn is None:
+        conn = get_connection()
+        should_close = True
+        
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DO $$
+            DECLARE
+                t text;
+                c text;
+                s text;
+                m bigint;
+            BEGIN
+                FOR t, c IN VALUES 
+                    ('jv_entries', 'entry_id'),
+                    ('journal_vouchers', 'jv_id'),
+                    ('bank_book', 'id'),
+                    ('cash_book', 'id'),
+                    ('customers', 'id'),
+                    ('transactions', 'id'),
+                    ('personal_loans', 'id'),
+                    ('gold_loans', 'id'),
+                    ('loan_repayments', 'id'),
+                    ('fixed_deposits', 'fd_id'),
+                    ('recurring_deposits', 'rd_id'),
+                    ('accounts', 'id')
+                LOOP
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = t AND table_schema = 'public') THEN
+                        s := pg_get_serial_sequence(t, c);
+                        IF s IS NOT NULL THEN
+                            EXECUTE format('SELECT COALESCE(MAX(%I), 0) FROM %I', c, t) INTO m;
+                            EXECUTE format('SELECT setval(%L, %s, true)', s, GREATEST(m, 1));
+                        END IF;
+                    END IF;
+                END LOOP;
+            END $$;
+        """)
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Sequence sync notice: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        if should_close:
+            release_connection(conn)
 
 def run_query(query, params=(), fetch=True, max_retries=3):
     """Execute a database query with auto-initialization, automatic retry on SSL/connection drops, and connection cleanup"""
@@ -1511,7 +1573,15 @@ def record_bank_book_transaction(entry_type, amount, bank_name, bank_code, accou
                 conn.rollback()
             except Exception:
                 pass
-        return False, str(e)
+        err_msg = str(e)
+        if USING_SUPABASE and any(term in err_msg.lower() for term in ["unique constraint", "pkey", "duplicate key"]):
+            try:
+                sync_postgres_sequences()
+                # Retry once after auto-healing sequence
+                return record_bank_book_transaction(entry_type, amount, bank_name, bank_code, account_code, particulars, narration, tx_date)
+            except Exception as retry_e:
+                err_msg = str(retry_e)
+        return False, err_msg
     finally:
         release_connection(conn)
 

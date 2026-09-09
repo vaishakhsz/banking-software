@@ -649,13 +649,22 @@ def init_db():
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_name TEXT;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_data BYTEA;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-                    ALTER TABLE loan_repayments ADD COLUMN IF NOT EXISTS created_at TEXT;
+                    DO $$ 
+                    BEGIN
+                        BEGIN
+                            ALTER TABLE gold_loans ALTER COLUMN monthly_interest_rate DROP NOT NULL;
+                        EXCEPTION WHEN OTHERS THEN NULL;
+                        END;
+                        BEGIN
+                            ALTER TABLE gold_loans ALTER COLUMN outstanding_principal DROP NOT NULL;
+                        EXCEPTION WHEN OTHERS THEN NULL;
+                        END;
+                        BEGIN
+                            ALTER TABLE gold_loans ALTER COLUMN appraised_value DROP NOT NULL;
+                        EXCEPTION WHEN OTHERS THEN NULL;
+                        END;
+                    END $$;
                 """)
-                for leg_col in ["monthly_interest_rate", "outstanding_principal", "appraised_value"]:
-                    try:
-                        cursor.execute(f"ALTER TABLE gold_loans ALTER COLUMN {leg_col} DROP NOT NULL;")
-                    except Exception:
-                        pass
             except Exception:
                 pass
         else:

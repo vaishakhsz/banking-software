@@ -559,6 +559,23 @@ def init_db():
                 narration TEXT,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS loan_emi_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_type TEXT,
+                loan_id INTEGER,
+                loan_no TEXT,
+                emi_number INTEGER,
+                from_date TEXT,
+                to_date TEXT,
+                due_date TEXT,
+                principal_component REAL DEFAULT 0,
+                interest_component REAL DEFAULT 0,
+                emi_amount REAL DEFAULT 0,
+                paid_amount REAL DEFAULT 0,
+                paid_date TEXT,
+                status TEXT DEFAULT 'PENDING',
+                created_at TEXT
+            );
         """
         
         if USING_SUPABASE:
@@ -596,6 +613,13 @@ def init_db():
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS guarantor_relation TEXT;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS guarantor_address TEXT;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS loan_from_date TEXT;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS loan_to_date TEXT;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS first_emi_due TEXT;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS last_emi_due TEXT;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS monthly_principal_emi DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS monthly_interest_emi DOUBLE PRECISION DEFAULT 0;
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
@@ -611,6 +635,15 @@ def init_db():
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS monthly_interest_due DOUBLE PRECISION DEFAULT 0;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS outstanding_due DOUBLE PRECISION DEFAULT 0;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS closure_date TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS loan_from_date TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS loan_to_date TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS first_emi_due TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS last_emi_due TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS monthly_principal_emi DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS monthly_interest_emi DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS installment_amount DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_name TEXT;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_data BYTEA;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
                 """)
             except Exception:
@@ -632,7 +665,20 @@ def init_db():
                     cursor.execute(f"ALTER TABLE recurring_deposits ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
-            for col in [("renewal_count", "INTEGER DEFAULT 0"), ("last_renewal_date", "TEXT")]:
+            for col in [
+                ("renewal_count", "INTEGER DEFAULT 0"),
+                ("last_renewal_date", "TEXT"),
+                ("guarantor_relation", "TEXT"),
+                ("guarantor_address", "TEXT"),
+                ("loan_from_date", "TEXT"),
+                ("loan_to_date", "TEXT"),
+                ("first_emi_due", "TEXT"),
+                ("last_emi_due", "TEXT"),
+                ("monthly_principal_emi", "REAL DEFAULT 0"),
+                ("monthly_interest_emi", "REAL DEFAULT 0"),
+                ("gold_image_name", "TEXT"),
+                ("gold_image_data", "BLOB")
+            ]:
                 try:
                     cursor.execute(f"ALTER TABLE personal_loans ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
@@ -739,6 +785,7 @@ def sync_postgres_sequences(conn=None):
                     ('personal_loans', 'id'),
                     ('gold_loans', 'id'),
                     ('loan_repayments', 'id'),
+                    ('loan_emi_schedules', 'id'),
                     ('fixed_deposits', 'fd_id'),
                     ('recurring_deposits', 'rd_id'),
                     ('accounts', 'id')

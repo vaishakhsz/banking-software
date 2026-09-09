@@ -50,7 +50,7 @@ def create_pdf_report(title, df):
     # Company Header
     elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
     elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subheader_style))
-    elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", subheader_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", subheader_style))
     elements.append(Spacer(1, 6))
     elements.append(Paragraph(title, title_style))
     elements.append(Spacer(1, 8))
@@ -186,7 +186,7 @@ def create_csv_report(title, df, from_date=None, to_date=None):
     # 1. Company Header (matching PDF)
     writer.writerow(["AARSHA NIDHI LIMITED"])
     writer.writerow(["6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"])
-    writer.writerow(["CIN: U65990KL22021PLN069978 | Ph: 0471-2994535"])
+    writer.writerow(["CIN: U65990KL2021PLN069978 | Ph: 0471-2994535"])
     
     # 2. Report Title & Date Scope
     date_str = f"From: {from_date} To: {to_date}" if from_date and to_date else ""
@@ -299,7 +299,7 @@ def create_excel_report(title, df, from_date=None, to_date=None):
     # Row 3: CIN
     ws.merge_cells(f"A3:{last_col_letter}3")
     c3 = ws["A3"]
-    c3.value = "CIN: U65990KL22021PLN069978 | Ph: 0471-2994535"
+    c3.value = "CIN: U65990KL2021PLN069978 | Ph: 0471-2994535"
     c3.font = Font(name="Segoe UI", size=9, color="4B5563")
     c3.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[3].height = 16
@@ -477,7 +477,7 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     
     elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
     elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_header_style))
-    elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", sub_header_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", sub_header_style))
     elements.append(Spacer(1, 4))
     
     if voucher_type == 'CB':
@@ -738,7 +738,7 @@ def generate_fd_pdf(fd_data):
     
     elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
     elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))
-    elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", subtitle_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", subtitle_style))
     elements.append(Spacer(1, 4))
     elements.append(Paragraph("FIXED DEPOSIT RECEIPT / LEDGER", heading_style))
     
@@ -973,7 +973,7 @@ def generate_rd_pdf(rd_data):
     
     elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
     elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))
-    elements.append(Paragraph("CIN: U65990KL22021PLN069978 | Ph: 0471-2994535", subtitle_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", subtitle_style))
     elements.append(Spacer(1, 4))
     elements.append(Paragraph("RECURRING DEPOSIT RECEIPT / LEDGER", heading_style))
     
@@ -1098,3 +1098,1565 @@ def generate_rd_pdf(rd_data):
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def extract_or_build_ledger_rows(loan_data, repayments_df=None):
+    """
+    Constructs normalized ledger rows:
+    [(date, voucher_no, particulars, mode, debit, credit, balance)]
+    Starts with Disbursal Debit, followed by Repayment Credits, computing running balance.
+    """
+    tot_rep = float(loan_data.get("total_amount", loan_data.get("total_repayable", 0.0)) or 0.0)
+    princ = float(loan_data.get("loan_amount", loan_data.get("principal_amount", 0.0)) or 0.0)
+    tot_int = float(loan_data.get("total_interest", 0.0) or 0.0)
+    if tot_rep == 0.0 and princ > 0.0:
+        tot_rep = princ + tot_int
+
+    s_date = str(loan_data.get("loan_date", loan_data.get("sanction_date", loan_data.get("loan_from", ""))))
+    l_no = str(loan_data.get("loan_no", ""))
+    
+    rows = []
+    
+    if repayments_df is not None and hasattr(repayments_df, "empty") and not repayments_df.empty:
+        cols = [str(c).upper() for c in repayments_df.columns]
+        has_debit = any("DEBIT" in c for c in cols)
+        
+        if has_debit:
+            for _, r in repayments_df.iterrows():
+                d_val = str(r.get("Date", r.get("DATE", "")))
+                v_val = str(r.get("Voucher No", r.get("VOUCHER NO", "")))
+                p_val = str(r.get("Particulars", r.get("PARTICULARS", r.get("Narration", r.get("NARRATION", "")))))
+                m_val = str(r.get("Payment Mode", r.get("PAYMENT MODE", r.get("Mode", ""))))
+                
+                dr_raw = r.get("Debit (Rs.)", r.get("Debit (₹)", r.get("DEBIT (Rs.)", r.get("Debit", r.get("DEBIT", 0.0)))))
+                cr_raw = r.get("Credit (Rs.)", r.get("Credit (₹)", r.get("CREDIT (Rs.)", r.get("Credit", r.get("CREDIT", 0.0)))))
+                bal_raw = r.get("Balance (Rs.)", r.get("Balance (₹)", r.get("BALANCE (Rs.)", r.get("Balance", r.get("BALANCE", 0.0)))))
+                
+                try:
+                    dr_val = float(dr_raw or 0.0)
+                except (ValueError, TypeError):
+                    dr_val = 0.0
+                try:
+                    cr_val = float(cr_raw or 0.0)
+                except (ValueError, TypeError):
+                    cr_val = 0.0
+                try:
+                    bal_val = float(bal_raw or 0.0)
+                except (ValueError, TypeError):
+                    bal_val = 0.0
+                    
+                rows.append((d_val, v_val, p_val, m_val, dr_val, cr_val, bal_val))
+            return rows
+        else:
+            running_bal = tot_rep
+            rows.append((
+                s_date,
+                l_no,
+                f"Loan Disbursed (Principal ₹{princ:,.2f} + Int ₹{tot_int:,.2f})",
+                "Disbursal",
+                tot_rep,
+                0.0,
+                running_bal
+            ))
+            for _, r in repayments_df.iterrows():
+                d_val = str(r.get("Date", r.get("payment_date", "")))
+                v_val = str(r.get("Voucher No", r.get("voucher_no", "")))
+                amt_raw = r.get("Amount Paid (₹)", r.get("Amount Paid", r.get("amount_paid", 0.0)))
+                try:
+                    amt_val = float(amt_raw or 0.0)
+                except (ValueError, TypeError):
+                    amt_val = 0.0
+                m_val = str(r.get("Payment Mode", r.get("payment_mode", "Cash")))
+                p_val = str(r.get("Narration", r.get("narration", "Loan Repayment Received")))
+                running_bal = round(running_bal - amt_val, 2)
+                rows.append((d_val, v_val, p_val, m_val, 0.0, amt_val, running_bal))
+            return rows
+    else:
+        rows.append((
+            s_date,
+            l_no,
+            f"Loan Disbursed (Principal ₹{princ:,.2f} + Int ₹{tot_int:,.2f})",
+            "Disbursal",
+            tot_rep,
+            0.0,
+            tot_rep
+        ))
+        return rows
+
+
+def create_loan_passbook_excel(loan_data, schedule_df, repayments_df=None):
+    """
+    Exports a styled Excel (.xlsx) Loan Passbook & Statement:
+    - Company & Passbook Header
+    - Customer & Guarantor Details Block
+    - Financial Terms & EMI Summary Block
+    - Section 1: Customer Repayment Ledger (Debit / Credit Transactions) - FIRST
+    - Section 2: 12-Month EMI Amortization Schedule Table - SECOND
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return b""
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Loan Passbook"
+    ws.views.sheetView[0].showGridLines = True
+
+    # Styles
+    navy_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    light_blue_fill = PatternFill(start_color="EBF5FB", end_color="EBF5FB", fill_type="solid")
+    soft_gray_fill = PatternFill(start_color="F2F4F7", end_color="F2F4F7", fill_type="solid")
+    header_section_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    font_title = Font(name="Segoe UI", size=14, bold=True, color="1F4E78")
+    font_sub = Font(name="Segoe UI", size=9, color="4B5563")
+    font_section = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
+    font_header_white = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+    font_bold = Font(name="Segoe UI", size=10, bold=True, color="111827")
+    font_normal = Font(name="Segoe UI", size=9.5, color="111827")
+
+    border_color = "D0D5DD"
+    thin_side = Side(style='thin', color=border_color)
+    double_bottom_side = Side(style='double', color="1F4E78")
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    summary_border = Border(top=thin_side, bottom=double_bottom_side, left=thin_side, right=thin_side)
+
+    # 1. Company Header
+    ws.merge_cells("A1:G1")
+    ws["A1"] = "AARSHA NIDHI LIMITED"
+    ws["A1"].font = font_title
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 22
+
+    ws.merge_cells("A2:G2")
+    ws["A2"] = "6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
+    ws["A2"].font = font_sub
+    ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 14
+
+    ws.merge_cells("A3:G3")
+    ws["A3"] = "CIN: U65990KL2021PLN069978 | Ph: 0471-2994535"
+    ws["A3"].font = font_sub
+    ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[3].height = 14
+
+    ws.merge_cells("A4:G4")
+    ws["A4"] = "LOAN PASSBOOK / LOAN STATEMENT OF ACCOUNT"
+    ws["A4"].font = Font(name="Segoe UI", size=12, bold=True, color="FFFFFF")
+    ws["A4"].fill = navy_fill
+    ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[4].height = 22
+
+    # 2. Loan & Borrower Info Block
+    info_rows = [
+        ("LOAN ACCOUNT NO", str(loan_data.get("loan_no", "")), "STATUS", str(loan_data.get("status", "ACTIVE"))),
+        ("LOAN PARTY NAME", str(loan_data.get("party_name", "")), "MEMBER ACC NO", str(loan_data.get("account_no", "N/A"))),
+        ("ADDRESS", str(loan_data.get("address", "")), "MOBILE NUMBER", str(loan_data.get("mobile", ""))),
+        ("GUARANTOR NAME", str(loan_data.get("guarantor_name", "")), "RELATION", str(loan_data.get("guarantor_relation", "Guarantor"))),
+        ("GUARANTOR ADDRESS", str(loan_data.get("guarantor_address", "")), "GUARANTOR MOBILE", str(loan_data.get("guarantor_phone", ""))),
+    ]
+
+    r_idx = 6
+    for lbl1, val1, lbl2, val2 in info_rows:
+        ws.cell(row=r_idx, column=1, value=lbl1).font = font_bold
+        ws.cell(row=r_idx, column=1).fill = soft_gray_fill
+        ws.cell(row=r_idx, column=2, value=val1).font = font_normal
+        ws.merge_cells(start_row=r_idx, start_column=2, end_row=r_idx, end_column=4)
+
+        ws.cell(row=r_idx, column=5, value=lbl2).font = font_bold
+        ws.cell(row=r_idx, column=5).fill = soft_gray_fill
+        ws.cell(row=r_idx, column=6, value=val2).font = font_normal
+        ws.merge_cells(start_row=r_idx, start_column=6, end_row=r_idx, end_column=7)
+        ws.row_dimensions[r_idx].height = 19
+        r_idx += 1
+
+    # 3. Financial Breakdown Block
+    r_idx += 1
+    ws.merge_cells(f"A{r_idx}:G{r_idx}")
+    ws[f"A{r_idx}"] = "LOAN FINANCIAL TERMS & EMI SUMMARY"
+    ws[f"A{r_idx}"].font = font_section
+    ws[f"A{r_idx}"].fill = header_section_fill
+    ws[f"A{r_idx}"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[r_idx].height = 20
+    r_idx += 1
+
+    fin_rows = [
+        ("LOAN AMOUNT", float(loan_data.get("loan_amount", 0)), "PRINCIPAL EMI", float(loan_data.get("principal_emi", 0))),
+        (f"INTEREST ({loan_data.get('interest_rate', 12)}%)", float(loan_data.get("total_interest", 0)), "INTEREST EMI", float(loan_data.get("interest_emi", 0))),
+        ("TOTAL AMOUNT", float(loan_data.get("total_amount", 0)), "TOTAL MONTHLY EMI", float(loan_data.get("total_emi", 0))),
+        ("LOAN DATE", str(loan_data.get("loan_date", "")), "DURATION", str(loan_data.get("duration", "12 Months"))),
+        ("LOAN FROM", str(loan_data.get("loan_from", "")), "LOAN TO", str(loan_data.get("loan_to", ""))),
+        ("FIRST EMI DUE", str(loan_data.get("first_emi_due", "")), "LAST EMI DUE", str(loan_data.get("last_emi_due", ""))),
+    ]
+
+    for lbl1, val1, lbl2, val2 in fin_rows:
+        ws.cell(row=r_idx, column=1, value=lbl1).font = font_bold
+        ws.cell(row=r_idx, column=1).fill = soft_gray_fill
+        
+        c_val1 = ws.cell(row=r_idx, column=2, value=val1)
+        c_val1.font = font_bold if isinstance(val1, (int, float)) else font_normal
+        if isinstance(val1, (int, float)):
+            c_val1.number_format = '"Rs." #,##0.00'
+        ws.merge_cells(start_row=r_idx, start_column=2, end_row=r_idx, end_column=4)
+
+        ws.cell(row=r_idx, column=5, value=lbl2).font = font_bold
+        ws.cell(row=r_idx, column=5).fill = soft_gray_fill
+        
+        c_val2 = ws.cell(row=r_idx, column=6, value=val2)
+        c_val2.font = font_bold if isinstance(val2, (int, float)) else font_normal
+        if isinstance(val2, (int, float)):
+            c_val2.number_format = '"Rs." #,##0.00'
+        ws.merge_cells(start_row=r_idx, start_column=6, end_row=r_idx, end_column=7)
+        
+        ws.row_dimensions[r_idx].height = 19
+        r_idx += 1
+
+    # 4. Section 1: Customer Repayment Ledger (Debit / Credit) - FIRST
+    ledger_rows = extract_or_build_ledger_rows(loan_data, repayments_df)
+    r_idx += 1
+    ws.merge_cells(f"A{r_idx}:G{r_idx}")
+    ws[f"A{r_idx}"] = "1. REPAYMENT TRANSACTIONS & CUSTOMER LEDGER (DEBIT / CREDIT)"
+    ws[f"A{r_idx}"].font = font_section
+    ws[f"A{r_idx}"].fill = header_section_fill
+    ws[f"A{r_idx}"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[r_idx].height = 20
+    r_idx += 1
+
+    rep_headers = ["DATE", "VOUCHER NO", "PARTICULARS", "PAYMENT MODE", "DEBIT (Rs.)", "CREDIT (Rs.)", "BALANCE (Rs.)"]
+    for c_idx, h in enumerate(rep_headers, 1):
+        cell = ws.cell(row=r_idx, column=c_idx, value=h)
+        cell.font = font_header_white
+        cell.fill = navy_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+    ws.row_dimensions[r_idx].height = 22
+    r_idx += 1
+
+    tot_dr = 0.0
+    tot_cr = 0.0
+    closing_bal = 0.0
+
+    for d_val, v_val, p_val, m_val, dr_val, cr_val, bal_val in ledger_rows:
+        tot_dr += dr_val
+        tot_cr += cr_val
+        closing_bal = bal_val
+
+        r_vals = [d_val, v_val, p_val, m_val, dr_val, cr_val, bal_val]
+        for col_idx, val in enumerate(r_vals, 1):
+            c = ws.cell(row=r_idx, column=col_idx, value=val)
+            c.font = font_normal
+            c.border = thin_border
+            if col_idx in [1, 2, 4]:
+                c.alignment = Alignment(horizontal="center", vertical="center")
+            elif col_idx == 3:
+                c.alignment = Alignment(horizontal="left", vertical="center")
+            else:
+                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.number_format = '#,##0.00'
+        ws.row_dimensions[r_idx].height = 18
+        r_idx += 1
+
+    # Summary row for Repayments
+    ws.cell(row=r_idx, column=1, value="TOTAL TRANSACTIONS & CLOSING DUE").font = font_bold
+    ws.merge_cells(start_row=r_idx, start_column=1, end_row=r_idx, end_column=4)
+    ws.cell(row=r_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(row=r_idx, column=1).fill = light_blue_fill
+
+    c_dr = ws.cell(row=r_idx, column=5, value=tot_dr)
+    c_dr.font = font_bold
+    c_dr.fill = light_blue_fill
+    c_dr.number_format = '#,##0.00'
+    c_dr.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_cr = ws.cell(row=r_idx, column=6, value=tot_cr)
+    c_cr.font = font_bold
+    c_cr.fill = light_blue_fill
+    c_cr.number_format = '#,##0.00'
+    c_cr.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_bal = ws.cell(row=r_idx, column=7, value=closing_bal)
+    c_bal.font = font_bold
+    c_bal.fill = light_blue_fill
+    c_bal.number_format = '#,##0.00'
+    c_bal.alignment = Alignment(horizontal="right", vertical="center")
+
+    for c in range(1, 8):
+        ws.cell(row=r_idx, column=c).border = summary_border
+    ws.row_dimensions[r_idx].height = 22
+    r_idx += 1
+
+    # 5. Section 2: EMI Schedule Table - SECOND
+    r_idx += 1
+    ws.merge_cells(f"A{r_idx}:G{r_idx}")
+    ws[f"A{r_idx}"] = "2. 12-MONTH EMI AMORTIZATION SCHEDULE"
+    ws[f"A{r_idx}"].font = font_section
+    ws[f"A{r_idx}"].fill = header_section_fill
+    ws[f"A{r_idx}"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[r_idx].height = 20
+    r_idx += 1
+
+    headers = ["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (Rs.)", "INTEREST (Rs.)", "EMI AMOUNT (Rs.)"]
+    for c_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=r_idx, column=c_idx, value=h)
+        cell.font = font_header_white
+        cell.fill = navy_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+    ws.row_dimensions[r_idx].height = 22
+    r_idx += 1
+
+    tot_p = 0.0
+    tot_i = 0.0
+    tot_e = 0.0
+
+    if schedule_df is not None and hasattr(schedule_df, 'empty') and not schedule_df.empty:
+        for _, row in schedule_df.iterrows():
+            emi_no = row.get("EMI NOS", row.get("emi_number", 0))
+            f_date = str(row.get("FROM DATE", row.get("from_date", "")))
+            t_date = str(row.get("TO DATE", row.get("to_date", "")))
+            d_date = str(row.get("DUE DATE", row.get("due_date", "")))
+            p_amt = float(row.get("PRINCIPAL (Rs.)", row.get("principal_component", 0.0)))
+            i_amt = float(row.get("INTEREST (Rs.)", row.get("interest_component", 0.0)))
+            e_amt = float(row.get("EMI AMOUNT (Rs.)", row.get("emi_amount", 0.0)))
+
+            tot_p += p_amt
+            tot_i += i_amt
+            tot_e += e_amt
+
+            r_vals = [emi_no, f_date, t_date, d_date, p_amt, i_amt, e_amt]
+            for col_idx, val in enumerate(r_vals, 1):
+                c = ws.cell(row=r_idx, column=col_idx, value=val)
+                c.font = font_normal
+                c.border = thin_border
+                if col_idx in [1, 2, 3, 4]:
+                    c.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    c.alignment = Alignment(horizontal="right", vertical="center")
+                    c.number_format = '#,##0.00'
+            ws.row_dimensions[r_idx].height = 18
+            r_idx += 1
+
+    # Total Summary Footer for EMI
+    ws.cell(row=r_idx, column=1, value="TOTAL SCHEDULE AMOUNT").font = font_bold
+    ws.merge_cells(start_row=r_idx, start_column=1, end_row=r_idx, end_column=4)
+    ws.cell(row=r_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(row=r_idx, column=1).fill = light_blue_fill
+
+    c_tp = ws.cell(row=r_idx, column=5, value=tot_p)
+    c_tp.font = font_bold
+    c_tp.fill = light_blue_fill
+    c_tp.number_format = '#,##0.00'
+    c_tp.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_ti = ws.cell(row=r_idx, column=6, value=tot_i)
+    c_ti.font = font_bold
+    c_ti.fill = light_blue_fill
+    c_ti.number_format = '#,##0.00'
+    c_ti.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_te = ws.cell(row=r_idx, column=7, value=tot_e)
+    c_te.font = font_bold
+    c_te.fill = light_blue_fill
+    c_te.number_format = '#,##0.00'
+    c_te.alignment = Alignment(horizontal="right", vertical="center")
+
+    for c in range(1, 8):
+        ws.cell(row=r_idx, column=c).border = summary_border
+    ws.row_dimensions[r_idx].height = 22
+
+    # Column Widths
+    col_widths = {1: 16, 2: 18, 3: 32, 4: 18, 5: 18, 6: 18, 7: 20}
+    for col_idx, width in col_widths.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def create_loan_passbook_pdf(loan_data, schedule_df, repayments_df=None):
+    """
+    Generates a high-quality PDF Loan Passbook & Statement:
+    - Company & Passbook Header
+    - Borrower & Guarantor & Financial Details Block
+    - Section 1: Customer Repayment Ledger (Debit / Credit) - FIRST
+    - Section 2: 12-Month EMI Amortization Schedule Table - SECOND
+    - Signatures block
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, 
+                           rightMargin=10*mm, leftMargin=10*mm, 
+                           topMargin=10*mm, bottomMargin=10*mm)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    header_style = ParagraphStyle(
+        'PLHeader',
+        parent=styles['Heading1'],
+        fontSize=12,
+        textColor=colors.HexColor('#1f4e78'),
+        alignment=1,
+        fontName='Helvetica-Bold',
+        spaceAfter=1
+    )
+    sub_style = ParagraphStyle(
+        'PLSub',
+        parent=styles['Normal'],
+        fontSize=7.5,
+        textColor=colors.HexColor('#4b5563'),
+        alignment=1,
+        spaceAfter=1
+    )
+    title_style = ParagraphStyle(
+        'PLTitle',
+        parent=styles['Heading2'],
+        fontSize=10,
+        textColor=colors.HexColor('#1f4e78'),
+        alignment=1,
+        fontName='Helvetica-Bold',
+        spaceAfter=4
+    )
+    sec_title = ParagraphStyle(
+        'PLSecTitle',
+        parent=styles['Heading3'],
+        fontSize=8.5,
+        textColor=colors.HexColor('#1f4e78'),
+        fontName='Helvetica-Bold',
+        spaceBefore=3,
+        spaceAfter=2
+    )
+    cell_bold = ParagraphStyle('CBold', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold')
+    cell_norm = ParagraphStyle('CNorm', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica')
+    cell_center = ParagraphStyle('CCenter', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', alignment=1)
+    cell_right = ParagraphStyle('CRight', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', alignment=2)
+    th_style = ParagraphStyle('CTH', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+
+    elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
+    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", sub_style))
+    elements.append(Spacer(1, 2))
+    elements.append(Paragraph("LOAN PASSBOOK & STATEMENT OF ACCOUNT", title_style))
+    elements.append(Spacer(1, 2))
+
+    # Info grid
+    info_table_data = [
+        [
+            Paragraph("<b>Loan A/c No:</b>", cell_bold), Paragraph(str(loan_data.get("loan_no", "")), cell_bold),
+            Paragraph("<b>Status:</b>", cell_bold), Paragraph(str(loan_data.get("status", "ACTIVE")), cell_bold)
+        ],
+        [
+            Paragraph("<b>Borrower Name:</b>", cell_bold), Paragraph(str(loan_data.get("party_name", "")), cell_norm),
+            Paragraph("<b>Member Acc:</b>", cell_bold), Paragraph(str(loan_data.get("account_no", "N/A")), cell_norm)
+        ],
+        [
+            Paragraph("<b>Address:</b>", cell_bold), Paragraph(str(loan_data.get("address", "")), cell_norm),
+            Paragraph("<b>Mobile No:</b>", cell_bold), Paragraph(str(loan_data.get("mobile", "")), cell_norm)
+        ],
+        [
+            Paragraph("<b>Guarantor / Surety:</b>", cell_bold), Paragraph(str(loan_data.get("guarantor_name", "")), cell_norm),
+            Paragraph("<b>Relation / Ph:</b>", cell_bold), Paragraph(f"{loan_data.get('guarantor_relation', '')} | {loan_data.get('guarantor_phone', '')}", cell_norm)
+        ],
+        [
+            Paragraph("<b>Principal Amount:</b>", cell_bold), Paragraph(f"₹{float(loan_data.get('loan_amount', 0)):,.2f}", cell_bold),
+            Paragraph("<b>Monthly EMI:</b>", cell_bold), Paragraph(f"₹{float(loan_data.get('total_emi', 0)):,.2f}", cell_bold)
+        ],
+        [
+            Paragraph("<b>Interest Rate:</b>", cell_bold), Paragraph(f"{loan_data.get('interest_rate', 12)}% Flat p.a.", cell_norm),
+            Paragraph("<b>Total Repayable:</b>", cell_bold), Paragraph(f"₹{float(loan_data.get('total_amount', 0)):,.2f}", cell_bold)
+        ],
+        [
+            Paragraph("<b>Loan Period:</b>", cell_bold), Paragraph(f"{loan_data.get('loan_from', '')} to {loan_data.get('loan_to', '')} ({loan_data.get('duration', '12 Months')})", cell_norm),
+            Paragraph("<b>First / Last Due:</b>", cell_bold), Paragraph(f"{loan_data.get('first_emi_due', '')} / {loan_data.get('last_emi_due', '')}", cell_norm)
+        ]
+    ]
+
+    t_info = Table(info_table_data, colWidths=[35*mm, 60*mm, 35*mm, 64*mm])
+    t_info.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#f8fafd')),
+        ('BACKGROUND', (2,0), (2,-1), colors.HexColor('#f8fafd')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    elements.append(t_info)
+    elements.append(Spacer(1, 3))
+
+    # Section 1: Customer Repayment Ledger (Debit / Credit) - FIRST
+    ledger_rows = extract_or_build_ledger_rows(loan_data, repayments_df)
+    elements.append(Paragraph("<b>1. CUSTOMER REPAYMENT LEDGER & STATEMENT (DEBIT / CREDIT)</b>", sec_title))
+    
+    rep_data = [[
+        Paragraph("Date", th_style),
+        Paragraph("Voucher No", th_style),
+        Paragraph("Particulars / Narration", th_style),
+        Paragraph("Mode", th_style),
+        Paragraph("Debit (₹)", th_style),
+        Paragraph("Credit (₹)", th_style),
+        Paragraph("Balance (₹)", th_style)
+    ]]
+
+    tot_dr = 0.0
+    tot_cr = 0.0
+    closing_bal = 0.0
+
+    for d_val, v_val, p_val, m_val, dr_val, cr_val, bal_val in ledger_rows:
+        tot_dr += dr_val
+        tot_cr += cr_val
+        closing_bal = bal_val
+
+        rep_data.append([
+            Paragraph(str(d_val), cell_center),
+            Paragraph(str(v_val), cell_center),
+            Paragraph(str(p_val), cell_norm),
+            Paragraph(str(m_val), cell_center),
+            Paragraph(f"{dr_val:,.2f}" if dr_val > 0 else "-", cell_right),
+            Paragraph(f"{cr_val:,.2f}" if cr_val > 0 else "-", cell_right),
+            Paragraph(f"{bal_val:,.2f}", cell_right)
+        ])
+
+    rep_data.append([
+        Paragraph("<b>TOTAL / CLOSING DUE</b>", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph(f"<b>{tot_dr:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{tot_cr:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{closing_bal:,.2f}</b>", cell_right)
+    ])
+
+    t_rep = Table(rep_data, colWidths=[20*mm, 24*mm, 52*mm, 20*mm, 26*mm, 26*mm, 26*mm])
+    t_rep.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1f4e78')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#ebf5fb')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_rep)
+    elements.append(Spacer(1, 3))
+
+    # Section 2: EMI Schedule Table - SECOND
+    elements.append(Paragraph("<b>2. 12-MONTH EMI AMORTIZATION SCHEDULE</b>", sec_title))
+    sched_data = [[
+        Paragraph("EMI #", th_style),
+        Paragraph("From Date", th_style),
+        Paragraph("To Date", th_style),
+        Paragraph("Due Date", th_style),
+        Paragraph("Principal (₹)", th_style),
+        Paragraph("Interest (₹)", th_style),
+        Paragraph("EMI Total (₹)", th_style)
+    ]]
+
+    tot_p, tot_i, tot_e = 0.0, 0.0, 0.0
+    if schedule_df is not None and hasattr(schedule_df, 'empty') and not schedule_df.empty:
+        for _, row in schedule_df.iterrows():
+            emi_no = str(row.get("EMI NOS", row.get("emi_number", 0)))
+            f_date = str(row.get("FROM DATE", row.get("from_date", "")))
+            t_date = str(row.get("TO DATE", row.get("to_date", "")))
+            d_date = str(row.get("DUE DATE", row.get("due_date", "")))
+            p_amt = float(row.get("PRINCIPAL (Rs.)", row.get("principal_component", 0.0)))
+            i_amt = float(row.get("INTEREST (Rs.)", row.get("interest_component", 0.0)))
+            e_amt = float(row.get("EMI AMOUNT (Rs.)", row.get("emi_amount", 0.0)))
+
+            tot_p += p_amt
+            tot_i += i_amt
+            tot_e += e_amt
+
+            sched_data.append([
+                Paragraph(emi_no, cell_center),
+                Paragraph(f_date, cell_center),
+                Paragraph(t_date, cell_center),
+                Paragraph(d_date, cell_center),
+                Paragraph(f"{p_amt:,.2f}", cell_right),
+                Paragraph(f"{i_amt:,.2f}", cell_right),
+                Paragraph(f"{e_amt:,.2f}", cell_right)
+            ])
+
+    # Footer Row
+    sched_data.append([
+        Paragraph("<b>TOTAL</b>", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph(f"<b>{tot_p:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{tot_i:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{tot_e:,.2f}</b>", cell_right)
+    ])
+
+    t_sched = Table(sched_data, colWidths=[14*mm, 28*mm, 28*mm, 28*mm, 32*mm, 32*mm, 32*mm])
+    t_sched.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1f4e78')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#ebf5fb')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_sched)
+    elements.append(Spacer(1, 6))
+
+    # Signature Block
+    sig_data = [
+        [Paragraph("<b>Borrower Signature</b>", cell_center), Paragraph("<b>Guarantor Signature</b>", cell_center), Paragraph("<b>Authorized Signatory / Manager</b>", cell_center)]
+    ]
+    t_sig = Table(sig_data, colWidths=[63*mm, 63*mm, 68*mm])
+    t_sig.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_sig)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def create_loan_agreement_pdf(loan_data, schedule_df):
+    """
+    Generates an official Legal Loan Agreement, Surety Undertaking Deed & Demand Promissory Note PDF.
+    Supports both Original Sanctions and Renewal Agreements (Cycle #X).
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, 
+                           rightMargin=10*mm, leftMargin=10*mm, 
+                           topMargin=10*mm, bottomMargin=10*mm)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    header_style = ParagraphStyle(
+        'AgreeHeader',
+        parent=styles['Heading1'],
+        fontSize=13,
+        textColor=colors.HexColor('#1f4e78'),
+        alignment=1,
+        fontName='Helvetica-Bold',
+        spaceAfter=2
+    )
+    sub_style = ParagraphStyle(
+        'AgreeSub',
+        parent=styles['Normal'],
+        fontSize=8,
+        textColor=colors.HexColor('#4b5563'),
+        alignment=1,
+        spaceAfter=1
+    )
+    title_style = ParagraphStyle(
+        'AgreeTitle',
+        parent=styles['Heading2'],
+        fontSize=10.5,
+        textColor=colors.HexColor('#1f4e78'),
+        alignment=1,
+        fontName='Helvetica-Bold',
+        spaceAfter=4
+    )
+    sec_title = ParagraphStyle(
+        'AgreeSecTitle',
+        parent=styles['Heading3'],
+        fontSize=9,
+        textColor=colors.HexColor('#1f4e78'),
+        fontName='Helvetica-Bold',
+        spaceBefore=4,
+        spaceAfter=2
+    )
+    body_style = ParagraphStyle(
+        'AgreeBody',
+        parent=styles['Normal'],
+        fontSize=7.5,
+        leading=10,
+        textColor=colors.HexColor('#222222'),
+        alignment=4
+    )
+    cell_bold = ParagraphStyle('CBold', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold')
+    cell_norm = ParagraphStyle('CNorm', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica')
+    cell_center = ParagraphStyle('CCenter', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', alignment=1)
+    cell_right = ParagraphStyle('CRight', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', alignment=2)
+    th_style = ParagraphStyle('CTH', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+
+    elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
+    elements.append(Paragraph("Reg. Office: 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Phone: 0471-2994535", sub_style))
+    elements.append(Spacer(1, 2))
+
+    ren_cnt = int(loan_data.get("renewal_count", 0) or 0)
+    if ren_cnt > 0:
+        doc_title = f"RENEWAL PERSONAL LOAN AGREEMENT, SURETY BOND & EXTENSION DEED (CYCLE #{ren_cnt})"
+    else:
+        doc_title = "PERSONAL LOAN AGREEMENT, SURETY BOND & DEMAND PROMISSORY NOTE"
+    elements.append(Paragraph(doc_title, title_style))
+    elements.append(Spacer(1, 3))
+
+    # Parties Block
+    parties_data = [
+        [
+            Paragraph("<b>LENDER:</b>", cell_bold),
+            Paragraph("<b>M/s AARSHA NIDHI LIMITED</b>, a Nidhi Company incorporated under the Companies Act, 2013, having its registered office at Balaramapuram, Trivandrum.", cell_norm)
+        ],
+        [
+            Paragraph("<b>BORROWER:</b>", cell_bold),
+            Paragraph(f"<b>{loan_data.get('party_name', '')}</b> (Member Acc: <b>{loan_data.get('account_no', 'N/A')}</b>)<br/>Address: {loan_data.get('address', '')} | Mobile: {loan_data.get('mobile', '')}", cell_norm)
+        ],
+        [
+            Paragraph("<b>SURETY / GUARANTOR:</b>", cell_bold),
+            Paragraph(f"<b>{loan_data.get('guarantor_name', '')}</b> ({loan_data.get('guarantor_relation', 'Surety')})<br/>Address: {loan_data.get('guarantor_address', '')} | Mobile: {loan_data.get('guarantor_phone', '')}", cell_norm)
+        ]
+    ]
+    t_parties = Table(parties_data, colWidths=[40*mm, 150*mm])
+    t_parties.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#f8fafd')),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('PADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    elements.append(t_parties)
+    elements.append(Spacer(1, 3))
+
+    # Loan Financial Terms Grid
+    princ_val = float(loan_data.get("loan_amount", 0.0) or 0.0)
+    int_rate_val = float(loan_data.get("interest_rate", 12.0) or 12.0)
+    tot_int_val = float(loan_data.get("total_interest", princ_val * (int_rate_val/100.0)) or 0.0)
+    tot_rep_val = float(loan_data.get("total_amount", princ_val + tot_int_val) or 0.0)
+    emi_val = float(loan_data.get("total_emi", 0.0) or 0.0)
+    p_emi_val = float(loan_data.get("principal_emi", 0.0) or 0.0)
+    i_emi_val = float(loan_data.get("interest_emi", 0.0) or 0.0)
+    tenure_str = str(loan_data.get("duration", "12 Months"))
+    loan_no_str = str(loan_data.get("loan_no", ""))
+    sanc_date_str = str(loan_data.get("sanction_date", loan_data.get("loan_from", "")))
+
+    terms_data = [
+        [
+            Paragraph("<b>Loan A/c No:</b>", cell_bold), Paragraph(f"<b>{loan_no_str}</b>", cell_bold),
+            Paragraph("<b>Execution Date:</b>", cell_bold), Paragraph(sanc_date_str, cell_norm)
+        ],
+        [
+            Paragraph("<b>Sanctioned Principal:</b>", cell_bold), Paragraph(f"<b>₹{princ_val:,.2f}</b>", cell_bold),
+            Paragraph("<b>Agreed Interest:</b>", cell_bold), Paragraph(f"{int_rate_val}% Flat (₹{tot_int_val:,.2f})", cell_norm)
+        ],
+        [
+            Paragraph("<b>Total Repayable Sum:</b>", cell_bold), Paragraph(f"<b>₹{tot_rep_val:,.2f}</b>", cell_bold),
+            Paragraph("<b>Loan Tenure:</b>", cell_bold), Paragraph(tenure_str, cell_norm)
+        ],
+        [
+            Paragraph("<b>Monthly EMI:</b>", cell_bold), Paragraph(f"<b>₹{emi_val:,.2f}</b> (P: ₹{p_emi_val:,.2f} + I: ₹{i_emi_val:,.2f})", cell_norm),
+            Paragraph("<b>Period & Due Dates:</b>", cell_bold), Paragraph(f"{loan_data.get('loan_from', '')} to {loan_data.get('loan_to', '')}", cell_norm)
+        ]
+    ]
+    t_terms = Table(terms_data, colWidths=[38*mm, 57*mm, 38*mm, 57*mm])
+    t_terms.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#f8fafd')),
+        ('BACKGROUND', (2,0), (2,-1), colors.HexColor('#f8fafd')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    elements.append(t_terms)
+    elements.append(Spacer(1, 3))
+
+    # Amortization Table
+    elements.append(Paragraph("<b>REPAYMENT INSTALLMENT SCHEDULE</b>", sec_title))
+    sched_data = [[
+        Paragraph("EMI #", th_style),
+        Paragraph("From Date", th_style),
+        Paragraph("To Date", th_style),
+        Paragraph("Due Date", th_style),
+        Paragraph("Principal (₹)", th_style),
+        Paragraph("Interest (₹)", th_style),
+        Paragraph("Total EMI (₹)", th_style)
+    ]]
+
+    if hasattr(schedule_df, 'empty') and not schedule_df.empty:
+        for _, row in schedule_df.iterrows():
+            emi_no = str(row.get("EMI NOS", row.get("emi_number", 0)))
+            f_date = str(row.get("FROM DATE", row.get("from_date", "")))
+            t_date = str(row.get("TO DATE", row.get("to_date", "")))
+            d_date = str(row.get("DUE DATE", row.get("due_date", "")))
+            p_amt = float(row.get("PRINCIPAL (Rs.)", row.get("principal_component", 0.0)))
+            i_amt = float(row.get("INTEREST (Rs.)", row.get("interest_component", 0.0)))
+            e_amt = float(row.get("EMI AMOUNT (Rs.)", row.get("emi_amount", 0.0)))
+            sched_data.append([
+                Paragraph(emi_no, cell_center),
+                Paragraph(f_date, cell_center),
+                Paragraph(t_date, cell_center),
+                Paragraph(d_date, cell_center),
+                Paragraph(f"{p_amt:,.2f}", cell_right),
+                Paragraph(f"{i_amt:,.2f}", cell_right),
+                Paragraph(f"{e_amt:,.2f}", cell_right)
+            ])
+
+    t_sched = Table(sched_data, colWidths=[14*mm, 28*mm, 28*mm, 28*mm, 31*mm, 30*mm, 31*mm])
+    t_sched.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1f4e78')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_sched)
+    elements.append(Spacer(1, 3))
+
+    # Covenants & Undertakings
+    elements.append(Paragraph("<b>LEGAL COVENANTS, SURETY UNDERTAKING & DEMAND PROMISSORY NOTE</b>", sec_title))
+    cov_text = (
+        "1. <b>Joint & Several Liability:</b> The Borrower and the Surety/Guarantor hereby jointly and severally promise to pay on demand to Aarsha Nidhi Limited the total repayable amount with accrued interest as per the above schedule.<br/>"
+        "2. <b>Lien & Right of Set-Off:</b> The Lender shall have a paramount lien on all deposits, shares, and assets of the Borrower and Guarantor.<br/>"
+        "3. <b>Default:</b> In the event of default on any installment, the Lender reserves the right to declare the entire loan immediately due and initiate legal recovery proceedings.<br/>"
+        "4. <b>Renewal / Rollover:</b> Upon completion of the tenure, any remaining unpaid principal may be renewed into a fresh term upon mutual agreement with re-computed interest."
+    )
+    elements.append(Paragraph(cov_text, body_style))
+    elements.append(Spacer(1, 4))
+
+    # Signatures
+    sig_table = Table([
+        [
+            Paragraph("____________________________<br/><b>Signature of Borrower</b><br/>(Thumb Impression / Signed)", cell_center),
+            Paragraph("____________________________<br/><b>Signature of Surety / Guarantor</b><br/>(Co-Obligant)", cell_center),
+            Paragraph("____________________________<br/><b>For AARSHA NIDHI LIMITED</b><br/>(Authorized Signatory / Secretary)", cell_center)
+        ]
+    ], colWidths=[63*mm, 63*mm, 64*mm])
+    sig_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(sig_table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def create_gold_loan_passbook_excel(loan_data, schedule_df, repayments_df=None):
+    """
+    Generates a Gold Loan Passbook in Microsoft Excel (.xlsx) format:
+    - Company & Gold Loan Header
+    - Customer & Pledged Gold Custody / Valuation Details Block
+    - Financial Terms & EMI Summary Block
+    - Section 1: Customer Repayment Ledger (Debit / Credit Transactions) - FIRST
+    - Section 2: 12-Month EMI Amortization Schedule Table - SECOND
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return b""
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "GOLD LOAN STATEMENT"
+    ws.views.sheetView[0].showGridLines = True
+
+    # Styling Palette
+    navy_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    light_blue_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    soft_gray_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    header_section_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    font_title = Font(name="Segoe UI", size=14, bold=True, color="1F4E78")
+    font_sub = Font(name="Segoe UI", size=9, color="4B5563")
+    font_header_white = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+    font_bold = Font(name="Segoe UI", size=9.5, bold=True, color="000000")
+    font_normal = Font(name="Segoe UI", size=9.5, color="000000")
+    font_section = Font(name="Segoe UI", size=10.5, bold=True, color="1F4E78")
+
+    thin_side = Side(border_style="thin", color="D0D5DD")
+    double_bottom_side = Side(border_style="double", color="1F4E78")
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    summary_border = Border(top=thin_side, bottom=double_bottom_side, left=thin_side, right=thin_side)
+
+    # 1. Company Header
+    ws.merge_cells("A1:G1")
+    ws["A1"] = "AARSHA NIDHI LIMITED"
+    ws["A1"].font = font_title
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 22
+
+    ws.merge_cells("A2:G2")
+    ws["A2"] = "6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
+    ws["A2"].font = font_sub
+    ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 14
+
+    ws.merge_cells("A3:G3")
+    ws["A3"] = "CIN: U65990KL2021PLN069978 | Ph: 0471-2994535"
+    ws["A3"].font = font_sub
+    ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[3].height = 14
+
+    ws.merge_cells("A4:G4")
+    ws["A4"] = "GOLD LOAN STATEMENT OF ACCOUNT & PAWN PASSBOOK"
+    ws["A4"].font = Font(name="Segoe UI", size=12, bold=True, color="FFFFFF")
+    ws["A4"].fill = navy_fill
+    ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[4].height = 22
+
+    # 2. Loan & Borrower Info Block
+    p_name = str(loan_data.get("party_name", loan_data.get("customer_name", "")))
+    p_acc = str(loan_data.get("account_no", "N/A"))
+    p_mob = str(loan_data.get("mobile", loan_data.get("phone", "")))
+    p_addr = str(loan_data.get("address", ""))
+    
+    info_rows = [
+        ("LOAN ACCOUNT NO", str(loan_data.get("loan_no", "")), "STATUS", str(loan_data.get("status", "ACTIVE"))),
+        ("LOAN PARTY NAME", p_name, "MEMBER ACC NO", p_acc),
+        ("ADDRESS", p_addr, "MOBILE NUMBER", p_mob),
+        ("SAFE PACKET NO", str(loan_data.get("vault_packet_no", "")), "LOCKER NO", str(loan_data.get("locker_no", "LOCKER-01"))),
+        ("PLDGD ORNAMENTS", str(loan_data.get("ornament_details", "22K Gold Jewels")), "NET GOLD WEIGHT", f"{float(loan_data.get('net_weight', 0)):.3f} g (Gross: {float(loan_data.get('gross_weight', 0)):.3f}g)"),
+        ("CERTIFIED APPRAISER", str(loan_data.get("appraiser_name", "Approved Nidhi Appraiser")), "MARKET VALUATION", f"Rs. {float(loan_data.get('market_value', 0)):,.2f} (@ Rs.{float(loan_data.get('gold_rate_per_gram', 6500)):,.2f}/g)"),
+    ]
+
+    r_idx = 6
+    for lbl1, val1, lbl2, val2 in info_rows:
+        ws.cell(row=r_idx, column=1, value=lbl1).font = font_bold
+        ws.cell(row=r_idx, column=1).fill = soft_gray_fill
+        ws.cell(row=r_idx, column=2, value=val1).font = font_normal
+        ws.merge_cells(start_row=r_idx, start_column=2, end_row=r_idx, end_column=4)
+
+        ws.cell(row=r_idx, column=5, value=lbl2).font = font_bold
+        ws.cell(row=r_idx, column=5).fill = soft_gray_fill
+        ws.cell(row=r_idx, column=6, value=val2).font = font_normal
+        ws.merge_cells(start_row=r_idx, start_column=6, end_row=r_idx, end_column=7)
+        ws.row_dimensions[r_idx].height = 19
+        r_idx += 1
+
+    # 3. Financial Breakdown Block
+    r_idx += 1
+    ws.merge_cells(f"A{r_idx}:G{r_idx}")
+    ws[f"A{r_idx}"] = "LOAN FINANCIAL TERMS & EMI SUMMARY"
+    ws[f"A{r_idx}"].font = font_section
+    ws[f"A{r_idx}"].fill = light_blue_fill
+    ws[f"A{r_idx}"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[r_idx].height = 20
+    r_idx += 1
+
+    p_amt = float(loan_data.get("loan_amount", loan_data.get("principal_amount", 0)))
+    tot_int = float(loan_data.get("total_interest", 0))
+    tot_rep = float(loan_data.get("total_amount", loan_data.get("total_repayable", p_amt + tot_int)))
+    p_emi_val = float(loan_data.get("principal_emi", loan_data.get("monthly_principal_emi", 0)))
+    i_emi_val = float(loan_data.get("interest_emi", loan_data.get("monthly_interest_emi", 0)))
+    t_emi_val = float(loan_data.get("total_emi", loan_data.get("installment_amount", p_emi_val + i_emi_val)))
+    int_rate_str = str(loan_data.get("interest_rate", 12))
+
+    fin_rows = [
+        ("LOAN AMOUNT", p_amt, "PRINCIPAL EMI", p_emi_val),
+        (f"INTEREST ({int_rate_str}%)", tot_int, "INTEREST EMI", i_emi_val),
+        ("TOTAL AMOUNT", tot_rep, "TOTAL MONTHLY EMI", t_emi_val),
+        ("LOAN DATE", str(loan_data.get("loan_date", loan_data.get("sanction_date", ""))), "DURATION", str(loan_data.get("duration", f"{loan_data.get('tenure_months', 12)} Months"))),
+        ("LOAN FROM", str(loan_data.get("loan_from", loan_data.get("sanction_date", ""))), "LOAN TO", str(loan_data.get("loan_to", ""))),
+        ("FIRST EMI DUE", str(loan_data.get("first_emi_due", "")), "LAST EMI DUE", str(loan_data.get("last_emi_due", ""))),
+    ]
+
+    for lbl1, val1, lbl2, val2 in fin_rows:
+        ws.cell(row=r_idx, column=1, value=lbl1).font = font_bold
+        ws.cell(row=r_idx, column=1).fill = soft_gray_fill
+        
+        c_val1 = ws.cell(row=r_idx, column=2, value=val1)
+        c_val1.font = font_bold if isinstance(val1, (int, float)) else font_normal
+        if isinstance(val1, (int, float)):
+            c_val1.number_format = '"Rs." #,##0.00'
+        ws.merge_cells(start_row=r_idx, start_column=2, end_row=r_idx, end_column=4)
+
+        ws.cell(row=r_idx, column=5, value=lbl2).font = font_bold
+        ws.cell(row=r_idx, column=5).fill = soft_gray_fill
+        
+        c_val2 = ws.cell(row=r_idx, column=6, value=val2)
+        c_val2.font = font_bold if isinstance(val2, (int, float)) else font_normal
+        if isinstance(val2, (int, float)):
+            c_val2.number_format = '"Rs." #,##0.00'
+        ws.merge_cells(start_row=r_idx, start_column=6, end_row=r_idx, end_column=7)
+        
+        ws.row_dimensions[r_idx].height = 19
+        r_idx += 1
+
+    # 4. Section 1: Customer Repayment Ledger (Debit / Credit) - FIRST
+    ledger_rows = extract_or_build_ledger_rows(loan_data, repayments_df)
+    r_idx += 1
+    ws.merge_cells(f"A{r_idx}:G{r_idx}")
+    ws[f"A{r_idx}"] = "1. REPAYMENT TRANSACTIONS & CUSTOMER LEDGER (DEBIT / CREDIT)"
+    ws[f"A{r_idx}"].font = font_section
+    ws[f"A{r_idx}"].fill = header_section_fill
+    ws[f"A{r_idx}"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[r_idx].height = 20
+    r_idx += 1
+
+    rep_headers = ["DATE", "VOUCHER NO", "PARTICULARS", "PAYMENT MODE", "DEBIT (Rs.)", "CREDIT (Rs.)", "BALANCE (Rs.)"]
+    for c_idx, h in enumerate(rep_headers, 1):
+        cell = ws.cell(row=r_idx, column=c_idx, value=h)
+        cell.font = font_header_white
+        cell.fill = navy_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+    ws.row_dimensions[r_idx].height = 22
+    r_idx += 1
+
+    tot_dr = 0.0
+    tot_cr = 0.0
+    closing_bal = 0.0
+
+    for d_val, v_val, p_val, m_val, dr_val, cr_val, bal_val in ledger_rows:
+        tot_dr += dr_val
+        tot_cr += cr_val
+        closing_bal = bal_val
+
+        r_vals = [d_val, v_val, p_val, m_val, dr_val, cr_val, bal_val]
+        for col_idx, val in enumerate(r_vals, 1):
+            c = ws.cell(row=r_idx, column=col_idx, value=val)
+            c.font = font_normal
+            c.border = thin_border
+            if col_idx in [1, 2, 4]:
+                c.alignment = Alignment(horizontal="center", vertical="center")
+            elif col_idx == 3:
+                c.alignment = Alignment(horizontal="left", vertical="center")
+            else:
+                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.number_format = '#,##0.00'
+        ws.row_dimensions[r_idx].height = 18
+        r_idx += 1
+
+    # Summary row for Repayments
+    ws.cell(row=r_idx, column=1, value="TOTAL TRANSACTIONS & CLOSING DUE").font = font_bold
+    ws.merge_cells(start_row=r_idx, start_column=1, end_row=r_idx, end_column=4)
+    ws.cell(row=r_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(row=r_idx, column=1).fill = light_blue_fill
+
+    c_dr = ws.cell(row=r_idx, column=5, value=tot_dr)
+    c_dr.font = font_bold
+    c_dr.fill = light_blue_fill
+    c_dr.number_format = '#,##0.00'
+    c_dr.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_cr = ws.cell(row=r_idx, column=6, value=tot_cr)
+    c_cr.font = font_bold
+    c_cr.fill = light_blue_fill
+    c_cr.number_format = '#,##0.00'
+    c_cr.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_bal = ws.cell(row=r_idx, column=7, value=closing_bal)
+    c_bal.font = font_bold
+    c_bal.fill = light_blue_fill
+    c_bal.number_format = '#,##0.00'
+    c_bal.alignment = Alignment(horizontal="right", vertical="center")
+
+    for c in range(1, 8):
+        ws.cell(row=r_idx, column=c).border = summary_border
+    ws.row_dimensions[r_idx].height = 22
+    r_idx += 1
+
+    # 5. Section 2: EMI Schedule Table - SECOND
+    r_idx += 1
+    ws.merge_cells(f"A{r_idx}:G{r_idx}")
+    ws[f"A{r_idx}"] = "2. 12-MONTH EMI AMORTIZATION SCHEDULE"
+    ws[f"A{r_idx}"].font = font_section
+    ws[f"A{r_idx}"].fill = header_section_fill
+    ws[f"A{r_idx}"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[r_idx].height = 20
+    r_idx += 1
+
+    headers = ["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (Rs.)", "INTEREST (Rs.)", "EMI AMOUNT (Rs.)"]
+    for c_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=r_idx, column=c_idx, value=h)
+        cell.font = font_header_white
+        cell.fill = navy_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+    ws.row_dimensions[r_idx].height = 22
+    r_idx += 1
+
+    tot_p = 0.0
+    tot_i = 0.0
+    tot_e = 0.0
+
+    if hasattr(schedule_df, 'empty') and not schedule_df.empty:
+        for _, row in schedule_df.iterrows():
+            emi_no = row.get("EMI NOS", row.get("emi_number", 0))
+            f_date = str(row.get("FROM DATE", row.get("from_date", "")))
+            t_date = str(row.get("TO DATE", row.get("to_date", "")))
+            d_date = str(row.get("DUE DATE", row.get("due_date", "")))
+            p_comp = float(row.get("PRINCIPAL (Rs.)", row.get("principal_component", 0.0)))
+            i_comp = float(row.get("INTEREST (Rs.)", row.get("interest_component", 0.0)))
+            e_comp = float(row.get("EMI AMOUNT (Rs.)", row.get("emi_amount", 0.0)))
+
+            tot_p += p_comp
+            tot_i += i_comp
+            tot_e += e_comp
+
+            r_vals = [emi_no, f_date, t_date, d_date, p_comp, i_comp, e_comp]
+            for col_idx, val in enumerate(r_vals, 1):
+                c = ws.cell(row=r_idx, column=col_idx, value=val)
+                c.font = font_normal
+                c.border = thin_border
+                if col_idx in [1, 2, 3, 4]:
+                    c.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    c.alignment = Alignment(horizontal="right", vertical="center")
+                    c.number_format = '#,##0.00'
+            ws.row_dimensions[r_idx].height = 18
+            r_idx += 1
+
+    # Total Summary Footer for EMI
+    ws.cell(row=r_idx, column=1, value="TOTAL SCHEDULE AMOUNT").font = font_bold
+    ws.merge_cells(start_row=r_idx, start_column=1, end_row=r_idx, end_column=4)
+    ws.cell(row=r_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(row=r_idx, column=1).fill = light_blue_fill
+
+    c_tp = ws.cell(row=r_idx, column=5, value=tot_p)
+    c_tp.font = font_bold
+    c_tp.fill = light_blue_fill
+    c_tp.number_format = '#,##0.00'
+    c_tp.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_ti = ws.cell(row=r_idx, column=6, value=tot_i)
+    c_ti.font = font_bold
+    c_ti.fill = light_blue_fill
+    c_ti.number_format = '#,##0.00'
+    c_ti.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_te = ws.cell(row=r_idx, column=7, value=tot_e)
+    c_te.font = font_bold
+    c_te.fill = light_blue_fill
+    c_te.number_format = '#,##0.00'
+    c_te.alignment = Alignment(horizontal="right", vertical="center")
+
+    for c in range(1, 8):
+        ws.cell(row=r_idx, column=c).border = summary_border
+    ws.row_dimensions[r_idx].height = 22
+
+    # Column Widths
+    col_widths = {1: 16, 2: 18, 3: 32, 4: 18, 5: 18, 6: 18, 7: 20}
+    for col_idx, width in col_widths.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def create_gold_loan_agreement_pdf(loan_data, schedule_df=None):
+    """
+    Generates an official Gold Loan Pawn Deed, Pledge Agreement & Demand Promissory Note PDF.
+    Supports both Original Sanctions and Renewal Deeds (Cycle #X) with complete 12-Month EMI Schedule.
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, 
+                           rightMargin=10*mm, leftMargin=10*mm, 
+                           topMargin=10*mm, bottomMargin=10*mm)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    header_style = ParagraphStyle('GLHeader', parent=styles['Heading1'], fontSize=13, textColor=colors.HexColor('#1f4e78'), alignment=1, fontName='Helvetica-Bold', spaceAfter=2)
+    sub_style = ParagraphStyle('GLSub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#4b5563'), alignment=1, spaceAfter=1)
+    title_style = ParagraphStyle('GLTitle', parent=styles['Heading2'], fontSize=10.5, textColor=colors.HexColor('#1f4e78'), alignment=1, fontName='Helvetica-Bold', spaceAfter=4)
+    sec_title = ParagraphStyle('GLSecTitle', parent=styles['Heading3'], fontSize=9, textColor=colors.HexColor('#1f4e78'), fontName='Helvetica-Bold', spaceBefore=4, spaceAfter=2)
+    body_style = ParagraphStyle('GLBody', parent=styles['Normal'], fontSize=7.5, leading=10, textColor=colors.HexColor('#222222'), alignment=4)
+    cell_bold = ParagraphStyle('CBold', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold')
+    cell_norm = ParagraphStyle('CNorm', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica')
+    cell_center = ParagraphStyle('CCenter', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', alignment=1)
+    cell_right = ParagraphStyle('CRight', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', alignment=2)
+    th_style = ParagraphStyle('CTH', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+
+    elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
+    elements.append(Paragraph("Reg. Office: 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Phone: 0471-2994535", sub_style))
+    elements.append(Spacer(1, 2))
+
+    ren_cnt = int(loan_data.get("renewal_count", 0) or 0)
+    if ren_cnt > 0:
+        doc_title = f"RENEWED GOLD LOAN PLEDGE DEED & RE-APPRAISAL ACKNOWLEDGMENT (CYCLE #{ren_cnt})"
+    else:
+        doc_title = "GOLD LOAN PAWN DEED, PLEDGE AGREEMENT & DEMAND PROMISSORY NOTE"
+    elements.append(Paragraph(doc_title, title_style))
+    elements.append(Spacer(1, 3))
+
+    # Parties Block
+    parties_data = [
+        [
+            Paragraph("<b>LENDER / PAWNEE:</b>", cell_bold),
+            Paragraph("<b>M/s AARSHA NIDHI LIMITED</b>, Balaramapuram, Trivandrum.", cell_norm)
+        ],
+        [
+            Paragraph("<b>BORROWER / PLEDGOR:</b>", cell_bold),
+            Paragraph(f"<b>{loan_data.get('party_name', loan_data.get('customer_name', ''))}</b> (Member Acc: <b>{loan_data.get('account_no', 'N/A')}</b>)<br/>Address: {loan_data.get('address', '')} | Mobile: {loan_data.get('phone', loan_data.get('mobile', ''))}", cell_norm)
+        ],
+        [
+            Paragraph("<b>SAFE VAULT CUSTODY:</b>", cell_bold),
+            Paragraph(f"Packet No: <b>{loan_data.get('vault_packet_no', '')}</b> | Locker: <b>{loan_data.get('locker_no', '')}</b> | Certified Appraiser: <b>{loan_data.get('appraiser_name', 'Approved Nidhi Appraiser')}</b>", cell_norm)
+        ]
+    ]
+    t_parties = Table(parties_data, colWidths=[45*mm, 145*mm])
+    t_parties.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#f8fafd')),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('PADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    elements.append(t_parties)
+    elements.append(Spacer(1, 3))
+
+    # Pledged Ornaments Inventory
+    elements.append(Paragraph("<b>PLEDGED GOLD ORNAMENTS & VALUATION INVENTORY</b>", sec_title))
+    inv_data = [
+        [
+            Paragraph("Ornament Description", th_style),
+            Paragraph("Item Count", th_style),
+            Paragraph("Gross Wt (g)", th_style),
+            Paragraph("Dross/Stone (g)", th_style),
+            Paragraph("Net Wt (g)", th_style),
+            Paragraph("Gold Rate (₹/g)", th_style),
+            Paragraph("Market Value (₹)", th_style)
+        ],
+        [
+            Paragraph(str(loan_data.get("ornament_details", "22K Gold Jewels")), cell_norm),
+            Paragraph(str(loan_data.get("item_count", "1")), cell_center),
+            Paragraph(f"{float(loan_data.get('gross_weight', 0)):.3f} g", cell_center),
+            Paragraph(f"{float(loan_data.get('stone_deduction', 0)):.3f} g", cell_center),
+            Paragraph(f"<b>{float(loan_data.get('net_weight', 0)):.3f} g</b>", cell_center),
+            Paragraph(f"₹{float(loan_data.get('gold_rate_per_gram', loan_data.get('gold_rate', 0))):,.2f}", cell_right),
+            Paragraph(f"<b>₹{float(loan_data.get('market_value', 0)):,.2f}</b>", cell_right)
+        ]
+    ]
+    t_inv = Table(inv_data, colWidths=[55*mm, 20*mm, 22*mm, 23*mm, 22*mm, 23*mm, 25*mm])
+    t_inv.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1f4e78')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    elements.append(t_inv)
+    elements.append(Spacer(1, 3))
+
+    # Loan Financial Terms
+    p_amt = float(loan_data.get("loan_amount", loan_data.get("principal_amount", 0.0)) or 0.0)
+    int_rate_val = float(loan_data.get("interest_rate", 12.0) or 12.0)
+    tot_int_val = float(loan_data.get("total_interest", p_amt * (int_rate_val / 100.0)) or 0.0)
+    tot_rep_val = float(loan_data.get("total_amount", loan_data.get("total_repayable", p_amt + tot_int_val)) or 0.0)
+    emi_val = float(loan_data.get("total_emi", loan_data.get("installment_amount", 0.0)) or 0.0)
+    p_emi_val = float(loan_data.get("principal_emi", loan_data.get("monthly_principal_emi", 0.0)) or 0.0)
+    i_emi_val = float(loan_data.get("interest_emi", loan_data.get("monthly_interest_emi", 0.0)) or 0.0)
+    tenure_str = str(loan_data.get("duration", f"{loan_data.get('tenure_months', 12)} Months"))
+    loan_no_str = str(loan_data.get("loan_no", ""))
+    sanc_date_str = str(loan_data.get("sanction_date", loan_data.get("loan_date", "")))
+
+    terms_data = [
+        [
+            Paragraph("<b>Loan Number:</b>", cell_bold), Paragraph(f"<b>{loan_no_str}</b>", cell_bold),
+            Paragraph("<b>Execution Date:</b>", cell_bold), Paragraph(sanc_date_str, cell_norm)
+        ],
+        [
+            Paragraph("<b>Sanctioned Principal:</b>", cell_bold), Paragraph(f"<b>₹{p_amt:,.2f}</b>", cell_bold),
+            Paragraph("<b>Agreed Interest:</b>", cell_bold), Paragraph(f"{int_rate_val}% Flat (₹{tot_int_val:,.2f})", cell_norm)
+        ],
+        [
+            Paragraph("<b>Total Repayable Sum:</b>", cell_bold), Paragraph(f"<b>₹{tot_rep_val:,.2f}</b>", cell_bold),
+            Paragraph("<b>Loan Tenure:</b>", cell_bold), Paragraph(tenure_str, cell_norm)
+        ],
+        [
+            Paragraph("<b>Monthly EMI:</b>", cell_bold), Paragraph(f"<b>₹{emi_val:,.2f}</b> (P: ₹{p_emi_val:,.2f} + I: ₹{i_emi_val:,.2f})", cell_norm),
+            Paragraph("<b>Period & Due Dates:</b>", cell_bold), Paragraph(f"{loan_data.get('loan_from', '')} to {loan_data.get('loan_to', '')}", cell_norm)
+        ]
+    ]
+    t_terms = Table(terms_data, colWidths=[40*mm, 55*mm, 40*mm, 55*mm])
+    t_terms.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#f8fafd')),
+        ('BACKGROUND', (2,0), (2,-1), colors.HexColor('#f8fafd')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    elements.append(t_terms)
+    elements.append(Spacer(1, 3))
+
+    # Repayment Schedule Table
+    if schedule_df is not None and hasattr(schedule_df, 'empty') and not schedule_df.empty:
+        elements.append(Paragraph("<b>REPAYMENT INSTALLMENT SCHEDULE</b>", sec_title))
+        sched_data = [[
+            Paragraph("EMI #", th_style),
+            Paragraph("From Date", th_style),
+            Paragraph("To Date", th_style),
+            Paragraph("Due Date", th_style),
+            Paragraph("Principal (₹)", th_style),
+            Paragraph("Interest (₹)", th_style),
+            Paragraph("Total EMI (₹)", th_style)
+        ]]
+
+        for _, row in schedule_df.iterrows():
+            emi_no = str(row.get("EMI NOS", row.get("emi_number", 0)))
+            f_date = str(row.get("FROM DATE", row.get("from_date", "")))
+            t_date = str(row.get("TO DATE", row.get("to_date", "")))
+            d_date = str(row.get("DUE DATE", row.get("due_date", "")))
+            p_val = float(row.get("PRINCIPAL (Rs.)", row.get("principal_component", 0.0)))
+            i_val = float(row.get("INTEREST (Rs.)", row.get("interest_component", 0.0)))
+            e_val = float(row.get("EMI AMOUNT (Rs.)", row.get("emi_amount", 0.0)))
+            sched_data.append([
+                Paragraph(emi_no, cell_center),
+                Paragraph(f_date, cell_center),
+                Paragraph(t_date, cell_center),
+                Paragraph(d_date, cell_center),
+                Paragraph(f"{p_val:,.2f}", cell_right),
+                Paragraph(f"{i_val:,.2f}", cell_right),
+                Paragraph(f"{e_val:,.2f}", cell_right)
+            ])
+
+        t_sched = Table(sched_data, colWidths=[14*mm, 28*mm, 28*mm, 28*mm, 31*mm, 30*mm, 31*mm])
+        t_sched.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1f4e78')),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('PADDING', (0,0), (-1,-1), 2),
+        ]))
+        elements.append(t_sched)
+        elements.append(Spacer(1, 3))
+
+    # Terms & Conditions
+    elements.append(Paragraph("<b>PLEDGE COVENANTS & DEMAND PROMISSORY NOTE</b>", sec_title))
+    pawn_cov = (
+        "1. <b>Pledge of Gold:</b> The Pledgor/Borrower declares that the pledged gold articles are their bona-fide absolute property and free from all encumbrances.<br/>"
+        "2. <b>Repayment Obligation:</b> The Borrower agrees to repay the monthly EMI installment of ₹" + f"{emi_val:,.2f}" + " as per the above schedule.<br/>"
+        "3. <b>Safe Custody:</b> The Lender warrants safe vault custody of the pledged ornaments.<br/>"
+        "4. <b>Default & Auction Notice:</b> In case of non-payment upon tenure completion, the Lender reserves the right to issue statutory notice and auction the pledged gold to recover the outstanding balance."
+    )
+    elements.append(Paragraph(pawn_cov, body_style))
+    elements.append(Spacer(1, 4))
+
+    # Signatures
+    sig_table = Table([
+        [
+            Paragraph("____________________________<br/><b>Signature of Borrower / Pledgor</b><br/>(Received Cash in Full)", cell_center),
+            Paragraph("____________________________<br/><b>Certified Gold Appraiser</b><br/>(Weight & Purity Verified)", cell_center),
+            Paragraph("____________________________<br/><b>For AARSHA NIDHI LIMITED</b><br/>(Authorized Signatory / Manager)", cell_center)
+        ]
+    ], colWidths=[63*mm, 63*mm, 64*mm])
+    sig_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(sig_table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def create_gold_loan_passbook_pdf(loan_data, schedule_df, repayments_df=None):
+    """
+    Generates a high-resolution printable Gold Loan Passbook & Statement PDF:
+    - Company & Gold Loan Header
+    - Borrower & Pledged Gold Custody & Valuation Grid
+    - Section 1: Customer Repayment Ledger (Debit / Credit Transactions) - FIRST
+    - Section 2: 12-Month EMI Amortization Schedule Table - SECOND
+    - Signatures Block
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, 
+                           rightMargin=10*mm, leftMargin=10*mm, 
+                           topMargin=10*mm, bottomMargin=10*mm)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    header_style = ParagraphStyle('GLPHeader', parent=styles['Heading1'], fontSize=12, textColor=colors.HexColor('#1f4e78'), alignment=1, fontName='Helvetica-Bold', spaceAfter=1)
+    sub_style = ParagraphStyle('GLPSub', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#4b5563'), alignment=1, spaceAfter=1)
+    title_style = ParagraphStyle('GLPTitle', parent=styles['Heading2'], fontSize=10, textColor=colors.HexColor('#1f4e78'), alignment=1, fontName='Helvetica-Bold', spaceAfter=4)
+    sec_title = ParagraphStyle('GLPSecTitle', parent=styles['Heading3'], fontSize=8.5, textColor=colors.HexColor('#1f4e78'), fontName='Helvetica-Bold', spaceBefore=3, spaceAfter=2)
+    cell_bold = ParagraphStyle('CBold', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold')
+    cell_norm = ParagraphStyle('CNorm', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica')
+    cell_center = ParagraphStyle('CCenter', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', alignment=1)
+    cell_right = ParagraphStyle('CRight', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', alignment=2)
+    th_style = ParagraphStyle('CTH', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+
+    elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
+    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", sub_style))
+    elements.append(Spacer(1, 2))
+    elements.append(Paragraph("GOLD LOAN STATEMENT & PAWN PASSBOOK", title_style))
+    elements.append(Spacer(1, 2))
+
+    p_name = str(loan_data.get("party_name", loan_data.get("customer_name", "")))
+    p_acc = str(loan_data.get("account_no", "N/A"))
+    p_addr = str(loan_data.get("address", ""))
+    p_mob = str(loan_data.get("phone", loan_data.get("mobile", "")))
+
+    p_amt = float(loan_data.get("loan_amount", loan_data.get("principal_amount", 0)))
+    tot_int = float(loan_data.get("total_interest", 0))
+    tot_rep = float(loan_data.get("total_amount", loan_data.get("total_repayable", p_amt + tot_int)))
+    p_emi_val = float(loan_data.get("principal_emi", loan_data.get("monthly_principal_emi", 0)))
+    i_emi_val = float(loan_data.get("interest_emi", loan_data.get("monthly_interest_emi", 0)))
+    t_emi_val = float(loan_data.get("total_emi", loan_data.get("installment_amount", p_emi_val + i_emi_val)))
+
+    # Info table
+    info_table_data = [
+        [
+            Paragraph("<b>Loan A/c No:</b>", cell_bold), Paragraph(str(loan_data.get("loan_no", "")), cell_bold),
+            Paragraph("<b>Status:</b>", cell_bold), Paragraph(str(loan_data.get("status", "ACTIVE")), cell_bold)
+        ],
+        [
+            Paragraph("<b>Borrower Name:</b>", cell_bold), Paragraph(p_name, cell_norm),
+            Paragraph("<b>Member Acc:</b>", cell_bold), Paragraph(p_acc, cell_norm)
+        ],
+        [
+            Paragraph("<b>Address:</b>", cell_bold), Paragraph(p_addr, cell_norm),
+            Paragraph("<b>Mobile No:</b>", cell_bold), Paragraph(p_mob, cell_norm)
+        ],
+        [
+            Paragraph("<b>Safe Packet No:</b>", cell_bold), Paragraph(str(loan_data.get("vault_packet_no", "")), cell_norm),
+            Paragraph("<b>Locker No:</b>", cell_bold), Paragraph(str(loan_data.get("locker_no", "")), cell_norm)
+        ],
+        [
+            Paragraph("<b>Pledged Ornaments:</b>", cell_bold), Paragraph(str(loan_data.get("ornament_details", "")), cell_norm),
+            Paragraph("<b>Net Weight:</b>", cell_bold), Paragraph(f"<b>{float(loan_data.get('net_weight', 0)):.3f} g</b> (Gross: {float(loan_data.get('gross_weight', 0)):.3f}g)", cell_norm)
+        ],
+        [
+            Paragraph("<b>Market Valuation:</b>", cell_bold), Paragraph(f"₹{float(loan_data.get('market_value', 0)):,.2f} (@ ₹{float(loan_data.get('gold_rate_per_gram', 0)):,.2f}/g)", cell_norm),
+            Paragraph("<b>Principal Loan:</b>", cell_bold), Paragraph(f"<b>₹{p_amt:,.2f}</b>", cell_bold)
+        ],
+        [
+            Paragraph("<b>Total Interest:</b>", cell_bold), Paragraph(f"₹{tot_int:,.2f} ({loan_data.get('interest_rate', 12)}% Flat)", cell_norm),
+            Paragraph("<b>Monthly EMI:</b>", cell_bold), Paragraph(f"<b>₹{t_emi_val:,.2f}</b> (P: ₹{p_emi_val:,.2f} + I: ₹{i_emi_val:,.2f})", cell_bold)
+        ],
+        [
+            Paragraph("<b>Total Repayable:</b>", cell_bold), Paragraph(f"<b>₹{tot_rep:,.2f}</b>", cell_bold),
+            Paragraph("<b>Loan Period:</b>", cell_bold), Paragraph(f"{loan_data.get('loan_from', '')} to {loan_data.get('loan_to', '')}", cell_norm)
+        ]
+    ]
+
+    t_info = Table(info_table_data, colWidths=[35*mm, 60*mm, 35*mm, 64*mm])
+    t_info.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#f8fafd')),
+        ('BACKGROUND', (2,0), (2,-1), colors.HexColor('#f8fafd')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    elements.append(t_info)
+    elements.append(Spacer(1, 3))
+
+    # Section 1: Customer Repayment Ledger (Debit / Credit) - FIRST
+    ledger_rows = extract_or_build_ledger_rows(loan_data, repayments_df)
+    elements.append(Paragraph("<b>1. CUSTOMER REPAYMENT LEDGER & STATEMENT (DEBIT / CREDIT)</b>", sec_title))
+    
+    rep_data = [[
+        Paragraph("Date", th_style),
+        Paragraph("Voucher No", th_style),
+        Paragraph("Particulars / Narration", th_style),
+        Paragraph("Mode", th_style),
+        Paragraph("Debit (₹)", th_style),
+        Paragraph("Credit (₹)", th_style),
+        Paragraph("Balance (₹)", th_style)
+    ]]
+
+    tot_dr = 0.0
+    tot_cr = 0.0
+    closing_bal = 0.0
+
+    for d_val, v_val, p_val, m_val, dr_val, cr_val, bal_val in ledger_rows:
+        tot_dr += dr_val
+        tot_cr += cr_val
+        closing_bal = bal_val
+
+        rep_data.append([
+            Paragraph(str(d_val), cell_center),
+            Paragraph(str(v_val), cell_center),
+            Paragraph(str(p_val), cell_norm),
+            Paragraph(str(m_val), cell_center),
+            Paragraph(f"{dr_val:,.2f}" if dr_val > 0 else "-", cell_right),
+            Paragraph(f"{cr_val:,.2f}" if cr_val > 0 else "-", cell_right),
+            Paragraph(f"{bal_val:,.2f}", cell_right)
+        ])
+
+    rep_data.append([
+        Paragraph("<b>TOTAL / CLOSING DUE</b>", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph(f"<b>{tot_dr:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{tot_cr:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{closing_bal:,.2f}</b>", cell_right)
+    ])
+
+    t_rep = Table(rep_data, colWidths=[20*mm, 24*mm, 52*mm, 20*mm, 26*mm, 26*mm, 26*mm])
+    t_rep.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1f4e78')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#ebf5fb')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_rep)
+    elements.append(Spacer(1, 3))
+
+    # Section 2: EMI Schedule Table - SECOND
+    elements.append(Paragraph("<b>2. 12-MONTH EMI AMORTIZATION SCHEDULE</b>", sec_title))
+    sched_data = [[
+        Paragraph("EMI #", th_style),
+        Paragraph("From Date", th_style),
+        Paragraph("To Date", th_style),
+        Paragraph("Due Date", th_style),
+        Paragraph("Principal (₹)", th_style),
+        Paragraph("Interest (₹)", th_style),
+        Paragraph("EMI Total (₹)", th_style)
+    ]]
+
+    tot_p, tot_i, tot_e = 0.0, 0.0, 0.0
+    if hasattr(schedule_df, 'empty') and not schedule_df.empty:
+        for _, row in schedule_df.iterrows():
+            emi_no = str(row.get("EMI NOS", row.get("emi_number", 0)))
+            f_date = str(row.get("FROM DATE", row.get("from_date", "")))
+            t_date = str(row.get("TO DATE", row.get("to_date", "")))
+            d_date = str(row.get("DUE DATE", row.get("due_date", "")))
+            p_val = float(row.get("PRINCIPAL (Rs.)", row.get("principal_component", 0.0)))
+            i_val = float(row.get("INTEREST (Rs.)", row.get("interest_component", 0.0)))
+            e_val = float(row.get("EMI AMOUNT (Rs.)", row.get("emi_amount", 0.0)))
+
+            tot_p += p_val
+            tot_i += i_val
+            tot_e += e_val
+
+            sched_data.append([
+                Paragraph(emi_no, cell_center),
+                Paragraph(f_date, cell_center),
+                Paragraph(t_date, cell_center),
+                Paragraph(d_date, cell_center),
+                Paragraph(f"{p_val:,.2f}", cell_right),
+                Paragraph(f"{i_val:,.2f}", cell_right),
+                Paragraph(f"{e_val:,.2f}", cell_right)
+            ])
+
+    sched_data.append([
+        Paragraph("<b>TOTAL</b>", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph(f"<b>{tot_p:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{tot_i:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{tot_e:,.2f}</b>", cell_right)
+    ])
+
+    t_sched = Table(sched_data, colWidths=[14*mm, 28*mm, 28*mm, 28*mm, 32*mm, 32*mm, 32*mm])
+    t_sched.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1f4e78')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#ebf5fb')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_sched)
+    elements.append(Spacer(1, 6))
+
+    # Signatures
+    sig_data = [
+        [Paragraph("<b>Borrower / Pledgor Signature</b>", cell_center), Paragraph("<b>Appraiser Signature</b>", cell_center), Paragraph("<b>Authorized Signatory / Manager</b>", cell_center)]
+    ]
+    t_sig = Table(sig_data, colWidths=[63*mm, 63*mm, 68*mm])
+    t_sig.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_sig)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+

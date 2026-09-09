@@ -20,7 +20,7 @@ import pytz
 # Import database layer
 try:
     from database import (
-        IST, DB_NAME, USING_SUPABASE, run_query, save_uploaded_file, 
+        IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
         get_account_balance_from_jv, get_cash_balance, get_bank_balance,
         generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
         post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
@@ -188,7 +188,7 @@ def render_dashboard():
     st.title("📊 Executive Dashboard & Active Deposits")
     
     # Combined query to fetch all dashboard metrics in a single network roundtrip
-    dashboard_metrics = run_query("""
+    dashboard_metrics = cached_query("""
         SELECT 
             (SELECT COUNT(*) FROM customers) as total_cust,
             (SELECT COUNT(*) FROM sb_accounts) as total_sb,
@@ -277,7 +277,7 @@ def render_dashboard():
         JOIN customers c ON r.customer_id = c.id
         WHERE r.status = 'ACTIVE'
     """
-    rd_data = run_query(rd_query)
+    rd_data = cached_query(rd_query)
     if rd_data:
         df_rd = pd.DataFrame(rd_data, columns=["RD ID", "Customer Name", "Monthly Amount", "Tenure (Months)", "Interest Rate (%)", "Installments Paid", "Status", "Created Date"])
         st.dataframe(format_df_dates(df_rd), use_container_width=True)
@@ -387,8 +387,9 @@ def render_customer_management():
                                 run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, ?, 3.5, ?)", 
                                           (final_acc_no, new_c_id, initial_balance, today_str), fetch=False)
                                           
+                                clear_db_cache()
                                 st.success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: {new_c_id}) registered successfully! Primary Account & Passbook created automatically with initial balance ₹{initial_balance:,.2f}.")
-                                time.sleep(1.0)
+                                time.sleep(0.5)
                                 st.rerun()
                             else:
                                 st.error("❌ Failed to create customer record. Please check inputs or database connectivity.")
@@ -397,7 +398,7 @@ def render_customer_management():
 
     with tab2:
         st.subheader("Customer Directory & Document Viewer")
-        customers = run_query("SELECT id, COALESCE(account_no, 'N/A') as account_no, name, phone, email, kyc_status, pan, created_at FROM customers ORDER BY id ASC")
+        customers = cached_query("SELECT id, COALESCE(account_no, 'N/A') as account_no, name, phone, email, kyc_status, pan, created_at FROM customers ORDER BY id ASC")
         if customers:
             df_cust = pd.DataFrame(customers, columns=["ID", "Account No", "Name", "Phone", "Email", "KYC Status", "PAN", "Joined"])
             df_cust_formatted = format_df_dates(df_cust)
@@ -418,7 +419,7 @@ def render_customer_management():
             cust_ids = [row[0] for row in customers]
             selected_cust_id = st.selectbox("Select Customer ID to View Documents", cust_ids, key="view_docs_id")
             if selected_cust_id:
-                doc_data = run_query("SELECT name, adhar_file, pan_file, signature_file FROM customers WHERE id = ?", (selected_cust_id,))
+                doc_data = cached_query("SELECT name, adhar_file, pan_file, signature_file FROM customers WHERE id = ?", (selected_cust_id,))
                 if doc_data:
                     c_name, a_file, p_file, s_file = doc_data[0]
                     st.write(f"**Documents for:** {c_name} (ID: {selected_cust_id})")
@@ -482,13 +483,13 @@ def render_customer_management():
 
     with tab3:
         st.subheader("✏️ Edit / Delete Customer Information")
-        all_cust_list = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone FROM customers ORDER BY id DESC")
+        all_cust_list = cached_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone FROM customers ORDER BY id DESC")
         if all_cust_list:
             c_dict = {f"#{r[0]} - {r[1]} (Acc: {r[2]} | Ph: {r[3]})": r[0] for r in all_cust_list}
             sel_c_label = st.selectbox("Select Customer to Edit / Manage / Delete", list(c_dict.keys()), key="edit_cust_sel")
             cust_id_edit = c_dict[sel_c_label]
             
-            cust_data = run_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
+            cust_data = cached_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
             if cust_data:
                 c = cust_data[0]
                 with st.form(f"edit_profile_form_{cust_id_edit}"):
@@ -507,6 +508,7 @@ def render_customer_management():
                             SET name=?, account_no=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
                             WHERE id=?
                         """, (new_name, new_acc_no, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
+                        clear_db_cache()
                         st.success("Profile details updated successfully!")
                         time.sleep(0.1)
                         st.rerun()
@@ -532,6 +534,7 @@ def render_customer_management():
                     if col2.button("🗑️ Delete & Clear Aadhaar", key=f"del_edit_adh_btn_{cust_id_edit}", type="secondary", use_container_width=True):
                         delete_document(c[8], doc_type='adhar', customer_id=cust_id_edit)
                         run_query("UPDATE customers SET adhar_file = NULL, adhar_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        clear_db_cache()
                         st.success("Aadhaar document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
@@ -543,6 +546,7 @@ def render_customer_management():
                             saved_name, saved_bytes = save_uploaded_file(new_adh)
                             param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
                             run_query("UPDATE customers SET adhar_file = ?, adhar_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            clear_db_cache()
                             st.success("Aadhaar document saved directly into database!")
                             time.sleep(0.1)
                             st.rerun()
@@ -562,6 +566,7 @@ def render_customer_management():
                     if col2.button("🗑️ Delete & Clear PAN", key=f"del_edit_pan_btn_{cust_id_edit}", type="secondary", use_container_width=True):
                         delete_document(c[9], doc_type='pan', customer_id=cust_id_edit)
                         run_query("UPDATE customers SET pan_file = NULL, pan_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        clear_db_cache()
                         st.success("PAN document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
@@ -573,6 +578,7 @@ def render_customer_management():
                             saved_name, saved_bytes = save_uploaded_file(new_pan)
                             param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
                             run_query("UPDATE customers SET pan_file = ?, pan_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            clear_db_cache()
                             st.success("PAN document saved directly into database!")
                             time.sleep(0.1)
                             st.rerun()
@@ -592,6 +598,7 @@ def render_customer_management():
                     if col2.button("🗑️ Delete & Clear Signature", key=f"del_edit_sig_btn_{cust_id_edit}", type="secondary", use_container_width=True):
                         delete_document(c[10], doc_type='signature', customer_id=cust_id_edit)
                         run_query("UPDATE customers SET signature_file = NULL, signature_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
+                        clear_db_cache()
                         st.success("Signature document deleted successfully!")
                         time.sleep(0.1)
                         st.rerun()
@@ -603,6 +610,7 @@ def render_customer_management():
                             saved_name, saved_bytes = save_uploaded_file(new_sig)
                             param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
                             run_query("UPDATE customers SET signature_file = ?, signature_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
+                            clear_db_cache()
                             st.success("Signature document saved directly into database!")
                             time.sleep(0.1)
                             st.rerun()
@@ -617,6 +625,7 @@ def render_customer_management():
                             from database import delete_customer_cascade
                             success, msg = delete_customer_cascade(cust_id_edit)
                             if success:
+                                clear_db_cache()
                                 st.success(f"✅ {msg}")
                                 time.sleep(1.0)
                                 st.rerun()
@@ -627,18 +636,20 @@ def render_customer_management():
 
 def render_kyc():
     st.title("✅ KYC Verification Panel")
-    pending = run_query("SELECT id, name, phone, pan, adhar_file, pan_file, signature_file, created_at FROM customers WHERE kyc_status='PENDING'")
+    pending = cached_query("SELECT id, name, phone, pan, adhar_file, pan_file, signature_file, created_at FROM customers WHERE kyc_status='PENDING'")
     if pending:
         for p in pending:
             with st.expander(f"Customer: {p[1]} (ID: {p[0]}) - Phone: {p[2]}"):
                 col1, col2 = st.columns(2)
                 if col1.button(f"✅ Approve KYC #{p[0]}", key=f"app_{p[0]}", use_container_width=True):
                     run_query("UPDATE customers SET kyc_status='APPROVED' WHERE id=?", (p[0],), fetch=False)
+                    clear_db_cache()
                     st.success(f"KYC Approved for ID {p[0]}")
                     time.sleep(0.1)
                     st.rerun()
                 if col2.button(f"❌ Reject KYC #{p[0]}", key=f"rej_{p[0]}", use_container_width=True):
                     run_query("UPDATE customers SET kyc_status='REJECTED' WHERE id=?", (p[0],), fetch=False)
+                    clear_db_cache()
                     st.error(f"KYC Rejected for ID {p[0]}")
                     time.sleep(0.1)
                     st.rerun()
@@ -652,7 +663,7 @@ def render_daily_collection_sheet():
     
     cur_cash = get_cash_balance()
     cur_bank = get_account_balance_from_jv("AST-102")
-    tot_due_res = run_query("SELECT SUM(outstanding_due) FROM personal_loans WHERE status != 'CLOSED'")
+    tot_due_res = cached_query("SELECT SUM(outstanding_due) FROM personal_loans WHERE status != 'CLOSED'")
     tot_due_val = float(tot_due_res[0][0]) if (tot_due_res and tot_due_res[0][0]) else 1458104.00
     
     m1, m2, m3 = st.columns(3)
@@ -664,7 +675,7 @@ def render_daily_collection_sheet():
     
     with tab1:
         st.subheader("⚡ Record Member Daily Collection")
-        pl_active = run_query("""
+        pl_active = cached_query("""
             SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.outstanding_due, pl.installment_amount, pl.customer_id
             FROM personal_loans pl
             JOIN customers c ON pl.customer_id = c.id
@@ -764,6 +775,7 @@ def render_daily_collection_sheet():
                         run_query("UPDATE accounts SET balance = ? WHERE id = ?", (pass_bal, a_id), fetch=False)
                         run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"DAILY COLLECTION [{l_no}] (CREDIT)", coll_amt, pass_bal, str(report_date)), fetch=False)
                         
+                    clear_db_cache()
                     st.success(f"🎉 Received ₹{coll_amt:,.2f} from {l_name}! Posted to Bank Book ({rep_voucher}) and Customer Passbook.")
                     time.sleep(0.1)
                     st.rerun()
@@ -786,7 +798,7 @@ def render_daily_collection_sheet():
             LEFT JOIN personal_loans pl ON c.id = pl.customer_id
             ORDER BY c.id ASC
         """
-        d_rows = run_query(daily_query)
+        d_rows = cached_query(daily_query)
         if d_rows:
             df_daily = pd.DataFrame(d_rows, columns=["Sl", "Customer Name", "Account No", "Contact No", "Loan Amount (₹)", "Due Amount (₹)", "Status", "Remarks / Legal Status"])
             st.dataframe(format_df_dates(df_daily), use_container_width=True)
@@ -813,7 +825,7 @@ def render_personal_loans():
     
     with tab1:
         st.subheader("📝 Sanction New Personal Loan")
-        cust_raw = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone, street, city, state, pincode FROM customers ORDER BY id DESC") or []
+        cust_raw = cached_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone, street, city, state, pincode FROM customers ORDER BY id DESC") or []
         if not cust_raw:
             st.warning("Please register a customer first.")
             return
@@ -971,13 +983,14 @@ def render_personal_loans():
                     if acc_id:
                         run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, tot_repayable, str(sanction_date)), fetch=False)
                     
+                clear_db_cache()
                 st.success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}**.")
-                time.sleep(1.0)
+                time.sleep(0.5)
                 st.rerun()
 
     with tab2:
         st.subheader("💳 Record Loan Repayment / Collect Installment")
-        active_loans = run_query("""
+        active_loans = cached_query("""
             SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.outstanding_due, pl.installment_amount, pl.customer_id, pl.principal_amount, pl.total_repayable, pl.interest_type
             FROM personal_loans pl
             JOIN customers c ON pl.customer_id = c.id
@@ -1006,7 +1019,7 @@ def render_personal_loans():
                 sc4.metric("🔴 Outstanding Due", f"₹{float(l_due):,.2f}")
                 st.caption(f"📌 **Loan Term:** {l_scheme} | **Monthly Installment:** {'₹{:,.2f}'.format(float(l_inst)) if float(l_inst) > 0 else '₹0.00'}")
             
-            sched_status_rows = run_query("""
+            sched_status_rows = cached_query("""
                 SELECT emi_number, from_date, to_date, due_date, emi_amount, paid_amount, status 
                 FROM loan_emi_schedules 
                 WHERE loan_id = ? AND loan_type = 'PERSONAL' 
@@ -1115,15 +1128,16 @@ def render_personal_loans():
                         run_query("UPDATE accounts SET balance = ? WHERE id = ?", (pass_bal, a_id), fetch=False)
                         run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"LOAN REPAYMENT [{l_no}] (CREDIT)", amt_paid, pass_bal, str(pay_date)), fetch=False)
                         
+                    clear_db_cache()
                     st.success(f"✅ Repayment of **₹{amt_paid:,.2f}** recorded for **{l_cname}**! Remaining Due: **₹{new_due:,.2f}**")
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                     st.rerun()
         else:
             st.info("No active personal loans pending repayment.")
 
     with tab3:
         st.subheader("🔄 Loan Renewal & Interest Reset / Rollover")
-        all_ren_loans = run_query("""
+        all_ren_loans = cached_query("""
             SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.principal_amount, 
                    pl.outstanding_due, pl.total_repayable, pl.total_interest, pl.sanction_date, 
                    pl.tenure_days, pl.tenure_months, pl.interest_rate, pl.interest_type, 
@@ -1282,15 +1296,16 @@ def render_personal_loans():
                         run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_tot_repayable, a_id), fetch=False)
                         run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"LOAN RENEWAL [{cur_l_no}]", new_tot_repayable, new_tot_repayable, str(ren_date)), fetch=False)
                         
+                    clear_db_cache()
                     st.success(f"🎉 Loan **#{cur_l_no}** for **{cur_cname}** successfully renewed! (Cycle #{new_ren_cnt}) | New Repayable Due: **₹{new_tot_repayable:,.2f}** | Monthly EMI: **₹{new_installment:,.2f}/mo**")
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                     st.rerun()
         else:
             st.info("ℹ️ No active loans with an outstanding balance pending renewal. (Fully repaid or closed loans do not require rollover renewal).")
 
     with tab4:
         st.subheader("✏️ Edit / Delete Loan Sanction")
-        all_edit_loans = run_query("""
+        all_edit_loans = cached_query("""
             SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), pl.principal_amount, pl.outstanding_due, pl.status
             FROM personal_loans pl
             JOIN customers c ON pl.customer_id = c.id
@@ -1301,7 +1316,7 @@ def render_personal_loans():
             sel_pl_label = st.selectbox("Select Personal Loan to Edit or Manage", list(e_opts.keys()), key="pl_edit_sel")
             sel_pl_id = e_opts[sel_pl_label]
             
-            l_data = run_query("""
+            l_data = cached_query("""
                 SELECT pl.loan_no, pl.customer_id, pl.sanction_date, pl.principal_amount, pl.interest_rate,
                        pl.interest_type, pl.tenure_days, pl.tenure_months, pl.total_interest, pl.total_repayable,
                        pl.installment_amount, pl.outstanding_due, pl.disbursal_mode, pl.voucher_no,
@@ -1334,8 +1349,9 @@ def render_personal_loans():
                         col_reopen, _ = st.columns([1, 2])
                         if col_reopen.button(f"🔓 Reopen / Reactivate Personal Loan #{l_no}", key=f"reopen_pl_{sel_pl_id}", type="secondary"):
                             run_query("UPDATE personal_loans SET status = 'ACTIVE' WHERE id = ?", (sel_pl_id,), fetch=False)
+                            clear_db_cache()
                             st.success(f"✅ Personal Loan #{l_no} has been reopened to ACTIVE status. Editing fields are now unlocked.")
-                            time.sleep(0.8)
+                            time.sleep(0.5)
                             st.rerun()
                     
                     st.markdown("### 1️⃣ Financial Terms & Automatic Dynamic Repayment Calculation")
@@ -1444,8 +1460,9 @@ def render_personal_loans():
                             batch_insert_loan_schedules('PERSONAL', sel_pl_id, new_l_no, pending_to_insert, new_s_date)
                                     
                             run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_out_due, c_id), fetch=False)
+                            clear_db_cache()
                             st.success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
-                            time.sleep(1.0)
+                            time.sleep(0.5)
                             st.rerun()
 
                 st.write("---")
@@ -1461,8 +1478,9 @@ def render_personal_loans():
                             new_acc_bal = float(rem_loans[0][0]) if rem_loans and rem_loans[0][0] is not None else 0.0
                             run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_acc_bal, c_id), fetch=False)
                             
+                            clear_db_cache()
                             st.success(f"✅ Loan #{l_no} for {c_name} was permanently deleted.")
-                            time.sleep(1.0)
+                            time.sleep(0.5)
                             st.rerun()
         else:
             st.info("No personal loan records found to edit or manage.")
@@ -1480,7 +1498,7 @@ def render_personal_loans():
             q_pl += f" WHERE pl.status = '{status_filter}'"
         q_pl += " ORDER BY pl.id ASC"
         
-        pl_rows = run_query(q_pl)
+        pl_rows = cached_query(q_pl)
         if pl_rows:
             df_pl = pd.DataFrame(pl_rows, columns=["ID", "Loan No", "Customer Name", "Account No", "Principal (₹)", "Daily/Monthly Inst (₹)", "Outstanding Due (₹)", "Renewal Cycle", "Status", "Legal Remarks / Notes"])
             
@@ -1506,7 +1524,7 @@ def render_personal_loans():
 
     with tab6:
         st.subheader("🖨️ Loan Statement & Passbook (Matching VAISAKH.xlsx)")
-        all_l = run_query("""
+        all_l = cached_query("""
             SELECT pl.id, pl.loan_no, c.name, COALESCE(c.account_no, 'N/A') 
             FROM personal_loans pl 
             JOIN customers c ON pl.customer_id = c.id 
@@ -1517,7 +1535,7 @@ def render_personal_loans():
             sel_pr_label = st.selectbox("Select Loan to View Passbook & Export Statement", list(l_options.keys()), key="pl_print_sel")
             sel_pr_id = l_options[sel_pr_label]
             
-            pl_info = run_query("""
+            pl_info = cached_query("""
                 SELECT pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, c.street, c.city, c.state, c.pincode,
                        pl.sanction_date, pl.principal_amount, pl.interest_rate, pl.total_interest, pl.total_repayable,
                        pl.installment_amount, pl.outstanding_due, pl.guarantor_name, COALESCE(pl.guarantor_relation, 'Surety'),
@@ -1541,7 +1559,7 @@ def render_personal_loans():
                 addr_parts = [part for part in [p_cstr, p_ccity, p_cstate, p_cpin] if part and str(part).strip()]
                 p_caddr = ", ".join(addr_parts) if addr_parts else "Balaramapuram, Trivandrum"
                 
-                sched_rows = run_query("""
+                sched_rows = cached_query("""
                     SELECT emi_number, from_date, to_date, due_date, principal_component, interest_component, emi_amount, paid_amount, status
                     FROM loan_emi_schedules
                     WHERE loan_id = ? AND loan_type = 'PERSONAL'
@@ -1607,7 +1625,7 @@ def render_personal_loans():
                     db3.caption(f"⏰ **First Due:** {p_fdue} | **Last Due:** {p_ldue}")
 
                 # Build Repayment Ledger (Debit / Credit transactions)
-                rep_txs = run_query("SELECT payment_date, voucher_no, amount_paid, payment_mode, narration FROM loan_repayments WHERE loan_type='PERSONAL' AND loan_id=? ORDER BY id ASC", (sel_pr_id,))
+                rep_txs = cached_query("SELECT payment_date, voucher_no, amount_paid, payment_mode, narration FROM loan_repayments WHERE loan_type='PERSONAL' AND loan_id=? ORDER BY id ASC", (sel_pr_id,))
                 ledger_rows = []
                 running_bal = float(p_tot_rep or 0)
                 ledger_rows.append({
@@ -1687,7 +1705,7 @@ def render_gold_loans():
     
     with tab1:
         st.subheader("🪙 Gold Appraisal & New Jewel Loan Sanction")
-        cust_raw = run_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone, street, city, state, pincode FROM customers ORDER BY id DESC") or []
+        cust_raw = cached_query("SELECT id, name, COALESCE(account_no, 'N/A'), phone, street, city, state, pincode FROM customers ORDER BY id DESC") or []
         if not cust_raw:
             st.warning("Please register a customer first.")
             return
@@ -1727,7 +1745,7 @@ def render_gold_loans():
         col_v2.success(f"🎯 **Max Eligible Loan (75% LTV):** ₹{max_eligible:,.2f}")
         
         col_s1, col_s2, col_s3 = st.columns(3)
-        gl_cnt_row = run_query("SELECT COUNT(*) FROM gold_loans")
+        gl_cnt_row = cached_query("SELECT COUNT(*) FROM gold_loans")
         cur_gl_cnt = (gl_cnt_row[0][0] if gl_cnt_row and gl_cnt_row[0] else 0) + 1
         packet_no = col_s1.text_input("Safe Vault Packet No", value=f"PKT-{cur_gl_cnt:03d}", key="gl_pkt_no")
         locker_no = col_s2.text_input("Locker Number", value="LOCKER-01", key="gl_locker_no")
@@ -1883,13 +1901,14 @@ def render_gold_loans():
                 else:
                     run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, tot_repayable, str(sanction_date)), fetch=False)
                     
+                clear_db_cache()
                 st.success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Monthly EMI: **₹{installment:,.2f}/mo**")
-                time.sleep(1.0)
+                time.sleep(0.5)
                 st.rerun()
 
     with tab2:
         st.subheader("💳 Collect Gold Loan Installment / Repayment")
-        all_gl_loans = run_query("""
+        all_gl_loans = cached_query("""
             SELECT gl.id, gl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), gl.principal_amount, 
                    gl.outstanding_due, COALESCE(gl.total_repayable, gl.principal_amount), COALESCE(gl.installment_amount, 0),
                    gl.customer_id, gl.vault_packet_no, gl.locker_no, gl.net_weight, gl.ornament_details,
@@ -1923,7 +1942,7 @@ def render_gold_loans():
                 sc4.metric("🔴 Outstanding Due", f"₹{float(gl_due):,.2f}")
                 st.caption(f"📌 **Pledged Jewels:** {gl_orn} ({float(gl_net):.3f}g net) | **Monthly EMI:** {'₹{:,.2f}'.format(float(gl_inst)) if float(gl_inst) > 0 else '₹0.00'}")
 
-            sched_status_rows = run_query("""
+            sched_status_rows = cached_query("""
                 SELECT emi_number, from_date, to_date, due_date, emi_amount, paid_amount, status 
                 FROM loan_emi_schedules 
                 WHERE loan_id = ? AND loan_type = 'GOLD' 
@@ -2032,15 +2051,16 @@ def render_gold_loans():
                         run_query("UPDATE accounts SET balance = ? WHERE id = ?", (pass_bal, a_id), fetch=False)
                         run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"GOLD LOAN REPAYMENT [{gl_no}] (CREDIT)", amt_paid, pass_bal, str(pay_date)), fetch=False)
                         
+                    clear_db_cache()
                     st.success(f"✅ Repayment of **₹{amt_paid:,.2f}** recorded for **{gl_cname}**! Remaining Due: **₹{new_due:,.2f}**")
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                     st.rerun()
         else:
             st.info("No active gold loans pending repayment.")
 
     with tab3:
         st.subheader("🔄 Gold / Jewel Loan Renewal & Pledge Rollover")
-        all_renewable_gl = run_query("""
+        all_renewable_gl = cached_query("""
             SELECT gl.id, gl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), gl.vault_packet_no, 
                    gl.locker_no, gl.net_weight, gl.gross_weight, gl.ornament_details, 
                    gl.principal_amount, gl.outstanding_due, COALESCE(gl.total_repayable, gl.principal_amount),
@@ -2216,15 +2236,16 @@ def render_gold_loans():
                         run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_gl_tot_repayable, a_id), fetch=False)
                         run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"GOLD LOAN RENEWAL [{c_gl_no}]", new_gl_tot_repayable, new_gl_tot_repayable, str(gl_ren_date)), fetch=False)
 
+                    clear_db_cache()
                     st.success(f"🎉 Gold Loan **#{c_gl_no}** for **{c_gl_cname}** successfully renewed! (Cycle #{new_gl_ren_cnt}) | New Valuation: **₹{updated_market_val:,.2f}** | New Repayable Due: **₹{new_gl_tot_repayable:,.2f}** | Monthly EMI: **₹{new_gl_installment:,.2f}/mo**")
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                     st.rerun()
         else:
             st.info("ℹ️ No active gold loans pending renewal. (Fully repaid or released loans do not require rollover renewal).")
 
     with tab4:
         st.subheader("✏️ Edit / Delete Gold Loan Sanction")
-        all_edit_gl = run_query("""
+        all_edit_gl = cached_query("""
             SELECT gl.id, gl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), gl.vault_packet_no, 
                    gl.principal_amount, gl.outstanding_due, gl.status, gl.net_weight
             FROM gold_loans gl
@@ -2236,7 +2257,7 @@ def render_gold_loans():
             sel_egl_label = st.selectbox("Select Gold Loan to Edit or Manage", list(egl_opts.keys()), key="gl_edit_sel")
             sel_egl_id = egl_opts[sel_egl_label]
             
-            gl_data = run_query("""
+            gl_data = cached_query("""
                 SELECT gl.loan_no, gl.customer_id, gl.sanction_date, gl.gold_rate_per_gram, gl.ornament_details,
                        gl.item_count, gl.gross_weight, gl.stone_deduction, gl.net_weight, gl.purity,
                        gl.market_value, gl.ltv_percent, gl.principal_amount, gl.interest_rate,
@@ -2276,8 +2297,9 @@ def render_gold_loans():
                         col_reopen_gl, _ = st.columns([1, 2])
                         if col_reopen_gl.button(f"🔓 Reopen / Reactivate Gold Loan #{eg_lno}", key=f"reopen_gl_{sel_egl_id}", type="secondary"):
                             run_query("UPDATE gold_loans SET status = 'ACTIVE', closure_date = NULL WHERE id = ?", (sel_egl_id,), fetch=False)
+                            clear_db_cache()
                             st.success(f"✅ Gold Loan #{eg_lno} has been reopened to ACTIVE status. Editing fields are now unlocked.")
-                            time.sleep(0.8)
+                            time.sleep(0.5)
                             st.rerun()
                     
                     st.markdown("### 1️⃣ Collateral Appraisal & Live Market Valuation")
@@ -2342,6 +2364,7 @@ def render_gold_loans():
                         )
                         if not is_closed_gl and btn_col2.button("🗑️ Remove Photo", key=f"del_gl_img_{sel_egl_id}", use_container_width=True):
                             run_query("UPDATE gold_loans SET gold_image_file = NULL, gold_image_data = NULL WHERE id = ?", (sel_egl_id,), fetch=False)
+                            clear_db_cache()
                             st.success("Gold ornament image cleared.")
                             time.sleep(0.5)
                             st.rerun()
@@ -2442,8 +2465,9 @@ def render_gold_loans():
                         batch_insert_loan_schedules('GOLD', sel_egl_id, new_gl_lno, pending_gl_to_insert, new_gl_sdate)
                                 
                         run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_gl_out_due, eg_cid), fetch=False)
+                        clear_db_cache()
                         st.success(f"🎉 Gold Loan **#{new_gl_lno}** updated successfully! New Total Repayable: **₹{calc_gl_repayable:,.2f}** | Monthly EMI: **₹{calc_gl_installment:,.2f}/mo**")
-                        time.sleep(1.0)
+                        time.sleep(0.5)
                         st.rerun()
 
                 st.write("---")
@@ -2459,15 +2483,16 @@ def render_gold_loans():
                             new_acc_bal = float(rem_gl[0][0]) if rem_gl and rem_gl[0][0] is not None else 0.0
                             run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_acc_bal, eg_cid), fetch=False)
                             
+                            clear_db_cache()
                             st.success(f"✅ Gold Loan #{eg_lno} for {eg_cname} was permanently deleted.")
-                            time.sleep(1.0)
+                            time.sleep(0.5)
                             st.rerun()
         else:
             st.info("No gold loan records found to edit or manage.")
 
     with tab5:
         st.subheader("🏷️ Gold Safe Vault & Packet Register")
-        gl_rows = run_query("""
+        gl_rows = cached_query("""
             SELECT gl.id, gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, gl.ornament_details, gl.net_weight, gl.market_value, gl.principal_amount, gl.outstanding_due, COALESCE(gl.renewal_count, 0), gl.status
             FROM gold_loans gl
             JOIN customers c ON gl.customer_id = c.id
@@ -2498,7 +2523,7 @@ def render_gold_loans():
 
     with tab6:
         st.subheader("🖨️ Gold Loan Statement & Passbook (Matching VAISAKH.xlsx)")
-        all_gl = run_query("""
+        all_gl = cached_query("""
             SELECT gl.id, gl.loan_no, gl.vault_packet_no, c.name, COALESCE(c.account_no, 'N/A')
             FROM gold_loans gl 
             JOIN customers c ON gl.customer_id = c.id 
@@ -2509,7 +2534,7 @@ def render_gold_loans():
             sel_gl_pr_label = st.selectbox("Select Gold Loan to View Passbook & Export Statement", list(gl_opts.keys()), key="gl_pawn_sel")
             sel_gl_pr_id = gl_opts[sel_gl_pr_label]
             
-            gl_pr_info = run_query("""
+            gl_pr_info = cached_query("""
                 SELECT gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, 
                        gl.sanction_date, gl.ornament_details, gl.item_count, gl.gross_weight, gl.net_weight, 
                        gl.market_value, gl.principal_amount, COALESCE(gl.interest_rate, 12.0), 
@@ -2538,7 +2563,7 @@ def render_gold_loans():
                 addr_parts = [part for part in [g_str, g_city, g_state, g_pin] if part and str(part).strip()]
                 g_caddr = ", ".join(addr_parts) if addr_parts else "Balaramapuram, Trivandrum"
                 
-                sched_rows = run_query("""
+                sched_rows = cached_query("""
                     SELECT emi_number, from_date, to_date, due_date, principal_component, interest_component, emi_amount, paid_amount, status
                     FROM loan_emi_schedules
                     WHERE loan_id = ? AND loan_type = 'GOLD'
@@ -2623,7 +2648,7 @@ def render_gold_loans():
                     db3.caption(f"⏰ **First Due:** {g_fdue} | **Last Due:** {g_ldue}")
 
                 # Build Gold Loan Repayment Ledger (Debit / Credit transactions)
-                gl_rep_txs = run_query("SELECT payment_date, voucher_no, amount_paid, payment_mode, narration FROM loan_repayments WHERE loan_type='GOLD' AND loan_id=? ORDER BY id ASC", (sel_gl_pr_id,))
+                gl_rep_txs = cached_query("SELECT payment_date, voucher_no, amount_paid, payment_mode, narration FROM loan_repayments WHERE loan_type='GOLD' AND loan_id=? ORDER BY id ASC", (sel_gl_pr_id,))
                 gl_ledger_rows = []
                 gl_running_bal = float(g_tot_rep or 0)
                 gl_ledger_rows.append({

@@ -856,8 +856,14 @@ def run_query(query, params=(), fetch=True, max_retries=3):
             if res is not None:
                 sanitized = []
                 for row in res:
-                    if any(isinstance(c, (memoryview, bytearray)) for c in row):
-                        sanitized.append(tuple(bytes(c) if isinstance(c, (memoryview, bytearray)) else c for c in row))
+                    if isinstance(row, (tuple, list)):
+                        new_row = []
+                        for c in row:
+                            if isinstance(c, (memoryview, bytearray)):
+                                new_row.append(bytes(c))
+                            else:
+                                new_row.append(c)
+                        sanitized.append(tuple(new_row))
                     else:
                         sanitized.append(row)
                 res = sanitized
@@ -902,9 +908,16 @@ def clear_db_cache():
 
 try:
     import streamlit as st
-    @st.cache_data(ttl=15, show_spinner=False)
-    def cached_query(query, params=()):
+    @st.cache_data(ttl=20, show_spinner=False)
+    def _inner_cached_query(query, params=()):
         return run_query(query, params, fetch=True)
+
+    def cached_query(query, params=()):
+        try:
+            p = tuple(params) if isinstance(params, (list, tuple)) else params
+            return _inner_cached_query(query, p)
+        except Exception:
+            return run_query(query, params, fetch=True)
 except Exception:
     def cached_query(query, params=()):
         return run_query(query, params, fetch=True)

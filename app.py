@@ -419,7 +419,7 @@ def render_customer_management():
             cust_ids = [row[0] for row in customers]
             selected_cust_id = st.selectbox("Select Customer ID to View Documents", cust_ids, key="view_docs_id")
             if selected_cust_id:
-                doc_data = cached_query("SELECT name, adhar_file, pan_file, signature_file FROM customers WHERE id = ?", (selected_cust_id,))
+                doc_data = run_query("SELECT name, adhar_file, pan_file, signature_file FROM customers WHERE id = ?", (selected_cust_id,))
                 if doc_data:
                     c_name, a_file, p_file, s_file = doc_data[0]
                     st.write(f"**Documents for:** {c_name} (ID: {selected_cust_id})")
@@ -489,7 +489,7 @@ def render_customer_management():
             sel_c_label = st.selectbox("Select Customer to Edit / Manage / Delete", list(c_dict.keys()), key="edit_cust_sel")
             cust_id_edit = c_dict[sel_c_label]
             
-            cust_data = cached_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
+            cust_data = run_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
             if cust_data:
                 c = cust_data[0]
                 with st.form(f"edit_profile_form_{cust_id_edit}"):
@@ -636,7 +636,7 @@ def render_customer_management():
 
 def render_kyc():
     st.title("✅ KYC Verification Panel")
-    pending = cached_query("SELECT id, name, phone, pan, adhar_file, pan_file, signature_file, created_at FROM customers WHERE kyc_status='PENDING'")
+    pending = run_query("SELECT id, name, phone, pan, adhar_file, pan_file, signature_file, created_at FROM customers WHERE kyc_status='PENDING'")
     if pending:
         for p in pending:
             with st.expander(f"Customer: {p[1]} (ID: {p[0]}) - Phone: {p[2]}"):
@@ -738,15 +738,21 @@ def render_daily_collection_sheet():
                     bank_or_cash_code = 'AST-102' if "Union Bank" in coll_mode else 'AST-101'
                     
                     if "Union Bank" in coll_mode:
+                        last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+                        prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
+                        new_b = prev_b + coll_amt
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'AST-108')
-                        """, (str(report_date), rep_voucher, part_text, coll_amt, c_notes), fetch=False)
+                            VALUES (?, ?, ?, ?, 0, ?, 'Union Bank of India', ?, 'AST-108')
+                        """, (str(report_date), rep_voucher, part_text, coll_amt, new_b, c_notes), fetch=False)
                     else:
+                        last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+                        prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
+                        new_c = prev_c + coll_amt
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, ?, 'AST-108')
-                        """, (str(report_date), rep_voucher, part_text, coll_amt, c_notes), fetch=False)
+                            VALUES (?, ?, ?, ?, 0, ?, ?, 'AST-108')
+                        """, (str(report_date), rep_voucher, part_text, coll_amt, new_c, c_notes), fetch=False)
                         
                     # Voucher 1: Receipt JV (Bank/Cash Dr, AST-108 Cr)
                     post_automated_jv(
@@ -948,16 +954,22 @@ def render_personal_loans():
                 part_text = f"Loan Disbursal to {selected_cust_name} (Acc: {selected_cust_acc}) [{loan_no}]"
                 
                 if "Union Bank" in disb_mode:
+                    last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+                    prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
+                    new_b = prev_b - principal
                     run_query("""
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                        VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-108')
-                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                        VALUES (?, ?, ?, 0, ?, ?, 'Union Bank of India', ?, 'AST-108')
+                    """, (str(sanction_date), voucher_no, part_text, principal, new_b, remarks), fetch=False)
                     bank_or_cash_code = 'AST-102'
                 else:
+                    last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+                    prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
+                    new_c = prev_c - principal
                     run_query("""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                        VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-108')
-                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                        VALUES (?, ?, ?, 0, ?, ?, ?, 'AST-108')
+                    """, (str(sanction_date), voucher_no, part_text, principal, new_c, remarks), fetch=False)
                     bank_or_cash_code = 'AST-101'
                     
                 cr_entries = [(bank_or_cash_code, principal)]
@@ -1094,15 +1106,21 @@ def render_personal_loans():
                     bank_or_cash_code = 'AST-102' if "Union Bank" in pay_mode else 'AST-101'
                     
                     if "Union Bank" in pay_mode:
+                        last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+                        prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
+                        new_b = prev_b + amt_paid
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'AST-108')
-                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, rep_narration), fetch=False)
+                            VALUES (?, ?, ?, ?, 0, ?, 'Union Bank of India', ?, 'AST-108')
+                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, new_b, rep_narration), fetch=False)
                     else:
+                        last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+                        prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
+                        new_c = prev_c + amt_paid
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, ?, 'AST-108')
-                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, rep_narration), fetch=False)
+                            VALUES (?, ?, ?, ?, 0, ?, ?, 'AST-108')
+                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, new_c, rep_narration), fetch=False)
                         
                     post_automated_jv(
                         f"Loan Receipt [{rep_voucher}]: {part_rep}",
@@ -1316,7 +1334,7 @@ def render_personal_loans():
             sel_pl_label = st.selectbox("Select Personal Loan to Edit or Manage", list(e_opts.keys()), key="pl_edit_sel")
             sel_pl_id = e_opts[sel_pl_label]
             
-            l_data = cached_query("""
+            l_data = run_query("""
                 SELECT pl.loan_no, pl.customer_id, pl.sanction_date, pl.principal_amount, pl.interest_rate,
                        pl.interest_type, pl.tenure_days, pl.tenure_months, pl.total_interest, pl.total_repayable,
                        pl.installment_amount, pl.outstanding_due, pl.disbursal_mode, pl.voucher_no,
@@ -1535,7 +1553,7 @@ def render_personal_loans():
             sel_pr_label = st.selectbox("Select Loan to View Passbook & Export Statement", list(l_options.keys()), key="pl_print_sel")
             sel_pr_id = l_options[sel_pr_label]
             
-            pl_info = cached_query("""
+            pl_info = run_query("""
                 SELECT pl.loan_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, c.street, c.city, c.state, c.pincode,
                        pl.sanction_date, pl.principal_amount, pl.interest_rate, pl.total_interest, pl.total_repayable,
                        pl.installment_amount, pl.outstanding_due, pl.guarantor_name, COALESCE(pl.guarantor_relation, 'Surety'),
@@ -1872,15 +1890,21 @@ def render_gold_loans():
             
                 bank_or_cash_code = 'AST-102' if "Union Bank" in disb_mode else 'AST-101'
                 if "Union Bank" in disb_mode:
+                    last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+                    prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
+                    new_b = prev_b - principal
                     run_query("""
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                        VALUES (?, ?, ?, 0, ?, 0, 'Union Bank of India', ?, 'AST-110')
-                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                        VALUES (?, ?, ?, 0, ?, ?, 'Union Bank of India', ?, 'AST-110')
+                    """, (str(sanction_date), voucher_no, part_text, principal, new_b, remarks), fetch=False)
                 else:
+                    last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+                    prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
+                    new_c = prev_c - principal
                     run_query("""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                        VALUES (?, ?, ?, 0, ?, 0, ?, 'AST-110')
-                    """, (str(sanction_date), voucher_no, part_text, principal, remarks), fetch=False)
+                        VALUES (?, ?, ?, 0, ?, ?, ?, 'AST-110')
+                    """, (str(sanction_date), voucher_no, part_text, principal, new_c, remarks), fetch=False)
                 
                 cr_entries = [(bank_or_cash_code, principal)]
                 if tot_interest > 0:
@@ -2017,15 +2041,21 @@ def render_gold_loans():
                     bank_or_cash_code = 'AST-102' if "Union Bank" in pay_mode else 'AST-101'
                     
                     if "Union Bank" in pay_mode:
+                        last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+                        prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
+                        new_b = prev_b + amt_paid
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, 'Union Bank of India', ?, 'AST-110')
-                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, rep_narration), fetch=False)
+                            VALUES (?, ?, ?, ?, 0, ?, 'Union Bank of India', ?, 'AST-110')
+                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, new_b, rep_narration), fetch=False)
                     else:
+                        last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+                        prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
+                        new_c = prev_c + amt_paid
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                            VALUES (?, ?, ?, ?, 0, 0, ?, 'AST-110')
-                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, rep_narration), fetch=False)
+                            VALUES (?, ?, ?, ?, 0, ?, ?, 'AST-110')
+                        """, (str(pay_date), rep_voucher, part_rep, amt_paid, new_c, rep_narration), fetch=False)
                         
                     post_automated_jv(
                         f"Gold Loan Receipt [{rep_voucher}]: {part_rep}",
@@ -2257,7 +2287,7 @@ def render_gold_loans():
             sel_egl_label = st.selectbox("Select Gold Loan to Edit or Manage", list(egl_opts.keys()), key="gl_edit_sel")
             sel_egl_id = egl_opts[sel_egl_label]
             
-            gl_data = cached_query("""
+            gl_data = run_query("""
                 SELECT gl.loan_no, gl.customer_id, gl.sanction_date, gl.gold_rate_per_gram, gl.ornament_details,
                        gl.item_count, gl.gross_weight, gl.stone_deduction, gl.net_weight, gl.purity,
                        gl.market_value, gl.ltv_percent, gl.principal_amount, gl.interest_rate,
@@ -2534,7 +2564,7 @@ def render_gold_loans():
             sel_gl_pr_label = st.selectbox("Select Gold Loan to View Passbook & Export Statement", list(gl_opts.keys()), key="gl_pawn_sel")
             sel_gl_pr_id = gl_opts[sel_gl_pr_label]
             
-            gl_pr_info = cached_query("""
+            gl_pr_info = run_query("""
                 SELECT gl.loan_no, gl.vault_packet_no, gl.locker_no, c.name, COALESCE(c.account_no, 'N/A'), c.phone, 
                        gl.sanction_date, gl.ornament_details, gl.item_count, gl.gross_weight, gl.net_weight, 
                        gl.market_value, gl.principal_amount, COALESCE(gl.interest_rate, 12.0), 

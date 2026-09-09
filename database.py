@@ -853,6 +853,14 @@ def run_query(query, params=(), fetch=True, max_retries=3):
             res = cursor.fetchall() if fetch else None
             conn.commit()
             release_connection(conn)
+            if res is not None:
+                sanitized = []
+                for row in res:
+                    if any(isinstance(c, (memoryview, bytearray)) for c in row):
+                        sanitized.append(tuple(bytes(c) if isinstance(c, (memoryview, bytearray)) else c for c in row))
+                    else:
+                        sanitized.append(row)
+                res = sanitized
             return res
         except Exception as e:
             last_err = e

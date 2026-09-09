@@ -194,9 +194,9 @@ def render_dashboard():
             (SELECT COUNT(*) FROM sb_accounts) as total_sb,
             (SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE') as total_fds,
             (SELECT COUNT(*) FROM recurring_deposits WHERE status='ACTIVE') as total_rds,
-            (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-101') as cash_bal,
-            (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-102') as union_bal,
-            (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-103') as sbi_bal,
+            COALESCE((SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1), (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-101'), 0) as cash_bal,
+            COALESCE((SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1), (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-102'), 0) as union_bal,
+            COALESCE((SELECT balance FROM bank_book WHERE bank_name = 'State Bank of India' ORDER BY id DESC LIMIT 1), (SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code='AST-103'), 0) as sbi_bal,
             (SELECT COALESCE(SUM(credit), 0) - COALESCE(SUM(debit), 0) FROM jv_entries WHERE account_code='LIA-101') as sb_dep_bal,
             (SELECT COALESCE(SUM(credit), 0) - COALESCE(SUM(debit), 0) FROM jv_entries WHERE account_code='LIA-102') as fd_dep_bal,
             (SELECT COALESCE(SUM(credit), 0) - COALESCE(SUM(debit), 0) FROM jv_entries WHERE account_code='LIA-103') as rd_dep_bal
@@ -1532,11 +1532,17 @@ def render_personal_loans():
             
             col_x, col_c, col_p = st.columns(3)
             with col_x:
-                st.download_button("📊 Download Register (.xlsx)", pdf_generator.create_excel_report("Personal Loan Register", df_pl), "personal_loans.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                if st.button("📊 Prepare Register (.xlsx)", key="btn_prep_pl_reg_xl", use_container_width=True):
+                    st.session_state.pl_reg_xl_bytes = pdf_generator.create_excel_report("Personal Loan Register", df_pl)
+                if "pl_reg_xl_bytes" in st.session_state and st.session_state.pl_reg_xl_bytes:
+                    st.download_button("📥 Click to Download (.xlsx)", st.session_state.pl_reg_xl_bytes, "personal_loans.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="dl_pl_reg_xl")
             with col_c:
-                st.download_button("📥 Download Register (.csv)", pdf_generator.create_csv_report("Personal Loan Register", df_pl), "personal_loans.csv", "text/csv", use_container_width=True)
+                st.download_button("📥 Download Register (.csv)", df_pl.to_csv(index=False).encode('utf-8'), "personal_loans.csv", "text/csv", use_container_width=True, key="dl_pl_reg_csv")
             with col_p:
-                st.download_button("📄 Download Register PDF", pdf_generator.create_pdf_report("Personal Loan Register", df_pl), "personal_loans.pdf", "application/pdf", use_container_width=True)
+                if st.button("📄 Prepare Register PDF", key="btn_prep_pl_reg_pdf", use_container_width=True):
+                    st.session_state.pl_reg_pdf_bytes = pdf_generator.create_pdf_report("Personal Loan Register", df_pl)
+                if "pl_reg_pdf_bytes" in st.session_state and st.session_state.pl_reg_pdf_bytes:
+                    st.download_button("📥 Click to Download PDF", st.session_state.pl_reg_pdf_bytes, "personal_loans.pdf", "application/pdf", use_container_width=True, key="dl_pl_reg_pdf")
         else:
             st.info("No personal loan records found matching this filter.")
 
@@ -1782,8 +1788,10 @@ def render_gold_loans():
             
         st.markdown("### 3️⃣ Loan Financial Terms & 12-Month Amortization")
         col_p1, col_p2, col_p3 = st.columns(3)
-        default_gl_p = float(min(max_eligible, 50000.0)) if max_eligible >= 1000.0 else float(max_eligible)
-        principal = col_p1.number_input("Sanctioned Loan Amount (₹)", min_value=1000.0, max_value=float(max_eligible), value=default_gl_p, step=1000.0, key="gl_princ_inp")
+        default_gl_p = float(min(max(100.0, max_eligible), 50000.0))
+        principal = col_p1.number_input("Sanctioned Loan Amount (₹)", min_value=100.0, value=default_gl_p, step=1000.0, key="gl_princ_inp")
+        if principal > max_eligible:
+            col_p1.caption(f"⚠️ *Amount exceeds 75% LTV ceiling (₹{max_eligible:,.2f})*")
         int_rate = col_p2.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key="gl_int_rate")
         tenure_months = col_p3.number_input("Loan Period / Tenure (Months)", min_value=1, value=12, step=1, key="gl_tenure_mo")
         
@@ -2165,8 +2173,10 @@ def render_gold_loans():
                 st.markdown("### 3️⃣ Renewal Terms & New 12-Month Schedule")
                 col_rp1, col_rp2, col_rp3 = st.columns(3)
                 default_ren_gl_princ = float(min(net_princ_rem if net_princ_rem > 0 else cur_due_val, max_eligible_ren))
-                renewed_gl_principal = col_rp1.number_input("Renewed Principal Balance (₹)", min_value=0.0, max_value=float(max_eligible_ren), value=default_ren_gl_princ, step=500.0, help="Carried-forward principal balance to renew")
-                new_gl_int_rate = col_rp2.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5)
+                renewed_gl_principal = col_rp1.number_input("Renewed Principal Balance (₹)", min_value=0.0, value=default_ren_gl_princ, step=500.0, help="Carried-forward principal balance to renew", key=f"gl_ren_princ_{c_gl_id}")
+                if renewed_gl_principal > max_eligible_ren:
+                    col_rp1.caption(f"⚠️ *Amount exceeds 75% LTV ceiling (₹{max_eligible_ren:,.2f})*")
+                new_gl_int_rate = col_rp2.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key=f"gl_ren_rate_{c_gl_id}")
                 new_gl_tenure_months = col_rp3.number_input("New Tenure (Months)", min_value=1, value=12, step=1)
 
                 new_gl_planned_interest = round(renewed_gl_principal * (new_gl_int_rate / 100.0) * (new_gl_tenure_months / 12.0), 2)
@@ -2549,11 +2559,17 @@ def render_gold_loans():
             
             col_x, col_c, col_p = st.columns(3)
             with col_x:
-                st.download_button("📊 Download Vault Register (.xlsx)", pdf_generator.create_excel_report("Gold Vault Register", df_gl), "gold_vault_register.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                if st.button("📊 Prepare Vault Register (.xlsx)", key="btn_prep_gl_reg_xl", use_container_width=True):
+                    st.session_state.gl_reg_xl_bytes = pdf_generator.create_excel_report("Gold Vault Register", df_gl)
+                if "gl_reg_xl_bytes" in st.session_state and st.session_state.gl_reg_xl_bytes:
+                    st.download_button("📥 Click to Download (.xlsx)", st.session_state.gl_reg_xl_bytes, "gold_vault_register.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="dl_gl_reg_xl")
             with col_c:
-                st.download_button("📥 Download Vault Register (.csv)", pdf_generator.create_csv_report("Gold Vault Register", df_gl), "gold_vault_register.csv", "text/csv", use_container_width=True)
+                st.download_button("📥 Download Vault Register (.csv)", df_gl.to_csv(index=False).encode('utf-8'), "gold_vault_register.csv", "text/csv", use_container_width=True, key="dl_gl_reg_csv")
             with col_p:
-                st.download_button("📄 Download Vault Register PDF", pdf_generator.create_pdf_report("Gold Vault Register", df_gl), "gold_vault_register.pdf", "application/pdf", use_container_width=True)
+                if st.button("📄 Prepare Vault Register PDF", key="btn_prep_gl_reg_pdf", use_container_width=True):
+                    st.session_state.gl_reg_pdf_bytes = pdf_generator.create_pdf_report("Gold Vault Register", df_gl)
+                if "gl_reg_pdf_bytes" in st.session_state and st.session_state.gl_reg_pdf_bytes:
+                    st.download_button("📥 Click to Download PDF", st.session_state.gl_reg_pdf_bytes, "gold_vault_register.pdf", "application/pdf", use_container_width=True, key="dl_gl_reg_pdf")
         else:
             st.info("No gold loan records found in safe vault register.")
 

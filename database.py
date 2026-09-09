@@ -1164,19 +1164,33 @@ def get_account_balance_from_jv(account_code):
         return 0.0
 
 def get_all_balances():
-    """Fetches Cash, Union Bank, and SBI balances in a single database round-trip."""
+    """Fetches Cash, Union Bank, and SBI closing balances directly from cash_book and bank_book."""
     try:
-        result = run_query("""
-            SELECT account_code, COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) as net_bal
-            FROM jv_entries
-            WHERE account_code IN ('AST-101', 'AST-102', 'AST-103')
-            GROUP BY account_code
-        """)
-        bal_map = {'AST-101': 0.0, 'AST-102': 0.0, 'AST-103': 0.0}
-        if result:
-            for code, bal in result:
-                bal_map[code] = float(bal) if bal is not None else 0.0
-        return bal_map['AST-101'], bal_map['AST-102'], bal_map['AST-103']
+        c_row = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+        c_bal = float(c_row[0][0]) if (c_row and c_row[0] and c_row[0][0] is not None) else None
+        
+        u_row = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+        u_bal = float(u_row[0][0]) if (u_row and u_row[0] and u_row[0][0] is not None) else None
+        
+        s_row = run_query("SELECT balance FROM bank_book WHERE bank_name = 'State Bank of India' ORDER BY id DESC LIMIT 1")
+        s_bal = float(s_row[0][0]) if (s_row and s_row[0] and s_row[0][0] is not None) else None
+
+        if c_bal is None or u_bal is None or s_bal is None:
+            jv_res = run_query("""
+                SELECT account_code, COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) as net_bal
+                FROM jv_entries
+                WHERE account_code IN ('AST-101', 'AST-102', 'AST-103')
+                GROUP BY account_code
+            """)
+            bal_map = {'AST-101': 0.0, 'AST-102': 0.0, 'AST-103': 0.0}
+            if jv_res:
+                for code, bal in jv_res:
+                    bal_map[code] = float(bal) if bal is not None else 0.0
+            if c_bal is None: c_bal = bal_map['AST-101']
+            if u_bal is None: u_bal = bal_map['AST-102']
+            if s_bal is None: s_bal = bal_map['AST-103']
+
+        return float(c_bal or 0.0), float(u_bal or 0.0), float(s_bal or 0.0)
     except Exception:
         return 0.0, 0.0, 0.0
 

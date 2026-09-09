@@ -883,6 +883,24 @@ def run_query(query, params=(), fetch=True, max_retries=3):
         print(f"Database error: {str(last_err)}")
     return None
 
+def clear_db_cache():
+    """Clears Streamlit cached queries on data mutations"""
+    try:
+        import streamlit as st
+        if hasattr(st, "cache_data"):
+            st.cache_data.clear()
+    except Exception:
+        pass
+
+try:
+    import streamlit as st
+    @st.cache_data(ttl=15, show_spinner=False)
+    def cached_query(query, params=()):
+        return run_query(query, params, fetch=True)
+except Exception:
+    def cached_query(query, params=()):
+        return run_query(query, params, fetch=True)
+
 def sync_db_sequences(table_name=None, id_column='id'):
     """
     Syncs PostgreSQL auto-increment sequences to match MAX(id) in a single fast roundtrip.

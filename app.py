@@ -1679,35 +1679,41 @@ def render_personal_loans():
 
                 exp_col1, exp_col2, exp_col3 = st.columns(3)
                 with exp_col1:
-                    excel_bytes = pdf_generator.create_loan_passbook_excel(loan_data_dict, df_sched, df_rep_ledger)
-                    st.download_button(
-                        "📊 Download Passbook (.xlsx)",
-                        data=excel_bytes,
-                        file_name=f"Loan_Passbook_{p_lno}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                        key=f"pl_tab6_xl_{sel_pr_id}"
-                    )
+                    if st.button("📊 Prepare Passbook (.xlsx)", key=f"btn_prep_pl_xl_{sel_pr_id}", use_container_width=True):
+                        st.session_state[f"pl_xl_bytes_{sel_pr_id}"] = pdf_generator.create_loan_passbook_excel(loan_data_dict, df_sched, df_rep_ledger)
+                    if f"pl_xl_bytes_{sel_pr_id}" in st.session_state:
+                        st.download_button(
+                            "📥 Click to Download Passbook (.xlsx)",
+                            data=st.session_state[f"pl_xl_bytes_{sel_pr_id}"],
+                            file_name=f"Loan_Passbook_{p_lno}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                            key=f"pl_tab6_xl_{sel_pr_id}"
+                        )
                 with exp_col2:
-                    pdf_bytes = pdf_generator.create_loan_passbook_pdf(loan_data_dict, df_sched, df_rep_ledger)
-                    st.download_button(
-                        "📄 Download Passbook PDF",
-                        data=pdf_bytes,
-                        file_name=f"Loan_Passbook_{p_lno}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key=f"pl_tab6_pdf_{sel_pr_id}"
-                    )
+                    if st.button("📄 Prepare Passbook PDF", key=f"btn_prep_pl_pdf_{sel_pr_id}", use_container_width=True):
+                        st.session_state[f"pl_pdf_bytes_{sel_pr_id}"] = pdf_generator.create_loan_passbook_pdf(loan_data_dict, df_sched, df_rep_ledger)
+                    if f"pl_pdf_bytes_{sel_pr_id}" in st.session_state:
+                        st.download_button(
+                            "📥 Click to Download Passbook PDF",
+                            data=st.session_state[f"pl_pdf_bytes_{sel_pr_id}"],
+                            file_name=f"Loan_Passbook_{p_lno}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key=f"pl_tab6_pdf_{sel_pr_id}"
+                        )
                 with exp_col3:
-                    agree_bytes = pdf_generator.create_loan_agreement_pdf(loan_data_dict, df_sched)
-                    st.download_button(
-                        "📑 Download Loan Agreement PDF",
-                        data=agree_bytes,
-                        file_name=f"Loan_Agreement_{p_lno}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key=f"pl_tab6_agree_{sel_pr_id}"
-                    )
+                    if st.button("📑 Prepare Loan Agreement PDF", key=f"btn_prep_pl_agree_{sel_pr_id}", use_container_width=True):
+                        st.session_state[f"pl_agree_bytes_{sel_pr_id}"] = pdf_generator.create_loan_agreement_pdf(loan_data_dict, df_sched)
+                    if f"pl_agree_bytes_{sel_pr_id}" in st.session_state:
+                        st.download_button(
+                            "📥 Click to Download Agreement PDF",
+                            data=st.session_state[f"pl_agree_bytes_{sel_pr_id}"],
+                            file_name=f"Loan_Agreement_{p_lno}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key=f"pl_tab6_agree_{sel_pr_id}"
+                        )
 
 
 def render_gold_loans():
@@ -2714,35 +2720,41 @@ def render_gold_loans():
 
                 exp_col1, exp_col2, exp_col3 = st.columns(3)
                 with exp_col1:
-                    excel_bytes = pdf_generator.create_gold_loan_passbook_excel(loan_data_dict, df_sched, df_gl_ledger)
-                    st.download_button(
-                        "📊 Download Passbook (.xlsx)",
-                        data=excel_bytes,
-                        file_name=f"Gold_Loan_Passbook_{g_lno}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                        key=f"gl_tab5_xl_{sel_gl_pr_id}"
-                    )
+                    if st.button("📊 Prepare Passbook (.xlsx)", key=f"btn_prep_gl_xl_{sel_gl_pr_id}", use_container_width=True):
+                        st.session_state[f"gl_xl_bytes_{sel_gl_pr_id}"] = pdf_generator.create_gold_loan_passbook_excel(loan_data_dict, df_sched, df_gl_ledger)
+                    if f"gl_xl_bytes_{sel_gl_pr_id}" in st.session_state:
+                        st.download_button(
+                            "📥 Click to Download Passbook (.xlsx)",
+                            data=st.session_state[f"gl_xl_bytes_{sel_gl_pr_id}"],
+                            file_name=f"Gold_Loan_Passbook_{g_lno}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                            key=f"gl_tab5_xl_{sel_gl_pr_id}"
+                        )
                 with exp_col2:
-                    pdf_bytes = pdf_generator.create_gold_loan_passbook_pdf(loan_data_dict, df_sched, df_gl_ledger)
-                    st.download_button(
-                        "📄 Download Passbook PDF",
-                        data=pdf_bytes,
-                        file_name=f"Gold_Loan_Passbook_{g_lno}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key=f"gl_tab5_pdf_{sel_gl_pr_id}"
-                    )
+                    if st.button("📄 Prepare Passbook PDF", key=f"btn_prep_gl_pdf_{sel_gl_pr_id}", use_container_width=True):
+                        st.session_state[f"gl_pdf_bytes_{sel_gl_pr_id}"] = pdf_generator.create_gold_loan_passbook_pdf(loan_data_dict, df_sched, df_gl_ledger)
+                    if f"gl_pdf_bytes_{sel_gl_pr_id}" in st.session_state:
+                        st.download_button(
+                            "📥 Click to Download Passbook PDF",
+                            data=st.session_state[f"gl_pdf_bytes_{sel_gl_pr_id}"],
+                            file_name=f"Gold_Loan_Passbook_{g_lno}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key=f"gl_tab5_pdf_{sel_gl_pr_id}"
+                        )
                 with exp_col3:
-                    agree_bytes = pdf_generator.create_gold_loan_agreement_pdf(loan_data_dict, df_sched)
-                    st.download_button(
-                        "📑 Download Gold Loan Agreement PDF",
-                        data=agree_bytes,
-                        file_name=f"Gold_Loan_Agreement_{g_lno}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key=f"gl_tab5_agree_{sel_gl_pr_id}"
-                    )
+                    if st.button("📑 Prepare Gold Loan Agreement PDF", key=f"btn_prep_gl_agree_{sel_gl_pr_id}", use_container_width=True):
+                        st.session_state[f"gl_agree_bytes_{sel_gl_pr_id}"] = pdf_generator.create_gold_loan_agreement_pdf(loan_data_dict, df_sched)
+                    if f"gl_agree_bytes_{sel_gl_pr_id}" in st.session_state:
+                        st.download_button(
+                            "📥 Click to Download Agreement PDF",
+                            data=st.session_state[f"gl_agree_bytes_{sel_gl_pr_id}"],
+                            file_name=f"Gold_Loan_Agreement_{g_lno}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key=f"gl_tab5_agree_{sel_gl_pr_id}"
+                        )
         else:
             st.info("No gold loan records found to view statement or passbook.")
 

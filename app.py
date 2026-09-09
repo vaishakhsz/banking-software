@@ -1316,16 +1316,27 @@ def render_personal_loans():
                 except Exception:
                     s_date_obj = date.today()
                 
+                is_closed = (stat in ["CLOSED"])
+                
                 with st.container(border=True):
                     st.markdown(f"#### 👤 Borrower: **{c_name}** (Acc: `{c_acc}` | ID: `#{c_id}` | Renewals: `Cycle #{ren_cnt}`)")
+                    
+                    if is_closed:
+                        st.warning(f"🔒 **Personal Loan #{l_no} is currently CLOSED.** All fields are locked from editing to protect finalized loan records.")
+                        col_reopen, _ = st.columns([1, 2])
+                        if col_reopen.button(f"🔓 Reopen / Reactivate Personal Loan #{l_no}", key=f"reopen_pl_{sel_pl_id}", type="secondary"):
+                            run_query("UPDATE personal_loans SET status = 'ACTIVE' WHERE id = ?", (sel_pl_id,), fetch=False)
+                            st.success(f"✅ Personal Loan #{l_no} has been reopened to ACTIVE status. Editing fields are now unlocked.")
+                            time.sleep(0.8)
+                            st.rerun()
                     
                     st.markdown("### 1️⃣ Financial Terms & Automatic Dynamic Repayment Calculation")
                     st.caption("💡 *Changing Principal Amount, Interest Rate, or Tenure Months automatically recalculates Total Interest, Total Repayable, and Monthly Installments in real time.*")
                     
                     col_f1, col_f2, col_f3 = st.columns(3)
-                    new_princ = col_f1.number_input("Principal Loan Amount (₹) *", min_value=100.0, value=float(princ), step=1000.0, key=f"pl_ed_p_{sel_pl_id}")
-                    new_rate = col_f2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate or 12.0), step=0.5, key=f"pl_ed_r_{sel_pl_id}")
-                    new_t_months = col_f3.number_input("Loan Period / Tenure (Months) *", min_value=1, value=int(t_months or 12), step=1, key=f"pl_ed_m_{sel_pl_id}")
+                    new_princ = col_f1.number_input("Principal Loan Amount (₹) *", min_value=100.0, value=float(princ), step=1000.0, disabled=is_closed, key=f"pl_ed_p_{sel_pl_id}")
+                    new_rate = col_f2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate or 12.0), step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
+                    new_t_months = col_f3.number_input("Loan Period / Tenure (Months) *", min_value=1, value=int(t_months or 12), step=1, disabled=is_closed, key=f"pl_ed_m_{sel_pl_id}")
                     
                     # Dynamic mathematical calculation
                     calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_t_months / 12.0), 2)
@@ -1347,35 +1358,36 @@ def render_personal_loans():
                     
                     st.markdown("### 2️⃣ Loan Administrative & Legal Details")
                     col_a1, col_a2, col_a3 = st.columns(3)
-                    new_l_no = col_a1.text_input("Loan Number *", value=str(l_no), key=f"pl_ed_lno_{sel_pl_id}")
-                    new_s_date = col_a2.date_input("Sanction Date", value=s_date_obj, format="DD-MM-YYYY", key=f"pl_ed_sdate_{sel_pl_id}")
+                    new_l_no = col_a1.text_input("Loan Number *", value=str(l_no), disabled=is_closed, key=f"pl_ed_lno_{sel_pl_id}")
+                    new_s_date = col_a2.date_input("Sanction Date", value=s_date_obj, format="DD-MM-YYYY", disabled=is_closed, key=f"pl_ed_sdate_{sel_pl_id}")
                     new_status = col_a3.selectbox(
                         "Loan Status",
                         ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"],
                         index=["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"].index(stat) if stat in ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"] else 0,
+                        disabled=is_closed,
                         key=f"pl_ed_stat_{sel_pl_id}"
                     )
                     
                     col_g1, col_g2, col_g3 = st.columns(3)
-                    new_g_name = col_g1.text_input("Guarantor / Surety Name", value=str(g_name or ""), key=f"pl_ed_gname_{sel_pl_id}")
-                    new_g_phone = col_g2.text_input("Guarantor Phone", value=str(g_phone or ""), key=f"pl_ed_gphone_{sel_pl_id}")
-                    new_g_rel = col_g3.text_input("Guarantor Relationship", value=str(g_rel or "Surety"), key=f"pl_ed_grel_{sel_pl_id}")
+                    new_g_name = col_g1.text_input("Guarantor / Surety Name", value=str(g_name or ""), disabled=is_closed, key=f"pl_ed_gname_{sel_pl_id}")
+                    new_g_phone = col_g2.text_input("Guarantor Phone", value=str(g_phone or ""), disabled=is_closed, key=f"pl_ed_gphone_{sel_pl_id}")
+                    new_g_rel = col_g3.text_input("Guarantor Relationship", value=str(g_rel or "Surety"), disabled=is_closed, key=f"pl_ed_grel_{sel_pl_id}")
                     
                     col_g4, col_g5 = st.columns(2)
-                    new_g_addr = col_g4.text_input("Guarantor Address", value=str(g_addr or ""), key=f"pl_ed_gaddr_{sel_pl_id}")
-                    new_d_mode = col_g5.selectbox("Disbursal Mode", ["Union Bank of India", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(d_mode or "") else 1, key=f"pl_ed_dmode_{sel_pl_id}")
+                    new_g_addr = col_g4.text_input("Guarantor Address", value=str(g_addr or ""), disabled=is_closed, key=f"pl_ed_gaddr_{sel_pl_id}")
+                    new_d_mode = col_g5.selectbox("Disbursal Mode", ["Union Bank of India", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(d_mode or "") else 1, disabled=is_closed, key=f"pl_ed_dmode_{sel_pl_id}")
                     
                     col_n1, col_n2 = st.columns(2)
-                    new_purp = col_n1.text_input("Loan Purpose", value=str(purp or "Personal / Household Finance"), key=f"pl_ed_purp_{sel_pl_id}")
-                    new_rem = col_n2.text_input("Remarks / Notes", value=str(rem or ""), key=f"pl_ed_rem_{sel_pl_id}")
+                    new_purp = col_n1.text_input("Loan Purpose", value=str(purp or "Personal / Household Finance"), disabled=is_closed, key=f"pl_ed_purp_{sel_pl_id}")
+                    new_rem = col_n2.text_input("Remarks / Notes", value=str(rem or ""), disabled=is_closed, key=f"pl_ed_rem_{sel_pl_id}")
                     
                     col_due1, col_due2 = st.columns(2)
-                    recalc_out_due = col_due1.checkbox("🔄 Reset Outstanding Due to New Repayable Amount", value=(float(out_due or 0) == float(t_rep or 0)), key=f"pl_recalc_due_{sel_pl_id}")
+                    recalc_out_due = col_due1.checkbox("🔄 Reset Outstanding Due to New Repayable Amount", value=(float(out_due or 0) == float(t_rep or 0)), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
                     if recalc_out_due:
                         new_out_due = calc_tot_repayable
                         col_due2.info(f"Outstanding Due set to **₹{new_out_due:,.2f}**")
                     else:
-                        new_out_due = col_due2.number_input("Custom Outstanding Due (₹)", min_value=0.0, value=float(out_due or calc_tot_repayable), step=100.0, key=f"pl_ed_due_{sel_pl_id}")
+                        new_out_due = col_due2.number_input("Custom Outstanding Due (₹)", min_value=0.0, value=float(out_due or calc_tot_repayable), step=100.0, disabled=is_closed, key=f"pl_ed_due_{sel_pl_id}")
                     
                     # Live preview schedule
                     ed_sched = generate_loan_schedule(new_s_date, new_princ, calc_tot_interest, tenure_months=new_t_months)
@@ -1387,43 +1399,46 @@ def render_personal_loans():
                         })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
                         st.dataframe(format_df_dates(df_ed_prev), use_container_width=True)
                     
-                    if st.button("💾 Save & Apply Updated Loan Terms", type="primary", use_container_width=True, key=f"btn_save_pl_{sel_pl_id}"):
-                        ed_loan_from = ed_sched[0]["from_date"] if ed_sched else str(new_s_date)
-                        ed_loan_to = ed_sched[-1]["to_date"] if ed_sched else str(new_s_date)
-                        ed_first_due = ed_sched[0]["due_date"] if ed_sched else str(new_s_date)
-                        ed_last_due = ed_sched[-1]["due_date"] if ed_sched else str(new_s_date)
-                        
-                        run_query("""
-                            UPDATE personal_loans
-                            SET loan_no = ?, sanction_date = ?, principal_amount = ?, interest_rate = ?,
-                                interest_type = ?, tenure_days = ?, tenure_months = ?, total_interest = ?,
-                                total_repayable = ?, installment_amount = ?, monthly_principal_emi = ?,
-                                monthly_interest_emi = ?, loan_from_date = ?, loan_to_date = ?,
-                                first_emi_due = ?, last_emi_due = ?, outstanding_due = ?, disbursal_mode = ?,
-                                guarantor_name = ?, guarantor_phone = ?, guarantor_relation = ?,
-                                guarantor_address = ?, purpose = ?, status = ?, remarks = ?
-                            WHERE id = ?
-                        """, (
-                            new_l_no, str(new_s_date), new_princ, new_rate,
-                            new_scheme_name, new_t_days, new_t_months, calc_tot_interest,
-                            calc_tot_repayable, calc_installment, calc_p_emi,
-                            calc_i_emi, ed_loan_from, ed_loan_to,
-                            ed_first_due, ed_last_due, new_out_due, new_d_mode,
-                            new_g_name, new_g_phone, new_g_rel,
-                            new_g_addr, new_purp, new_status, new_rem,
-                            sel_pl_id
-                        ), fetch=False)
-                        
-                        # Regenerate pending schedules
-                        run_query("DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ? AND status = 'PENDING'", (sel_pl_id,), fetch=False)
-                        paid_pl_emis = set(r[0] for r in (run_query("SELECT emi_number FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ? AND status = 'PAID'", (sel_pl_id,)) or []))
-                        pending_to_insert = [s for s in ed_sched if s['emi_number'] not in paid_pl_emis]
-                        batch_insert_loan_schedules('PERSONAL', sel_pl_id, new_l_no, pending_to_insert, new_s_date)
-                                
-                        run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_out_due, c_id), fetch=False)
-                        st.success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
-                        time.sleep(1.0)
-                        st.rerun()
+                    if is_closed:
+                        st.info("ℹ️ *This loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Personal Loan'** button above.*")
+                    else:
+                        if st.button("💾 Save & Apply Updated Loan Terms", type="primary", use_container_width=True, key=f"btn_save_pl_{sel_pl_id}"):
+                            ed_loan_from = ed_sched[0]["from_date"] if ed_sched else str(new_s_date)
+                            ed_loan_to = ed_sched[-1]["to_date"] if ed_sched else str(new_s_date)
+                            ed_first_due = ed_sched[0]["due_date"] if ed_sched else str(new_s_date)
+                            ed_last_due = ed_sched[-1]["due_date"] if ed_sched else str(new_s_date)
+                            
+                            run_query("""
+                                UPDATE personal_loans
+                                SET loan_no = ?, sanction_date = ?, principal_amount = ?, interest_rate = ?,
+                                    interest_type = ?, tenure_days = ?, tenure_months = ?, total_interest = ?,
+                                    total_repayable = ?, installment_amount = ?, monthly_principal_emi = ?,
+                                    monthly_interest_emi = ?, loan_from_date = ?, loan_to_date = ?,
+                                    first_emi_due = ?, last_emi_due = ?, outstanding_due = ?, disbursal_mode = ?,
+                                    guarantor_name = ?, guarantor_phone = ?, guarantor_relation = ?,
+                                    guarantor_address = ?, purpose = ?, status = ?, remarks = ?
+                                WHERE id = ?
+                            """, (
+                                new_l_no, str(new_s_date), new_princ, new_rate,
+                                new_scheme_name, new_t_days, new_t_months, calc_tot_interest,
+                                calc_tot_repayable, calc_installment, calc_p_emi,
+                                calc_i_emi, ed_loan_from, ed_loan_to,
+                                ed_first_due, ed_last_due, new_out_due, new_d_mode,
+                                new_g_name, new_g_phone, new_g_rel,
+                                new_g_addr, new_purp, new_status, new_rem,
+                                sel_pl_id
+                            ), fetch=False)
+                            
+                            # Regenerate pending schedules
+                            run_query("DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ? AND status = 'PENDING'", (sel_pl_id,), fetch=False)
+                            paid_pl_emis = set(r[0] for r in (run_query("SELECT emi_number FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ? AND status = 'PAID'", (sel_pl_id,)) or []))
+                            pending_to_insert = [s for s in ed_sched if s['emi_number'] not in paid_pl_emis]
+                            batch_insert_loan_schedules('PERSONAL', sel_pl_id, new_l_no, pending_to_insert, new_s_date)
+                                    
+                            run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_out_due, c_id), fetch=False)
+                            st.success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
+                            time.sleep(1.0)
+                            st.rerun()
 
                 st.write("---")
                 with st.expander(f"🚨 Danger Zone: Delete Loan #{l_no}", expanded=False):
@@ -2232,18 +2247,29 @@ def render_gold_loans():
                 except Exception:
                     eg_sdate_obj = date.today()
                     
+                is_closed_gl = (eg_stat in ["CLOSED", "CLOSED_RELEASED"])
+                    
                 with st.container(border=True):
                     st.markdown(f"#### 🪙 Borrower: **{eg_cname}** (Acc: `{eg_cacc}` | Packet: `{eg_pkt}` | Renewals: `Cycle #{eg_ren_cnt}`)")
                     
+                    if is_closed_gl:
+                        st.warning(f"🔒 **Gold Loan #{eg_lno} is currently CLOSED.** All appraisal details and financial fields are locked from editing to protect finalized loan records.")
+                        col_reopen_gl, _ = st.columns([1, 2])
+                        if col_reopen_gl.button(f"🔓 Reopen / Reactivate Gold Loan #{eg_lno}", key=f"reopen_gl_{sel_egl_id}", type="secondary"):
+                            run_query("UPDATE gold_loans SET status = 'ACTIVE', closure_date = NULL WHERE id = ?", (sel_egl_id,), fetch=False)
+                            st.success(f"✅ Gold Loan #{eg_lno} has been reopened to ACTIVE status. Editing fields are now unlocked.")
+                            time.sleep(0.8)
+                            st.rerun()
+                    
                     st.markdown("### 1️⃣ Collateral Appraisal & Live Market Valuation")
                     col_ea1, col_ea2 = st.columns(2)
-                    ed_gold_rate = col_ea1.number_input("22K Gold Market Rate (₹ / gram)", min_value=1000.0, value=float(eg_grate or 6500.0), step=50.0, key=f"gl_ed_grate_{sel_egl_id}")
-                    ed_orn_desc = col_ea2.text_input("Ornaments Description", value=str(eg_orn or ""), key=f"gl_ed_orn_{sel_egl_id}")
+                    ed_gold_rate = col_ea1.number_input("22K Gold Market Rate (₹ / gram)", min_value=1000.0, value=float(eg_grate or 6500.0), step=50.0, disabled=is_closed_gl, key=f"gl_ed_grate_{sel_egl_id}")
+                    ed_orn_desc = col_ea2.text_input("Ornaments Description", value=str(eg_orn or ""), disabled=is_closed_gl, key=f"gl_ed_orn_{sel_egl_id}")
                     
                     col_ew1, col_ew2, col_ew3, col_ew4 = st.columns(4)
-                    ed_item_cnt = col_ew1.number_input("Item Count", min_value=1, value=int(eg_cnt or 1), step=1, key=f"gl_ed_cnt_{sel_egl_id}")
-                    ed_gross_wt = col_ew2.number_input("Gross Weight (g)", min_value=0.1, value=float(eg_gross or 10.0), step=0.1, format="%.3f", key=f"gl_ed_gross_{sel_egl_id}")
-                    ed_stone_ded = col_ew3.number_input("Stone Deduction (g)", min_value=0.0, value=float(eg_stone or 0.0), step=0.05, format="%.3f", key=f"gl_ed_stone_{sel_egl_id}")
+                    ed_item_cnt = col_ew1.number_input("Item Count", min_value=1, value=int(eg_cnt or 1), step=1, disabled=is_closed_gl, key=f"gl_ed_cnt_{sel_egl_id}")
+                    ed_gross_wt = col_ew2.number_input("Gross Weight (g)", min_value=0.1, value=float(eg_gross or 10.0), step=0.1, format="%.3f", disabled=is_closed_gl, key=f"gl_ed_gross_{sel_egl_id}")
+                    ed_stone_ded = col_ew3.number_input("Stone Deduction (g)", min_value=0.0, value=float(eg_stone or 0.0), step=0.05, format="%.3f", disabled=is_closed_gl, key=f"gl_ed_stone_{sel_egl_id}")
                     
                     # Auto-compute Net Weight & Market Value
                     ed_net_wt = max(0.01, round(float(ed_gross_wt) - float(ed_stone_ded), 3))
@@ -2259,9 +2285,9 @@ def render_gold_loans():
                     st.caption("💡 *Changing Principal Amount, Interest Rate, or Tenure Months automatically recalculates Total Interest, Total Repayable, and Monthly Installments in real time.*")
                     
                     col_ef1, col_ef2, col_ef3 = st.columns(3)
-                    ed_princ = col_ef1.number_input("Sanctioned Loan Principal (₹) *", min_value=100.0, value=float(eg_princ or 1000.0), step=1000.0, key=f"gl_ed_princ_{sel_egl_id}")
-                    ed_int_rate = col_ef2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, key=f"gl_ed_rate_{sel_egl_id}")
-                    ed_tenure_mo = col_ef3.number_input("Loan Period / Tenure (Months) *", min_value=1, value=int(eg_tmonths or 12), step=1, key=f"gl_ed_tmo_{sel_egl_id}")
+                    ed_princ = col_ef1.number_input("Sanctioned Loan Principal (₹) *", min_value=100.0, value=float(eg_princ or 1000.0), step=1000.0, disabled=is_closed_gl, key=f"gl_ed_princ_{sel_egl_id}")
+                    ed_int_rate = col_ef2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
+                    ed_tenure_mo = col_ef3.number_input("Loan Period / Tenure (Months) *", min_value=1, value=int(eg_tmonths or 12), step=1, disabled=is_closed_gl, key=f"gl_ed_tmo_{sel_egl_id}")
                     
                     # Auto math
                     calc_gl_interest = round(ed_princ * (ed_int_rate / 100.0) * (ed_tenure_mo / 12.0), 2)
@@ -2295,7 +2321,7 @@ def render_gold_loans():
                             use_container_width=True,
                             key=f"dl_gl_img_{sel_egl_id}"
                         )
-                        if btn_col2.button("🗑️ Remove Photo", key=f"del_gl_img_{sel_egl_id}", use_container_width=True):
+                        if not is_closed_gl and btn_col2.button("🗑️ Remove Photo", key=f"del_gl_img_{sel_egl_id}", use_container_width=True):
                             run_query("UPDATE gold_loans SET gold_image_file = NULL, gold_image_data = NULL WHERE id = ?", (sel_egl_id,), fetch=False)
                             st.success("Gold ornament image cleared.")
                             time.sleep(0.5)
@@ -2303,37 +2329,38 @@ def render_gold_loans():
                     else:
                         img_col1.info("No gold ornament photo attached to this loan.")
                         
-                    new_gl_photo = img_col2.file_uploader("Upload / Replace Gold Photo (JPG, PNG)", type=["jpg", "jpeg", "png"], key=f"up_gl_photo_{sel_egl_id}")
+                    new_gl_photo = img_col2.file_uploader("Upload / Replace Gold Photo (JPG, PNG)", type=["jpg", "jpeg", "png"], disabled=is_closed_gl, key=f"up_gl_photo_{sel_egl_id}")
                     if new_gl_photo:
                         img_col2.image(new_gl_photo, caption="📸 New Upload Preview", width=250)
 
                     st.markdown("### 4️⃣ Vault Custody & Loan Management")
                     col_vc1, col_vc2, col_vc3 = st.columns(3)
-                    new_pkt_no = col_vc1.text_input("Safe Vault Packet No *", value=str(eg_pkt or ""), key=f"gl_ed_pkt_{sel_egl_id}")
-                    new_locker_no = col_vc2.text_input("Locker Number *", value=str(eg_lock or "LOCKER-01"), key=f"gl_ed_lock_{sel_egl_id}")
-                    new_appr_name = col_vc3.text_input("Certified Appraiser Name", value=str(eg_appr or "Approved Nidhi Appraiser"), key=f"gl_ed_appr_{sel_egl_id}")
+                    new_pkt_no = col_vc1.text_input("Safe Vault Packet No *", value=str(eg_pkt or ""), disabled=is_closed_gl, key=f"gl_ed_pkt_{sel_egl_id}")
+                    new_locker_no = col_vc2.text_input("Locker Number *", value=str(eg_lock or "LOCKER-01"), disabled=is_closed_gl, key=f"gl_ed_lock_{sel_egl_id}")
+                    new_appr_name = col_vc3.text_input("Certified Appraiser Name", value=str(eg_appr or "Approved Nidhi Appraiser"), disabled=is_closed_gl, key=f"gl_ed_appr_{sel_egl_id}")
                     
                     col_ad1, col_ad2, col_ad3 = st.columns(3)
-                    new_gl_lno = col_ad1.text_input("Loan Number *", value=str(eg_lno), key=f"gl_ed_lno_{sel_egl_id}")
-                    new_gl_sdate = col_ad2.date_input("Sanction Date", value=eg_sdate_obj, format="DD-MM-YYYY", key=f"gl_ed_sdate_{sel_egl_id}")
+                    new_gl_lno = col_ad1.text_input("Loan Number *", value=str(eg_lno), disabled=is_closed_gl, key=f"gl_ed_lno_{sel_egl_id}")
+                    new_gl_sdate = col_ad2.date_input("Sanction Date", value=eg_sdate_obj, format="DD-MM-YYYY", disabled=is_closed_gl, key=f"gl_ed_sdate_{sel_egl_id}")
                     new_gl_status = col_ad3.selectbox(
                         "Loan Status",
                         ["ACTIVE", "CLOSED", "CLOSED_RELEASED", "COURT_CASE", "AUCTION_PROCEEDING", "NOT_REMITTING"],
                         index=["ACTIVE", "CLOSED", "CLOSED_RELEASED", "COURT_CASE", "AUCTION_PROCEEDING", "NOT_REMITTING"].index(eg_stat) if eg_stat in ["ACTIVE", "CLOSED", "CLOSED_RELEASED", "COURT_CASE", "AUCTION_PROCEEDING", "NOT_REMITTING"] else 0,
+                        disabled=is_closed_gl,
                         key=f"gl_ed_stat_{sel_egl_id}"
                     )
                     
                     col_adm1, col_adm2 = st.columns(2)
-                    new_gl_dmode = col_adm1.selectbox("Disbursal Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(eg_dmode or "") else 1, key=f"gl_ed_dmode_{sel_egl_id}")
-                    new_gl_remarks = col_adm2.text_input("Remarks / Condition Notes", value=str(eg_rem or ""), key=f"gl_ed_rem_{sel_egl_id}")
+                    new_gl_dmode = col_adm1.selectbox("Disbursal Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(eg_dmode or "") else 1, disabled=is_closed_gl, key=f"gl_ed_dmode_{sel_egl_id}")
+                    new_gl_remarks = col_adm2.text_input("Remarks / Condition Notes", value=str(eg_rem or ""), disabled=is_closed_gl, key=f"gl_ed_rem_{sel_egl_id}")
                     
                     col_gldue1, col_gldue2 = st.columns(2)
-                    recalc_gl_due = col_gldue1.checkbox("🔄 Reset Outstanding Due to New Repayable Amount", value=(float(eg_out_due or 0) == float(eg_tot_rep or 0)), key=f"gl_recalc_due_{sel_egl_id}")
+                    recalc_gl_due = col_gldue1.checkbox("🔄 Reset Outstanding Due to New Repayable Amount", value=(float(eg_out_due or 0) == float(eg_tot_rep or 0)), disabled=is_closed_gl, key=f"gl_recalc_due_{sel_egl_id}")
                     if recalc_gl_due:
                         new_gl_out_due = calc_gl_repayable
                         col_gldue2.info(f"Outstanding Due set to **₹{new_gl_out_due:,.2f}**")
                     else:
-                        new_gl_out_due = col_gldue2.number_input("Custom Outstanding Due (₹)", min_value=0.0, value=float(eg_out_due or calc_gl_repayable), step=100.0, key=f"gl_ed_due_{sel_egl_id}")
+                        new_gl_out_due = col_gldue2.number_input("Custom Outstanding Due (₹)", min_value=0.0, value=float(eg_out_due or calc_gl_repayable), step=100.0, disabled=is_closed_gl, key=f"gl_ed_due_{sel_egl_id}")
                         
                     ed_gl_sched = generate_loan_schedule(new_gl_sdate, ed_princ, calc_gl_interest, tenure_months=ed_tenure_mo, loan_type='GOLD')
                     with st.expander(f"📅 View Updated {len(ed_gl_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
@@ -2344,47 +2371,50 @@ def render_gold_loans():
                         })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
                         st.dataframe(format_df_dates(df_ed_gl_prev), use_container_width=True)
 
-                    if st.button("💾 Save & Apply Updated Gold Loan Details", type="primary", use_container_width=True, key=f"btn_save_gl_{sel_egl_id}"):
-                        ed_loan_from = ed_gl_sched[0]["from_date"] if ed_gl_sched else str(new_gl_sdate)
-                        ed_loan_to = ed_gl_sched[-1]["to_date"] if ed_gl_sched else str(new_gl_sdate)
-                        ed_first_due = ed_gl_sched[0]["due_date"] if ed_gl_sched else str(new_gl_sdate)
-                        ed_last_due = ed_gl_sched[-1]["due_date"] if ed_gl_sched else str(new_gl_sdate)
-                        
-                        # Check if new photo was uploaded
-                        import psycopg2
-                        if new_gl_photo:
-                            u_name, u_bytes = save_uploaded_file(new_gl_photo)
-                            u_param = psycopg2.Binary(u_bytes) if (USING_SUPABASE and u_bytes) else u_bytes
+                    if is_closed_gl:
+                        st.info("ℹ️ *This gold loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Gold Loan'** button above.*")
+                    else:
+                        if st.button("💾 Save & Apply Updated Gold Loan Details", type="primary", use_container_width=True, key=f"btn_save_gl_{sel_egl_id}"):
+                            ed_loan_from = ed_gl_sched[0]["from_date"] if ed_gl_sched else str(new_gl_sdate)
+                            ed_loan_to = ed_gl_sched[-1]["to_date"] if ed_gl_sched else str(new_gl_sdate)
+                            ed_first_due = ed_gl_sched[0]["due_date"] if ed_gl_sched else str(new_gl_sdate)
+                            ed_last_due = ed_gl_sched[-1]["due_date"] if ed_gl_sched else str(new_gl_sdate)
+                            
+                            # Check if new photo was uploaded
+                            import psycopg2
+                            if new_gl_photo:
+                                u_name, u_bytes = save_uploaded_file(new_gl_photo)
+                                u_param = psycopg2.Binary(u_bytes) if (USING_SUPABASE and u_bytes) else u_bytes
+                                run_query("""
+                                    UPDATE gold_loans
+                                    SET gold_image_file = ?, gold_image_data = ?
+                                    WHERE id = ?
+                                """, (u_name, u_param, sel_egl_id), fetch=False)
+                                
                             run_query("""
                                 UPDATE gold_loans
-                                SET gold_image_file = ?, gold_image_data = ?
+                                SET loan_no = ?, sanction_date = ?, gold_rate_per_gram = ?, ornament_details = ?,
+                                    item_count = ?, gross_weight = ?, stone_deduction = ?, net_weight = ?,
+                                    market_value = ?, principal_amount = ?, interest_rate = ?,
+                                    interest_rate_monthly = ?, tenure_months = ?, total_interest = ?,
+                                    total_repayable = ?, installment_amount = ?, monthly_principal_emi = ?,
+                                    monthly_interest_emi = ?, monthly_interest_due = ?,
+                                    loan_from_date = ?, loan_to_date = ?, first_emi_due = ?, last_emi_due = ?,
+                                    outstanding_due = ?, vault_packet_no = ?, locker_no = ?,
+                                    appraiser_name = ?, disbursal_mode = ?, status = ?, remarks = ?
                                 WHERE id = ?
-                            """, (u_name, u_param, sel_egl_id), fetch=False)
-                            
-                        run_query("""
-                            UPDATE gold_loans
-                            SET loan_no = ?, sanction_date = ?, gold_rate_per_gram = ?, ornament_details = ?,
-                                item_count = ?, gross_weight = ?, stone_deduction = ?, net_weight = ?,
-                                market_value = ?, principal_amount = ?, interest_rate = ?,
-                                interest_rate_monthly = ?, tenure_months = ?, total_interest = ?,
-                                total_repayable = ?, installment_amount = ?, monthly_principal_emi = ?,
-                                monthly_interest_emi = ?, monthly_interest_due = ?,
-                                loan_from_date = ?, loan_to_date = ?, first_emi_due = ?, last_emi_due = ?,
-                                outstanding_due = ?, vault_packet_no = ?, locker_no = ?,
-                                appraiser_name = ?, disbursal_mode = ?, status = ?, remarks = ?
-                            WHERE id = ?
-                        """, (
-                            new_gl_lno, str(new_gl_sdate), ed_gold_rate, ed_orn_desc,
-                            ed_item_cnt, ed_gross_wt, ed_stone_ded, ed_net_wt,
-                            ed_market_val, ed_princ, ed_int_rate,
-                            round(ed_int_rate / 12.0, 2), ed_tenure_mo, calc_gl_interest,
-                            calc_gl_repayable, calc_gl_installment, calc_gl_p_emi,
-                            calc_gl_i_emi, calc_gl_i_emi,
-                            ed_loan_from, ed_loan_to, ed_first_due, ed_last_due,
-                            new_gl_out_due, new_pkt_no, new_locker_no,
-                            new_appr_name, new_gl_dmode, new_gl_status, new_gl_remarks,
-                            sel_egl_id
-                        ), fetch=False)
+                            """, (
+                                new_gl_lno, str(new_gl_sdate), ed_gold_rate, ed_orn_desc,
+                                ed_item_cnt, ed_gross_wt, ed_stone_ded, ed_net_wt,
+                                ed_market_val, ed_princ, ed_int_rate,
+                                round(ed_int_rate / 12.0, 2), ed_tenure_mo, calc_gl_interest,
+                                calc_gl_repayable, calc_gl_installment, calc_gl_p_emi,
+                                calc_gl_i_emi, calc_gl_i_emi,
+                                ed_loan_from, ed_loan_to, ed_first_due, ed_last_due,
+                                new_gl_out_due, new_pkt_no, new_locker_no,
+                                new_appr_name, new_gl_dmode, new_gl_status, new_gl_remarks,
+                                sel_egl_id
+                            ), fetch=False)
                         
                         # Regenerate pending schedules
                         run_query("DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = ? AND status = 'PENDING'", (sel_egl_id,), fetch=False)

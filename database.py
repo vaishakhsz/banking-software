@@ -651,6 +651,11 @@ def init_db():
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
                     ALTER TABLE loan_repayments ADD COLUMN IF NOT EXISTS created_at TEXT;
                 """)
+                for leg_col in ["monthly_interest_rate", "outstanding_principal", "appraised_value"]:
+                    try:
+                        cursor.execute(f"ALTER TABLE gold_loans ALTER COLUMN {leg_col} DROP NOT NULL;")
+                    except Exception:
+                        pass
             except Exception:
                 pass
         else:

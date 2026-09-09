@@ -642,9 +642,14 @@ def init_db():
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS monthly_principal_emi DOUBLE PRECISION DEFAULT 0;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS monthly_interest_emi DOUBLE PRECISION DEFAULT 0;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS installment_amount DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS interest_rate DOUBLE PRECISION DEFAULT 12.0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS total_interest DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS total_repayable DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_file TEXT;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_name TEXT;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_data BYTEA;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                    ALTER TABLE loan_repayments ADD COLUMN IF NOT EXISTS created_at TEXT;
                 """)
             except Exception:
                 pass
@@ -676,6 +681,10 @@ def init_db():
                 ("last_emi_due", "TEXT"),
                 ("monthly_principal_emi", "REAL DEFAULT 0"),
                 ("monthly_interest_emi", "REAL DEFAULT 0"),
+                ("installment_amount", "REAL DEFAULT 0"),
+                ("interest_rate", "REAL DEFAULT 12.0"),
+                ("total_interest", "REAL DEFAULT 0"),
+                ("total_repayable", "REAL DEFAULT 0"),
                 ("gold_image_name", "TEXT"),
                 ("gold_image_data", "BLOB")
             ]:

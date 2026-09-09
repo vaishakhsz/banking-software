@@ -917,7 +917,7 @@ def clear_db_cache():
 
 try:
     import streamlit as st
-    @st.cache_data(ttl=20, show_spinner=False)
+    @st.cache_data(ttl=600, show_spinner=False)
     def _inner_cached_query(query, params=()):
         return run_query(query, params, fetch=True)
 
@@ -927,9 +927,106 @@ try:
             return _inner_cached_query(query, p)
         except Exception:
             return run_query(query, params, fetch=True)
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def get_all_gold_loans_bundle():
+        """
+        Fetches all Gold Loans, all Gold EMI Schedules, and all Gold Repayments
+        in 1 unified cacheable bundle for 0.0ms instant tab rendering.
+        """
+        all_gl_data = run_query("""
+            SELECT gl.id, gl.loan_no, gl.customer_id, c.name, COALESCE(c.account_no, 'N/A'), c.phone,
+                   gl.sanction_date, gl.gold_rate_per_gram, gl.ornament_details, gl.item_count,
+                   gl.gross_weight, gl.stone_deduction, gl.net_weight, gl.purity, gl.market_value,
+                   gl.ltv_percent, gl.principal_amount, gl.interest_rate, gl.interest_rate_monthly,
+                   gl.tenure_months, gl.total_interest, gl.total_repayable, gl.installment_amount,
+                   gl.monthly_principal_emi, gl.monthly_interest_emi, gl.monthly_interest_due,
+                   gl.loan_from_date, gl.loan_to_date, gl.first_emi_due, gl.last_emi_due,
+                   gl.outstanding_due, gl.vault_packet_no, gl.locker_no, gl.appraiser_name,
+                   gl.disbursal_mode, gl.voucher_no, gl.status, gl.remarks, COALESCE(gl.renewal_count, 0),
+                   gl.last_renewal_date, c.street, c.city, c.state, c.pincode, gl.gold_image_file,
+                   CASE WHEN gl.gold_image_data IS NOT NULL THEN 1 ELSE 0 END as has_photo
+            FROM gold_loans gl
+            JOIN customers c ON gl.customer_id = c.id
+            ORDER BY gl.id DESC
+        """) or []
+
+        gl_schedules = run_query("""
+            SELECT loan_id, emi_number, from_date, to_date, due_date, principal_component, interest_component, emi_amount, paid_amount, status
+            FROM loan_emi_schedules
+            WHERE loan_type = 'GOLD'
+            ORDER BY loan_id, emi_number ASC
+        """) or []
+
+        gl_repayments = run_query("""
+            SELECT loan_id, payment_date, voucher_no, amount_paid, payment_mode, narration
+            FROM loan_repayments
+            WHERE loan_type = 'GOLD'
+            ORDER BY loan_id, id ASC
+        """) or []
+
+        gl_sched_map = {}
+        for s in gl_schedules:
+            gl_sched_map.setdefault(s[0], []).append(s[1:])
+
+        gl_rep_map = {}
+        for r in gl_repayments:
+            gl_rep_map.setdefault(r[0], []).append(r[1:])
+
+        return all_gl_data, gl_sched_map, gl_rep_map
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def get_all_personal_loans_bundle():
+        """
+        Fetches all Personal Loans, all Personal EMI Schedules, and all Personal Repayments
+        in 1 unified cacheable bundle for 0.0ms instant tab rendering.
+        """
+        all_pl_data = run_query("""
+            SELECT pl.id, pl.loan_no, pl.customer_id, c.name, COALESCE(c.account_no, 'N/A'), c.phone,
+                   pl.sanction_date, pl.principal_amount, pl.interest_rate, pl.interest_type,
+                   pl.tenure_days, pl.tenure_months, pl.total_interest, pl.total_repayable,
+                   pl.installment_amount, pl.monthly_principal_emi, pl.monthly_interest_emi,
+                   pl.loan_from_date, pl.loan_to_date, pl.first_emi_due, pl.last_emi_due,
+                   pl.outstanding_due, pl.disbursal_mode, pl.voucher_no, pl.guarantor_name,
+                   pl.guarantor_phone, COALESCE(pl.guarantor_relation, 'Surety'),
+                   COALESCE(pl.guarantor_address, 'Balaramapuram, Trivandrum'),
+                   pl.purpose, pl.status, pl.remarks, COALESCE(pl.renewal_count, 0),
+                   pl.last_renewal_date, c.street, c.city, c.state, c.pincode
+            FROM personal_loans pl
+            JOIN customers c ON pl.customer_id = c.id
+            ORDER BY pl.id DESC
+        """) or []
+
+        pl_schedules = run_query("""
+            SELECT loan_id, emi_number, from_date, to_date, due_date, principal_component, interest_component, emi_amount, paid_amount, status
+            FROM loan_emi_schedules
+            WHERE loan_type = 'PERSONAL'
+            ORDER BY loan_id, emi_number ASC
+        """) or []
+
+        pl_repayments = run_query("""
+            SELECT loan_id, payment_date, voucher_no, amount_paid, payment_mode, narration
+            FROM loan_repayments
+            WHERE loan_type = 'PERSONAL'
+            ORDER BY loan_id, id ASC
+        """) or []
+
+        pl_sched_map = {}
+        for s in pl_schedules:
+            pl_sched_map.setdefault(s[0], []).append(s[1:])
+
+        pl_rep_map = {}
+        for r in pl_repayments:
+            pl_rep_map.setdefault(r[0], []).append(r[1:])
+
+        return all_pl_data, pl_sched_map, pl_rep_map
 except Exception:
     def cached_query(query, params=()):
         return run_query(query, params, fetch=True)
+    def get_all_gold_loans_bundle():
+        return [], {}, {}
+    def get_all_personal_loans_bundle():
+        return [], {}, {}
 
 def sync_db_sequences(table_name=None, id_column='id'):
     """

@@ -1,14 +1,22 @@
-[client]
-showErrorDetails = "full"
-
-[theme]
-primaryColor = "#1f4e78"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f0f4f8"
-textColor = "#262730"
-font = "sans serif"
-
 [server]
 headless = true
+fileWatcherType = "none"
+runOnSave = false
 enableCORS = false
 enableXsrfProtection = false
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[theme]
+base = "dark"
+primaryColor = "#00e5ff"
+backgroundColor = "#050b14"
+secondaryBackgroundColor = "#0a192f"
+textColor = "#f8fafc"
+font = "sans serif"

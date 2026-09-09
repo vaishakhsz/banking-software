@@ -888,7 +888,8 @@ def render_personal_loans():
             remarks = col_p2.text_input("Remarks / Notes", value="New Personal Loan Disbursed")
             
             if st.form_submit_button("🚀 Confirm & 1-Click Disburse Loan", use_container_width=True):
-                cur_count = run_query("SELECT COUNT(*) FROM personal_loans")[0][0] + 1
+                pl_cnt_row = run_query("SELECT COUNT(*) FROM personal_loans")
+                cur_count = (pl_cnt_row[0][0] if pl_cnt_row and pl_cnt_row[0] else 0) + 1
                 loan_no = custom_loan_no.strip() if custom_loan_no and custom_loan_no.strip() else f"PL-2026-{cur_count:04d}"
                 voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{cur_count:03d}"
                 
@@ -923,7 +924,12 @@ def render_personal_loans():
                     purpose, remarks
                 ), fetch=False)
                 
-                new_pl_id = run_query("SELECT id FROM personal_loans WHERE loan_no = ?", (loan_no,))[0][0]
+                pl_lookup = run_query("SELECT id FROM personal_loans WHERE loan_no = ?", (loan_no,))
+                if pl_lookup and pl_lookup[0]:
+                    new_pl_id = pl_lookup[0][0]
+                else:
+                    st.error(f"❌ Failed to disburse Personal Loan **{loan_no}**. Please check database connection.")
+                    st.stop()
                 
                 batch_insert_loan_schedules('PERSONAL', new_pl_id, loan_no, preview_schedule, sanction_date)
                 
@@ -960,8 +966,10 @@ def render_personal_loans():
                     run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, new_bal, str(sanction_date)), fetch=False)
                 else:
                     run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (selected_cust_acc, selected_cust_id, tot_repayable, str(sanction_date)), fetch=False)
-                    acc_id = run_query("SELECT id FROM accounts WHERE customer_id = ?", (selected_cust_id,))[0][0]
-                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, tot_repayable, str(sanction_date)), fetch=False)
+                    acc_lookup = run_query("SELECT id FROM accounts WHERE customer_id = ?", (selected_cust_id,))
+                    acc_id = acc_lookup[0][0] if acc_lookup and acc_lookup[0] else None
+                    if acc_id:
+                        run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, tot_repayable, str(sanction_date)), fetch=False)
                     
                 st.success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}**.")
                 time.sleep(1.0)
@@ -1719,7 +1727,8 @@ def render_gold_loans():
         col_v2.success(f"🎯 **Max Eligible Loan (75% LTV):** ₹{max_eligible:,.2f}")
         
         col_s1, col_s2, col_s3 = st.columns(3)
-        cur_gl_cnt = (run_query("SELECT COUNT(*) FROM gold_loans")[0][0] or 0) + 1
+        gl_cnt_row = run_query("SELECT COUNT(*) FROM gold_loans")
+        cur_gl_cnt = (gl_cnt_row[0][0] if gl_cnt_row and gl_cnt_row[0] else 0) + 1
         packet_no = col_s1.text_input("Safe Vault Packet No", value=f"PKT-{cur_gl_cnt:03d}", key="gl_pkt_no")
         locker_no = col_s2.text_input("Locker Number", value="LOCKER-01", key="gl_locker_no")
         appraiser_name = col_s3.text_input("Certified Appraiser Name", value="Approved Nidhi Appraiser", key="gl_appr_name")
@@ -1829,7 +1838,15 @@ def render_gold_loans():
                     img_name, img_param
                 ))
                 
-                new_gl_id = new_gl_row[0][0] if new_gl_row else run_query("SELECT id FROM gold_loans WHERE loan_no = ?", (loan_no,))[0][0]
+                if new_gl_row and new_gl_row[0]:
+                    new_gl_id = new_gl_row[0][0]
+                else:
+                    gl_lookup = run_query("SELECT id FROM gold_loans WHERE loan_no = ?", (loan_no,))
+                    if gl_lookup and gl_lookup[0]:
+                        new_gl_id = gl_lookup[0][0]
+                    else:
+                        st.error(f"❌ Failed to disburse Gold Loan **{loan_no}**. Please check database connection.")
+                        st.stop()
                 
                 batch_insert_loan_schedules('GOLD', new_gl_id, loan_no, gl_schedule, sanction_date)
                     
@@ -5113,9 +5130,12 @@ def render_reports():
             else:
                 st.info("No customer registration data available.")
         elif chart_type == "Account Distribution":
-            sb_count = run_query("SELECT COUNT(*) FROM sb_accounts")[0][0]
-            fd_count = run_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")[0][0]
-            rd_count = run_query("SELECT COUNT(*) FROM recurring_deposits WHERE status='ACTIVE'")[0][0]
+            sb_row = run_query("SELECT COUNT(*) FROM sb_accounts")
+            fd_row = run_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")
+            rd_row = run_query("SELECT COUNT(*) FROM recurring_deposits WHERE status='ACTIVE'")
+            sb_count = sb_row[0][0] if sb_row and sb_row[0] else 0
+            fd_count = fd_row[0][0] if fd_row and fd_row[0] else 0
+            rd_count = rd_row[0][0] if rd_row and rd_row[0] else 0
             df_dist = pd.DataFrame({
                 "Account Type": ["SB Accounts", "Fixed Deposits (FD)", "Recurring Deposits (RD)"],
                 "Count": [sb_count, fd_count, rd_count]

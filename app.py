@@ -23,6 +23,7 @@ import re
 import plotly.express as px
 import plotly.graph_objects as go
 import pytz
+import streamlit.components.v1 as components
 
 # Import database layer
 try:
@@ -5347,17 +5348,105 @@ st.sidebar.markdown(f"""
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
-current_time_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
-st.sidebar.markdown(f"""
-<div style="text-align: center; background: linear-gradient(135deg, rgba(8, 24, 48, 0.85) 0%, rgba(15, 38, 70, 0.75) 100%); padding: 12px 10px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.14); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.08);">
-    <div style="color: #cbd5e1; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; display: flex; align-items: center; justify-content: center; gap: 6px;">
-        <span style="display: inline-block; width: 6px; height: 6px; background: #94a3b8; border-radius: 50%;"></span>
-        IST Live Clock
-    </div>
-    <div style="color: #ffffff; font-size: 19px; font-weight: 800; font-family: 'Consolas', 'Courier New', monospace; letter-spacing: 1px; margin: 6px 0 4px 0; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);">{current_time_ist.strftime('%I:%M:%S %p')}</div>
-    <div style="color: #94a3b8; font-size: 11px; font-weight: 500; opacity: 0.9;">{current_time_ist.strftime('%d %b %Y')}</div>
-</div>
-""", unsafe_allow_html=True)
+with st.sidebar:
+    components.html("""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        background: transparent;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        user-select: none;
+      }
+      .clock-card {
+        text-align: center;
+        background: linear-gradient(135deg, rgba(8, 24, 48, 0.85) 0%, rgba(15, 38, 70, 0.75) 100%);
+        padding: 9px 8px 8px 8px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.08);
+        width: 100%;
+      }
+      .clock-title {
+        color: #cbd5e1;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+      .live-dot {
+        width: 6px;
+        height: 6px;
+        background: #94a3b8;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .clock-time {
+        color: #ffffff;
+        font-size: 18px;
+        font-weight: 800;
+        font-family: 'Consolas', 'Courier New', monospace;
+        letter-spacing: 1px;
+        margin: 4px 0 2px 0;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        line-height: 1.2;
+      }
+      .clock-date {
+        color: #94a3b8;
+        font-size: 11px;
+        font-weight: 500;
+        opacity: 0.9;
+        line-height: 1.2;
+      }
+    </style>
+    </head>
+    <body>
+      <div class="clock-card">
+        <div class="clock-title">
+          <span class="live-dot"></span>
+          IST Live Clock
+        </div>
+        <div id="ist-time" class="clock-time">--:--:-- --</div>
+        <div id="ist-date" class="clock-date">-- --- ----</div>
+      </div>
+
+      <script>
+        function updateClock() {
+          try {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: true
+            });
+            const dateStr = now.toLocaleDateString('en-GB', {
+              timeZone: 'Asia/Kolkata',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric'
+            });
+            const timeEl = document.getElementById('ist-time');
+            const dateEl = document.getElementById('ist-date');
+            if (timeEl) timeEl.innerText = timeStr;
+            if (dateEl) dateEl.innerText = dateStr;
+          } catch (e) {}
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+      </script>
+    </body>
+    </html>
+    """, height=82)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 
 menu_options = [

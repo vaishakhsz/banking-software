@@ -34,7 +34,10 @@ try:
         post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
         get_connection, release_connection, sync_db_sequences,
         get_all_gold_loans_bundle, get_all_personal_loans_bundle,
-        delete_cash_book_entry, delete_bank_book_entry, resequence_cash_book, resequence_bank_book
+        delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
+        delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
+        delete_cash_book_entry, delete_bank_book_entry,
+        resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database
     )
 except Exception as _db_imp_err:
     import traceback
@@ -1460,17 +1463,18 @@ def render_personal_loans():
                 conf_del = st.checkbox(f"Yes, I confirm I want to permanently delete Loan #{l_no} (Borrower: {c_name})", key=f"conf_del_pl_{sel_pl_id}")
                 if conf_del:
                     if st.button(f"🗑️ Permanently Delete Loan #{l_no}", type="primary", use_container_width=True, key=f"btn_del_pl_{sel_pl_id}"):
-                        run_query("DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ?", (sel_pl_id,), fetch=False)
-                        run_query("DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (sel_pl_id,), fetch=False)
-                        run_query("DELETE FROM personal_loans WHERE id = ?", (sel_pl_id,), fetch=False)
+                        success, msg = delete_personal_loan_entry(sel_pl_id)
                         rem_loans = run_query("SELECT SUM(outstanding_due) FROM personal_loans WHERE customer_id = ?", (c_id,))
                         new_acc_bal = float(rem_loans[0][0]) if rem_loans and rem_loans[0][0] is not None else 0.0
                         run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_acc_bal, c_id), fetch=False)
                         
                         clear_db_cache()
-                        st.success(f"✅ Loan #{l_no} for {c_name} was permanently deleted.")
-                        time.sleep(0.5)
-                        st.rerun()
+                        if success:
+                            st.success(f"✅ {msg}")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to delete loan: {msg}")
         else:
             st.info("No personal loan records found to edit or manage.")
 
@@ -2410,17 +2414,18 @@ def render_gold_loans():
                 conf_del_gl = st.checkbox(f"Yes, I confirm I want to permanently delete Gold Loan #{eg_lno} (Borrower: {eg_cname})", key=f"conf_del_gl_{sel_egl_id}")
                 if conf_del_gl:
                     if st.button(f"🗑️ Permanently Delete Gold Loan #{eg_lno}", type="primary", use_container_width=True, key=f"btn_del_gl_{sel_egl_id}"):
-                        run_query("DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = ?", (sel_egl_id,), fetch=False)
-                        run_query("DELETE FROM loan_repayments WHERE loan_type = 'GOLD' AND loan_id = ?", (sel_egl_id,), fetch=False)
-                        run_query("DELETE FROM gold_loans WHERE id = ?", (sel_egl_id,), fetch=False)
+                        success, msg = delete_gold_loan_entry(sel_egl_id)
                         rem_gl = run_query("SELECT SUM(outstanding_due) FROM gold_loans WHERE customer_id = ?", (eg_cid,))
                         new_acc_bal = float(rem_gl[0][0]) if rem_gl and rem_gl[0][0] is not None else 0.0
                         run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_acc_bal, eg_cid), fetch=False)
                         
                         clear_db_cache()
-                        st.success(f"✅ Gold Loan #{eg_lno} for {eg_cname} was permanently deleted.")
-                        time.sleep(0.5)
-                        st.rerun()
+                        if success:
+                            st.success(f"✅ {msg}")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to delete gold loan: {msg}")
         else:
             st.info("No gold loan records found to edit or manage.")
 
@@ -2824,6 +2829,18 @@ def render_fixed_deposits():
         if fds:
             df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Payment Mode"])
             st.dataframe(df_fds, use_container_width=True)
+            
+            with st.expander("🗑️ Delete Fixed Deposit", expanded=False):
+                del_fd_id = st.number_input("Enter FD ID to Delete", min_value=1, step=1, key="del_fd_input_id")
+                if st.button("Delete Fixed Deposit", type="primary", use_container_width=True, key="del_fd_btn"):
+                    success, msg = delete_fd_entry(del_fd_id)
+                    clear_db_cache()
+                    if success:
+                        st.success(f"✅ {msg}")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
         else:
             st.info("No active fixed deposits found.")
 
@@ -3511,10 +3528,14 @@ def render_recurring_deposits():
                 with st.popover("🗑️ Delete RD"):
                     st.error(f"Are you sure you want to delete RD #{edit_rd_no}?")
                     if st.button("Confirm Delete Permanently", key=f"btn_del_rd_{c_rd_id}", type="primary", use_container_width=True):
-                        run_query("DELETE FROM recurring_deposits WHERE rd_id = ?", (c_rd_id,), fetch=False)
-                        st.success(f"🗑️ Recurring Deposit #{edit_rd_no} deleted successfully!")
-                        time.sleep(0.1)
-                        st.rerun()
+                        success, msg = delete_rd_entry(c_rd_id)
+                        clear_db_cache()
+                        if success:
+                            st.success(f"✅ {msg}")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to delete RD: {msg}")
         else:
             st.info("No Recurring Deposits available to edit.")
 
@@ -3564,15 +3585,14 @@ def render_chart_of_accounts():
 
             # Option to manually trigger resequencing of all accounts to resolve gaps
             st.markdown('<div class="resequence-btn-container">', unsafe_allow_html=True)
-            if st.button("🛠️ Force Resequence Account Codes (Enforce strict 101+ order)", use_container_width=True):
-                from database import resequence_all_accounts, reconcile_books, resequence_cash_book, resequence_bank_book
+            if st.button("🛠️ Force Resequence Database & Accounts (Enforce strict gapless order)", use_container_width=True):
                 try:
-                    resequence_all_accounts()
-                    reconcile_books()
-                    resequence_cash_book()
-                    resequence_bank_book()
-                    st.success("✅ Resequenced Chart of Accounts, Cash Book & Bank Book successfully! All IDs and account codes are in strict sequential order.")
-                    time.sleep(0.1)
+                    success, msg = resequence_entire_database()
+                    if success:
+                        st.success("✅ Resequenced Chart of Accounts, Customers, Loans, Deposits, Cash & Bank Books successfully! All IDs and account codes are in strict sequential order.")
+                    else:
+                        st.error(f"❌ Resequencing error: {msg}")
+                    time.sleep(0.5)
                     st.rerun()
                 except Exception as ex:
                     st.error(f"❌ Resequencing error: {str(ex)}")
@@ -3583,12 +3603,16 @@ def render_chart_of_accounts():
             del_code = st.selectbox("Select Account Code to Delete", df_coa["Account Code"].tolist())
             if st.button("Delete Account Head", type="primary", use_container_width=True):
                 try:
+                    from database import resequence_all_accounts, reconcile_books
                     run_query("DELETE FROM chart_of_accounts WHERE account_code = ?", (del_code,), fetch=False)
-                    st.success(f"Successfully deleted account code: {del_code}")
-                    time.sleep(0.1)
+                    resequence_all_accounts()
+                    reconcile_books()
+                    clear_db_cache()
+                    st.success(f"✅ Successfully deleted account code: {del_code} and resequenced accounts!")
+                    time.sleep(0.5)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Could not delete account. Error: {e}")
+                    st.error(f"❌ Could not delete account. Error: {e}")
         else:
             st.info("No records found in the Chart of Accounts.")
 
@@ -4426,6 +4450,18 @@ def render_journal_vouchers():
         if jvs:
             df_jvs = pd.DataFrame(jvs, columns=["JV ID", "Date", "Narration", "Status"])
             st.dataframe(format_df_dates(df_jvs), use_container_width=True)
+            
+            with st.expander("🗑️ Delete Journal Voucher", expanded=False):
+                del_jv_id = st.number_input("Enter JV ID to Delete", min_value=1, step=1, key="del_jv_input_id")
+                if st.button("Delete Journal Voucher", type="primary", use_container_width=True, key="del_jv_btn"):
+                    success, msg = delete_jv_entry(del_jv_id)
+                    clear_db_cache()
+                    if success:
+                        st.success(f"✅ {msg}")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
         else:
             st.info("No journal vouchers found in this date range.")
 
@@ -4539,23 +4575,35 @@ def render_admin_editor():
                     except ValueError:
                         val = record_id_to_del
                     
-                    if selected_table == 'cash_book' and isinstance(val, int):
+                    if selected_table == 'customers' and isinstance(val, int):
+                        success, msg = delete_customer_cascade(val)
+                    elif selected_table == 'personal_loans' and isinstance(val, int):
+                        success, msg = delete_personal_loan_entry(val)
+                    elif selected_table == 'gold_loans' and isinstance(val, int):
+                        success, msg = delete_gold_loan_entry(val)
+                    elif selected_table == 'fixed_deposits' and isinstance(val, int):
+                        success, msg = delete_fd_entry(val)
+                    elif selected_table == 'recurring_deposits' and isinstance(val, int):
+                        success, msg = delete_rd_entry(val)
+                    elif selected_table == 'journal_vouchers' and isinstance(val, int):
+                        success, msg = delete_jv_entry(val)
+                    elif selected_table == 'transactions' and isinstance(val, int):
+                        success, msg = delete_transaction_entry(val)
+                    elif selected_table == 'cash_book' and isinstance(val, int):
                         success, msg = delete_cash_book_entry(val)
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(f"❌ {msg}")
                     elif selected_table == 'bank_book' and isinstance(val, int):
                         success, msg = delete_bank_book_entry(val)
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(f"❌ {msg}")
                     else:
                         run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
-                        sync_db_sequences()
-                        st.success("Record deleted and sequences synced!")
-                    time.sleep(0.1)
+                        resequence_entire_database()
+                        success, msg = True, f"Record deleted from {selected_table} and entire database resequenced successfully."
+                    
+                    clear_db_cache()
+                    if success:
+                        st.success(f"✅ {msg}")
+                    else:
+                        st.error(f"❌ {msg}")
+                    time.sleep(0.5)
                     st.rerun()
             elif action == "Edit Record":
                 record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
@@ -5687,15 +5735,10 @@ if uploaded_dbs:
                     conn.commit()
                     
                     # Force resequence and reconcile
-                    from database import resequence_all_accounts, reconcile_books
                     try:
-                        resequence_all_accounts()
+                        resequence_entire_database()
                     except Exception as ex:
                         print(f"Resequence error: {str(ex)}")
-                    try:
-                        reconcile_books()
-                    except Exception as ex:
-                        print(f"Reconcile error: {str(ex)}")
                     
                     st.sidebar.success(f"✅ Successfully restored from {len(sql_files)} SQL files! Please refresh.")
                     time.sleep(0.1)

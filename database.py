@@ -1171,6 +1171,7 @@ def delete_customer_cascade(customer_id):
     """
     Safely deletes a customer and cascades all linked accounts, transactions,
     loans, deposits, shares, and documents.
+    Resequences remaining customers (id = id - 1) and shifts child customer_id references.
     """
     conn = None
     try:
@@ -1182,7 +1183,6 @@ def delete_customer_cascade(customer_id):
         cursor.execute(f"SELECT id, name, account_no, adhar_file, pan_file, signature_file FROM customers WHERE id = {placeholder}", (customer_id,))
         cust_row = cursor.fetchone()
         if not cust_row:
-            release_connection(conn)
             return False, f"Customer with ID {customer_id} not found."
         
         c_id, c_name, c_acc, adh_f, pan_f, sig_f = cust_row
@@ -1211,15 +1211,21 @@ def delete_customer_cascade(customer_id):
         if c_acc:
             safe_exec(f"DELETE FROM sb_accounts WHERE account_no = {placeholder}", (c_acc,))
             
-        # 4. Delete loan repayments and loans
+        # 4. Delete loan repayments, schedules, and loans
         cursor.execute(f"SELECT id FROM personal_loans WHERE customer_id = {placeholder}", (c_id,))
         pl_ids = [r[0] for r in cursor.fetchall()]
         for pl_id in pl_ids:
             safe_exec(f"DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder}", (pl_id,))
+            safe_exec(f"DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder}", (pl_id,))
         safe_exec(f"DELETE FROM loan_repayments WHERE customer_id = {placeholder}", (c_id,))
         safe_exec(f"DELETE FROM personal_loans WHERE customer_id = {placeholder}", (c_id,))
         
-        # 5. Delete daily loans, gold loans, FDs, RDs
+        # 5. Delete gold loans, FDs, RDs
+        cursor.execute(f"SELECT id FROM gold_loans WHERE customer_id = {placeholder}", (c_id,))
+        gl_ids = [r[0] for r in cursor.fetchall()]
+        for gl_id in gl_ids:
+            safe_exec(f"DELETE FROM loan_repayments WHERE loan_type = 'GOLD' AND loan_id = {placeholder}", (gl_id,))
+            safe_exec(f"DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = {placeholder}", (gl_id,))
         safe_exec(f"DELETE FROM gold_loans WHERE customer_id = {placeholder}", (c_id,))
         safe_exec(f"DELETE FROM fixed_deposits WHERE customer_id = {placeholder}", (c_id,))
         safe_exec(f"DELETE FROM recurring_deposits WHERE customer_id = {placeholder}", (c_id,))
@@ -1227,10 +1233,45 @@ def delete_customer_cascade(customer_id):
         # 6. Delete from customers table
         cursor.execute(f"DELETE FROM customers WHERE id = {placeholder}", (c_id,))
         
+        # 7. Resequence remaining customers and shift foreign keys
+        if USING_SUPABASE:
+            cursor.execute("UPDATE sb_accounts SET customer_id = customer_id - 1 WHERE customer_id > %s", (c_id,))
+            safe_exec("UPDATE accounts SET customer_id = customer_id - 1 WHERE customer_id > %s", (c_id,))
+            cursor.execute("UPDATE personal_loans SET customer_id = customer_id - 1 WHERE customer_id > %s", (c_id,))
+            cursor.execute("UPDATE gold_loans SET customer_id = customer_id - 1 WHERE customer_id > %s", (c_id,))
+            cursor.execute("UPDATE loan_repayments SET customer_id = customer_id - 1 WHERE customer_id > %s", (c_id,))
+            cursor.execute("UPDATE fixed_deposits SET customer_id = customer_id - 1 WHERE customer_id > %s", (c_id,))
+            cursor.execute("UPDATE recurring_deposits SET customer_id = customer_id - 1 WHERE customer_id > %s", (c_id,))
+            
+            cursor.execute("UPDATE customers SET id = -id WHERE id > %s", (c_id,))
+            cursor.execute("UPDATE customers SET id = (-id) - 1 WHERE id < 0")
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    max_id BIGINT;
+                BEGIN
+                    SELECT COALESCE(MAX(id), 0) INTO max_id FROM customers;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE customers_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('customers_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("UPDATE sb_accounts SET customer_id = customer_id - 1 WHERE customer_id > ?", (c_id,))
+            cursor.execute("UPDATE personal_loans SET customer_id = customer_id - 1 WHERE customer_id > ?", (c_id,))
+            cursor.execute("UPDATE gold_loans SET customer_id = customer_id - 1 WHERE customer_id > ?", (c_id,))
+            cursor.execute("UPDATE loan_repayments SET customer_id = customer_id - 1 WHERE customer_id > ?", (c_id,))
+            cursor.execute("UPDATE fixed_deposits SET customer_id = customer_id - 1 WHERE customer_id > ?", (c_id,))
+            cursor.execute("UPDATE recurring_deposits SET customer_id = customer_id - 1 WHERE customer_id > ?", (c_id,))
+            
+            cursor.execute("UPDATE customers SET id = -id WHERE id > ?", (c_id,))
+            cursor.execute("UPDATE customers SET id = (-id) - 1 WHERE id < 0")
+            
         conn.commit()
-        release_connection(conn)
         
-        # 7. Clean up local files if any
+        # 8. Clean up local files if any
         for fpath in [adh_f, pan_f, sig_f]:
             if fpath and os.path.exists(fpath):
                 try:
@@ -1238,15 +1279,16 @@ def delete_customer_cascade(customer_id):
                 except Exception:
                     pass
                     
-        return True, f"Customer #{c_id} ({c_name}) and all associated accounts were permanently deleted."
+        return True, f"Customer #{c_id} ({c_name}) and all associated accounts were permanently deleted. Sequence re-aligned without gaps."
     except Exception as e:
         if conn:
             try:
                 conn.rollback()
             except Exception:
                 pass
-            release_connection(conn)
         return False, str(e)
+    finally:
+        release_connection(conn)
 
 def get_account_balance_from_jv(account_code):
     try:
@@ -2274,6 +2316,592 @@ def resequence_bank_book():
         return False, str(e)
     finally:
         release_connection(conn)
+
+
+def delete_personal_loan_entry(del_id):
+    """
+    Deletes a personal loan, cascades linked schedules and repayments,
+    resequences personal_loans IDs (1..N) and dependent loan_id references,
+    and resets the sequence counter.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Fetch loan details
+        if USING_SUPABASE:
+            cursor.execute("SELECT loan_no, voucher_no, customer_id FROM personal_loans WHERE id = %s", (del_id,))
+        else:
+            cursor.execute("SELECT loan_no, voucher_no, customer_id FROM personal_loans WHERE id = ?", (del_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, f"Personal Loan ID {del_id} not found."
+            
+        loan_no, voucher_no, cust_id = row
+        
+        # 2. Delete linked EMI schedules & repayments
+        if USING_SUPABASE:
+            cursor.execute("DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = %s", (del_id,))
+            cursor.execute("DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = %s", (del_id,))
+            if voucher_no:
+                cursor.execute("DELETE FROM journal_vouchers WHERE narration LIKE %s", (f"%{voucher_no}%",))
+            cursor.execute("DELETE FROM personal_loans WHERE id = %s", (del_id,))
+            
+            # 3. Shift child loan_ids and personal_loans.id
+            cursor.execute("UPDATE loan_emi_schedules SET loan_id = loan_id - 1 WHERE loan_type = 'PERSONAL' AND loan_id > %s", (del_id,))
+            cursor.execute("UPDATE loan_repayments SET loan_id = loan_id - 1 WHERE loan_type = 'PERSONAL' AND loan_id > %s", (del_id,))
+            cursor.execute("UPDATE personal_loans SET id = -id WHERE id > %s", (del_id,))
+            cursor.execute("UPDATE personal_loans SET id = (-id) - 1 WHERE id < 0")
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    max_id BIGINT;
+                BEGIN
+                    SELECT COALESCE(MAX(id), 0) INTO max_id FROM personal_loans;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE personal_loans_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('personal_loans_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ?", (del_id,))
+            cursor.execute("DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (del_id,))
+            if voucher_no:
+                cursor.execute("DELETE FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+            cursor.execute("DELETE FROM personal_loans WHERE id = ?", (del_id,))
+            
+            cursor.execute("UPDATE loan_emi_schedules SET loan_id = loan_id - 1 WHERE loan_type = 'PERSONAL' AND loan_id > ?", (del_id,))
+            cursor.execute("UPDATE loan_repayments SET loan_id = loan_id - 1 WHERE loan_type = 'PERSONAL' AND loan_id > ?", (del_id,))
+            cursor.execute("UPDATE personal_loans SET id = -id WHERE id > ?", (del_id,))
+            cursor.execute("UPDATE personal_loans SET id = (-id) - 1 WHERE id < 0")
+            
+        conn.commit()
+        return True, f"Personal Loan #{loan_no} deleted and loans re-sequenced successfully without gaps."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def delete_gold_loan_entry(del_id):
+    """
+    Deletes a gold loan, cascades linked schedules and repayments,
+    resequences gold_loans IDs (1..N) and dependent loan_id references,
+    and resets the sequence counter.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Fetch loan details
+        if USING_SUPABASE:
+            cursor.execute("SELECT loan_no, voucher_no, customer_id FROM gold_loans WHERE id = %s", (del_id,))
+        else:
+            cursor.execute("SELECT loan_no, voucher_no, customer_id FROM gold_loans WHERE id = ?", (del_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, f"Gold Loan ID {del_id} not found."
+            
+        loan_no, voucher_no, cust_id = row
+        
+        # 2. Delete linked EMI schedules & repayments
+        if USING_SUPABASE:
+            cursor.execute("DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = %s", (del_id,))
+            cursor.execute("DELETE FROM loan_repayments WHERE loan_type = 'GOLD' AND loan_id = %s", (del_id,))
+            if voucher_no:
+                cursor.execute("DELETE FROM journal_vouchers WHERE narration LIKE %s", (f"%{voucher_no}%",))
+            cursor.execute("DELETE FROM gold_loans WHERE id = %s", (del_id,))
+            
+            # 3. Shift child loan_ids and gold_loans.id
+            cursor.execute("UPDATE loan_emi_schedules SET loan_id = loan_id - 1 WHERE loan_type = 'GOLD' AND loan_id > %s", (del_id,))
+            cursor.execute("UPDATE loan_repayments SET loan_id = loan_id - 1 WHERE loan_type = 'GOLD' AND loan_id > %s", (del_id,))
+            cursor.execute("UPDATE gold_loans SET id = -id WHERE id > %s", (del_id,))
+            cursor.execute("UPDATE gold_loans SET id = (-id) - 1 WHERE id < 0")
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    max_id BIGINT;
+                BEGIN
+                    SELECT COALESCE(MAX(id), 0) INTO max_id FROM gold_loans;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE gold_loans_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('gold_loans_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = ?", (del_id,))
+            cursor.execute("DELETE FROM loan_repayments WHERE loan_type = 'GOLD' AND loan_id = ?", (del_id,))
+            if voucher_no:
+                cursor.execute("DELETE FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+            cursor.execute("DELETE FROM gold_loans WHERE id = ?", (del_id,))
+            
+            cursor.execute("UPDATE loan_emi_schedules SET loan_id = loan_id - 1 WHERE loan_type = 'GOLD' AND loan_id > ?", (del_id,))
+            cursor.execute("UPDATE loan_repayments SET loan_id = loan_id - 1 WHERE loan_type = 'GOLD' AND loan_id > ?", (del_id,))
+            cursor.execute("UPDATE gold_loans SET id = -id WHERE id > ?", (del_id,))
+            cursor.execute("UPDATE gold_loans SET id = (-id) - 1 WHERE id < 0")
+            
+        conn.commit()
+        return True, f"Gold Loan #{loan_no} deleted and gold loans re-sequenced successfully without gaps."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def delete_fd_entry(del_id):
+    """
+    Deletes a fixed deposit and resequences fixed_deposits (fd_id = fd_id - 1) without gaps.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USING_SUPABASE:
+            cursor.execute("DELETE FROM fixed_deposits WHERE fd_id = %s", (del_id,))
+            cursor.execute("UPDATE fixed_deposits SET fd_id = -fd_id WHERE fd_id > %s", (del_id,))
+            cursor.execute("UPDATE fixed_deposits SET fd_id = (-fd_id) - 1 WHERE fd_id < 0")
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    max_id BIGINT;
+                BEGIN
+                    SELECT COALESCE(MAX(fd_id), 0) INTO max_id FROM fixed_deposits;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE fixed_deposits_fd_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('fixed_deposits_fd_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("DELETE FROM fixed_deposits WHERE fd_id = ?", (del_id,))
+            cursor.execute("UPDATE fixed_deposits SET fd_id = -fd_id WHERE fd_id > ?", (del_id,))
+            cursor.execute("UPDATE fixed_deposits SET fd_id = (-fd_id) - 1 WHERE fd_id < 0")
+        conn.commit()
+        return True, f"Fixed Deposit #{del_id} deleted and resequenced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def delete_rd_entry(del_id):
+    """
+    Deletes a recurring deposit and resequences recurring_deposits (rd_id = rd_id - 1) without gaps.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USING_SUPABASE:
+            cursor.execute("DELETE FROM recurring_deposits WHERE rd_id = %s", (del_id,))
+            cursor.execute("UPDATE recurring_deposits SET rd_id = -rd_id WHERE rd_id > %s", (del_id,))
+            cursor.execute("UPDATE recurring_deposits SET rd_id = (-rd_id) - 1 WHERE rd_id < 0")
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    max_id BIGINT;
+                BEGIN
+                    SELECT COALESCE(MAX(rd_id), 0) INTO max_id FROM recurring_deposits;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE recurring_deposits_rd_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('recurring_deposits_rd_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("DELETE FROM recurring_deposits WHERE rd_id = ?", (del_id,))
+            cursor.execute("UPDATE recurring_deposits SET rd_id = -rd_id WHERE rd_id > ?", (del_id,))
+            cursor.execute("UPDATE recurring_deposits SET rd_id = (-rd_id) - 1 WHERE rd_id < 0")
+        conn.commit()
+        return True, f"Recurring Deposit #{del_id} deleted and resequenced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def delete_jv_entry(del_jv_id):
+    """
+    Deletes a journal voucher and cascades its jv_entries,
+    resequences journal_vouchers (jv_id = jv_id - 1), shifts jv_entries.jv_id,
+    resequences jv_entries.entry_id, and syncs sequences.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USING_SUPABASE:
+            cursor.execute("DELETE FROM jv_entries WHERE jv_id = %s", (del_jv_id,))
+            cursor.execute("DELETE FROM journal_vouchers WHERE jv_id = %s", (del_jv_id,))
+            cursor.execute("UPDATE jv_entries SET jv_id = jv_id - 1 WHERE jv_id > %s", (del_jv_id,))
+            cursor.execute("UPDATE journal_vouchers SET jv_id = -jv_id WHERE jv_id > %s", (del_jv_id,))
+            cursor.execute("UPDATE journal_vouchers SET jv_id = (-jv_id) - 1 WHERE jv_id < 0")
+            
+            # Resequence jv_entries entry_id
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    rec RECORD;
+                    new_id INT := 1;
+                    max_j BIGINT;
+                    max_e BIGINT;
+                BEGIN
+                    UPDATE jv_entries SET entry_id = -entry_id;
+                    FOR rec IN SELECT entry_id FROM jv_entries ORDER BY -entry_id ASC LOOP
+                        UPDATE jv_entries SET entry_id = new_id WHERE entry_id = rec.entry_id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    
+                    SELECT COALESCE(MAX(jv_id), 0) INTO max_j FROM journal_vouchers;
+                    IF max_j = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE journal_vouchers_jv_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('journal_vouchers_jv_id_seq', max_j, true);
+                    END IF;
+                    
+                    SELECT COALESCE(MAX(entry_id), 0) INTO max_e FROM jv_entries;
+                    IF max_e = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE jv_entries_entry_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('jv_entries_entry_id_seq', max_e, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("DELETE FROM jv_entries WHERE jv_id = ?", (del_jv_id,))
+            cursor.execute("DELETE FROM journal_vouchers WHERE jv_id = ?", (del_jv_id,))
+            cursor.execute("UPDATE jv_entries SET jv_id = jv_id - 1 WHERE jv_id > ?", (del_jv_id,))
+            cursor.execute("UPDATE journal_vouchers SET jv_id = -jv_id WHERE jv_id > ?", (del_jv_id,))
+            cursor.execute("UPDATE journal_vouchers SET jv_id = (-jv_id) - 1 WHERE jv_id < 0")
+        conn.commit()
+        return True, f"Journal Voucher #{del_jv_id} deleted and resequenced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def delete_transaction_entry(del_id):
+    """
+    Deletes a savings account transaction and resequences transactions.id (1..N).
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USING_SUPABASE:
+            cursor.execute("DELETE FROM transactions WHERE id = %s", (del_id,))
+            cursor.execute("UPDATE transactions SET id = -id WHERE id > %s", (del_id,))
+            cursor.execute("UPDATE transactions SET id = (-id) - 1 WHERE id < 0")
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    max_id BIGINT;
+                BEGIN
+                    SELECT COALESCE(MAX(id), 0) INTO max_id FROM transactions;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE transactions_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('transactions_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("DELETE FROM transactions WHERE id = ?", (del_id,))
+            cursor.execute("UPDATE transactions SET id = -id WHERE id > ?", (del_id,))
+            cursor.execute("UPDATE transactions SET id = (-id) - 1 WHERE id < 0")
+        conn.commit()
+        return True, f"Transaction #{del_id} deleted and resequenced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def resequence_customers():
+    """Resequences all customers (1..N) and maps all child table customer_id references."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USING_SUPABASE:
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    rec RECORD;
+                    new_id INT := 1;
+                BEGIN
+                    CREATE TEMP TABLE IF NOT EXISTS temp_cust_map (old_id INT, new_id INT) ON COMMIT DROP;
+                    TRUNCATE temp_cust_map;
+                    
+                    FOR rec IN SELECT id FROM customers ORDER BY id ASC LOOP
+                        INSERT INTO temp_cust_map VALUES (rec.id, new_id);
+                        new_id := new_id + 1;
+                    END LOOP;
+                    
+                    UPDATE sb_accounts SET customer_id = temp_cust_map.new_id FROM temp_cust_map WHERE sb_accounts.customer_id = temp_cust_map.old_id AND sb_accounts.customer_id != temp_cust_map.new_id;
+                    UPDATE personal_loans SET customer_id = temp_cust_map.new_id FROM temp_cust_map WHERE personal_loans.customer_id = temp_cust_map.old_id AND personal_loans.customer_id != temp_cust_map.new_id;
+                    UPDATE gold_loans SET customer_id = temp_cust_map.new_id FROM temp_cust_map WHERE gold_loans.customer_id = temp_cust_map.old_id AND gold_loans.customer_id != temp_cust_map.new_id;
+                    UPDATE fixed_deposits SET customer_id = temp_cust_map.new_id FROM temp_cust_map WHERE fixed_deposits.customer_id = temp_cust_map.old_id AND fixed_deposits.customer_id != temp_cust_map.new_id;
+                    UPDATE recurring_deposits SET customer_id = temp_cust_map.new_id FROM temp_cust_map WHERE recurring_deposits.customer_id = temp_cust_map.old_id AND recurring_deposits.customer_id != temp_cust_map.new_id;
+                    UPDATE loan_repayments SET customer_id = temp_cust_map.new_id FROM temp_cust_map WHERE loan_repayments.customer_id = temp_cust_map.old_id AND loan_repayments.customer_id != temp_cust_map.new_id;
+                    
+                    UPDATE customers SET id = -id;
+                    UPDATE customers SET id = temp_cust_map.new_id FROM temp_cust_map WHERE customers.id = -temp_cust_map.old_id;
+                    
+                    IF (SELECT COUNT(*) FROM customers) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE customers_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('customers_id_seq', (SELECT MAX(id) FROM customers), true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("SELECT id FROM customers ORDER BY id ASC")
+            rows = cursor.fetchall()
+            id_map = {old_id: new_id for new_id, (old_id,) in enumerate(rows, 1)}
+            for old_id, new_id in id_map.items():
+                if old_id != new_id:
+                    cursor.execute("UPDATE sb_accounts SET customer_id = ? WHERE customer_id = ?", (new_id, old_id))
+                    cursor.execute("UPDATE personal_loans SET customer_id = ? WHERE customer_id = ?", (new_id, old_id))
+                    cursor.execute("UPDATE gold_loans SET customer_id = ? WHERE customer_id = ?", (new_id, old_id))
+                    cursor.execute("UPDATE fixed_deposits SET customer_id = ? WHERE customer_id = ?", (new_id, old_id))
+                    cursor.execute("UPDATE recurring_deposits SET customer_id = ? WHERE customer_id = ?", (new_id, old_id))
+                    cursor.execute("UPDATE loan_repayments SET customer_id = ? WHERE customer_id = ?", (new_id, old_id))
+            cursor.execute("UPDATE customers SET id = -id")
+            for old_id, new_id in id_map.items():
+                cursor.execute("UPDATE customers SET id = ? WHERE id = ?", (new_id, -old_id))
+        conn.commit()
+        return True, "Customers resequenced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def resequence_entire_database():
+    """
+    Master resequencer that re-indexes and aligns all tables across the entire banking system:
+    Customers, Chart of Accounts, Journal Vouchers, JV Entries, Cash Book, Bank Book,
+    Personal Loans, Gold Loans, Fixed Deposits, Recurring Deposits, Transactions,
+    Loan Repayments, and EMI Schedules with 100% zero sequence gaps.
+    """
+    # 1. Resequence Chart of Accounts
+    resequence_all_accounts()
+    
+    # 2. Resequence Customers
+    resequence_customers()
+    
+    # 3. Resequence Cash Book & Bank Book
+    resequence_cash_book()
+    resequence_bank_book()
+    
+    # 4. Resequence Personal Loans, Gold Loans, Deposits, JVs, Transactions
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USING_SUPABASE:
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    rec RECORD;
+                    new_id INT := 1;
+                BEGIN
+                    -- Resequence personal_loans
+                    CREATE TEMP TABLE IF NOT EXISTS temp_pl_map (old_id INT, new_id INT) ON COMMIT DROP;
+                    TRUNCATE temp_pl_map;
+                    FOR rec IN SELECT id FROM personal_loans ORDER BY id ASC LOOP
+                        INSERT INTO temp_pl_map VALUES (rec.id, new_id);
+                        new_id := new_id + 1;
+                    END LOOP;
+                    UPDATE loan_emi_schedules SET loan_id = temp_pl_map.new_id FROM temp_pl_map WHERE loan_emi_schedules.loan_type = 'PERSONAL' AND loan_emi_schedules.loan_id = temp_pl_map.old_id AND loan_emi_schedules.loan_id != temp_pl_map.new_id;
+                    UPDATE loan_repayments SET loan_id = temp_pl_map.new_id FROM temp_pl_map WHERE loan_repayments.loan_type = 'PERSONAL' AND loan_repayments.loan_id = temp_pl_map.old_id AND loan_repayments.loan_id != temp_pl_map.new_id;
+                    UPDATE personal_loans SET id = -id;
+                    UPDATE personal_loans SET id = temp_pl_map.new_id FROM temp_pl_map WHERE personal_loans.id = -temp_pl_map.old_id;
+                    IF (SELECT COUNT(*) FROM personal_loans) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE personal_loans_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('personal_loans_id_seq', (SELECT MAX(id) FROM personal_loans), true);
+                    END IF;
+
+                    -- Resequence gold_loans
+                    new_id := 1;
+                    CREATE TEMP TABLE IF NOT EXISTS temp_gl_map (old_id INT, new_id INT) ON COMMIT DROP;
+                    TRUNCATE temp_gl_map;
+                    FOR rec IN SELECT id FROM gold_loans ORDER BY id ASC LOOP
+                        INSERT INTO temp_gl_map VALUES (rec.id, new_id);
+                        new_id := new_id + 1;
+                    END LOOP;
+                    UPDATE loan_emi_schedules SET loan_id = temp_gl_map.new_id FROM temp_gl_map WHERE loan_emi_schedules.loan_type = 'GOLD' AND loan_emi_schedules.loan_id = temp_gl_map.old_id AND loan_emi_schedules.loan_id != temp_gl_map.new_id;
+                    UPDATE loan_repayments SET loan_id = temp_gl_map.new_id FROM temp_gl_map WHERE loan_repayments.loan_type = 'GOLD' AND loan_repayments.loan_id = temp_gl_map.old_id AND loan_repayments.loan_id != temp_gl_map.new_id;
+                    UPDATE gold_loans SET id = -id;
+                    UPDATE gold_loans SET id = temp_gl_map.new_id FROM temp_gl_map WHERE gold_loans.id = -temp_gl_map.old_id;
+                    IF (SELECT COUNT(*) FROM gold_loans) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE gold_loans_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('gold_loans_id_seq', (SELECT MAX(id) FROM gold_loans), true);
+                    END IF;
+
+                    -- Resequence fixed_deposits
+                    new_id := 1;
+                    UPDATE fixed_deposits SET fd_id = -fd_id;
+                    FOR rec IN SELECT fd_id FROM fixed_deposits ORDER BY -fd_id ASC LOOP
+                        UPDATE fixed_deposits SET fd_id = new_id WHERE fd_id = rec.fd_id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    IF (SELECT COUNT(*) FROM fixed_deposits) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE fixed_deposits_fd_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('fixed_deposits_fd_id_seq', (SELECT MAX(fd_id) FROM fixed_deposits), true);
+                    END IF;
+
+                    -- Resequence recurring_deposits
+                    new_id := 1;
+                    UPDATE recurring_deposits SET rd_id = -rd_id;
+                    FOR rec IN SELECT rd_id FROM recurring_deposits ORDER BY -rd_id ASC LOOP
+                        UPDATE recurring_deposits SET rd_id = new_id WHERE rd_id = rec.rd_id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    IF (SELECT COUNT(*) FROM recurring_deposits) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE recurring_deposits_rd_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('recurring_deposits_rd_id_seq', (SELECT MAX(rd_id) FROM recurring_deposits), true);
+                    END IF;
+
+                    -- Resequence journal_vouchers & jv_entries
+                    new_id := 1;
+                    CREATE TEMP TABLE IF NOT EXISTS temp_jv_map (old_id INT, new_id INT) ON COMMIT DROP;
+                    TRUNCATE temp_jv_map;
+                    FOR rec IN SELECT jv_id FROM journal_vouchers ORDER BY voucher_date ASC, jv_id ASC LOOP
+                        INSERT INTO temp_jv_map VALUES (rec.jv_id, new_id);
+                        new_id := new_id + 1;
+                    END LOOP;
+                    CREATE TEMP TABLE IF NOT EXISTS temp_jv_entries_staged (
+                        new_entry_id SERIAL,
+                        new_jv_id INT,
+                        account_code TEXT,
+                        debit REAL,
+                        credit REAL
+                    ) ON COMMIT DROP;
+                    TRUNCATE temp_jv_entries_staged;
+                    INSERT INTO temp_jv_entries_staged (new_jv_id, account_code, debit, credit)
+                    SELECT m.new_id, e.account_code, e.debit, e.credit
+                    FROM jv_entries e
+                    JOIN temp_jv_map m ON e.jv_id = m.old_id
+                    ORDER BY m.new_id ASC, e.entry_id ASC;
+                    DELETE FROM jv_entries;
+                    UPDATE journal_vouchers SET jv_id = -jv_id;
+                    UPDATE journal_vouchers SET jv_id = temp_jv_map.new_id FROM temp_jv_map WHERE journal_vouchers.jv_id = -temp_jv_map.old_id;
+                    INSERT INTO jv_entries (entry_id, jv_id, account_code, debit, credit)
+                    SELECT new_entry_id, new_jv_id, account_code, debit, credit FROM temp_jv_entries_staged;
+                    IF (SELECT COUNT(*) FROM journal_vouchers) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE journal_vouchers_jv_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('journal_vouchers_jv_id_seq', (SELECT MAX(jv_id) FROM journal_vouchers), true);
+                    END IF;
+                    IF (SELECT COUNT(*) FROM jv_entries) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE jv_entries_entry_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('jv_entries_entry_id_seq', (SELECT MAX(entry_id) FROM jv_entries), true);
+                    END IF;
+
+                    -- Resequence transactions
+                    new_id := 1;
+                    UPDATE transactions SET id = -id;
+                    FOR rec IN SELECT id FROM transactions ORDER BY -id ASC LOOP
+                        UPDATE transactions SET id = new_id WHERE id = rec.id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    IF (SELECT COUNT(*) FROM transactions) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE transactions_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('transactions_id_seq', (SELECT MAX(id) FROM transactions), true);
+                    END IF;
+
+                    -- Resequence loan_repayments & loan_emi_schedules
+                    new_id := 1;
+                    UPDATE loan_repayments SET id = -id;
+                    FOR rec IN SELECT id FROM loan_repayments ORDER BY -id ASC LOOP
+                        UPDATE loan_repayments SET id = new_id WHERE id = rec.id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    IF (SELECT COUNT(*) FROM loan_repayments) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE loan_repayments_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('loan_repayments_id_seq', (SELECT MAX(id) FROM loan_repayments), true);
+                    END IF;
+
+                    new_id := 1;
+                    UPDATE loan_emi_schedules SET id = -id;
+                    FOR rec IN SELECT id FROM loan_emi_schedules ORDER BY -id ASC LOOP
+                        UPDATE loan_emi_schedules SET id = new_id WHERE id = rec.id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    IF (SELECT COUNT(*) FROM loan_emi_schedules) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE loan_emi_schedules_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('loan_emi_schedules_id_seq', (SELECT MAX(id) FROM loan_emi_schedules), true);
+                    END IF;
+                END $$;
+            """)
+        
+        conn.commit()
+        sync_db_sequences()
+        return True, "Entire database resequenced and all sequences synced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
 
 
 

@@ -2002,4 +2002,279 @@ def calculate_rd_accrued_value(monthly_amount: float, interest_rate: float, inst
     return total_paid, accrued_amount, interest_earned
 
 
+def delete_cash_book_entry(del_id):
+    """
+    Deletes an entry from cash_book:
+    1. Cascades deletion of associated Journal Voucher and JV entries.
+    2. Deletes the row from cash_book.
+    3. Shifts all subsequent rows down (id = id - 1) with zero sequence gaps.
+    4. Adjusts running balances for all subsequent rows.
+    5. Syncs the auto-increment sequence to MAX(id) so the next entry starts at MAX(id) + 1.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Fetch entry details before deletion
+        if USING_SUPABASE:
+            cursor.execute("SELECT voucher_no, particulars, debit_amount, credit_amount FROM cash_book WHERE id = %s", (del_id,))
+        else:
+            cursor.execute("SELECT voucher_no, particulars, debit_amount, credit_amount FROM cash_book WHERE id = ?", (del_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, f"Cash Entry ID {del_id} not found."
+            
+        voucher_no, particulars, dr, cr = row
+        dr = float(dr or 0.0)
+        cr = float(cr or 0.0)
+        del_delta = dr - cr
+        
+        # 2. Delete related journal voucher and its entries
+        if voucher_no:
+            if USING_SUPABASE:
+                cursor.execute("SELECT jv_id FROM journal_vouchers WHERE narration LIKE %s", (f"%{voucher_no}%",))
+            else:
+                cursor.execute("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+            jv_row = cursor.fetchone()
+            if jv_row:
+                jv_id = jv_row[0]
+                if USING_SUPABASE:
+                    cursor.execute("DELETE FROM jv_entries WHERE jv_id = %s", (jv_id,))
+                    cursor.execute("DELETE FROM journal_vouchers WHERE jv_id = %s", (jv_id,))
+                else:
+                    cursor.execute("DELETE FROM jv_entries WHERE jv_id = ?", (jv_id,))
+                    cursor.execute("DELETE FROM journal_vouchers WHERE jv_id = ?", (jv_id,))
+                    
+        # 3. Delete the cash_book row
+        if USING_SUPABASE:
+            cursor.execute("DELETE FROM cash_book WHERE id = %s", (del_id,))
+            cursor.execute("UPDATE cash_book SET id = -id WHERE id > %s", (del_id,))
+            cursor.execute("UPDATE cash_book SET id = (-id) - 1, balance = balance - %s WHERE id < 0", (del_delta,))
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    max_id BIGINT;
+                BEGIN
+                    SELECT COALESCE(MAX(id), 0) INTO max_id FROM cash_book;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE cash_book_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('cash_book_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("DELETE FROM cash_book WHERE id = ?", (del_id,))
+            cursor.execute("UPDATE cash_book SET id = -id WHERE id > ?", (del_id,))
+            cursor.execute("UPDATE cash_book SET id = (-id) - 1, balance = balance - ? WHERE id < 0", (del_delta,))
+            
+        conn.commit()
+        return True, f"Cash Entry ID {del_id} and related ledger entries deleted successfully. Sequence and balances re-aligned without gaps."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def delete_bank_book_entry(del_id):
+    """
+    Deletes an entry from bank_book:
+    1. Cascades deletion of associated Journal Voucher and JV entries.
+    2. Deletes the row from bank_book.
+    3. Shifts all subsequent rows down (id = id - 1) with zero sequence gaps.
+    4. Adjusts running balances for subsequent rows of the same bank.
+    5. Syncs the auto-increment sequence to MAX(id) so the next entry starts at MAX(id) + 1.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Fetch entry details before deletion
+        if USING_SUPABASE:
+            cursor.execute("SELECT voucher_no, particulars, debit_amount, credit_amount, bank_name FROM bank_book WHERE id = %s", (del_id,))
+        else:
+            cursor.execute("SELECT voucher_no, particulars, debit_amount, credit_amount, bank_name FROM bank_book WHERE id = ?", (del_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, f"Bank Entry ID {del_id} not found."
+            
+        voucher_no, particulars, dr, cr, bank_name = row
+        bank_name = bank_name or 'Union Bank of India'
+        dr = float(dr or 0.0)
+        cr = float(cr or 0.0)
+        del_delta = dr - cr
+        
+        # 2. Delete related journal voucher and its entries
+        if voucher_no:
+            if USING_SUPABASE:
+                cursor.execute("SELECT jv_id FROM journal_vouchers WHERE narration LIKE %s", (f"%{voucher_no}%",))
+            else:
+                cursor.execute("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
+            jv_row = cursor.fetchone()
+            if jv_row:
+                jv_id = jv_row[0]
+                if USING_SUPABASE:
+                    cursor.execute("DELETE FROM jv_entries WHERE jv_id = %s", (jv_id,))
+                    cursor.execute("DELETE FROM journal_vouchers WHERE jv_id = %s", (jv_id,))
+                else:
+                    cursor.execute("DELETE FROM jv_entries WHERE jv_id = ?", (jv_id,))
+                    cursor.execute("DELETE FROM journal_vouchers WHERE jv_id = ?", (jv_id,))
+                    
+        # 3. Delete the bank_book row
+        if USING_SUPABASE:
+            cursor.execute("DELETE FROM bank_book WHERE id = %s", (del_id,))
+            cursor.execute("UPDATE bank_book SET id = -id WHERE id > %s", (del_id,))
+            cursor.execute("""
+                UPDATE bank_book 
+                SET id = (-id) - 1, 
+                    balance = CASE WHEN bank_name = %s THEN balance - %s ELSE balance END 
+                WHERE id < 0
+            """, (bank_name, del_delta))
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    max_id BIGINT;
+                BEGIN
+                    SELECT COALESCE(MAX(id), 0) INTO max_id FROM bank_book;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE bank_book_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('bank_book_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("DELETE FROM bank_book WHERE id = ?", (del_id,))
+            cursor.execute("UPDATE bank_book SET id = -id WHERE id > ?", (del_id,))
+            cursor.execute("""
+                UPDATE bank_book 
+                SET id = (-id) - 1,
+                    balance = CASE WHEN bank_name = ? THEN balance - ? ELSE balance END
+                WHERE id < 0
+            """, (bank_name, del_delta))
+            
+        conn.commit()
+        return True, f"Bank Entry ID {del_id} and related ledger entries deleted successfully. Sequence and balances re-aligned without gaps."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def resequence_cash_book():
+    """Resequences all cash_book rows from 1 to N without gaps and recalculates running balances."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USING_SUPABASE:
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    r RECORD;
+                    new_id INT := 1;
+                    curr_bal NUMERIC := 0;
+                BEGIN
+                    UPDATE cash_book SET id = -id;
+                    FOR r IN SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY -id ASC LOOP
+                        IF new_id = 1 AND r.particulars ILIKE '%opening%' THEN
+                            curr_bal := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                        ELSE
+                            curr_bal := curr_bal + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                        END IF;
+                        UPDATE cash_book SET id = new_id, balance = curr_bal WHERE id = r.id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    
+                    IF (SELECT COUNT(*) FROM cash_book) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE cash_book_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('cash_book_id_seq', (SELECT MAX(id) FROM cash_book), true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY id ASC")
+            rows = cursor.fetchall()
+            cursor.execute("UPDATE cash_book SET id = -id")
+            curr_bal = 0.0
+            for new_id, (old_neg_id, part, dr, cr) in enumerate(rows, 1):
+                dr = float(dr or 0.0)
+                cr = float(cr or 0.0)
+                if new_id == 1 and "opening" in (part or "").lower():
+                    curr_bal = dr - cr
+                else:
+                    curr_bal += (dr - cr)
+                cursor.execute("UPDATE cash_book SET id = ?, balance = ? WHERE id = ?", (new_id, curr_bal, -old_neg_id))
+        conn.commit()
+        return True, "Cash Book resequenced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def resequence_bank_book():
+    """Resequences all bank_book rows from 1 to N without gaps and recalculates running balances per bank."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if USING_SUPABASE:
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    r RECORD;
+                    new_id INT := 1;
+                BEGIN
+                    UPDATE bank_book SET id = -id;
+                    FOR r IN SELECT id FROM bank_book ORDER BY -id ASC LOOP
+                        UPDATE bank_book SET id = new_id WHERE id = r.id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    
+                    IF (SELECT COUNT(*) FROM bank_book) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE bank_book_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('bank_book_id_seq', (SELECT MAX(id) FROM bank_book), true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("SELECT id FROM bank_book ORDER BY id ASC")
+            rows = cursor.fetchall()
+            cursor.execute("UPDATE bank_book SET id = -id")
+            for new_id, (old_neg_id,) in enumerate(rows, 1):
+                cursor.execute("UPDATE bank_book SET id = ? WHERE id = ?", (new_id, -old_neg_id))
+        conn.commit()
+        return True, "Bank Book resequenced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+
 

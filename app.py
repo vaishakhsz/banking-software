@@ -33,7 +33,8 @@ try:
         generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
         post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
         get_connection, release_connection, sync_db_sequences,
-        get_all_gold_loans_bundle, get_all_personal_loans_bundle
+        get_all_gold_loans_bundle, get_all_personal_loans_bundle,
+        delete_cash_book_entry, delete_bank_book_entry, resequence_cash_book, resequence_bank_book
     )
 except Exception as _db_imp_err:
     import traceback
@@ -3564,11 +3565,13 @@ def render_chart_of_accounts():
             # Option to manually trigger resequencing of all accounts to resolve gaps
             st.markdown('<div class="resequence-btn-container">', unsafe_allow_html=True)
             if st.button("🛠️ Force Resequence Account Codes (Enforce strict 101+ order)", use_container_width=True):
-                from database import resequence_all_accounts, reconcile_books
+                from database import resequence_all_accounts, reconcile_books, resequence_cash_book, resequence_bank_book
                 try:
                     resequence_all_accounts()
                     reconcile_books()
-                    st.success("✅ Resequenced and reconciled Chart of Accounts successfully! All account codes are now in order.")
+                    resequence_cash_book()
+                    resequence_bank_book()
+                    st.success("✅ Resequenced Chart of Accounts, Cash Book & Bank Book successfully! All IDs and account codes are in strict sequential order.")
                     time.sleep(0.1)
                     st.rerun()
                 except Exception as ex:
@@ -3735,22 +3738,27 @@ def render_cash_book():
             
             st.dataframe(format_df_dates(df_cash), use_container_width=True)
             
-            del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
-            if st.button("Delete Cash Entry", use_container_width=True):
-                # Fetch voucher no before deleting
-                c_row = run_query("SELECT voucher_no FROM cash_book WHERE id=?", (del_id,))
-                if c_row:
-                    voucher_no = c_row[0][0]
-                    # Delete the related JV (cascades to jv_entries automatically!)
-                    jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
-                    if jv_row:
-                        run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
-                
-                run_query("DELETE FROM cash_book WHERE id=?", (del_id,), fetch=False)
-                sync_db_sequences()
-                st.warning(f"Cash Entry ID {del_id} and related ledger entries deleted successfully.")
-                time.sleep(0.1)
-                st.rerun()
+            c_del1, c_del2 = st.columns([3, 1])
+            with c_del1:
+                del_id = st.number_input("Enter Cash Entry ID to Delete", min_value=1, step=1, key="del_cash_id")
+                if st.button("Delete Cash Entry", use_container_width=True):
+                    success, msg = delete_cash_book_entry(del_id)
+                    if success:
+                        st.warning(msg)
+                        time.sleep(0.1)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+            with c_del2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                if st.button("🔄 Resequence All IDs", key="reseq_cb_btn", help="Recalculates all Cash Book IDs sequentially from 1 to N without gaps and updates running balances", use_container_width=True):
+                    success, msg = resequence_cash_book()
+                    if success:
+                        st.success("✅ Cash Book resequenced and running balances verified!")
+                        time.sleep(0.1)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
         else:
             st.info("No cash book entries found in this date range.")
 
@@ -4114,22 +4122,27 @@ def render_bank_book():
 
             st.dataframe(format_df_dates(df_bank), use_container_width=True)
             
-            del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
-            if st.button("Delete Bank Entry", use_container_width=True):
-                # Fetch voucher no before deleting
-                b_row = run_query("SELECT voucher_no FROM bank_book WHERE id=?", (del_id,))
-                if b_row:
-                    voucher_no = b_row[0][0]
-                    # Delete the related JV (cascades to jv_entries automatically!)
-                    jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
-                    if jv_row:
-                        run_query("DELETE FROM journal_vouchers WHERE jv_id=?", (jv_row[0][0],), fetch=False)
-                
-                run_query("DELETE FROM bank_book WHERE id=?", (del_id,), fetch=False)
-                sync_db_sequences()
-                st.warning(f"Bank Entry ID {del_id} and related ledger entries deleted successfully.")
-                time.sleep(0.1)
-                st.rerun()
+            b_del1, b_del2 = st.columns([3, 1])
+            with b_del1:
+                del_id = st.number_input("Enter Bank Entry ID to Delete", min_value=1, step=1, key="del_bank_id")
+                if st.button("Delete Bank Entry", use_container_width=True):
+                    success, msg = delete_bank_book_entry(del_id)
+                    if success:
+                        st.warning(msg)
+                        time.sleep(0.1)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+            with b_del2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                if st.button("🔄 Resequence All IDs", key="reseq_bb_btn", help="Recalculates all Bank Book IDs sequentially from 1 to N without gaps", use_container_width=True):
+                    success, msg = resequence_bank_book()
+                    if success:
+                        st.success("✅ Bank Book resequenced successfully!")
+                        time.sleep(0.1)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
         else:
             st.info("No bank entries found in this date range.")
 
@@ -4525,9 +4538,23 @@ def render_admin_editor():
                         val = int(record_id_to_del)
                     except ValueError:
                         val = record_id_to_del
-                    run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
-                    sync_db_sequences()
-                    st.success("Record deleted and sequences synced!")
+                    
+                    if selected_table == 'cash_book' and isinstance(val, int):
+                        success, msg = delete_cash_book_entry(val)
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(f"❌ {msg}")
+                    elif selected_table == 'bank_book' and isinstance(val, int):
+                        success, msg = delete_bank_book_entry(val)
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(f"❌ {msg}")
+                    else:
+                        run_query(f"DELETE FROM {selected_table} WHERE {pk_col} = ?", (val,), fetch=False)
+                        sync_db_sequences()
+                        st.success("Record deleted and sequences synced!")
                     time.sleep(0.1)
                     st.rerun()
             elif action == "Edit Record":

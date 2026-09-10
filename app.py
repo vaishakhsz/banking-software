@@ -3720,7 +3720,7 @@ def render_cash_book():
             FROM cash_book cb
             LEFT JOIN chart_of_accounts co ON cb.account_code = co.account_code
             WHERE cb.date BETWEEN ? AND ? 
-            ORDER BY cb.date ASC, cb.id ASC
+            ORDER BY cb.id ASC
         """, (str(from_date), str(to_date)))
         if entries:
             df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
@@ -4098,7 +4098,7 @@ def render_bank_book():
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
             WHERE bb.date BETWEEN ? AND ?
-            ORDER BY bb.date ASC, bb.id ASC
+            ORDER BY bb.id ASC
         """
         entries = run_query(bb_query, (str(from_date), str(to_date)))
         if entries:

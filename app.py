@@ -897,7 +897,7 @@ def render_personal_loans():
                 "interest_component": "INTEREST (₹)",
                 "emi_amount": "EMI AMOUNT (₹)"
             })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
-            st.dataframe(format_df_dates(df_prev_display), use_container_width=True)
+            st.dataframe(format_df_dates(df_prev_display), use_container_width=True, hide_index=True, height=220)
 
         with st.form("new_personal_loan_form"):
             st.markdown("### 3️⃣ Disbursal Account & Guarantor / Surety Details")
@@ -1046,7 +1046,7 @@ def render_personal_loans():
             if sched_status_rows:
                 with st.expander("📋 View Installment Amortization Schedule & Payment Status", expanded=False):
                     df_sched_st = pd.DataFrame(sched_status_rows, columns=["EMI #", "From Date", "To Date", "Due Date", "Principal (₹)", "Interest (₹)", "EMI Amount (₹)", "Paid (₹)", "Status"])
-                    st.dataframe(format_df_dates(df_sched_st[["EMI #", "From Date", "To Date", "Due Date", "EMI Amount (₹)", "Paid (₹)", "Status"]]), use_container_width=True)
+                    st.dataframe(format_df_dates(df_sched_st[["EMI #", "From Date", "To Date", "Due Date", "EMI Amount (₹)", "Paid (₹)", "Status"]]), use_container_width=True, hide_index=True, height=240)
 
             with st.form(f"loan_repayment_form_{l_id}"):
                 st.markdown("### 2️⃣ Payment Details")
@@ -1415,7 +1415,7 @@ def render_personal_loans():
                         "due_date": "DUE DATE", "principal_component": "PRINCIPAL (₹)",
                         "interest_component": "INTEREST (₹)", "emi_amount": "EMI AMOUNT (₹)"
                     })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
-                    st.dataframe(format_df_dates(df_ed_prev), use_container_width=True)
+                    st.dataframe(format_df_dates(df_ed_prev), use_container_width=True, hide_index=True, height=220)
                 
                 if is_closed:
                     st.info("ℹ️ *This loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Personal Loan'** button above.*")
@@ -1499,7 +1499,7 @@ def render_personal_loans():
             m2.metric("Total Outstanding Due Portfolio", f"₹{tot_d:,.2f}")
             m3.metric("Total Loan Count", len(df_pl))
             
-            st.dataframe(format_df_dates(df_pl), use_container_width=True)
+            st.dataframe(format_df_dates(df_pl), use_container_width=True, hide_index=True, height=320)
             
             col_x, col_c, col_p = st.columns(3)
             with col_x:
@@ -1620,10 +1620,10 @@ def render_personal_loans():
             df_rep_ledger = pd.DataFrame(ledger_rows)
 
             st.markdown("#### 📜 **CUSTOMER REPAYMENT LEDGER & STATEMENT (DEBIT / CREDIT)**")
-            st.dataframe(format_df_dates(df_rep_ledger), use_container_width=True)
+            st.dataframe(format_df_dates(df_rep_ledger), use_container_width=True, hide_index=True, height=260)
 
             st.markdown("#### 📅 **12-MONTH EMI AMORTIZATION TABLE**")
-            st.dataframe(format_df_dates(df_sched), use_container_width=True)
+            st.dataframe(format_df_dates(df_sched), use_container_width=True, hide_index=True, height=260)
 
             exp_col1, exp_col2, exp_col3 = st.columns(3)
             with exp_col1:
@@ -1780,7 +1780,7 @@ def render_gold_loans():
                 "interest_component": "INTEREST (Rs.)",
                 "emi_amount": "EMI AMOUNT (Rs.)"
             })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (Rs.)", "INTEREST (Rs.)", "EMI AMOUNT (Rs.)"]]
-            st.dataframe(format_df_dates(df_prev_display), use_container_width=True)
+            st.dataframe(format_df_dates(df_prev_display), use_container_width=True, hide_index=True, height=220)
 
         with st.form("new_gold_loan_disbursal_form"):
             st.markdown("### 4️⃣ Automated 1-Click Disbursal Mode")
@@ -1929,7 +1929,7 @@ def render_gold_loans():
             if sched_status_rows:
                 with st.expander("📋 View 12-Month Gold Loan EMI Schedule & Status", expanded=False):
                     df_sched_st = pd.DataFrame(sched_status_rows, columns=["EMI #", "From Date", "To Date", "Due Date", "Principal (₹)", "Interest (₹)", "EMI Amount (₹)", "Paid (₹)", "Status"])
-                    st.dataframe(format_df_dates(df_sched_st[["EMI #", "From Date", "To Date", "Due Date", "EMI Amount (₹)", "Paid (₹)", "Status"]]), use_container_width=True)
+                    st.dataframe(format_df_dates(df_sched_st[["EMI #", "From Date", "To Date", "Due Date", "EMI Amount (₹)", "Paid (₹)", "Status"]]), use_container_width=True, hide_index=True, height=240)
 
             with st.form(f"gold_loan_repayment_form_{gl_id}"):
                 st.markdown("### 2️⃣ Payment Collection Details")
@@ -2368,7 +2368,7 @@ def render_gold_loans():
                         "due_date": "DUE DATE", "principal_component": "PRINCIPAL (₹)",
                         "interest_component": "INTEREST (₹)", "emi_amount": "EMI AMOUNT (₹)"
                     })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
-                    st.dataframe(format_df_dates(df_ed_gl_prev), use_container_width=True)
+                    st.dataframe(format_df_dates(df_ed_gl_prev), use_container_width=True, hide_index=True, height=220)
 
                 if is_closed_gl:
                     st.info("ℹ️ *This gold loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Gold Loan'** button above.*")
@@ -2464,7 +2464,7 @@ def render_gold_loans():
             vm2.metric("💰 Active Gold Loan Portfolio", f"₹{tot_gl_due:,.2f}")
             vm3.metric("📦 Total Packets", len(df_gl))
             
-            st.dataframe(format_df_dates(df_gl), use_container_width=True)
+            st.dataframe(format_df_dates(df_gl), use_container_width=True, hide_index=True, height=320)
             
             col_x, col_c, col_p = st.columns(3)
             with col_x:
@@ -2609,10 +2609,10 @@ def render_gold_loans():
             df_gl_ledger = pd.DataFrame(gl_ledger_rows)
 
             st.markdown("#### 📜 **GOLD LOAN REPAYMENT LEDGER & STATEMENT (DEBIT / CREDIT)**")
-            st.dataframe(format_df_dates(df_gl_ledger), use_container_width=True)
+            st.dataframe(format_df_dates(df_gl_ledger), use_container_width=True, hide_index=True, height=260)
 
             st.markdown("#### 📅 **12-MONTH EMI AMORTIZATION TABLE**")
-            st.dataframe(format_df_dates(df_sched), use_container_width=True)
+            st.dataframe(format_df_dates(df_sched), use_container_width=True, hide_index=True, height=260)
 
             exp_col1, exp_col2, exp_col3 = st.columns(3)
             with exp_col1:
@@ -5212,13 +5212,13 @@ if not get_login_status():
     col1, col2, col3 = st.columns([1, 2.2, 1])
     with col2:
         st.markdown("""
-        <div style="text-align: center; background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); padding: 30px 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin-bottom: 20px; color: white;">
-            <h1 style="color: white !important; font-size: 26px; margin: 5px 0; font-weight: 800; letter-spacing: 0.8px; text-shadow: 0 2px 4px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; gap: 10px;">🏦 AARSHA NIDHI  LIMITED</h1>
-            <p style="color: #cbd5e1 !important; font-size: 11px; margin: 8px 0 5px 0; font-weight: 500; opacity: 0.9;">📍 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
-            <p style="color: #cbd5e1 !important; font-size: 10px; margin: 5px 0; opacity: 0.8;">📄 CIN: U65990KL2021PLN069978 | 📞 Ph: 0471-2994535</p>
+        <div style="text-align: center; background: linear-gradient(135deg, #1f4e78 0%, #2c5e8a 100%); padding: 30px 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 16px rgba(0,0,0,0.15); margin-bottom: 20px; color: white;">
+            <h1 style="color: white !important; font-size: 26px; margin: 5px 0; font-weight: 800; letter-spacing: 0.8px; display: flex; align-items: center; justify-content: center; gap: 10px;">🏦 AARSHA NIDHI LIMITED</h1>
+            <p style="color: #dbeafe !important; font-size: 11px; margin: 8px 0 5px 0; font-weight: 500; opacity: 0.95;">📍 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+            <p style="color: #dbeafe !important; font-size: 10px; margin: 5px 0; opacity: 0.85;">📄 CIN: U65990KL2021PLN069978 | 📞 Ph: 0471-2994535</p>
         </div>
         <div style="text-align: center; margin-bottom: 15px;">
-            <h2 style="color: #3b82f6; font-size: 20px; margin: 5px 0; font-weight: 700;">🔐 Banking Software Login</h2>
+            <h2 style="color: #1f4e78; font-size: 20px; margin: 5px 0; font-weight: 700;">🔐 Banking Software Login</h2>
         </div>
         """, unsafe_allow_html=True)
         
@@ -5241,158 +5241,52 @@ if not get_login_status():
 # --- SIDEBAR STYLING ---
 st.sidebar.markdown("""
 <style>
-    /* Premium Midnight Blue Gradient Sidebar background */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1e3a8a 0%, #0f172a 100%) !important;
-        border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+        background: linear-gradient(180deg, #0f2b4a 0%, #1a4a7a 100%) !important;
     }
-    
-    /* Clean sidebar headers and texts */
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p {
-        color: #e2e8f0 !important;
+        color: white !important;
     }
-    
-    /* Navigation Radio Items styled as custom premium tabs */
     [data-testid="stSidebar"] .stRadio > label {
-        color: #94a3b8 !important;
-        font-weight: 700 !important;
-        text-transform: uppercase;
-        font-size: 11px !important;
-        letter-spacing: 0.8px;
-        padding-left: 5px;
-        margin-bottom: 8px !important;
+        color: white !important;
+        font-weight: bold;
     }
-    
-    /* Hide the radio button circle inputs */
-    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] div:first-child {
-        display: none !important;
-    }
-    
-    /* Custom menu list items styling */
-    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] {
+    [data-testid="stSidebar"] div[role="radiogroup"] label {
+        color: white !important;
         background: transparent !important;
-        padding: 9px 15px !important;
-        border-radius: 8px !important;
-        margin-bottom: 6px !important;
-        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        border-left: 4px solid transparent !important;
-        width: 100% !important;
-        display: flex !important;
-        align-items: center !important;
-        box-shadow: none !important;
     }
-    
-    /* Hover state for menu list items */
-    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:hover {
-        background-color: rgba(255, 255, 255, 0.04) !important;
-        color: #ffffff !important;
-        border-left: 4px solid #3b82f6 !important;
-        padding-left: 18px !important; /* Subtle slide-in effect */
+    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] input:checked + div {
+        background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
     }
-    
-    /* Selected/Active state for menu list items */
-    [data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
-        background: linear-gradient(90deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.03) 100%) !important;
-        color: #ffffff !important;
-        border-left: 4px solid #3b82f6 !important;
-        font-weight: 600 !important;
-        box-shadow: inset 1px 0 0 rgba(255,255,255,0.05) !important;
-    }
-    
-    /* Sidebar Header brand styling */
     .sidebar-header {
         text-align: center;
-        padding: 20px 10px 15px 10px;
-        background: rgba(255, 255, 255, 0.02);
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        margin: 10px;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        padding: 10px 0 5px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+        margin-bottom: 10px;
     }
     .sidebar-header h2 {
-        color: #ffffff !important;
-        font-size: 20px !important;
-        font-weight: 800 !important;
-        margin: 0 !important;
-        letter-spacing: 0.5px;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        color: white !important; font-size: 18px !important; font-weight: 700 !important; margin: 0 !important;
     }
     .sidebar-header p {
-        color: #64748b !important;
-        font-size: 11px !important;
-        font-weight: 500;
-        margin: 4px 0 0 0 !important;
-        text-transform: uppercase;
-        letter-spacing: 1px;
+        color: #b8d4f0 !important; font-size: 10px !important; margin: 3px 0 0 0 !important;
     }
-    
     .sidebar-divider {
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        margin: 15px 10px;
+        border-top: 1px solid rgba(255,255,255,0.1); margin: 8px 0;
     }
-    
     .user-info {
-        color: #94a3b8 !important;
-        font-size: 12px;
-        padding: 5px 0;
-        text-align: center;
-        font-weight: 500;
+        color: #b8d4f0 !important; font-size: 12px; padding: 5px 0; text-align: center;
     }
     
-    /* Live Pulsating Green Dot animation */
-    .pulse-dot {
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        background-color: #10b981;
-        border-radius: 50%;
-        margin-right: 6px;
-        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-        animation: pulse-live 1.8s infinite;
-        vertical-align: middle;
-    }
-    @keyframes pulse-live {
-        0% {
-            transform: scale(0.95);
-            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-        }
-        70% {
-            transform: scale(1);
-            box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
-        }
-        100% {
-            transform: scale(0.95);
-            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-        }
-    }
-    
-    /* Styled digital clock with Glassmorphism */
-    .ist-clock-card {
-        text-align: center;
-        background: #000000 !important;
-        padding: 12px;
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        margin: 10px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
-        backdrop-filter: blur(8px);
-    }
-    
-    /* Lock only sidebar file uploader to black, leave main page default */
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] section,
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] section:hover,
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] section:active,
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] section:focus {
-        background-color: #000000 !important;
-        background: #000000 !important;
-        border: 1px solid #333333 !important;
+    /* Clean sidebar file uploader */
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] section {
+        background: rgba(0, 0, 0, 0.2) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
         border-radius: 8px !important;
     }
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] button,
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] button:hover {
-        background-color: #000000 !important;
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] button {
+        background-color: rgba(255, 255, 255, 0.15) !important;
         color: #ffffff !important;
-        border: 1px solid #333333 !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
     }
     [data-testid="stSidebar"] [data-testid="stFileUploader"] label,
     [data-testid="stSidebar"] [data-testid="stFileUploader"] p,
@@ -5401,65 +5295,32 @@ st.sidebar.markdown("""
         color: #ffffff !important;
     }
 
-    /* Lock sidebar download button to black background and white text */
-    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button,
-    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:hover,
-    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:active,
-    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:focus {
-        background-color: #000000 !important;
-        background: #000000 !important;
+    /* Clean sidebar download button */
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button {
+        background-color: rgba(255, 255, 255, 0.15) !important;
         color: #ffffff !important;
-        border: 1.5px solid #475569 !important;
-        border-radius: 4px !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        border-radius: 6px !important;
         font-weight: 600 !important;
     }
 
-    /* Lock sidebar expander to black background and white text */
+    /* Clean sidebar expander */
     [data-testid="stSidebar"] [data-testid="stExpander"],
     [data-testid="stSidebar"] .streamlit-expander {
-        background-color: #000000 !important;
-        background: #000000 !important;
-        border: 1px solid #333333 !important;
+        background: rgba(0, 0, 0, 0.15) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
         border-radius: 8px !important;
     }
-    [data-testid="stSidebar"] [data-testid="stExpander"] details,
-    [data-testid="stSidebar"] details {
-        background-color: #000000 !important;
-        background: #000000 !important;
+    [data-testid="stSidebar"] [data-testid="stExpander"] details {
+        background: transparent !important;
     }
-    [data-testid="stSidebar"] [data-testid="stExpander"] summary,
-    [data-testid="stSidebar"] .streamlit-expanderHeader,
-    [data-testid="stSidebar"] summary {
-        background-color: #000000 !important;
-        background: #000000 !important;
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+        background: transparent !important;
         color: #ffffff !important;
-        border-radius: 8px !important;
-    }
-    [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
-        background-color: #1a1a1a !important;
-        color: #00e5ff !important;
-    }
-    [data-testid="stSidebar"] [data-testid="stExpander"] summary p,
-    [data-testid="stSidebar"] [data-testid="stExpander"] summary span,
-    [data-testid="stSidebar"] [data-testid="stExpander"] summary svg,
-    [data-testid="stSidebar"] [data-testid="stExpander"] p,
-    [data-testid="stSidebar"] [data-testid="stExpander"] span {
-        color: #ffffff !important;
-        fill: #ffffff !important;
     }
     [data-testid="stSidebar"] [data-testid="stExpander"] div[data-testid="stExpanderDetails"] {
-        background-color: #000000 !important;
-        background: #000000 !important;
-        border-top: 1px solid #222222 !important;
-    }
-
-    /* Square bordered box for sidebar modules */
-    [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div {
-        border: 1px solid rgba(255, 255, 255, 0.15) !important;
-        border-radius: 4px !important; /* Clean square border */
-        background-color: #050b14 !important;
-        padding: 12px 10px !important;
-        margin-bottom: 8px !important;
+        background: transparent !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -5467,25 +5328,23 @@ st.sidebar.markdown("""
 st.sidebar.markdown("""
 <div class="sidebar-header">
     <h2>🏦 AARSHA NIDHI</h2>
-    <p>Premium Banking Suite</p>
+    <p>Financial Banking Software</p>
 </div>
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown(f"""
 <div class="user-info">
-    👤 Active: <b style="color:white;">{st.session_state.get('username', 'Admin').upper()}</b>
+    👤 Logged in as: <b style="color:white;">{st.session_state.get('username', 'Admin')}</b>
 </div>
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
 current_time_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
 st.sidebar.markdown(f"""
-<div class="ist-clock-card">
-    <div style="color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; display: flex; align-items: center; justify-content: center; gap: 4px; margin-bottom: 2px;">
-        <span class="pulse-dot"></span> IST Live Clock
-    </div>
-    <div style="color: #00e5ff; font-size: 20px; font-weight: 800; font-family: 'Courier New', monospace; margin: 6px 0; text-shadow: 0 0 10px rgba(0, 229, 255, 0.4);">{current_time_ist.strftime('%I:%M:%S %p')}</div>
-    <div style="color: #cbd5e1; font-size: 11px; font-weight: 500; opacity: 0.85;">{current_time_ist.strftime('%d %b %Y')}</div>
+<div style="text-align: center; background: rgba(0, 0, 0, 0.25); padding: 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.15);">
+    <div style="color: #b8d4f0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">IST Live Clock</div>
+    <div style="color: white; font-size: 17px; font-weight: 700; font-family: monospace; margin: 4px 0;">{current_time_ist.strftime('%I:%M:%S %p')}</div>
+    <div style="color: #b8d4f0; font-size: 10px;">{current_time_ist.strftime('%d %b %Y')}</div>
 </div>
 """, unsafe_allow_html=True)
 st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
@@ -5584,7 +5443,7 @@ def generate_sql_backup():
 
 with st.sidebar.expander("💾 System Backup & Restore"):
     with st.container(border=True):
-        st.markdown("<div style='font-size: 11px; font-weight: 700; color: #00e5ff; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.8px;'>📦 SQL Backup Export</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size: 11px; font-weight: 700; color: #b8d4f0; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.8px;'>📦 SQL Backup Export</div>", unsafe_allow_html=True)
         if USING_SUPABASE:
             if st.button("🔄 Prepare SQL Backup", key="prep_sql_bkp", use_container_width=True):
                 with st.spinner("Generating database backup..."):
@@ -5616,7 +5475,7 @@ with st.sidebar.expander("💾 System Backup & Restore"):
                 )
 
     with st.container(border=True):
-        st.markdown("<div style='font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.8px;'>📥 Database Import</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size: 11px; font-weight: 700; color: #b8d4f0; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.8px;'>📥 Database Import</div>", unsafe_allow_html=True)
         uploaded_dbs = st.file_uploader("Upload Backup File", type=["db", "sqlite", "sqlite3", "sql"], accept_multiple_files=True)
 if uploaded_dbs:
     # If there's only one file and it's a local .db file
@@ -5696,29 +5555,6 @@ if uploaded_dbs:
                     release_connection(conn)
 
 
-# Styling specifically targeting all buttons inside the sidebar
-st.sidebar.markdown("""
-<style>
-    section[data-testid="stSidebar"] button,
-    div[data-testid="stSidebar"] button,
-    .stSidebar button,
-    [data-testid="stSidebar"] [data-testid^="stBaseButton"] {
-        background-color: #000000 !important;
-        color: #ffffff !important;
-        border: 1.5px solid #475569 !important; /* Visible square border */
-        border-radius: 4px !important; /* Clean square corners */
-    }
-    section[data-testid="stSidebar"] button:hover,
-    div[data-testid="stSidebar"] button:hover,
-    .stSidebar button:hover,
-    [data-testid="stSidebar"] [data-testid^="stBaseButton"]:hover {
-        background-color: #0f172a !important;
-        color: #00e5ff !important;
-        border: 1.5px solid #00e5ff !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True):
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -5727,11 +5563,11 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
-# Header banner
+# Header banner & Anti-truncation styles
 st.markdown("""
 <style>
     .company-header {
-        background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%) !important;
+        background: linear-gradient(135deg, #1f4e78 0%, #2c5e8a 100%) !important;
         padding: 20px 25px;
         border-radius: 12px;
         margin-bottom: 25px;
@@ -5740,9 +5576,8 @@ st.markdown("""
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
-        border: 1px solid rgba(255,255,255,0.06);
-        border-left: 5px solid #00e5ff !important; /* neon cyan left indicator */
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
     }
     .company-header .brand { display: flex; align-items: center; gap: 15px; }
     .company-header .brand h1 {
@@ -5751,19 +5586,18 @@ st.markdown("""
         font-weight: 800;
         letter-spacing: 0.8px;
         color: #ffffff;
-        text-shadow: 0 0 10px rgba(0, 229, 255, 0.2);
     }
     .company-header .brand .sub {
         font-size: 11px;
-        color: #94a3b8;
+        color: #dbeafe;
         margin-top: 4px;
         font-weight: 500;
     }
     .company-header .contact {
         text-align: right;
         font-size: 12px;
-        color: #cbd5e1;
-        opacity: 0.9;
+        color: #e2e8f0;
+        opacity: 0.95;
         line-height: 1.6;
     }
     .company-header .contact .pulsing-online {
@@ -5775,7 +5609,7 @@ st.markdown("""
         text-transform: uppercase;
         letter-spacing: 0.8px;
         color: #10b981;
-        background: rgba(16, 185, 129, 0.1);
+        background: rgba(16, 185, 129, 0.15);
         padding: 4px 10px;
         border-radius: 20px;
         margin-bottom: 6px;
@@ -5785,23 +5619,6 @@ st.markdown("""
         height: 6px;
         background-color: #10b981;
         border-radius: 50%;
-        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-        animation: pulse-live 1.8s infinite;
-    }
-    
-    /* Resequence button styling */
-    .resequence-btn-container button {
-        background-color: #000000 !important;
-        color: #ffffff !important;
-        border: 1px solid #000000 !important;
-        font-weight: 600 !important;
-        border-radius: 8px !important;
-        padding: 10px 20px !important;
-    }
-    .resequence-btn-container button:hover {
-        background-color: #222222 !important;
-        border-color: #222222 !important;
-        color: #ffffff !important;
     }
 
     /* ======================================================== */

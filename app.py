@@ -5234,16 +5234,40 @@ st.sidebar.markdown("""
         background: linear-gradient(90deg, #2c6b9e, #4a8bc2) !important;
     }
     .sidebar-header {
-        text-align: center;
-        padding: 10px 0 5px 0;
-        border-bottom: 1px solid rgba(255,255,255,0.15);
-        margin-bottom: 10px;
+        text-align: center !important;
+        padding: 12px 4px 8px 4px !important;
+        border-bottom: 1px solid rgba(255,255,255,0.15) !important;
+        margin-bottom: 10px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
     }
     .sidebar-header h2 {
-        color: white !important; font-size: 18px !important; font-weight: 700 !important; margin: 0 !important;
+        color: #ffffff !important;
+        font-size: 18px !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.8px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1.2 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 6px !important;
+        white-space: nowrap !important;
+        text-align: center !important;
     }
     .sidebar-header p {
-        color: #b8d4f0 !important; font-size: 10px !important; margin: 3px 0 0 0 !important;
+        color: #b8d4f0 !important;
+        font-size: 10px !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.5px !important;
+        margin: 4px 0 0 0 !important;
+        padding: 0 !important;
+        text-align: center !important;
+        white-space: nowrap !important;
     }
     .sidebar-divider {
         border-top: 1px solid rgba(255,255,255,0.1); margin: 8px 0;
@@ -5580,21 +5604,72 @@ st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strfti
 st.markdown("""
 <style>
     .company-header {
-        background: linear-gradient(135deg, #1f4e78 0%, #2c6b9e 100%);
-        padding: 15px 25px;
-        border-radius: 10px;
-        margin-bottom: 20px;
-        color: white;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        background: linear-gradient(135deg, #1f4e78 0%, #2c6b9e 100%) !important;
+        padding: 16px 24px !important;
+        border-radius: 10px !important;
+        margin-bottom: 20px !important;
+        color: white !important;
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18) !important;
+        gap: 16px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
     }
-    .company-header .brand { display: flex; align-items: center; gap: 15px; }
-    .company-header .brand h1 { font-size: 22px; margin: 0; font-weight: 700; letter-spacing: 1px; color: #ffffff; }
-    .company-header .brand .sub { font-size: 11px; opacity: 0.85; margin-top: 2px; color: #ffffff; }
-    .company-header .contact { text-align: right; font-size: 12px; opacity: 0.9; line-height: 1.6; color: #ffffff; }
+    .company-header .brand {
+        display: flex !important;
+        align-items: center !important;
+        gap: 14px !important;
+        flex: 1 1 auto !important;
+    }
+    .company-header .brand-icon {
+        font-size: 32px !important;
+        line-height: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-shrink: 0 !important;
+    }
+    .company-header .brand-text {
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+    }
+    .company-header .brand h1 {
+        font-size: 22px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.8px !important;
+        color: #ffffff !important;
+        line-height: 1.2 !important;
+    }
+    .company-header .brand .sub {
+        font-size: 11px !important;
+        color: #dbeafe !important;
+        opacity: 0.95 !important;
+        margin: 3px 0 0 0 !important;
+        padding: 0 !important;
+        line-height: 1.3 !important;
+    }
+    .company-header .contact {
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+        text-align: right !important;
+        font-size: 12px !important;
+        color: #ffffff !important;
+        line-height: 1.5 !important;
+        flex-shrink: 0 !important;
+    }
+    .company-header .contact .cin {
+        font-weight: 600 !important;
+        color: #ffffff !important;
+    }
+    .company-header .contact .phone {
+        color: #dbeafe !important;
+    }
 
     /* ======================================================== */
     /* ANTI-TRUNCATION & BORDER CONTAINMENT DISPLAY FIXES       */
@@ -5670,15 +5745,15 @@ st.markdown("""
 </style>
 <div class="company-header">
     <div class="brand">
-        <div style="font-size: 32px;">🏦</div>
-        <div>
+        <div class="brand-icon">🏦</div>
+        <div class="brand-text">
             <h1>AARSHA NIDHI LIMITED</h1>
             <div class="sub">6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
         </div>
     </div>
     <div class="contact">
-        <div>CIN: U65990KL22021PLN069978</div>
-        <div>📞 0471-2994535</div>
+        <div class="cin">CIN: U65990KL22021PLN069978</div>
+        <div class="phone">📞 0471-2994535</div>
     </div>
 </div>
 """, unsafe_allow_html=True)

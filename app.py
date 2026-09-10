@@ -2180,83 +2180,50 @@ def render_gold_loans():
                         time.sleep(0.5)
                         st.rerun()
                 
+                if eg_has_photo:
+                    with st.expander("📸 View / Download Pledged Ornament Photo", expanded=False):
+                        _, existing_raw_img = get_cached_gl_photo(sel_egl_id)
+                        if existing_raw_img:
+                            st.image(existing_raw_img, caption=f"📸 Current Pledged Ornaments ({eg_img_file or 'Jewel Photo'})", width=300)
+                            
+                            btn_col1, btn_col2 = st.columns(2)
+                            btn_col1.download_button(
+                                "📥 Download Photo",
+                                data=existing_raw_img,
+                                file_name=f"Gold_Photo_{eg_lno}.jpg",
+                                mime="image/jpeg",
+                                use_container_width=True,
+                                key=f"dl_gl_img_{sel_egl_id}"
+                            )
+                            if not is_closed_gl and btn_col2.button("🗑️ Remove Photo", key=f"del_gl_img_{sel_egl_id}", use_container_width=True):
+                                run_query("UPDATE gold_loans SET gold_image_file = NULL, gold_image_data = NULL WHERE id = ?", (sel_egl_id,), fetch=False)
+                                clear_db_cache()
+                                st.success("Gold ornament image cleared.")
+                                time.sleep(0.5)
+                                st.rerun()
+                        else:
+                            st.info("No gold ornament photo attached to this loan.")
+                
                 with st.form(f"edit_gold_loan_form_{sel_egl_id}"):
                     st.markdown("### 1️⃣ Collateral Appraisal & Live Market Valuation")
                     col_ea1, col_ea2 = st.columns(2)
                     ed_gold_rate = col_ea1.number_input("22K Gold Market Rate (₹ / gram)", min_value=1000.0, value=float(eg_grate or 6500.0), step=50.0, disabled=is_closed_gl, key=f"gl_ed_grate_{sel_egl_id}")
                     ed_orn_desc = col_ea2.text_input("Ornaments Description", value=str(eg_orn or ""), disabled=is_closed_gl, key=f"gl_ed_orn_{sel_egl_id}")
                     
-                    col_ew1, col_ew2, col_ew3, col_ew4 = st.columns(4)
+                    col_ew1, col_ew2, col_ew3 = st.columns(3)
                     ed_item_cnt = col_ew1.number_input("Item Count", min_value=1, value=int(eg_cnt or 1), step=1, disabled=is_closed_gl, key=f"gl_ed_cnt_{sel_egl_id}")
                     ed_gross_wt = col_ew2.number_input("Gross Weight (g)", min_value=0.1, value=float(eg_gross or 10.0), step=0.1, format="%.3f", disabled=is_closed_gl, key=f"gl_ed_gross_{sel_egl_id}")
                     ed_stone_ded = col_ew3.number_input("Stone Deduction (g)", min_value=0.0, value=float(eg_stone or 0.0), step=0.05, format="%.3f", disabled=is_closed_gl, key=f"gl_ed_stone_{sel_egl_id}")
                     
-                    # Auto-compute Net Weight & Market Value
-                    ed_net_wt = max(0.01, round(float(ed_gross_wt) - float(ed_stone_ded), 3))
-                    ed_market_val = round(ed_net_wt * float(ed_gold_rate), 2)
-                    ed_max_eligible = round(ed_market_val * 0.75, 2)
-                    col_ew4.metric("Net Gold Weight", f"{ed_net_wt:.3f} g")
-                    
-                    col_ev1, col_ev2 = st.columns(2)
-                    col_ev1.info(f"💎 **Re-Calculated Market Value:** ₹{ed_market_val:,.2f}")
-                    col_ev2.success(f"🎯 **Max Eligible Loan (75% LTV):** ₹{ed_max_eligible:,.2f}")
-                    
-                    st.markdown("### 2️⃣ Dynamic Loan Terms & Repayment Calculation")
-                    st.caption("💡 *Changing Principal Amount, Interest Rate, or Tenure Months automatically recalculates Total Interest, Total Repayable, and Monthly Installments in real time.*")
-                    
+                    st.markdown("### 2️⃣ Dynamic Loan Terms & Repayment")
                     col_ef1, col_ef2, col_ef3 = st.columns(3)
                     ed_princ = col_ef1.number_input("Sanctioned Loan Principal (₹) *", min_value=100.0, value=float(eg_princ or 1000.0), step=1000.0, disabled=is_closed_gl, key=f"gl_ed_princ_{sel_egl_id}")
                     ed_int_rate = col_ef2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
                     ed_tenure_mo = col_ef3.number_input("Loan Period / Tenure (Months) *", min_value=1, value=int(eg_tmonths or 12), step=1, disabled=is_closed_gl, key=f"gl_ed_tmo_{sel_egl_id}")
                     
-                    # Auto math
-                    calc_gl_interest = round(ed_princ * (ed_int_rate / 100.0) * (ed_tenure_mo / 12.0), 2)
-                    calc_gl_repayable = round(ed_princ + calc_gl_interest, 2)
-                    calc_gl_p_emi = round(ed_princ / float(ed_tenure_mo), 2)
-                    calc_gl_i_emi = round(calc_gl_interest / float(ed_tenure_mo), 2)
-                    calc_gl_installment = round(calc_gl_repayable / float(ed_tenure_mo), 2)
+                    st.markdown("### 3️⃣ Pledged Gold Ornament Photo Upload / Replacement")
+                    new_gl_photo = st.file_uploader("Upload / Replace Gold Photo (JPG, PNG)", type=["jpg", "jpeg", "png"], disabled=is_closed_gl, key=f"up_gl_photo_{sel_egl_id}")
                     
-                    with st.container(border=True):
-                        st.markdown("##### 📊 Live Auto-Calculated Gold Loan Structure")
-                        gm1, gm2, gm3, gm4 = st.columns(4)
-                        gm1.metric("💵 Principal", f"₹{ed_princ:,.2f}")
-                        gm2.metric(f"📈 Total Interest ({ed_int_rate}%)", f"₹{calc_gl_interest:,.2f}")
-                        gm3.metric("💳 Total Repayable", f"₹{calc_gl_repayable:,.2f}")
-                        gm4.metric("📅 Monthly EMI", f"₹{calc_gl_installment:,.2f}")
-                        st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{calc_gl_p_emi:,.2f}** + Interest EMI: **₹{calc_gl_i_emi:,.2f}** = Total EMI: **₹{calc_gl_installment:,.2f}** per month for {ed_tenure_mo} months.")
-                        
-                    st.markdown("### 3️⃣ Pledged Gold Ornament Photo Management")
-                    img_col1, img_col2 = st.columns([1, 1])
-                    if eg_has_photo:
-                        with img_col1.expander("📸 View / Download Pledged Ornament Photo", expanded=False):
-                            _, existing_raw_img = get_cached_gl_photo(sel_egl_id)
-                            if existing_raw_img:
-                                st.image(existing_raw_img, caption=f"📸 Current Pledged Ornaments ({eg_img_file or 'Jewel Photo'})", width=300)
-                                
-                                btn_col1, btn_col2 = st.columns(2)
-                                btn_col1.download_button(
-                                    "📥 Download Photo",
-                                    data=existing_raw_img,
-                                    file_name=f"Gold_Photo_{eg_lno}.jpg",
-                                    mime="image/jpeg",
-                                    use_container_width=True,
-                                    key=f"dl_gl_img_{sel_egl_id}"
-                                )
-                                if not is_closed_gl and btn_col2.button("🗑️ Remove Photo", key=f"del_gl_img_{sel_egl_id}", use_container_width=True):
-                                    run_query("UPDATE gold_loans SET gold_image_file = NULL, gold_image_data = NULL WHERE id = ?", (sel_egl_id,), fetch=False)
-                                    clear_db_cache()
-                                    st.success("Gold ornament image cleared.")
-                                    time.sleep(0.5)
-                                    st.rerun()
-                            else:
-                                st.info("No gold ornament photo attached to this loan.")
-                    else:
-                        img_col1.info("No gold ornament photo attached to this loan.")
-                        
-                    new_gl_photo = img_col2.file_uploader("Upload / Replace Gold Photo (JPG, PNG)", type=["jpg", "jpeg", "png"], disabled=is_closed_gl, key=f"up_gl_photo_{sel_egl_id}")
-                    if new_gl_photo:
-                        img_col2.image(new_gl_photo, caption="📸 New Upload Preview", width=250)
-
                     st.markdown("### 4️⃣ Vault Custody & Loan Management")
                     col_vc1, col_vc2, col_vc3 = st.columns(3)
                     new_pkt_no = col_vc1.text_input("Safe Vault Packet No *", value=str(eg_pkt or ""), disabled=is_closed_gl, key=f"gl_ed_pkt_{sel_egl_id}")

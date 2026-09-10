@@ -5325,10 +5325,13 @@ st.sidebar.markdown(f"""
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 current_time_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
 st.sidebar.markdown(f"""
-<div style="text-align: center; background-color: #000000; padding: 10px; border-radius: 8px; border: 1px solid #333333;">
-    <div style="color: #b8d4f0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">IST Clock</div>
-    <div style="color: white; font-size: 16px; font-weight: 700; font-family: monospace; margin: 4px 0;">{current_time_ist.strftime('%I:%M:%S %p')}</div>
-    <div style="color: #b8d4f0; font-size: 10px;">{current_time_ist.strftime('%d %b %Y')}</div>
+<div style="text-align: center; background: linear-gradient(135deg, rgba(12, 38, 68, 0.85) 0%, rgba(20, 58, 98, 0.75) 100%); padding: 12px 10px; border-radius: 10px; border: 1px solid rgba(147, 197, 253, 0.25); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.15);">
+    <div style="color: #93c5fd; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+        <span style="display: inline-block; width: 6px; height: 6px; background: #38bdf8; border-radius: 50%; box-shadow: 0 0 8px #38bdf8;"></span>
+        IST Live Clock
+    </div>
+    <div style="color: #e0f2fe; font-size: 19px; font-weight: 800; font-family: 'Consolas', 'Courier New', monospace; letter-spacing: 1px; margin: 6px 0 4px 0; text-shadow: 0 0 12px rgba(56, 189, 248, 0.35);">{current_time_ist.strftime('%I:%M:%S %p')}</div>
+    <div style="color: #bae6fd; font-size: 11px; font-weight: 500; opacity: 0.9;">{current_time_ist.strftime('%d %b %Y')}</div>
 </div>
 """, unsafe_allow_html=True)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)

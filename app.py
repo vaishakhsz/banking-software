@@ -2221,6 +2221,14 @@ def render_gold_loans():
                     ed_int_rate = col_ef2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
                     ed_tenure_mo = col_ef3.number_input("Loan Period / Tenure (Months) *", min_value=1, value=int(eg_tmonths or 12), step=1, disabled=is_closed_gl, key=f"gl_ed_tmo_{sel_egl_id}")
                     
+                    ed_net_wt = max(0.01, round(float(ed_gross_wt) - float(ed_stone_ded), 3))
+                    ed_market_val = round(ed_net_wt * float(ed_gold_rate), 2)
+                    calc_gl_interest = round(ed_princ * (ed_int_rate / 100.0) * (ed_tenure_mo / 12.0), 2)
+                    calc_gl_repayable = round(ed_princ + calc_gl_interest, 2)
+                    calc_gl_p_emi = round(ed_princ / float(ed_tenure_mo), 2)
+                    calc_gl_i_emi = round(calc_gl_interest / float(ed_tenure_mo), 2)
+                    calc_gl_installment = round(calc_gl_repayable / float(ed_tenure_mo), 2)
+                    
                     st.markdown("### 3️⃣ Pledged Gold Ornament Photo Upload / Replacement")
                     new_gl_photo = st.file_uploader("Upload / Replace Gold Photo (JPG, PNG)", type=["jpg", "jpeg", "png"], disabled=is_closed_gl, key=f"up_gl_photo_{sel_egl_id}")
                     

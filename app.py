@@ -5604,69 +5604,101 @@ st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strfti
 st.markdown("""
 <style>
     .company-header {
-        background: linear-gradient(135deg, #1f4e78 0%, #2c6b9e 100%) !important;
-        padding: 18px 20px !important;
-        border-radius: 12px !important;
+        background: linear-gradient(135deg, #163d63 0%, #1f4e78 50%, #2c6b9e 100%) !important;
+        padding: 18px 26px !important;
+        border-radius: 14px !important;
         margin-bottom: 22px !important;
-        color: white !important;
+        color: #ffffff !important;
         display: flex !important;
-        flex-direction: column !important;
+        justify-content: space-between !important;
         align-items: center !important;
-        justify-content: center !important;
-        text-align: center !important;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18) !important;
+        flex-wrap: wrap !important;
+        gap: 16px !important;
+        border: 1px solid rgba(255, 255, 255, 0.16) !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.14), inset 0 1px 1px rgba(255, 255, 255, 0.18) !important;
+        transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        cursor: default !important;
         width: 100% !important;
         box-sizing: border-box !important;
     }
-    .company-header .header-title-row {
+    .company-header:hover {
+        transform: translateY(-2px) scale(1.002) !important;
+        box-shadow: 0 10px 32px rgba(15, 78, 120, 0.35), 0 2px 8px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.28) !important;
+        border-color: rgba(255, 255, 255, 0.28) !important;
+    }
+    .company-header .brand {
+        display: flex !important;
+        align-items: center !important;
+        gap: 16px !important;
+        flex: 1 1 auto !important;
+        min-width: 260px !important;
+    }
+    .company-header .brand-icon {
+        font-size: 34px !important;
+        line-height: 1 !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        gap: 10px !important;
-        margin-bottom: 4px !important;
+        flex-shrink: 0 !important;
+        transition: transform 0.35s ease !important;
+        filter: drop-shadow(0 2px 6px rgba(0,0,0,0.25)) !important;
     }
-    .company-header .header-title-row .brand-icon {
-        font-size: 28px !important;
-        line-height: 1 !important;
+    .company-header:hover .brand-icon {
+        transform: scale(1.12) rotate(-3deg) !important;
     }
-    .company-header .header-title-row h1 {
-        font-size: 24px !important;
+    .company-header .brand-text {
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+    }
+    .company-header .brand h1 {
+        font-size: 23px !important;
         font-weight: 800 !important;
-        letter-spacing: 1px !important;
+        letter-spacing: 0.9px !important;
         color: #ffffff !important;
         margin: 0 !important;
         padding: 0 !important;
         line-height: 1.2 !important;
-        text-align: center !important;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
     }
-    .company-header .header-sub {
+    .company-header .brand .sub {
+        font-size: 11.5px !important;
+        color: #dbeafe !important;
+        opacity: 0.95 !important;
+        margin: 4px 0 0 0 !important;
+        padding: 0 !important;
+        font-weight: 500 !important;
+        line-height: 1.3 !important;
+        letter-spacing: 0.2px !important;
+    }
+    .company-header .contact-badge {
+        background: rgba(255, 255, 255, 0.08) !important;
+        backdrop-filter: blur(8px) !important;
+        padding: 8px 16px !important;
+        border-radius: 10px !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-end !important;
+        gap: 3px !important;
+        transition: all 0.3s ease !important;
+        flex-shrink: 0 !important;
+    }
+    .company-header:hover .contact-badge {
+        background: rgba(255, 255, 255, 0.15) !important;
+        border-color: rgba(255, 255, 255, 0.25) !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.15) !important;
+    }
+    .company-header .contact-badge .cin {
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        color: #ffffff !important;
+        letter-spacing: 0.5px !important;
+    }
+    .company-header .contact-badge .phone {
         font-size: 11.5px !important;
         color: #dbeafe !important;
         font-weight: 500 !important;
-        margin: 3px 0 6px 0 !important;
-        padding: 0 !important;
-        line-height: 1.4 !important;
-        text-align: center !important;
-    }
-    .company-header .header-details {
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        gap: 16px !important;
-        font-size: 11.5px !important;
-        color: #e2e8f0 !important;
-        flex-wrap: wrap !important;
-        text-align: center !important;
-    }
-    .company-header .header-details .cin {
-        font-weight: 600 !important;
-        color: #ffffff !important;
-    }
-    .company-header .header-details .divider-dot {
-        opacity: 0.5 !important;
-    }
-    .company-header .header-details .phone {
-        color: #dbeafe !important;
     }
 
     /* ======================================================== */
@@ -5742,17 +5774,16 @@ st.markdown("""
     }
 </style>
 <div class="company-header">
-    <div class="header-title-row">
-        <span class="brand-icon">🏦</span>
-        <h1>AARSHA NIDHI LIMITED</h1>
+    <div class="brand">
+        <div class="brand-icon">🏦</div>
+        <div class="brand-text">
+            <h1>AARSHA NIDHI LIMITED</h1>
+            <div class="sub">📍 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
+        </div>
     </div>
-    <div class="header-sub">
-        6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501
-    </div>
-    <div class="header-details">
-        <span class="cin"><b>CIN:</b> U65990KL22021PLN069978</span>
-        <span class="divider-dot">•</span>
-        <span class="phone">📞 0471-2994535</span>
+    <div class="contact-badge">
+        <div class="cin">CIN: U65990KL22021PLN069978</div>
+        <div class="phone">📞 0471-2994535</div>
     </div>
 </div>
 """, unsafe_allow_html=True)

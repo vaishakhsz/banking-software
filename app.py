@@ -5325,13 +5325,13 @@ st.sidebar.markdown(f"""
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 current_time_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
 st.sidebar.markdown(f"""
-<div style="text-align: center; background: linear-gradient(135deg, rgba(11, 30, 54, 0.9) 0%, rgba(20, 42, 70, 0.85) 100%); padding: 12px 10px; border-radius: 10px; border: 1px solid rgba(212, 175, 55, 0.35); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 235, 170, 0.15);">
-    <div style="color: #fde68a; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; display: flex; align-items: center; justify-content: center; gap: 6px;">
-        <span style="display: inline-block; width: 6px; height: 6px; background: #f59e0b; border-radius: 50%; box-shadow: 0 0 8px #f59e0b;"></span>
+<div style="text-align: center; background: linear-gradient(135deg, rgba(8, 24, 48, 0.85) 0%, rgba(15, 38, 70, 0.75) 100%); padding: 12px 10px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.14); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.08);">
+    <div style="color: #cbd5e1; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+        <span style="display: inline-block; width: 6px; height: 6px; background: #94a3b8; border-radius: 50%;"></span>
         IST Live Clock
     </div>
-    <div style="color: #fef08a; font-size: 19px; font-weight: 800; font-family: 'Consolas', 'Courier New', monospace; letter-spacing: 1px; margin: 6px 0 4px 0; text-shadow: 0 0 12px rgba(245, 158, 11, 0.35);">{current_time_ist.strftime('%I:%M:%S %p')}</div>
-    <div style="color: #fef3c7; font-size: 11px; font-weight: 500; opacity: 0.9;">{current_time_ist.strftime('%d %b %Y')}</div>
+    <div style="color: #ffffff; font-size: 19px; font-weight: 800; font-family: 'Consolas', 'Courier New', monospace; letter-spacing: 1px; margin: 6px 0 4px 0; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);">{current_time_ist.strftime('%I:%M:%S %p')}</div>
+    <div style="color: #94a3b8; font-size: 11px; font-weight: 500; opacity: 0.9;">{current_time_ist.strftime('%d %b %Y')}</div>
 </div>
 """, unsafe_allow_html=True)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)

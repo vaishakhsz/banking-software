@@ -5364,46 +5364,66 @@ with st.sidebar:
       }
       .clock-card {
         text-align: center;
-        background: linear-gradient(135deg, rgba(8, 24, 48, 0.85) 0%, rgba(15, 38, 70, 0.75) 100%);
-        padding: 9px 8px 8px 8px;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.08);
+        background: linear-gradient(135deg, rgba(8, 24, 48, 0.88) 0%, rgba(15, 38, 70, 0.78) 100%);
+        padding: 14px 12px 13px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.1);
         width: 100%;
+      }
+      @keyframes pulse-dot {
+        0% {
+          opacity: 1;
+          transform: scale(1);
+          box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7);
+        }
+        50% {
+          opacity: 0.3;
+          transform: scale(0.85);
+          box-shadow: 0 0 8px 3px rgba(56, 189, 248, 0.9);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1);
+          box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7);
+        }
       }
       .clock-title {
         color: #cbd5e1;
-        font-size: 10px;
+        font-size: 10.5px;
         font-weight: 700;
         text-transform: uppercase;
-        letter-spacing: 1.2px;
+        letter-spacing: 1.4px;
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 6px;
+        gap: 7px;
+        margin-bottom: 7px;
       }
       .live-dot {
-        width: 6px;
-        height: 6px;
-        background: #94a3b8;
+        width: 7px;
+        height: 7px;
+        background: #38bdf8;
         border-radius: 50%;
         display: inline-block;
+        animation: pulse-dot 1.5s infinite ease-in-out;
       }
       .clock-time {
         color: #ffffff;
-        font-size: 18px;
+        font-size: 21px;
         font-weight: 800;
         font-family: 'Consolas', 'Courier New', monospace;
-        letter-spacing: 1px;
-        margin: 4px 0 2px 0;
-        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        letter-spacing: 1.2px;
+        margin: 0 0 6px 0;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
         line-height: 1.2;
       }
       .clock-date {
         color: #94a3b8;
-        font-size: 11px;
+        font-size: 11.5px;
         font-weight: 500;
-        opacity: 0.9;
+        opacity: 0.95;
+        letter-spacing: 0.3px;
         line-height: 1.2;
       }
     </style>
@@ -5446,7 +5466,7 @@ with st.sidebar:
       </script>
     </body>
     </html>
-    """, height=82)
+    """, height=106)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 
 menu_options = [

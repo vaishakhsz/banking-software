@@ -5252,16 +5252,21 @@ st.sidebar.markdown("""
         color: #b8d4f0 !important; font-size: 12px; padding: 5px 0; text-align: center;
     }
     
-    /* Clean sidebar file uploader */
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] section {
-        background: rgba(0, 0, 0, 0.2) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    /* Lock only sidebar file uploader to black, leave main page default */
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] section,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] section:hover,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] section:active,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] section:focus {
+        background-color: #000000 !important;
+        background: #000000 !important;
+        border: 1px solid #333333 !important;
         border-radius: 8px !important;
     }
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] button {
-        background-color: rgba(255, 255, 255, 0.15) !important;
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] button,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] button:hover {
+        background-color: #000000 !important;
         color: #ffffff !important;
-        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        border: 1px solid #333333 !important;
     }
     [data-testid="stSidebar"] [data-testid="stFileUploader"] label,
     [data-testid="stSidebar"] [data-testid="stFileUploader"] p,
@@ -5270,12 +5275,16 @@ st.sidebar.markdown("""
         color: #ffffff !important;
     }
 
-    /* Clean sidebar download button */
-    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button {
-        background-color: rgba(255, 255, 255, 0.15) !important;
+    /* Lock sidebar download button to black background and white text */
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button,
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:hover,
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:active,
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] button:focus {
+        background-color: #000000 !important;
+        background: #000000 !important;
         color: #ffffff !important;
-        border: 1px solid rgba(255, 255, 255, 0.3) !important;
-        border-radius: 6px !important;
+        border: 1px solid #333333 !important;
+        border-radius: 8px !important;
         font-weight: 600 !important;
     }
 
@@ -5313,16 +5322,16 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 current_time_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
 st.sidebar.markdown(f"""
-<div style="text-align: center; background: rgba(0, 0, 0, 0.25); padding: 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.15);">
-    <div style="color: #b8d4f0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">IST Live Clock</div>
-    <div style="color: white; font-size: 17px; font-weight: 700; font-family: monospace; margin: 4px 0;">{current_time_ist.strftime('%I:%M:%S %p')}</div>
+<div style="text-align: center; background-color: #000000; padding: 10px; border-radius: 8px; border: 1px solid #333333;">
+    <div style="color: #b8d4f0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">IST Clock</div>
+    <div style="color: white; font-size: 16px; font-weight: 700; font-family: monospace; margin: 4px 0;">{current_time_ist.strftime('%I:%M:%S %p')}</div>
     <div style="color: #b8d4f0; font-size: 10px;">{current_time_ist.strftime('%d %b %Y')}</div>
 </div>
 """, unsafe_allow_html=True)
-st.sidebar.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
+st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 
 menu_options = [
     "📊 Dashboard",
@@ -5534,6 +5543,28 @@ if uploaded_dbs:
                     release_connection(conn)
 
 
+# Styling specifically targeting all buttons inside the sidebar
+st.sidebar.markdown("""
+<style>
+    section[data-testid="stSidebar"] button,
+    div[data-testid="stSidebar"] button,
+    .stSidebar button,
+    [data-testid="stSidebar"] [data-testid^="stBaseButton"] {
+        background-color: #000000 !important;
+        color: #ffffff !important;
+        border: 1px solid #000000 !important;
+    }
+    section[data-testid="stSidebar"] button:hover,
+    div[data-testid="stSidebar"] button:hover,
+    .stSidebar button:hover,
+    [data-testid="stSidebar"] [data-testid^="stBaseButton"]:hover {
+        background-color: #333333 !important;
+        color: #ffffff !important;
+        border: 1px solid #333333 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True):
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -5546,59 +5577,21 @@ st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strfti
 st.markdown("""
 <style>
     .company-header {
-        background: linear-gradient(135deg, #1f4e78 0%, #2c5e8a 100%) !important;
-        padding: 20px 25px;
-        border-radius: 12px;
-        margin-bottom: 25px;
+        background: linear-gradient(135deg, #1f4e78 0%, #2c6b9e 100%);
+        padding: 15px 25px;
+        border-radius: 10px;
+        margin-bottom: 20px;
         color: white;
         display: flex;
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
-        border: 1px solid rgba(255,255,255,0.12);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     }
     .company-header .brand { display: flex; align-items: center; gap: 15px; }
-    .company-header .brand h1 {
-        font-size: 24px;
-        margin: 0;
-        font-weight: 800;
-        letter-spacing: 0.8px;
-        color: #ffffff;
-    }
-    .company-header .brand .sub {
-        font-size: 11px;
-        color: #dbeafe;
-        margin-top: 4px;
-        font-weight: 500;
-    }
-    .company-header .contact {
-        text-align: right;
-        font-size: 12px;
-        color: #e2e8f0;
-        opacity: 0.95;
-        line-height: 1.6;
-    }
-    .company-header .contact .pulsing-online {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 10px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.8px;
-        color: #10b981;
-        background: rgba(16, 185, 129, 0.15);
-        padding: 4px 10px;
-        border-radius: 20px;
-        margin-bottom: 6px;
-    }
-    .company-header .contact .pulsing-dot {
-        width: 6px;
-        height: 6px;
-        background-color: #10b981;
-        border-radius: 50%;
-    }
+    .company-header .brand h1 { font-size: 22px; margin: 0; font-weight: 700; letter-spacing: 1px; color: #ffffff; }
+    .company-header .brand .sub { font-size: 11px; opacity: 0.85; margin-top: 2px; color: #ffffff; }
+    .company-header .contact { text-align: right; font-size: 12px; opacity: 0.9; line-height: 1.6; color: #ffffff; }
 
     /* ======================================================== */
     /* ANTI-TRUNCATION & BORDER CONTAINMENT DISPLAY FIXES       */
@@ -5677,13 +5670,10 @@ st.markdown("""
         <div style="font-size: 32px;">🏦</div>
         <div>
             <h1>AARSHA NIDHI LIMITED</h1>
-            <div class="sub">6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
+            <div class="sub">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
         </div>
     </div>
     <div class="contact">
-        <div class="pulsing-online">
-            <span class="pulsing-dot"></span> System Online
-        </div>
         <div>CIN: U65990KL22021PLN069978</div>
         <div>📞 0471-2994535</div>
     </div>

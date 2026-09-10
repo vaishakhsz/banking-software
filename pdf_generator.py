@@ -57,7 +57,7 @@ def create_pdf_report(title, df):
     
     # Company Header
     elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
-    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subheader_style))
+    elements.append(Paragraph("6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subheader_style))
     elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", subheader_style))
     elements.append(Spacer(1, 6))
     elements.append(Paragraph(title, title_style))
@@ -194,7 +194,7 @@ def create_csv_report(title, df, from_date=None, to_date=None):
     
     # 1. Company Header (matching PDF)
     writer.writerow(["AARSHA NIDHI LIMITED"])
-    writer.writerow(["6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"])
+    writer.writerow(["6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"])
     writer.writerow(["CIN: U65990KL2021PLN069978 | Ph: 0471-2994535"])
     
     # 2. Report Title & Date Scope
@@ -301,7 +301,7 @@ def create_excel_report(title, df, from_date=None, to_date=None):
     # Row 2: Address
     ws.merge_cells(f"A2:{last_col_letter}2")
     c2 = ws["A2"]
-    c2.value = "6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
+    c2.value = "6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
     c2.font = Font(name="Segoe UI", size=9, color="4B5563")
     c2.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[2].height = 16
@@ -486,7 +486,7 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
     )
     
     elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
-    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_header_style))
+    elements.append(Paragraph("6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_header_style))
     elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", sub_header_style))
     elements.append(Spacer(1, 4))
     
@@ -747,7 +747,7 @@ def generate_fd_pdf(fd_data):
     status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
     
     elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
-    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))
+    elements.append(Paragraph("6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))
     elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", subtitle_style))
     elements.append(Spacer(1, 4))
     elements.append(Paragraph("FIXED DEPOSIT RECEIPT / LEDGER", heading_style))
@@ -982,7 +982,7 @@ def generate_rd_pdf(rd_data):
     status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
     
     elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
-    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))
+    elements.append(Paragraph("6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))
     elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", subtitle_style))
     elements.append(Spacer(1, 4))
     elements.append(Paragraph("RECURRING DEPOSIT RECEIPT / LEDGER", heading_style))
@@ -1243,7 +1243,7 @@ def create_loan_passbook_excel(loan_data, schedule_df, repayments_df=None):
     ws.row_dimensions[1].height = 22
 
     ws.merge_cells("A2:G2")
-    ws["A2"] = "6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
+    ws["A2"] = "6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
     ws["A2"].font = font_sub
     ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[2].height = 14
@@ -1548,7 +1548,7 @@ def create_loan_passbook_pdf(loan_data, schedule_df, repayments_df=None):
     th_style = ParagraphStyle('CTH', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
 
     elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
-    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
+    elements.append(Paragraph("6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
     elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", sub_style))
     elements.append(Spacer(1, 2))
     elements.append(Paragraph("LOAN PASSBOOK & STATEMENT OF ACCOUNT", title_style))
@@ -1987,7 +1987,7 @@ def create_gold_loan_passbook_excel(loan_data, schedule_df, repayments_df=None):
     ws.row_dimensions[1].height = 22
 
     ws.merge_cells("A2:G2")
-    ws["A2"] = "6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
+    ws["A2"] = "6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
     ws["A2"].font = font_sub
     ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[2].height = 14
@@ -2481,7 +2481,7 @@ def create_gold_loan_passbook_pdf(loan_data, schedule_df, repayments_df=None):
     th_style = ParagraphStyle('CTH', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
 
     elements.append(Paragraph("AARSHA NIDHI LIMITED", header_style))
-    elements.append(Paragraph("6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
+    elements.append(Paragraph("6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
     elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", sub_style))
     elements.append(Spacer(1, 2))
     elements.append(Paragraph("GOLD LOAN STATEMENT & PAWN PASSBOOK", title_style))

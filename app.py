@@ -1565,7 +1565,7 @@ def render_personal_loans():
 
             with st.container(border=True):
                 st.markdown("### 📖 **LOAN PASSBOOK / LOAN STATEMENT OF ACCOUNT**")
-                st.caption("AARSHA NIDHI LIMITED | 6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram")
+                st.caption("AARSHA NIDHI LIMITED | 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram")
                 st.divider()
                 
                 hb1, hb2 = st.columns(2)
@@ -2529,7 +2529,7 @@ def render_gold_loans():
 
             with st.container(border=True):
                 st.markdown("### 📖 **GOLD LOAN STATEMENT OF ACCOUNT & PAWN PASSBOOK**")
-                st.caption("AARSHA NIDHI LIMITED | 6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram")
+                st.caption("AARSHA NIDHI LIMITED | 6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram")
                 st.divider()
                 
                 gb1, gb2 = st.columns(2)
@@ -5670,7 +5670,7 @@ st.markdown("""
         <div style="font-size: 32px;">🏦</div>
         <div>
             <h1>AARSHA NIDHI LIMITED</h1>
-            <div class="sub">6/814, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
+            <div class="sub">6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</div>
         </div>
     </div>
     <div class="contact">

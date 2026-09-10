@@ -2188,7 +2188,7 @@ def resequence_cash_book():
                     curr_bal NUMERIC := 0;
                 BEGIN
                     UPDATE cash_book SET id = -id;
-                    FOR r IN SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY -id ASC LOOP
+                    FOR r IN SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, -id ASC LOOP
                         IF new_id = 1 AND r.particulars ILIKE '%opening%' THEN
                             curr_bal := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
                         ELSE
@@ -2206,7 +2206,7 @@ def resequence_cash_book():
                 END $$;
             """)
         else:
-            cursor.execute("SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY id ASC")
+            cursor.execute("SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, id ASC")
             rows = cursor.fetchall()
             cursor.execute("UPDATE cash_book SET id = -id")
             curr_bal = 0.0
@@ -2245,7 +2245,7 @@ def resequence_bank_book():
                     new_id INT := 1;
                 BEGIN
                     UPDATE bank_book SET id = -id;
-                    FOR r IN SELECT id FROM bank_book ORDER BY -id ASC LOOP
+                    FOR r IN SELECT id FROM bank_book ORDER BY date ASC, -id ASC LOOP
                         UPDATE bank_book SET id = new_id WHERE id = r.id;
                         new_id := new_id + 1;
                     END LOOP;
@@ -2258,7 +2258,7 @@ def resequence_bank_book():
                 END $$;
             """)
         else:
-            cursor.execute("SELECT id FROM bank_book ORDER BY id ASC")
+            cursor.execute("SELECT id FROM bank_book ORDER BY date ASC, id ASC")
             rows = cursor.fetchall()
             cursor.execute("UPDATE bank_book SET id = -id")
             for new_id, (old_neg_id,) in enumerate(rows, 1):

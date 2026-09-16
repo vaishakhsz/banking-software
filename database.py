@@ -1847,7 +1847,7 @@ def record_bank_book_transaction(entry_type, amount, bank_name, bank_code, accou
     finally:
         release_connection(conn)
 
-def record_sb_transaction(account_no, tx_type, amount, pay_mode, chosen_asset_code, narration):
+def record_sb_transaction(account_no, tx_type, amount, pay_mode, chosen_asset_code, narration, tx_date=None):
     """
     Executes SB balance update, transaction record, JV creation, JV entries,
     and Cash/Bank book recording inside a SINGLE database transaction.
@@ -1855,9 +1855,14 @@ def record_sb_transaction(account_no, tx_type, amount, pay_mode, chosen_asset_co
     if amount <= 0:
         return False, "Amount must be greater than 0"
         
-    today = datetime.now(IST).strftime("%Y-%m-%d")
-    today_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
-    today_code = datetime.now(IST).strftime("%Y%m%d")
+    if tx_date:
+        today = str(tx_date)
+        today_code = today.replace("-", "")
+        today_time = f"{today} 12:00"
+    else:
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+        today_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+        today_code = datetime.now(IST).strftime("%Y%m%d")
     tx_id = f"TX{datetime.now(IST).strftime('%M%S%f')}"
     
     conn = None
@@ -2645,6 +2650,70 @@ def delete_transaction_entry(del_id):
             cursor.execute("UPDATE transactions SET id = (-id) - 1 WHERE id < 0")
         conn.commit()
         return True, f"Transaction #{del_id} deleted and resequenced successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def delete_sb_account_entry(account_no):
+    """
+    Deletes an SB account, cascades linked transactions, and resequences remaining transactions.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch account details
+        cursor.execute(f"SELECT account_no, customer_id, balance FROM sb_accounts WHERE account_no = {placeholder}", (account_no,))
+        row = cursor.fetchone()
+        if not row:
+            return False, f"SB Account {account_no} not found."
+            
+        # 2. Delete transactions linked to account_no
+        cursor.execute(f"DELETE FROM transactions WHERE account_no = {placeholder}", (account_no,))
+        
+        # 3. Delete SB account
+        cursor.execute(f"DELETE FROM sb_accounts WHERE account_no = {placeholder}", (account_no,))
+        
+        # 4. Resequence transactions
+        if USING_SUPABASE:
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    rec RECORD;
+                    new_id INT := 1;
+                    max_id BIGINT;
+                BEGIN
+                    UPDATE transactions SET id = -id;
+                    FOR rec IN SELECT id FROM transactions ORDER BY -id ASC LOOP
+                        UPDATE transactions SET id = new_id WHERE id = rec.id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    SELECT COALESCE(MAX(id), 0) INTO max_id FROM transactions;
+                    IF max_id = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE transactions_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('transactions_id_seq', max_id, true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("SELECT id FROM transactions ORDER BY id ASC")
+            rows = cursor.fetchall()
+            cursor.execute("UPDATE transactions SET id = -id")
+            for new_id, (old_neg_id,) in enumerate(rows, 1):
+                cursor.execute("UPDATE transactions SET id = ? WHERE id = ?", (new_id, -old_neg_id))
+                
+        conn.commit()
+        return True, f"SB Account {account_no} deleted successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
             try:

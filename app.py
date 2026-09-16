@@ -37,7 +37,8 @@ try:
         delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
         delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
         delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
-        resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database
+        resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
+        update_sb_account_details
     )
 except Exception as _db_imp_err:
     import traceback
@@ -2850,25 +2851,41 @@ def render_sb_accounts():
             with col_sb_e2:
                 edit_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=float(c_rate or 3.5), step=0.25, key=f"edit_sb_rate_{c_acc_no}")
                 edit_sb_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_sb_created_{c_acc_no}")
+                
+                edit_asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+                if not edit_asset_accounts:
+                    edit_asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+                edit_asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in edit_asset_accounts} if edit_asset_accounts else {}
+                
+                existing_asset_idx = 0
+                if edit_asset_dict:
+                    asset_codes_list = list(edit_asset_dict.values())
+                    if "AST-102" in asset_codes_list:
+                        existing_asset_idx = asset_codes_list.index("AST-102")
+                
+                edit_chosen_asset_label = st.selectbox(
+                    "Funding / Settlement Account",
+                    list(edit_asset_dict.keys()),
+                    index=existing_asset_idx,
+                    key=f"edit_sb_asset_{c_acc_no}"
+                )
+                edit_chosen_asset = edit_asset_dict[edit_chosen_asset_label] if edit_asset_dict else "AST-102"
             
             st.markdown("<br>", unsafe_allow_html=True)
             btn_sb1, btn_sb2 = st.columns([3, 1])
             with btn_sb1:
                 if st.button("💾 Save & Update SB Account Details", key=f"btn_save_sb_{c_acc_no}", type="primary", use_container_width=True):
                     edit_created_str = edit_sb_created.strftime("%Y-%m-%d")
-                    run_query("""
-                        UPDATE sb_accounts 
-                        SET account_no = ?, customer_id = ?, balance = ?, interest_rate = ?, created_at = ?
-                        WHERE account_no = ?
-                    """, (edit_sb_acc_no, edit_sb_cust_id, edit_sb_bal, edit_sb_rate, edit_created_str, c_acc_no), fetch=False)
-                    
-                    if edit_sb_acc_no != c_acc_no:
-                        run_query("UPDATE transactions SET account_no = ? WHERE account_no = ?", (edit_sb_acc_no, c_acc_no), fetch=False)
-                        
+                    success, msg = update_sb_account_details(
+                        c_acc_no, edit_sb_acc_no, edit_sb_cust_id, edit_sb_bal, edit_sb_rate, edit_created_str, edit_chosen_asset
+                    )
                     clear_db_cache()
-                    st.success(f"✅ SB Account **{edit_sb_acc_no}** updated successfully!")
-                    time.sleep(0.5)
-                    st.rerun()
+                    if success:
+                        st.success(f"✅ {msg}")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed to update SB Account: {msg}")
             
             with btn_sb2:
                 with st.popover("🗑️ Delete SB Account"):

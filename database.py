@@ -2728,7 +2728,8 @@ def delete_sb_account_entry(account_no):
 def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, new_rate, new_created_date, chosen_asset_code="AST-102"):
     """
     Updates SB account details, customer assignment, balance, rate, and opening date,
-    and synchronizes linked transactions, Journal Vouchers, and Cash/Bank Book entries.
+    and automatically synchronizes linked transactions, Journal Vouchers, Cash Book, and Bank Book entries,
+    recalculating running balances and resequencing chronologically.
     """
     conn = None
     try:
@@ -2751,31 +2752,30 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
         # 3. Update accounts table
         cursor.execute(f"""
             UPDATE accounts 
-            SET account_number = {placeholder}, customer_id = {placeholder}, balance = {placeholder}
+            SET account_number = {placeholder}, customer_id = {placeholder}, balance = {placeholder}, created_at = {placeholder}
             WHERE account_number = {placeholder} OR (customer_id = {placeholder} AND account_type = 'Savings Account')
-        """, (new_acc_no, new_cust_id, new_balance, old_acc_no, new_cust_id))
+        """, (new_acc_no, new_cust_id, new_balance, str(new_created_date), old_acc_no, new_cust_id))
         
-        # 4. Update transactions table if account_no changed
+        # 4. Update transactions table (account_no & date)
         if new_acc_no != old_acc_no:
             cursor.execute(f"UPDATE transactions SET account_no = {placeholder} WHERE account_no = {placeholder}", (new_acc_no, old_acc_no))
+        cursor.execute(f"UPDATE transactions SET date = {placeholder} WHERE account_no = {placeholder}", (str(new_created_date), new_acc_no))
             
-        # 5. Check for existing Opening Deposit in bank_book or cash_book
+        # 5. Locate existing Bank Book or Cash Book entry for this account
         cursor.execute(f"""
             SELECT id, voucher_no, particulars, account_code, bank_name 
             FROM bank_book 
-            WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-              AND (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
             ORDER BY id ASC LIMIT 1
-        """, (f"%{old_acc_no}%", f"%{new_acc_no}%", f"%{old_acc_no}%", f"%{new_acc_no}%", "%Opening Deposit%", "%Opening Balance%", "%Opening Deposit%", "%Opening Balance%"))
+        """, (f"%{old_acc_no}%", f"%{new_acc_no}%", f"%{old_acc_no}%", f"%{new_acc_no}%"))
         existing_bb = cursor.fetchone()
         
         cursor.execute(f"""
             SELECT id, voucher_no, particulars, account_code 
             FROM cash_book 
-            WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-              AND (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
             ORDER BY id ASC LIMIT 1
-        """, (f"%{old_acc_no}%", f"%{new_acc_no}%", f"%{old_acc_no}%", f"%{new_acc_no}%", "%Opening Deposit%", "%Opening Balance%", "%Opening Deposit%", "%Opening Balance%"))
+        """, (f"%{old_acc_no}%", f"%{new_acc_no}%", f"%{old_acc_no}%", f"%{new_acc_no}%"))
         existing_cb = cursor.fetchone()
         
         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else ("State Bank of India" if chosen_asset_code == 'AST-103' else "Cash")
@@ -2787,9 +2787,9 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
                 cursor.execute(f"""
                     UPDATE bank_book 
                     SET date = {placeholder}, particulars = {placeholder}, debit_amount = {placeholder},
-                        bank_name = {placeholder}, account_code = {placeholder}, narration = {placeholder}
+                        bank_name = {placeholder}, account_code = {placeholder}, narration = {placeholder}, created_at = {placeholder}
                     WHERE id = {placeholder}
-                """, (str(new_created_date), f"SB Opening Deposit: {new_acc_no} ({cust_name})", new_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {new_acc_no}", bb_id))
+                """, (str(new_created_date), f"SB Deposit: {new_acc_no} ({cust_name})", new_balance, bank_name, chosen_asset_code, f"SB Deposit - {new_acc_no}", today_time, bb_id))
             else:
                 cursor.execute(f"DELETE FROM bank_book WHERE id = {placeholder}", (bb_id,))
                 today_code = str(new_created_date).replace("-", "")
@@ -2800,7 +2800,7 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
                 cursor.execute(f"""
                     INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                     VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, 'AST-101', {placeholder}, {placeholder})
-                """, (str(new_created_date), c_voucher, f"SB Opening Deposit: {new_acc_no} ({cust_name})", new_balance, f"SB Opening Balance - {new_acc_no}", today_time))
+                """, (str(new_created_date), c_voucher, f"SB Deposit: {new_acc_no} ({cust_name})", new_balance, f"SB Deposit - {new_acc_no}", today_time))
                 
             cursor.execute(f"""
                 SELECT jv_id FROM journal_vouchers 
@@ -2811,7 +2811,7 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
             if jv_row:
                 jv_id = jv_row[0]
                 cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}",
-                               (str(new_created_date), f"SB Opening Balance - Account {new_acc_no} ({cust_name})", jv_id))
+                               (str(new_created_date), f"SB Deposit: {new_acc_no} ({cust_name})", jv_id))
                 cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder}, debit = {placeholder} WHERE jv_id = {placeholder} AND debit > 0", (chosen_asset_code, new_balance, jv_id))
                 cursor.execute(f"UPDATE jv_entries SET account_code = 'LIA-101', credit = {placeholder} WHERE jv_id = {placeholder} AND credit > 0", (new_balance, jv_id))
                 
@@ -2821,9 +2821,9 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
                 cursor.execute(f"""
                     UPDATE cash_book 
                     SET date = {placeholder}, particulars = {placeholder}, debit_amount = {placeholder},
-                        account_code = 'AST-101', narration = {placeholder}
+                        account_code = 'AST-101', narration = {placeholder}, created_at = {placeholder}
                     WHERE id = {placeholder}
-                """, (str(new_created_date), f"SB Opening Deposit: {new_acc_no} ({cust_name})", new_balance, f"SB Opening Balance - {new_acc_no}", cb_id))
+                """, (str(new_created_date), f"SB Deposit: {new_acc_no} ({cust_name})", new_balance, f"SB Deposit - {new_acc_no}", today_time, cb_id))
             else:
                 cursor.execute(f"DELETE FROM cash_book WHERE id = {placeholder}", (cb_id,))
                 today_code = str(new_created_date).replace("-", "")
@@ -2834,7 +2834,7 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
                 cursor.execute(f"""
                     INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                     VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
-                """, (str(new_created_date), b_voucher, f"SB Opening Deposit: {new_acc_no} ({cust_name})", new_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {new_acc_no}", today_time))
+                """, (str(new_created_date), b_voucher, f"SB Deposit: {new_acc_no} ({cust_name})", new_balance, bank_name, chosen_asset_code, f"SB Deposit - {new_acc_no}", today_time))
                 
             cursor.execute(f"""
                 SELECT jv_id FROM journal_vouchers 
@@ -2845,14 +2845,14 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
             if jv_row:
                 jv_id = jv_row[0]
                 cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}",
-                               (str(new_created_date), f"SB Opening Balance - Account {new_acc_no} ({cust_name})", jv_id))
+                               (str(new_created_date), f"SB Deposit: {new_acc_no} ({cust_name})", jv_id))
                 cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder}, debit = {placeholder} WHERE jv_id = {placeholder} AND debit > 0", (chosen_asset_code, new_balance, jv_id))
                 cursor.execute(f"UPDATE jv_entries SET account_code = 'LIA-101', credit = {placeholder} WHERE jv_id = {placeholder} AND credit > 0", (new_balance, jv_id))
                 
         else:
             if new_balance > 0:
                 today_code = str(new_created_date).replace("-", "")
-                jv_narr = f"SB Opening Balance - Account {new_acc_no} ({cust_name})"
+                jv_narr = f"SB Deposit: {new_acc_no} ({cust_name})"
                 if USING_SUPABASE:
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (str(new_created_date), jv_narr))
                     jv_id = cursor.fetchone()[0]
@@ -2872,7 +2872,7 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
                     cursor.execute(f"""
                         INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                         VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
-                    """, (str(new_created_date), b_voucher, f"SB Opening Deposit: {new_acc_no} ({cust_name})", new_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {new_acc_no}", today_time))
+                    """, (str(new_created_date), b_voucher, f"SB Deposit: {new_acc_no} ({cust_name})", new_balance, bank_name, chosen_asset_code, f"SB Deposit - {new_acc_no}", today_time))
                 else:
                     cursor.execute(f"SELECT voucher_no FROM cash_book WHERE voucher_no LIKE {placeholder} ORDER BY id DESC LIMIT 1", (f"CB{today_code}%",))
                     cb_res = cursor.fetchone()
@@ -2881,12 +2881,22 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
                     cursor.execute(f"""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                         VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, 'AST-101', {placeholder}, {placeholder})
-                    """, (str(new_created_date), c_voucher, f"SB Opening Deposit: {new_acc_no} ({cust_name})", new_balance, f"SB Opening Balance - {new_acc_no}", today_time))
+                    """, (str(new_created_date), c_voucher, f"SB Deposit: {new_acc_no} ({cust_name})", new_balance, f"SB Deposit - {new_acc_no}", today_time))
 
         if new_acc_no != old_acc_no:
             cursor.execute(f"UPDATE bank_book SET particulars = REPLACE(particulars, {placeholder}, {placeholder}), narration = REPLACE(narration, {placeholder}, {placeholder}) WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (old_acc_no, new_acc_no, old_acc_no, new_acc_no, f"%{old_acc_no}%", f"%{old_acc_no}%"))
             cursor.execute(f"UPDATE cash_book SET particulars = REPLACE(particulars, {placeholder}, {placeholder}), narration = REPLACE(narration, {placeholder}, {placeholder}) WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (old_acc_no, new_acc_no, old_acc_no, new_acc_no, f"%{old_acc_no}%", f"%{old_acc_no}%"))
             cursor.execute(f"UPDATE journal_vouchers SET narration = REPLACE(narration, {placeholder}, {placeholder}) WHERE narration LIKE {placeholder}", (old_acc_no, new_acc_no, f"%{old_acc_no}%"))
+
+        # Recalculate Bank Book cumulative running balances
+        cursor.execute("SELECT id, debit_amount, credit_amount FROM bank_book ORDER BY date ASC, id ASC")
+        rows = cursor.fetchall()
+        running_bal = 0.0
+        for r_id, dr, cr in rows:
+            dr = float(dr or 0.0)
+            cr = float(cr or 0.0)
+            running_bal += (dr - cr)
+            cursor.execute(f"UPDATE bank_book SET balance = {placeholder} WHERE id = {placeholder}", (round(running_bal, 2), r_id))
 
         conn.commit()
         return True, f"SB Account {new_acc_no} updated and synchronized with Bank/Cash Book and Journal Vouchers successfully."

@@ -315,7 +315,14 @@ def render_customer_management():
             phone = col2.text_input("Phone Number")
             
             col_b1, col_b2 = st.columns(2)
-            acc_type = col_b1.selectbox("Primary Account Type", ["Savings Bank (SB) & Member Account", "Loan Account (Personal/Micro Loan)"])
+            acc_type = col_b1.selectbox(
+                "Primary Account Type", 
+                [
+                    "Savings Bank (SB) & Member Account", 
+                    "Personal / Micro Loan Account",
+                    "Gold Loan Account (Jewel / Pawn Loan)"
+                ]
+            )
             initial_balance = col_b2.number_input("Opening Balance / Loan Due Balance (₹)", min_value=0.0, value=0.0, step=500.0)
             
             col_d1, col_d2 = st.columns(2)
@@ -385,30 +392,151 @@ def render_customer_management():
                                 new_c_id = new_cust_id_row[0][0]
                                 
                                 # 3. Automatically create Account in accounts table
-                                db_acc_type = 'Loan Account' if 'Loan' in acc_type else 'Savings Account'
+                                db_acc_type = 'Loan Account' if ('Loan' in acc_type or 'Gold' in acc_type) else 'Savings Account'
                                 run_query("""
                                     INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
                                     VALUES (?, ?, ?, ?, ?)
                                 """, (final_acc_no, db_acc_type, new_c_id, initial_balance, today_str), fetch=False)
                                 
                                 # 4. Insert into sb_accounts for standard SB tracking
+                                sb_open_bal = initial_balance if ('Savings' in acc_type or 'SB' in acc_type) else 0.0
                                 run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, ?, 3.5, ?)", 
-                                          (final_acc_no, new_c_id, initial_balance, today_str), fetch=False)
+                                          (final_acc_no, new_c_id, sb_open_bal, today_str), fetch=False)
                                 
                                 # 5. Log Opening Transaction and General Ledger/Cash/Bank books if initial_balance > 0
                                 if initial_balance > 0:
-                                    if 'Loan' in acc_type:
+                                    today_time = f"{today_str} {datetime.now(IST).strftime('%H:%M')}"
+                                    
+                                    if 'Gold' in acc_type:
+                                        gl_code = f"GL-2026-{new_c_id:04d}"
+                                        gl_vno = f"GLV{reg_date.strftime('%Y%m%d')}{new_c_id:03d}"
+                                        calc_weight = max(1.0, round(initial_balance / 5000.0, 3))
+                                        calc_market_val = round(calc_weight * 6500.0, 2)
+                                        gl_inst = round(initial_balance / 12.0, 2)
+                                        
+                                        gl_sched = generate_loan_schedule(today_str, initial_balance, 0.0, tenure_months=12, loan_type='GOLD')
+                                        loan_from = gl_sched[0]["from_date"] if gl_sched else today_str
+                                        loan_to = gl_sched[-1]["to_date"] if gl_sched else today_str
+                                        first_due = gl_sched[0]["due_date"] if gl_sched else today_str
+                                        last_due = gl_sched[-1]["due_date"] if gl_sched else today_str
+                                        
+                                        new_gl_row = run_query("""
+                                            INSERT INTO gold_loans (
+                                                loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
+                                                item_count, gross_weight, stone_deduction, net_weight, purity,
+                                                market_value, ltv_percent, principal_amount, interest_rate,
+                                                interest_rate_monthly, tenure_days, tenure_months, total_interest, total_repayable,
+                                                installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
+                                                loan_from_date, loan_to_date, first_emi_due, last_emi_due,
+                                                outstanding_due, vault_packet_no, locker_no, appraiser_name,
+                                                disbursal_mode, voucher_no, status, remarks, renewal_count
+                                            ) VALUES (
+                                                ?, ?, ?, 6500.0, 'Gold Ornaments (Opening Loan)',
+                                                1, ?, 0.0, ?, '22K',
+                                                ?, 75.0, ?, 12.0,
+                                                1.0, 365, 12, 0.0, ?,
+                                                ?, ?, 0.0, 0.0,
+                                                ?, ?, ?, ?,
+                                                ?, ?, 'LOCKER-01', 'Approved Nidhi Appraiser',
+                                                ?, ?, 'ACTIVE', 'Opening Gold Loan Balance', 0
+                                            ) RETURNING id
+                                        """, (
+                                            gl_code, new_c_id, today_str,
+                                            calc_weight, calc_weight,
+                                            calc_market_val, initial_balance,
+                                            initial_balance,
+                                            gl_inst, gl_inst,
+                                            loan_from, loan_to, first_due, last_due,
+                                            initial_balance, f"PKT-{new_c_id:04d}",
+                                            pay_mode, gl_vno
+                                        ))
+                                        
+                                        if new_gl_row and new_gl_row[0]:
+                                            new_gl_id = new_gl_row[0][0]
+                                        else:
+                                            gl_lookup = run_query("SELECT id FROM gold_loans WHERE loan_no = ?", (gl_code,))
+                                            new_gl_id = gl_lookup[0][0] if gl_lookup and gl_lookup[0] else new_c_id
+                                            
+                                        batch_insert_loan_schedules('GOLD', new_gl_id, gl_code, gl_sched, reg_date)
+                                        
+                                        post_automated_jv(f"Gold Loan Disbursal - {name.strip()} ({gl_code})", "AST-110", chosen_asset_code, initial_balance, voucher_date=today_str)
+                                        
+                                        new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
+                                        if chosen_asset_code == 'AST-101':
+                                            voucher_no = generate_cash_voucher_no()
+                                            run_query("""
+                                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                                                VALUES (?, ?, ?, 0, ?, ?, 'AST-110', ?, ?)
+                                            """, (today_str, voucher_no, f"Gold Loan Disbursal: {final_acc_no} ({name.strip()}) [{gl_code}]", initial_balance, new_asset_balance, f"Opening Gold Loan Disbursal - {gl_code}", today_time), fetch=False)
+                                        elif chosen_asset_code in ['AST-102', 'AST-103']:
+                                            bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
+                                            voucher_no = generate_bank_voucher_no()
+                                            run_query("""
+                                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                                                VALUES (?, ?, ?, 0, ?, ?, bank_name, 'AST-110', ?, ?)
+                                            """, (today_str, voucher_no, f"Gold Loan Disbursal: {final_acc_no} ({name.strip()}) [{gl_code}]", initial_balance, new_asset_balance, f"Opening Gold Loan Disbursal - {gl_code}", today_time), fetch=False)
+
+                                    elif 'Personal' in acc_type or 'Loan' in acc_type:
                                         pl_code = f"PL-2026-{new_c_id:04d}"
-                                        run_query("""
+                                        pl_vno = f"PLV{reg_date.strftime('%Y%m%d')}{new_c_id:03d}"
+                                        pl_inst = round(initial_balance / 12.0, 2)
+                                        
+                                        pl_sched = generate_loan_schedule(today_str, initial_balance, 0.0, tenure_months=12, loan_type='PERSONAL')
+                                        loan_from = pl_sched[0]["from_date"] if pl_sched else today_str
+                                        loan_to = pl_sched[-1]["to_date"] if pl_sched else today_str
+                                        first_due = pl_sched[0]["due_date"] if pl_sched else today_str
+                                        last_due = pl_sched[-1]["due_date"] if pl_sched else today_str
+                                        
+                                        new_pl_row = run_query("""
                                             INSERT INTO personal_loans (
                                                 loan_no, customer_id, sanction_date, principal_amount, interest_rate,
                                                 interest_type, tenure_days, tenure_months, total_interest, total_repayable,
                                                 installment_amount, outstanding_due, disbursal_mode, voucher_no,
-                                                guarantor_name, guarantor_phone, purpose, status, remarks
-                                            ) VALUES (?, ?, ?, ?, 12.00, 'Daily 100-Day Micro Loan', 100, 12, 0, ?, ?, ?, ?, ?, 'Member Surety', ?, 'Personal Loan', 'ACTIVE', 'Opening Loan Balance')
-                                        """, (pl_code, new_c_id, today_str, initial_balance, initial_balance, round(initial_balance/100, 2), initial_balance, pay_mode, f"PLV{new_c_id:04d}", phone or 'N/A'), fetch=False)
+                                                guarantor_name, guarantor_phone, purpose, status, remarks,
+                                                loan_from_date, loan_to_date, first_emi_due, last_emi_due,
+                                                monthly_principal_emi, monthly_interest_emi, renewal_count
+                                            ) VALUES (
+                                                ?, ?, ?, ?, 12.00,
+                                                '100-Day Micro Loan', 100, 12, 0.0, ?,
+                                                ?, ?, ?, ?,
+                                                'Member Surety', ?, 'Personal Loan', 'ACTIVE', 'Opening Loan Balance',
+                                                ?, ?, ?, ?,
+                                                ?, 0.0, 0
+                                            ) RETURNING id
+                                        """, (
+                                            pl_code, new_c_id, today_str, initial_balance,
+                                            initial_balance,
+                                            pl_inst, initial_balance, pay_mode, pl_vno,
+                                            phone or 'N/A',
+                                            loan_from, loan_to, first_due, last_due,
+                                            pl_inst
+                                        ))
                                         
-                                        post_automated_jv(f"Personal Loan Disbursal - {name.strip()} ({pl_code})", "AST-104", chosen_asset_code, initial_balance, voucher_date=today_str)
+                                        if new_pl_row and new_pl_row[0]:
+                                            new_pl_id = new_pl_row[0][0]
+                                        else:
+                                            pl_lookup = run_query("SELECT id FROM personal_loans WHERE loan_no = ?", (pl_code,))
+                                            new_pl_id = pl_lookup[0][0] if pl_lookup and pl_lookup[0] else new_c_id
+                                            
+                                        batch_insert_loan_schedules('PERSONAL', new_pl_id, pl_code, pl_sched, reg_date)
+                                        
+                                        post_automated_jv(f"Personal Loan Disbursal - {name.strip()} ({pl_code})", "AST-108", chosen_asset_code, initial_balance, voucher_date=today_str)
+                                        
+                                        new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
+                                        if chosen_asset_code == 'AST-101':
+                                            voucher_no = generate_cash_voucher_no()
+                                            run_query("""
+                                                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                                                VALUES (?, ?, ?, 0, ?, ?, 'AST-108', ?, ?)
+                                            """, (today_str, voucher_no, f"Personal Loan Disbursal: {final_acc_no} ({name.strip()}) [{pl_code}]", initial_balance, new_asset_balance, f"Opening Personal Loan Disbursal - {pl_code}", today_time), fetch=False)
+                                        elif chosen_asset_code in ['AST-102', 'AST-103']:
+                                            bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
+                                            voucher_no = generate_bank_voucher_no()
+                                            run_query("""
+                                                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                                                VALUES (?, ?, ?, 0, ?, ?, bank_name, 'AST-108', ?, ?)
+                                            """, (today_str, voucher_no, f"Personal Loan Disbursal: {final_acc_no} ({name.strip()}) [{pl_code}]", initial_balance, new_asset_balance, f"Opening Personal Loan Disbursal - {pl_code}", today_time), fetch=False)
+
                                     else:
                                         # Standard SB Opening Deposit
                                         run_query("""
@@ -420,21 +548,19 @@ def render_customer_management():
                                         
                                         if jv_result:
                                             new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
-                                            today_time = f"{today_str} {datetime.now(IST).strftime('%H:%M')}"
-                                            
                                             if chosen_asset_code == 'AST-101':
                                                 voucher_no = generate_cash_voucher_no()
                                                 run_query("""
                                                     INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                                """, (today_str, voucher_no, f"SB Opening Deposit: {final_acc_no} ({name.strip()})", initial_balance, 0, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {final_acc_no}", today_time), fetch=False)
+                                                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+                                                """, (today_str, voucher_no, f"SB Opening Deposit: {final_acc_no} ({name.strip()})", initial_balance, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {final_acc_no}", today_time), fetch=False)
                                             elif chosen_asset_code in ['AST-102', 'AST-103']:
                                                 bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                                                 voucher_no = generate_bank_voucher_no()
                                                 run_query("""
                                                     INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                                """, (today_str, voucher_no, f"SB Opening Deposit: {final_acc_no} ({name.strip()})", initial_balance, 0, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {final_acc_no}", today_time), fetch=False)
+                                                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                                                """, (today_str, voucher_no, f"SB Opening Deposit: {final_acc_no} ({name.strip()})", initial_balance, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {final_acc_no}", today_time), fetch=False)
                                           
                                 clear_db_cache()
                                 st.success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: {new_c_id}) registered successfully on {today_str}! Primary Account created with initial balance ₹{initial_balance:,.2f} recorded in {pay_mode}.")

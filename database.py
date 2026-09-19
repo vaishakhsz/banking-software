@@ -530,6 +530,7 @@ def init_db():
                 sanction_date TEXT,
                 principal_amount REAL,
                 interest_rate REAL,
+                tenure_days INTEGER DEFAULT 365,
                 tenure_months INTEGER,
                 total_interest REAL,
                 total_repayable REAL,
@@ -645,6 +646,7 @@ def init_db():
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS interest_rate DOUBLE PRECISION DEFAULT 12.0;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS total_interest DOUBLE PRECISION DEFAULT 0;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS total_repayable DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS tenure_days INTEGER DEFAULT 365;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_file TEXT;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_name TEXT;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_data BYTEA;
@@ -699,6 +701,7 @@ def init_db():
                 ("interest_rate", "REAL DEFAULT 12.0"),
                 ("total_interest", "REAL DEFAULT 0"),
                 ("total_repayable", "REAL DEFAULT 0"),
+                ("tenure_days", "INTEGER DEFAULT 365"),
                 ("gold_image_name", "TEXT"),
                 ("gold_image_data", "BLOB")
             ]:
@@ -939,6 +942,7 @@ try:
                    gl.sanction_date, gl.gold_rate_per_gram, gl.ornament_details, gl.item_count,
                    gl.gross_weight, gl.stone_deduction, gl.net_weight, gl.purity, gl.market_value,
                    gl.ltv_percent, gl.principal_amount, gl.interest_rate, gl.interest_rate_monthly,
+                   COALESCE(gl.tenure_days, gl.tenure_months * 30, 365) AS tenure_days,
                    gl.tenure_months, gl.total_interest, gl.total_repayable, gl.installment_amount,
                    gl.monthly_principal_emi, gl.monthly_interest_emi, gl.monthly_interest_due,
                    gl.loan_from_date, gl.loan_to_date, gl.first_emi_due, gl.last_emi_due,

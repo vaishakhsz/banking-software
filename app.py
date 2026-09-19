@@ -905,11 +905,11 @@ def render_personal_loans():
         sanction_date = col1.date_input("Sanction Date (From)", value=date.today(), format="DD-MM-YYYY", key="pl_sanc_date")
         principal = col2.number_input("Principal Loan Amount (₹)", min_value=1000.0, value=50000.0, step=1000.0, help="The principal amount disbursed to the borrower", key="pl_princ_inp")
         int_rate = col3.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, help="Annual flat interest rate percentage (default 12%)", key="pl_rate_inp")
-        tenure_months = col4.number_input("Loan Period / Tenure (Months)", min_value=1, value=12, step=1, help="Total tenure in months (default 12 months)", key="pl_ten_mo")
+        tenure_days = col4.number_input("Loan Period / Tenure (Days)", min_value=1, value=100, step=5, help="Total loan tenure in days (e.g., 100 days micro loan, 180 days, 365 days)", key="pl_ten_days")
         
-        tenure_days = tenure_months * 30
-        loan_scheme_name = f"Monthly {tenure_months}-Month EMI Loan"
-        tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
+        tenure_months = max(1, int(round(tenure_days / 30.0)))
+        loan_scheme_name = f"{tenure_days}-Day Loan ({tenure_months}M EMI)" if tenure_days != 100 else "Daily 100-Day Micro Loan"
+        tot_interest = round(principal * (int_rate / 100.0) * (tenure_days / 365.0), 2)
         tot_repayable = round(principal + tot_interest, 2)
         p_emi = round(principal / float(tenure_months), 2)
         i_emi = round(tot_interest / float(tenure_months), 2)
@@ -922,7 +922,7 @@ def render_personal_loans():
             m2.metric(f"📈 Interest ({int_rate}%)", f"₹{tot_interest:,.2f}")
             m3.metric("💳 Total Due (Repayable)", f"₹{tot_repayable:,.2f}")
             m4.metric("📅 Monthly EMI", f"₹{installment:,.2f}")
-            st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{p_emi:,.2f}** + Interest EMI: **₹{i_emi:,.2f}** = Total EMI: **₹{installment:,.2f}** per month for {tenure_months} months.")
+            st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{p_emi:,.2f}** + Interest EMI: **₹{i_emi:,.2f}** = Total EMI: **₹{installment:,.2f}** per month for {tenure_days} days ({tenure_months} months).")
 
         preview_schedule = generate_loan_schedule(sanction_date, principal, tot_interest, tenure_months=tenure_months)
         with st.expander(f"📅 Preview {len(preview_schedule)}-Month EMI Amortization Schedule Table", expanded=False):
@@ -1245,11 +1245,11 @@ def render_personal_loans():
             default_ren_princ = float(net_princ_rem if net_princ_rem > 0 else cur_due_val)
             renewed_principal = col_rn2.number_input("Renewed Principal Balance (₹)", min_value=0.0, value=default_ren_princ, step=500.0, help="Carried-forward principal balance to renew", key=f"pl_rnw_p_{cur_pl_id}")
             new_int_rate = col_rn3.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key=f"pl_rnw_r_{cur_pl_id}")
-            new_tenure_months = col_rn4.number_input("New Tenure (Months)", min_value=1, value=12, step=1, key=f"pl_rnw_m_{cur_pl_id}")
+            new_tenure_days = col_rn4.number_input("New Tenure (Days)", min_value=1, value=100, step=5, help="Carried-forward loan tenure in days", key=f"pl_rnw_d_{cur_pl_id}")
             
-            new_tenure_days = new_tenure_months * 30
-            new_scheme_name = f"Monthly {new_tenure_months}-Month EMI Loan (Renewed)"
-            new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_months / 12.0), 2)
+            new_tenure_months = max(1, int(round(new_tenure_days / 30.0)))
+            new_scheme_name = f"{new_tenure_days}-Day Loan (Renewed)"
+            new_planned_interest = round(renewed_principal * (new_int_rate / 100.0) * (new_tenure_days / 365.0), 2)
             new_tot_repayable = round(renewed_principal + new_planned_interest, 2)
             new_p_emi = round(renewed_principal / float(new_tenure_months), 2)
             new_i_emi = round(new_planned_interest / float(new_tenure_months), 2)
@@ -1262,7 +1262,7 @@ def render_personal_loans():
                 m2.metric(f"📈 New Interest ({new_int_rate}%)", f"₹{new_planned_interest:,.2f}")
                 m3.metric("💳 Total Due (Repayable)", f"₹{new_tot_repayable:,.2f}")
                 m4.metric("📅 New Monthly EMI", f"₹{new_installment:,.2f}")
-                st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{new_p_emi:,.2f}** + Interest EMI: **₹{new_i_emi:,.2f}** = Total EMI: **₹{new_installment:,.2f}** per month for {new_tenure_months} months.")
+                st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{new_p_emi:,.2f}** + Interest EMI: **₹{new_i_emi:,.2f}** = Total EMI: **₹{new_installment:,.2f}** per month for {new_tenure_days} days ({new_tenure_months} months).")
                 
             ren_remarks = st.text_input("Renewal Remarks / Notes", value=f"Loan Rollover & Term Renewal - Cycle #{cur_ren_cnt+1}", key=f"pl_rnw_rem_{cur_pl_id}")
             
@@ -1389,9 +1389,10 @@ def render_personal_loans():
                 col_f1, col_f2, col_f3 = st.columns(3)
                 new_princ = col_f1.number_input("Principal Loan Amount (₹) *", min_value=100.0, value=float(princ), step=1000.0, disabled=is_closed, key=f"pl_ed_p_{sel_pl_id}")
                 new_rate = col_f2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate or 12.0), step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
-                new_t_months = col_f3.number_input("Loan Period / Tenure (Months) *", min_value=1, value=int(t_months or 12), step=1, disabled=is_closed, key=f"pl_ed_m_{sel_pl_id}")
+                new_t_days = col_f3.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days or (t_months * 30 if t_months else 100)), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
                 
-                calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_t_months / 12.0), 2)
+                new_t_months = max(1, int(round(new_t_days / 30.0)))
+                calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_t_days / 365.0), 2)
                 calc_tot_repayable = round(new_princ + calc_tot_interest, 2)
                 calc_p_emi = round(new_princ / float(new_t_months), 2)
                 calc_i_emi = round(calc_tot_interest / float(new_t_months), 2)
@@ -1404,7 +1405,7 @@ def render_personal_loans():
                     pem2.metric(f"📈 Total Interest ({new_rate}%)", f"₹{calc_tot_interest:,.2f}")
                     pem3.metric("💳 Total Repayable", f"₹{calc_tot_repayable:,.2f}")
                     pem4.metric("📅 Monthly EMI", f"₹{calc_installment:,.2f}")
-                    st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{calc_p_emi:,.2f}** + Interest EMI: **₹{calc_i_emi:,.2f}** = Total EMI: **₹{calc_installment:,.2f}** per month for {new_t_months} months.")
+                    st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{calc_p_emi:,.2f}** + Interest EMI: **₹{calc_i_emi:,.2f}** = Total EMI: **₹{calc_installment:,.2f}** per month for {new_t_days} days ({new_t_months} months).")
 
                 st.markdown("### 2️⃣ Loan Administrative & Legal Details")
                 col_a1, col_a2, col_a3 = st.columns(3)
@@ -1452,8 +1453,8 @@ def render_personal_loans():
                     st.info("ℹ️ *This loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Personal Loan'** button above.*")
                 else:
                     if st.button("💾 Save & Apply Updated Loan Terms", type="primary", use_container_width=True, key=f"btn_save_pl_{sel_pl_id}"):
-                        new_t_days = int(new_t_months * 30)
-                        new_scheme_name = f"Monthly {new_t_months}-Month EMI Loan"
+                        new_t_days = int(new_t_days)
+                        new_scheme_name = f"{new_t_days}-Day Loan"
                         
                         ed_loan_from = ed_sched[0]["from_date"] if ed_sched else str(new_s_date)
                         ed_loan_to = ed_sched[-1]["to_date"] if ed_sched else str(new_s_date)
@@ -1597,7 +1598,7 @@ def render_personal_loans():
                 "interest_emi": p_i_emi_val,
                 "total_emi": p_tot_emi_val,
                 "loan_date": p_sdate,
-                "duration": f"{p_ten_mo or 12} MONTHS",
+                "duration": f"{p_tdays} DAYS ({p_ten_mo or 12} Months)" if p_tdays else f"{p_ten_mo or 12} MONTHS",
                 "loan_from": str(p_from) if p_from else str(p_sdate),
                 "loan_to": str(p_to) if p_to else (df_sched.iloc[-1]["TO DATE"] if not df_sched.empty else ""),
                 "first_emi_due": str(p_fdue) if p_fdue else (df_sched.iloc[0]["DUE DATE"] if not df_sched.empty else ""),
@@ -1621,7 +1622,8 @@ def render_personal_loans():
                 fb3.metric("TOTAL AMOUNT", f"₹{float(p_tot_rep):,.2f}", f"Total Monthly EMI: ₹{p_tot_emi_val:,.2f}")
                 
                 db1, db2, db3 = st.columns(3)
-                db1.caption(f"🗓️ **Loan Date:** {p_sdate} | **Duration:** {p_ten_mo or 12} Months")
+                dur_label = f"{p_tdays} Days ({p_ten_mo or 12} Months)" if p_tdays else f"{p_ten_mo or 12} Months"
+                db1.caption(f"🗓️ **Loan Date:** {p_sdate} | **Duration:** {dur_label}")
                 db2.caption(f"📅 **Loan Period:** {p_from} to {p_to}")
                 db3.caption(f"⏰ **First Due:** {p_fdue} | **Last Due:** {p_ldue}")
 
@@ -1782,11 +1784,11 @@ def render_gold_loans():
         default_gl_p = float(min(max_eligible, 50000.0)) if max_eligible >= 100.0 else float(max_eligible)
         principal = col_p1.number_input("Sanctioned Loan Amount (₹)", min_value=100.0, value=default_gl_p, step=1000.0, key="gl_princ_inp")
         int_rate = col_p2.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key="gl_int_rate")
-        tenure_months = col_p3.number_input("Loan Period / Tenure (Months)", min_value=1, value=12, step=1, key="gl_tenure_mo")
+        tenure_days = col_p3.number_input("Loan Period / Tenure (Days)", min_value=1, value=365, step=10, help="Loan tenure in days (e.g., 90, 180, 365 days)", key="gl_tenure_days")
         
-        tenure_days = tenure_months * 30
-        loan_scheme_name = f"Monthly {tenure_months}-Month Gold Loan"
-        tot_interest = round(principal * (int_rate / 100.0) * (tenure_months / 12.0), 2)
+        tenure_months = max(1, int(round(tenure_days / 30.0)))
+        loan_scheme_name = f"{tenure_days}-Day Gold Loan"
+        tot_interest = round(principal * (int_rate / 100.0) * (tenure_days / 365.0), 2)
         tot_repayable = round(principal + tot_interest, 2)
         p_emi = round(principal / float(tenure_months), 2)
         i_emi = round(tot_interest / float(tenure_months), 2)
@@ -1796,10 +1798,10 @@ def render_gold_loans():
             st.markdown("#### 📊 Live Gold Loan Breakdown & EMI Structure")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("💵 Principal", f"₹{principal:,.2f}")
-            m2.metric(f"📈 Interest ({int_rate}%)", f"₹{tot_interest:,.2f}")
+            m1.metric(f"📈 Interest ({int_rate}%)", f"₹{tot_interest:,.2f}")
             m3.metric("💳 Total Due (Repayable)", f"₹{tot_repayable:,.2f}")
             m4.metric("📅 Monthly EMI", f"₹{installment:,.2f}")
-            st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{p_emi:,.2f}** + Interest EMI: **₹{i_emi:,.2f}** = Total EMI: **₹{installment:,.2f}** per month for {tenure_months} months.")
+            st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{p_emi:,.2f}** + Interest EMI: **₹{i_emi:,.2f}** = Total EMI: **₹{installment:,.2f}** per month for {tenure_days} days ({tenure_months} months).")
 
         preview_schedule = generate_loan_schedule(sanction_date, principal, tot_interest, tenure_months=tenure_months, loan_type='GOLD')
         with st.expander(f"📅 Preview {len(preview_schedule)}-Month EMI Amortization Schedule Table", expanded=False):
@@ -1842,7 +1844,7 @@ def render_gold_loans():
                     loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
                     item_count, gross_weight, stone_deduction, net_weight, purity,
                     market_value, ltv_percent, principal_amount, interest_rate,
-                    interest_rate_monthly, tenure_months, total_interest, total_repayable,
+                    interest_rate_monthly, tenure_days, tenure_months, total_interest, total_repayable,
                     installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
                     loan_from_date, loan_to_date, first_emi_due, last_emi_due,
                     outstanding_due, vault_packet_no, locker_no, appraiser_name,
@@ -1852,7 +1854,7 @@ def render_gold_loans():
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, '22K',
                     ?, 75.00, ?, ?,
-                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?, ?, ?,
@@ -1863,7 +1865,7 @@ def render_gold_loans():
                 loan_no, selected_cust_id, str(sanction_date), gold_rate, ornament_desc,
                 item_count, gross_weight, stone_ded, net_weight,
                 market_val, principal, int_rate,
-                round(int_rate / 12.0, 2), tenure_months, tot_interest, tot_repayable,
+                round(int_rate / 12.0, 2), tenure_days, tenure_months, tot_interest, tot_repayable,
                 installment, p_emi, i_emi, i_emi,
                 loan_from, loan_to, first_due, last_due,
                 tot_repayable, packet_no, locker_no, appraiser_name,
@@ -1929,15 +1931,15 @@ def render_gold_loans():
 
     with tab2:
         st.subheader("💳 Collect Gold Loan Installment / Repayment")
-        active_gl_loans = [r for r in all_gl_data if float(r[30] or 0) > 0 and r[36] not in ('CLOSED', 'CLOSED_RELEASED')]
+        active_gl_loans = [r for r in all_gl_data if float(r[31] or 0) > 0 and r[37] not in ('CLOSED', 'CLOSED_RELEASED')]
         
         if active_gl_loans:
-            gl_loan_dict = {f"#{r[1]} - {r[3]} (Packet: {r[31]} | Due: ₹{float(r[30]):,.2f} | Gold: {float(r[12]):.3f}g)": r for r in active_gl_loans}
+            gl_loan_dict = {f"#{r[1]} - {r[3]} (Packet: {r[32]} | Due: ₹{float(r[31]):,.2f} | Gold: {float(r[12]):.3f}g)": r for r in active_gl_loans}
             sel_gl_label = st.selectbox("1️⃣ Select Active Gold Loan Account", list(gl_loan_dict.keys()), key="gl_rep_sel")
             sel_gl_row = gl_loan_dict[sel_gl_label]
             (gl_id, gl_no, gl_cid, gl_cname, gl_cacc, gl_cphone, gl_sdate, gl_grate, gl_orn, gl_cnt,
              gl_gross, gl_stone, gl_net, gl_pur, gl_mval, gl_ltv, gl_princ, gl_rate, gl_mrate,
-             gl_tmonths, gl_tot_int, gl_tot_rep, gl_inst, gl_p_emi, gl_i_emi, gl_i_due,
+             gl_tdays, gl_tmonths, gl_tot_int, gl_tot_rep, gl_inst, gl_p_emi, gl_i_emi, gl_i_due,
              gl_from, gl_to, gl_fdue, gl_ldue, gl_due, gl_pkt, gl_lock, gl_appr, gl_dmode,
              gl_vno, gl_stat, gl_rem, gl_ren_cnt, gl_last_ren, gl_str, gl_city, gl_state,
              gl_pin, gl_img_file, gl_has_photo) = sel_gl_row
@@ -2074,20 +2076,20 @@ def render_gold_loans():
 
     with tab3:
         st.subheader("🔄 Gold / Jewel Loan Renewal & Pledge Rollover")
-        all_renewable_gl = [r for r in all_gl_data if float(r[30] or 0) > 0 and r[36] not in ('CLOSED', 'CLOSED_RELEASED')]
+        all_renewable_gl = [r for r in all_gl_data if float(r[31] or 0) > 0 and r[37] not in ('CLOSED', 'CLOSED_RELEASED')]
         
         if all_renewable_gl:
             gl_ren_dict = {}
             for g in all_renewable_gl:
-                ren_tag = f" [Cycle #{g[38]}]" if int(g[38] or 0) > 0 else ""
-                label = f"#{g[1]} - {g[3]} (Packet: {g[31]} | Due: ₹{float(g[30]):,.2f} | Gold: {float(g[12]):.3f}g{ren_tag})"
+                ren_tag = f" [Cycle #{g[39]}]" if int(g[39] or 0) > 0 else ""
+                label = f"#{g[1]} - {g[3]} (Packet: {g[32]} | Due: ₹{float(g[31]):,.2f} | Gold: {float(g[12]):.3f}g{ren_tag})"
                 gl_ren_dict[label] = g
                 
             sel_gl_ren_key = st.selectbox("1️⃣ Select Active Gold Loan to Renew / Rollover", list(gl_ren_dict.keys()), key="gl_ren_sel")
             sel_gl_data = gl_ren_dict[sel_gl_ren_key]
             (c_gl_id, c_gl_no, c_gl_cid, c_gl_cname, c_gl_cacc, c_gl_cphone, c_gl_sdate, c_gl_grate, c_gl_orn, c_gl_cnt,
              c_gl_gross, c_gl_stone, c_gl_net, c_gl_pur, c_gl_mval, c_gl_ltv, c_gl_princ, c_gl_rate, c_gl_mrate,
-             c_gl_tmonths, c_gl_tot_int, c_gl_tot_rep, c_gl_inst, c_gl_p_emi, c_gl_i_emi, c_gl_i_due,
+             c_gl_tdays, c_gl_tmonths, c_gl_tot_int, c_gl_tot_rep, c_gl_inst, c_gl_p_emi, c_gl_i_emi, c_gl_i_due,
              c_gl_from, c_gl_to, c_gl_fdue, c_gl_ldue, c_gl_due, c_gl_pkt, c_gl_lock, c_gl_appr, c_gl_dmode,
              c_gl_vno, c_gl_stat, c_gl_rem, c_gl_ren_cnt, c_gl_last_ren, c_gl_str, c_gl_city, c_gl_state,
              c_gl_pin, c_gl_img_file, c_gl_has_photo) = sel_gl_data
@@ -2130,16 +2132,17 @@ def render_gold_loans():
             col_vm1.info(f"💎 **Re-Appraised Market Value:** ₹{updated_market_val:,.2f}")
             col_vm2.success(f"🎯 **Max Eligible Limit (75% LTV):** ₹{max_eligible_ren:,.2f}")
 
-            st.markdown("### 3️⃣ Renewal Terms & New 12-Month Schedule")
+            st.markdown("### 3️⃣ Renewal Terms & New Amortization Schedule")
             col_rp1, col_rp2, col_rp3 = st.columns(3)
             default_ren_gl_princ = float(min(net_princ_rem if net_princ_rem > 0 else cur_due_val, max_eligible_ren))
             renewed_gl_principal = col_rp1.number_input("Renewed Principal Balance (₹)", min_value=0.0, value=default_ren_gl_princ, step=500.0, help="Carried-forward principal balance to renew", key=f"gl_ren_princ_{c_gl_id}")
             if renewed_gl_principal > max_eligible_ren:
                 col_rp1.caption(f"⚠️ *Amount exceeds 75% LTV ceiling (₹{max_eligible_ren:,.2f})*")
             new_gl_int_rate = col_rp2.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key=f"gl_ren_rate_{c_gl_id}")
-            new_gl_tenure_months = col_rp3.number_input("New Tenure (Months)", min_value=1, value=12, step=1, key=f"gl_ren_tmo_{c_gl_id}")
+            new_gl_tenure_days = col_rp3.number_input("New Tenure (Days)", min_value=1, value=365, step=10, key=f"gl_ren_tday_{c_gl_id}")
 
-            new_gl_planned_interest = round(renewed_gl_principal * (new_gl_int_rate / 100.0) * (new_gl_tenure_months / 12.0), 2)
+            new_gl_tenure_months = max(1, int(round(new_gl_tenure_days / 30.0)))
+            new_gl_planned_interest = round(renewed_gl_principal * (new_gl_int_rate / 100.0) * (new_gl_tenure_days / 365.0), 2)
             new_gl_tot_repayable = round(renewed_gl_principal + new_gl_planned_interest, 2)
             new_gl_p_emi = round(renewed_gl_principal / float(new_gl_tenure_months), 2)
             new_gl_i_emi = round(new_gl_planned_interest / float(new_gl_tenure_months), 2)
@@ -2152,7 +2155,7 @@ def render_gold_loans():
                 m1.metric(f"📈 New Interest ({new_gl_int_rate}%)", f"₹{new_gl_planned_interest:,.2f}")
                 m3.metric("💳 Total Due (Repayable)", f"₹{new_gl_tot_repayable:,.2f}")
                 m4.metric("📅 New Monthly EMI", f"₹{new_gl_installment:,.2f}")
-                st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{new_gl_p_emi:,.2f}** + Interest EMI: **₹{new_gl_i_emi:,.2f}** = Total EMI: **₹{new_gl_installment:,.2f}** per month for {new_gl_tenure_months} months.")
+                st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{new_gl_p_emi:,.2f}** + Interest EMI: **₹{new_gl_i_emi:,.2f}** = Total EMI: **₹{new_gl_installment:,.2f}** per month for {new_gl_tenure_days} days ({new_gl_tenure_months} months).")
 
             gl_ren_remarks = st.text_input("Renewal Remarks / Notes", value=f"Gold Loan Pledge Rollover & Term Renewal - Cycle #{c_gl_ren_cnt+1}", key=f"gl_ren_rem_{c_gl_id}")
 
@@ -2191,6 +2194,7 @@ def render_gold_loans():
                         principal_amount = ?,
                         interest_rate = ?,
                         interest_rate_monthly = ?,
+                        tenure_days = ?,
                         tenure_months = ?,
                         total_interest = ?,
                         total_repayable = ?,
@@ -2216,6 +2220,7 @@ def render_gold_loans():
                     renewed_gl_principal,
                     new_gl_int_rate,
                     round(new_gl_int_rate / 12.0, 2),
+                    new_gl_tenure_days,
                     new_gl_tenure_months,
                     new_gl_planned_interest,
                     new_gl_tot_repayable,
@@ -2253,12 +2258,12 @@ def render_gold_loans():
         st.subheader("✏️ Edit / Delete Gold Loan Sanction")
         all_edit_gl = all_gl_data
         if all_edit_gl:
-            egl_opts = {f"#{r[1]} - {r[3]} (Pkt: {r[31]} | Due: ₹{float(r[30]):,.2f} | Gold: {float(r[12]):.3f}g | Stat: {r[36]})": r for r in all_edit_gl}
+            egl_opts = {f"#{r[1]} - {r[3]} (Pkt: {r[32]} | Due: ₹{float(r[31]):,.2f} | Gold: {float(r[12]):.3f}g | Stat: {r[37]})": r for r in all_edit_gl}
             sel_egl_label = st.selectbox("Select Gold Loan to Edit or Manage", list(egl_opts.keys()), key="gl_edit_sel")
             grow = egl_opts[sel_egl_label]
             (sel_egl_id, eg_lno, eg_cid, eg_cname, eg_cacc, eg_cphone, eg_sdate, eg_grate, eg_orn,
              eg_cnt, eg_gross, eg_stone, eg_net, eg_pur, eg_mval, eg_ltv, eg_princ, eg_rate,
-             eg_mrate, eg_tmonths, eg_tot_int, eg_tot_rep, eg_inst, eg_p_emi, eg_i_emi, eg_i_due,
+             eg_mrate, eg_tdays, eg_tmonths, eg_tot_int, eg_tot_rep, eg_inst, eg_p_emi, eg_i_emi, eg_i_due,
              eg_from, eg_to, eg_fdue, eg_ldue, eg_out_due, eg_pkt, eg_lock, eg_appr, eg_dmode,
              eg_vno, eg_stat, eg_rem, eg_ren_cnt, eg_last_ren, eg_str, eg_city, eg_state,
              eg_pin, eg_img_file, eg_has_photo) = grow
@@ -2329,9 +2334,10 @@ def render_gold_loans():
                 col_ef1, col_ef2, col_ef3 = st.columns(3)
                 ed_princ = col_ef1.number_input("Sanctioned Loan Principal (₹) *", min_value=100.0, value=float(eg_princ or 1000.0), step=1000.0, disabled=is_closed_gl, key=f"gl_ed_princ_{sel_egl_id}")
                 ed_int_rate = col_ef2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
-                ed_tenure_mo = col_ef3.number_input("Loan Period / Tenure (Months) *", min_value=1, value=int(eg_tmonths or 12), step=1, disabled=is_closed_gl, key=f"gl_ed_tmo_{sel_egl_id}")
+                ed_tenure_days = col_ef3.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(eg_tdays or (eg_tmonths * 30 if eg_tmonths else 365)), step=10, disabled=is_closed_gl, key=f"gl_ed_tday_{sel_egl_id}")
                 
-                calc_gl_interest = round(ed_princ * (ed_int_rate / 100.0) * (ed_tenure_mo / 12.0), 2)
+                ed_tenure_mo = max(1, int(round(ed_tenure_days / 30.0)))
+                calc_gl_interest = round(ed_princ * (ed_int_rate / 100.0) * (ed_tenure_days / 365.0), 2)
                 calc_gl_repayable = round(ed_princ + calc_gl_interest, 2)
                 calc_gl_p_emi = round(ed_princ / float(ed_tenure_mo), 2)
                 calc_gl_i_emi = round(calc_gl_interest / float(ed_tenure_mo), 2)
@@ -2344,7 +2350,7 @@ def render_gold_loans():
                     em2.metric(f"📈 Total Interest ({ed_int_rate}%)", f"₹{calc_gl_interest:,.2f}")
                     em3.metric("💳 Total Repayable", f"₹{calc_gl_repayable:,.2f}")
                     em4.metric("📅 Monthly EMI", f"₹{calc_gl_installment:,.2f}")
-                    st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{calc_gl_p_emi:,.2f}** + Interest EMI: **₹{calc_gl_i_emi:,.2f}** = Total EMI: **₹{calc_gl_installment:,.2f}** per month for {ed_tenure_mo} months.")
+                    st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{calc_gl_p_emi:,.2f}** + Interest EMI: **₹{calc_gl_i_emi:,.2f}** = Total EMI: **₹{calc_gl_installment:,.2f}** per month for {ed_tenure_days} days ({ed_tenure_mo} months).")
                 
                 st.markdown("### 3️⃣ Pledged Gold Ornament Photo Upload / Replacement")
                 new_gl_photo = st.file_uploader("Upload / Replace Gold Photo (JPG, PNG)", type=["jpg", "jpeg", "png"], disabled=is_closed_gl, key=f"up_gl_photo_{sel_egl_id}")
@@ -2412,7 +2418,7 @@ def render_gold_loans():
                             SET loan_no = ?, sanction_date = ?, gold_rate_per_gram = ?, ornament_details = ?,
                                 item_count = ?, gross_weight = ?, stone_deduction = ?, net_weight = ?,
                                 market_value = ?, principal_amount = ?, interest_rate = ?,
-                                interest_rate_monthly = ?, tenure_months = ?, total_interest = ?,
+                                interest_rate_monthly = ?, tenure_days = ?, tenure_months = ?, total_interest = ?,
                                 total_repayable = ?, installment_amount = ?, monthly_principal_emi = ?,
                                 monthly_interest_emi = ?, monthly_interest_due = ?,
                                 loan_from_date = ?, loan_to_date = ?, first_emi_due = ?, last_emi_due = ?,
@@ -2423,7 +2429,7 @@ def render_gold_loans():
                             new_gl_lno, str(new_gl_sdate), ed_gold_rate, ed_orn_desc,
                             ed_item_cnt, ed_gross_wt, ed_stone_ded, ed_net_wt,
                             ed_market_val, ed_princ, ed_int_rate,
-                            round(ed_int_rate / 12.0, 2), ed_tenure_mo, calc_gl_interest,
+                            round(ed_int_rate / 12.0, 2), ed_tenure_days, ed_tenure_mo, calc_gl_interest,
                             calc_gl_repayable, calc_gl_installment, calc_gl_p_emi,
                             calc_gl_i_emi, calc_gl_i_emi,
                             ed_loan_from, ed_loan_to, ed_first_due, ed_last_due,
@@ -2468,7 +2474,7 @@ def render_gold_loans():
     with tab5:
         st.subheader("🏷️ Gold Safe Vault & Packet Register")
         gl_rows = [
-            (r[0], r[1], r[31], r[32], r[3], r[8], float(r[12] or 0), float(r[14] or 0), float(r[16] or 0), float(r[30] or 0), int(r[38] or 0), r[36])
+            (r[0], r[1], r[32], r[33], r[3], r[8], float(r[12] or 0), float(r[14] or 0), float(r[16] or 0), float(r[31] or 0), int(r[39] or 0), r[37])
             for r in reversed(all_gl_data)
         ]
         if gl_rows:
@@ -2503,12 +2509,12 @@ def render_gold_loans():
     with tab6:
         st.subheader("🖨️ Gold Loan Statement & Passbook (Matching VAISAKH.xlsx)")
         if all_gl_data:
-            gl_opts = {f"#{r[1]} - {r[3]} (Packet: {r[31]} | Acc: {r[4]})": r for r in all_gl_data}
+            gl_opts = {f"#{r[1]} - {r[3]} (Packet: {r[32]} | Acc: {r[4]})": r for r in all_gl_data}
             sel_gl_pr_label = st.selectbox("Select Gold Loan to View Passbook & Export Statement", list(gl_opts.keys()), key="gl_pawn_sel")
             g = gl_opts[sel_gl_pr_label]
             (sel_gl_pr_id, g_lno, g_cid, g_cname, g_cacc, g_cphone, g_sdate, g_grate, g_orn,
              g_cnt, g_gross, g_stone, g_net, g_pur, g_mval, g_ltv, g_princ, g_rate,
-             g_mrate, g_ten_mo, g_tot_int, g_tot_rep, g_inst, g_p_emi, g_i_emi, g_i_due,
+             g_mrate, g_tdays, g_ten_mo, g_tot_int, g_tot_rep, g_inst, g_p_emi, g_i_emi, g_i_due,
              g_from, g_to, g_fdue, g_ldue, g_out_due, g_pkt, g_lock, g_appr, g_dmode,
              g_vno, g_stat, g_rem, g_ren_cnt, g_last_ren, g_str, g_city, g_state,
              g_pin, g_img_file, g_has_photo) = g
@@ -2561,7 +2567,7 @@ def render_gold_loans():
                 "outstanding_due": float(g_out_due or 0),
                 "loan_date": g_sdate,
                 "sanction_date": str(g_sdate),
-                "duration": f"{g_ten_mo or 12} MONTHS",
+                "duration": f"{g_tdays} DAYS ({g_ten_mo or 12} Months)" if g_tdays else f"{g_ten_mo or 12} MONTHS",
                 "tenure_months": int(g_ten_mo or 12),
                 "loan_from": str(g_from) if g_from else str(g_sdate),
                 "loan_to": str(g_to) if g_to else (df_sched.iloc[-1]["TO DATE"] if not df_sched.empty else ""),
@@ -2593,7 +2599,8 @@ def render_gold_loans():
                 fb3.metric("TOTAL AMOUNT", f"₹{float(g_tot_rep):,.2f}", f"Total Monthly EMI: ₹{g_tot_emi_val:,.2f}")
                 
                 db1, db2, db3 = st.columns(3)
-                db1.caption(f"🗓️ **Loan Date:** {g_sdate} | **Duration:** {g_ten_mo or 12} Months")
+                dur_gl_disp = f"{g_tdays} Days ({g_ten_mo or 12} Months)" if g_tdays else f"{g_ten_mo or 12} Months"
+                db1.caption(f"🗓️ **Loan Date:** {g_sdate} | **Duration:** {dur_gl_disp}")
                 db2.caption(f"📅 **Loan Period:** {g_from or g_sdate} to {g_to}")
                 db3.caption(f"⏰ **First Due:** {g_fdue} | **Last Due:** {g_ldue}")
 

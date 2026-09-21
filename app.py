@@ -1139,12 +1139,12 @@ def render_customer_management():
                                 col_r4, col_r5, col_r6 = st.columns(3)
                                 ed_rd_rate = col_r4.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(rd_rate or 6.0), step=0.25, key=f"cust_rd_r_{rd_id}")
                                 ed_rd_inst = col_r5.number_input("Installments Paid", min_value=0, max_value=int(ed_rd_tenure), value=int(rd_inst or 1), step=1, key=f"cust_rd_inst_{rd_id}")
-                                ed_rd_colbal = col_r6.number_input("Total Collected / Paid Balance (₹)", min_value=0.0, value=float(rd_colbal or (float(ed_rd_mamt) * int(ed_rd_inst))), step=100.0, key=f"cust_rd_cbal_{rd_id}")
+                                ed_rd_colbal = col_r6.number_input("Opening Balance / Total Collected (₹)", min_value=0.0, value=float(rd_colbal or (float(ed_rd_mamt) * int(ed_rd_inst))), step=100.0, key=f"cust_rd_cbal_{rd_id}")
 
                                 col_r7, col_r8, col_r9 = st.columns(3)
                                 ed_rd_nom = col_r7.text_input("Nominee Name", value=str(rd_nom or "Family Nominee"), key=f"cust_rd_nom_{rd_id}")
                                 ed_rd_stat = col_r8.selectbox("Status", ["ACTIVE", "CLOSED"], index=0 if rd_stat == "ACTIVE" else 1, key=f"cust_rd_stat_{rd_id}")
-                                ed_rd_cdate = col_r9.date_input("Opening Date", value=rd_created_dt, format="DD-MM-YYYY", key=f"cust_rd_cd_{rd_id}")
+                                ed_rd_cdate = col_r9.date_input("A/c Opening Date / Opening Balance Date", value=rd_created_dt, format="DD-MM-YYYY", key=f"cust_rd_cd_{rd_id}")
 
                                 col_r10, col_r11 = st.columns(2)
                                 rd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
@@ -4465,7 +4465,7 @@ def render_recurring_deposits():
                    COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name,
                    COALESCE(r.maturity_date, '2026-12-20') as maturity_date,
                    COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as collected_balance,
-                   r.customer_id, r.closed_date
+                   r.customer_id, r.closed_date, COALESCE(r.payment_mode, 'Union Bank of India') as payment_mode
             FROM recurring_deposits r 
             JOIN customers c ON r.customer_id = c.id
             ORDER BY r.rd_id DESC
@@ -4481,7 +4481,7 @@ def render_recurring_deposits():
             selected_edit_label = st.selectbox("Select RD Account to Edit", list(rd_edit_dict.keys()), key="rd_edit_select")
             curr_rd = rd_edit_dict[selected_edit_label]
             
-            c_rd_id, c_name, c_monthly, c_tenure, c_rate, c_paid, c_nominee, c_status, c_created, c_maturity, c_rd_no, c_scheme, c_mat_date, c_col_bal, c_cust_id, c_closed = curr_rd
+            c_rd_id, c_name, c_monthly, c_tenure, c_rate, c_paid, c_nominee, c_status, c_created, c_maturity, c_rd_no, c_scheme, c_mat_date, c_col_bal, c_cust_id, c_closed, c_pm = curr_rd
             
             customers_all = cached_query("SELECT id, name FROM customers ORDER BY name ASC")
             cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
@@ -4529,7 +4529,15 @@ def render_recurring_deposits():
             col_e3, col_e4 = st.columns(2)
             with col_e3:
                 edit_status = st.selectbox("Account Status", ["ACTIVE", "CLOSED"], index=0 if c_status == 'ACTIVE' else 1, key=f"edit_status_{c_rd_id}")
-                edit_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_created_{c_rd_id}")
+                edit_created = st.date_input("A/c Opening Date / Opening Balance Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_created_{c_rd_id}")
+                
+                rd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
+                rd_pm_idx = 0
+                if "cash" in str(c_pm).lower(): rd_pm_idx = 1
+                elif "sbi" in str(c_pm).lower() or "state bank" in str(c_pm).lower(): rd_pm_idx = 2
+                edit_rd_asset_lbl = st.selectbox("Funding / Settlement Asset Mode", list(rd_asset_opts.keys()), index=rd_pm_idx, key=f"edit_rd_asset_{c_rd_id}")
+                edit_rd_asset_code = rd_asset_opts[edit_rd_asset_lbl]
+                edit_rd_pay_mode = edit_rd_asset_lbl.split(" - ")[1]
             with col_e4:
                 edit_mat_date = st.date_input("Maturity Date", value=c_mat_dt, format="DD-MM-YYYY", key=f"edit_mat_date_{c_rd_id}")
                 if edit_status == 'CLOSED':
@@ -4559,7 +4567,7 @@ def render_recurring_deposits():
             calc_method = st.radio(
                 "Select Maturity Amount Calculation",
                 calc_options,
-                index=0,
+                index=1 if (edit_status == 'CLOSED' or edit_paid < edit_tenure) else 0,
                 key=f"calc_method_{c_rd_id}"
             )
             
@@ -4595,35 +4603,32 @@ def render_recurring_deposits():
             btn_col1, btn_col2 = st.columns([3, 1])
             
             with btn_col1:
-                if st.button("💾 Save & Update RD Account Changes", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
+                if st.button("💾 Save & Sync RD Account (Update Ledgers, JVs & Books)", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
                     edit_created_str = edit_created.strftime("%Y-%m-%d")
                     edit_mat_str = edit_mat_date.strftime("%Y-%m-%d")
                     closed_date_val = edit_closed_date.strftime("%Y-%m-%d") if (edit_status == 'CLOSED' and edit_closed_date) else (datetime.now(IST).strftime("%Y-%m-%d") if edit_status == 'CLOSED' else None)
+                    
+                    success, msg = update_rd_account_details(
+                        c_rd_id, edit_rd_cust_id, edit_rd_no, edit_monthly, edit_tenure, edit_rate,
+                        edit_paid, edit_col_balance, edit_nominee, edit_status,
+                        edit_created_str, closed_date_val, edit_rd_pay_mode, edit_rd_asset_code
+                    )
+                    
                     run_query("""
                         UPDATE recurring_deposits 
-                        SET customer_id = ?,
-                            monthly_amount = ?,
-                            tenure_months = ?,
-                            interest_rate = ?,
-                            installments_paid = ?,
-                            nominee = ?,
-                            status = ?,
-                            created_at = ?,
-                            maturity_amount = ?,
-                            rd_no = ?,
-                            scheme_name = ?,
+                        SET scheme_name = ?,
                             maturity_date = ?,
-                            collected_balance = ?,
-                            closed_date = ?
+                            maturity_amount = ?
                         WHERE rd_id = ?
-                    """, (edit_rd_cust_id, edit_monthly, edit_tenure, edit_rate, edit_paid, edit_nominee, 
-                          edit_status, edit_created_str, final_maturity_amt, edit_rd_no, 
-                          edit_scheme, edit_mat_str, edit_col_balance, closed_date_val, c_rd_id), fetch=False)
+                    """, (edit_scheme, edit_mat_str, final_maturity_amt, c_rd_id), fetch=False)
                     
                     clear_db_cache()
-                    st.success(f"✅ Recurring Deposit #{edit_rd_no} updated successfully! Amount Paid: ₹{edit_col_balance:,.2f} | Maturity: ₹{final_maturity_amt:,.2f}")
-                    time.sleep(0.5)
-                    st.rerun()
+                    if success:
+                        st.success(f"✅ {msg}")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed to update RD: {msg}")
             
             with btn_col2:
                 with st.popover("🗑️ Delete RD"):

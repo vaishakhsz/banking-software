@@ -3379,7 +3379,7 @@ def render_sb_accounts():
 
             # Fetch transaction history
             tx_data = run_query("""
-                SELECT date, tx_id, narration, mode, type, amount, created_at
+                SELECT date, tx_id, narration, mode, type, amount
                 FROM transactions
                 WHERE account_no = ?
                 ORDER BY date ASC, id ASC
@@ -3394,7 +3394,7 @@ def render_sb_accounts():
 
             if tx_data:
                 for tx in tx_data:
-                    t_date, t_id, t_narr, t_mode, t_type, t_amt, t_created = tx
+                    t_date, t_id, t_narr, t_mode, t_type, t_amt = tx[:6]
                     t_amt = float(t_amt or 0.0)
                     t_type_str = str(t_type or "").upper()
                     is_opening = "opening" in str(t_narr or "").lower()

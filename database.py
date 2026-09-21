@@ -365,7 +365,7 @@ def reconcile_books():
         release_connection(conn)
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 def init_db(force=False):
     """Initialize database tables lazily on first query execution with sub-millisecond fast-path check"""
@@ -646,6 +646,7 @@ def init_db(force=False):
                     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS narration TEXT;
                     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS balance_after REAL;
                     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id INTEGER;
+                    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_at TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS scheme_name TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
@@ -744,7 +745,7 @@ def init_db(force=False):
                     cursor.execute(f"ALTER TABLE customers ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
-            for col in [("tx_id", "TEXT"), ("account_no", "TEXT"), ("mode", "TEXT"), ("narration", "TEXT"), ("balance_after", "REAL"), ("account_id", "INTEGER")]:
+            for col in [("tx_id", "TEXT"), ("account_no", "TEXT"), ("mode", "TEXT"), ("narration", "TEXT"), ("balance_after", "REAL"), ("account_id", "INTEGER"), ("created_at", "TEXT")]:
                 try:
                     cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col[0]} {col[1]};")
                 except Exception:

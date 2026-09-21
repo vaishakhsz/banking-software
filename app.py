@@ -26,6 +26,13 @@ import pytz
 import streamlit.components.v1 as components
 
 # Import database layer
+import importlib
+try:
+    import database
+    importlib.reload(database)
+except Exception:
+    pass
+
 try:
     from database import (
         IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
@@ -42,10 +49,28 @@ try:
         create_or_link_personal_loan_opening, create_or_link_gold_loan_opening
     )
 except Exception as _db_imp_err:
-    import traceback
-    st.error(f"⚠️ Critical Database Module Loading Error: {str(_db_imp_err)}")
-    st.code(traceback.format_exc())
-    raise _db_imp_err
+    try:
+        import database
+        importlib.reload(database)
+        from database import (
+            IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
+            get_account_balance_from_jv, get_cash_balance, get_bank_balance,
+            generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
+            post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
+            get_connection, release_connection, sync_db_sequences,
+            get_all_gold_loans_bundle, get_all_personal_loans_bundle,
+            delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
+            delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
+            delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
+            resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
+            update_sb_account_details, update_personal_loan_details, update_gold_loan_details,
+            create_or_link_personal_loan_opening, create_or_link_gold_loan_opening
+        )
+    except Exception as _db_imp_err2:
+        import traceback
+        st.error(f"⚠️ Critical Database Module Loading Error: {str(_db_imp_err2)}")
+        st.code(traceback.format_exc())
+        raise _db_imp_err2
 
 try:
     from database import calculate_rd_maturity, calculate_rd_accrued_value

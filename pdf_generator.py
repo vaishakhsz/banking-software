@@ -980,6 +980,21 @@ def generate_rd_pdf(rd_data):
     full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
     total_deposited = col_balance
     status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
+
+    if status == 'CLOSED' or int(paid_inst or 0) < int(tenure or 1):
+        try:
+            m_amt = float(monthly_amt or 0.0)
+            r_val = float(rate or 0.0)
+            p_inst = int(paid_inst or 0)
+            if p_inst > 0:
+                if r_val > 0:
+                    i = r_val / 400.0
+                    accrued_mat = sum(m_amt * ((1.0 + i) ** ((p_inst - k + 1) / 3.0)) for k in range(1, p_inst + 1))
+                    maturity = round(accrued_mat, 2)
+                else:
+                    maturity = round(m_amt * p_inst, 2)
+        except Exception:
+            pass
     
     elements.append(Paragraph("AARSHA NIDHI LIMITED", title_style))
     elements.append(Paragraph("6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", subtitle_style))

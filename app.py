@@ -4269,6 +4269,15 @@ def render_recurring_deposits():
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#2980b9"
             
+            if status == 'CLOSED' or int(paid_inst or 0) < int(tenure or 1):
+                try:
+                    _, accrued_mat, _ = calculate_rd_accrued_value(float(monthly_amt or 0), float(rate or 0), int(paid_inst or 0))
+                    display_maturity = accrued_mat if (status == 'CLOSED' or int(paid_inst or 0) < int(tenure or 1)) else float(maturity)
+                except Exception:
+                    display_maturity = float(maturity)
+            else:
+                display_maturity = float(maturity)
+            
             years = int(tenure) // 12
             months = int(tenure) % 12
             if years > 0 and months > 0:
@@ -4339,7 +4348,7 @@ def render_recurring_deposits():
               </div>
               <div class="grid-row">
                 <div><b>Total Balance Deposited:</b> ₹{col_balance:,.2f}</div>
-                <div><b>Maturity Amount:</b> <span style="color:#1b4f72;font-weight:bold;">₹{maturity:,.2f}</span></div>
+                <div><b>Maturity Amount:</b> <span style="color:#1b4f72;font-weight:bold;">₹{display_maturity:,.2f}</span></div>
               </div>
               {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date}</div><div></div></div>' if status == 'CLOSED' else ''}
               
@@ -4364,7 +4373,7 @@ def render_recurring_deposits():
                   <td>₹{col_balance:,.2f}</td>
                   <td>{paid_inst}</td>
                 </tr>
-                {f'<tr><td>{closed_date}</td><td>RD Closed / Maturity Payment</td><td>₹{maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>{paid_inst}</td></tr>' if status == 'CLOSED' else ''}
+                {f'<tr><td>{closed_date}</td><td>RD Closed / Maturity Payment</td><td>₹{display_maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>{paid_inst}</td></tr>' if status == 'CLOSED' else ''}
               </table>
 
               <div class="signatures">
@@ -4378,7 +4387,9 @@ def render_recurring_deposits():
             st.markdown(rd_receipt_html, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
             
-            rd_pdf_data = pdf_generator.generate_rd_pdf(rd_data)
+            rd_data_pdf = list(rd_data)
+            rd_data_pdf[10] = display_maturity
+            rd_pdf_data = pdf_generator.generate_rd_pdf(rd_data_pdf)
             st.download_button(
                 label=f"📥 Download RD Certificate {rd_acc_no} (PDF)",
                 data=rd_pdf_data,
@@ -4427,9 +4438,9 @@ def render_recurring_deposits():
                 close_date_str = rd_close_date.strftime("%Y-%m-%d")
                 run_query("""
                     UPDATE recurring_deposits 
-                    SET status = 'CLOSED', closed_date = ?
+                    SET status = 'CLOSED', closed_date = ?, maturity_amount = ?
                     WHERE rd_id = ?
-                """, (close_date_str, rd_id), fetch=False)
+                """, (close_date_str, maturity_amount_to_pay, rd_id), fetch=False)
                 
                 post_automated_jv(f"RD #{rd_id} Maturity - Transfer to SB Deposits Control", "LIA-103", "LIA-101", maturity_amount_to_pay, voucher_date=close_date_str)
                 
@@ -5757,63 +5768,66 @@ def render_financial_statements():
     
     with tab1:
         st.subheader("Trial Balance Summary")
-        if USING_SUPABASE:
-            entries = cached_query("""
-                SELECT CO.account_code, CO.account_name, CO.account_type, 
-                       COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
-                FROM chart_of_accounts CO
-                LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                GROUP BY CO.account_code, CO.account_name, CO.account_type
-                HAVING COALESCE(SUM(JE.debit), 0) > 0 OR COALESCE(SUM(JE.credit), 0) > 0
-                ORDER BY CO.account_type, CO.account_code
-            """)
-        else:
-            entries = cached_query("""
-                SELECT CO.account_code, CO.account_name, CO.account_type, 
-                       COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
-                FROM chart_of_accounts CO
-                LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                GROUP BY CO.account_code
-                HAVING total_debit > 0 OR total_credit > 0
-                ORDER BY CO.account_type, CO.account_code
-            """)
+        col_tb_d1, col_tb_d2 = st.columns(2)
+        tb_from = col_tb_d1.date_input("From Date", value=date(date.today().year if date.today().month >= 4 else date.today().year - 1, 4, 1), format="DD-MM-YYYY", key="tb_from_date")
+        tb_to = col_tb_d2.date_input("To Date", value=date.today(), format="DD-MM-YYYY", key="tb_to_date")
+        
+        from_str = str(tb_from)
+        to_str = str(tb_to)
+        
+        entries = cached_query("""
+            SELECT CO.account_code, CO.account_name, CO.account_type, 
+                   COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
+            FROM chart_of_accounts CO
+            JOIN jv_entries JE ON CO.account_code = JE.account_code
+            JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+            WHERE JV.voucher_date BETWEEN ? AND ?
+            GROUP BY CO.account_code, CO.account_name, CO.account_type
+            HAVING COALESCE(SUM(JE.debit), 0) > 0 OR COALESCE(SUM(JE.credit), 0) > 0
+            ORDER BY CO.account_type, CO.account_code
+        """, (from_str, to_str))
+        
         if entries:
             df_tb = pd.DataFrame(entries, columns=["Account Code", "Account Name", "Account Type", "Total Debit", "Total Credit"])
             st.dataframe(df_tb, use_container_width=True)
             total_debits = sum(row[3] for row in entries)
             total_credits = sum(row[4] for row in entries)
-            st.metric("Total Debits / Credits Balance", f"Dr. ₹{total_debits:,.2f} | Cr. ₹{total_credits:,.2f}")
-            st.download_button("📥 Download Trial Balance PDF", pdf_generator.create_pdf_report("Trial Balance Statement", df_tb), "trial_balance.pdf", "application/pdf", use_container_width=True)
+            diff = abs(total_debits - total_credits)
+            diff_str = f" | Difference: ₹{diff:,.2f}" if diff > 0.01 else " | Balanced ✅"
+            st.metric("Total Debits / Credits Balance", f"Dr. ₹{total_debits:,.2f} | Cr. ₹{total_credits:,.2f}{diff_str}")
+            
+            report_title = f"Trial Balance ({tb_from.strftime('%d-%m-%Y')} to {tb_to.strftime('%d-%m-%Y')})"
+            col_tb_csv, col_tb_pdf = st.columns(2)
+            col_tb_csv.download_button("📥 Download Trial Balance CSV", df_tb.to_csv(index=False).encode('utf-8'), f"trial_balance_{from_str}_{to_str}.csv", "text/csv", use_container_width=True)
+            col_tb_pdf.download_button("📥 Download Trial Balance PDF", pdf_generator.create_pdf_report(report_title, df_tb), f"trial_balance_{from_str}_{to_str}.pdf", "application/pdf", use_container_width=True)
+        else:
+            st.info(f"No transactions found for the period {tb_from.strftime('%d-%m-%Y')} to {tb_to.strftime('%d-%m-%Y')}.")
             
     with tab2:
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
-        # Fetch all account balances in a single database roundtrip
-        if USING_SUPABASE:
-            raw_balances = cached_query("""
-                SELECT 
-                    CO.account_code, 
-                    CO.account_name, 
-                    CO.account_type, 
-                    CO.category,
-                    COALESCE(SUM(JE.debit), 0) as total_debit,
-                    COALESCE(SUM(JE.credit), 0) as total_credit
-                FROM chart_of_accounts CO 
-                LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                GROUP BY CO.account_code, CO.account_name, CO.account_type, CO.category
-            """)
-        else:
-            raw_balances = cached_query("""
-                SELECT 
-                    CO.account_code, 
-                    CO.account_name, 
-                    CO.account_type, 
-                    CO.category,
-                    COALESCE(SUM(JE.debit), 0) as total_debit,
-                    COALESCE(SUM(JE.credit), 0) as total_credit
-                FROM chart_of_accounts CO 
-                LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code
-                GROUP BY CO.account_code
-            """)
+        col_bs_d1, col_bs_d2 = st.columns(2)
+        bs_from = col_bs_d1.date_input("P&L Period Start (From Date)", value=date(date.today().year if date.today().month >= 4 else date.today().year - 1, 4, 1), format="DD-MM-YYYY", key="bs_from_date")
+        bs_to = col_bs_d2.date_input("As on Date / Closing (To Date)", value=date.today(), format="DD-MM-YYYY", key="bs_to_date")
+        
+        bs_from_str = str(bs_from)
+        bs_to_str = str(bs_to)
+        
+        # Fetch account balances up to bs_to_str
+        raw_balances = cached_query("""
+            SELECT 
+                CO.account_code, 
+                CO.account_name, 
+                CO.account_type, 
+                CO.category,
+                COALESCE(SUM(JE.debit), 0) as total_debit,
+                COALESCE(SUM(JE.credit), 0) as total_credit
+            FROM chart_of_accounts CO 
+            LEFT JOIN (
+                jv_entries JE 
+                JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id AND JV.voucher_date <= ?
+            ) ON CO.account_code = JE.account_code
+            GROUP BY CO.account_code, CO.account_name, CO.account_type, CO.category
+        """, (bs_to_str,))
 
         # Process balances locally in Python memory
         balance_dict = {}
@@ -5855,13 +5869,29 @@ def render_financial_statements():
                 if net != 0:
                     depreciation_balances.append([code, info.get("name"), net])
                     
-        tot_inc = sum(info.get("net_lia_eq_inc", 0.0) for code, info in balance_dict.items() if info.get("type") == "Income")
-        tot_exp = sum(info.get("net_asset_exp", 0.0) for code, info in balance_dict.items() if info.get("type") == "Expense")
-        net_profit_loss = tot_inc - tot_exp
- 
+        # Calculate Period Net Profit / Loss for [bs_from_str, bs_to_str]
+        pnl_inc_row = cached_query("""
+            SELECT COALESCE(SUM(JE.credit - JE.debit), 0)
+            FROM chart_of_accounts CO 
+            JOIN jv_entries JE ON CO.account_code = JE.account_code
+            JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+            WHERE CO.account_type = 'Income' AND JV.voucher_date BETWEEN ? AND ?
+        """, (bs_from_str, bs_to_str))
+        pnl_exp_row = cached_query("""
+            SELECT COALESCE(SUM(JE.debit - JE.credit), 0)
+            FROM chart_of_accounts CO 
+            JOIN jv_entries JE ON CO.account_code = JE.account_code
+            JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+            WHERE CO.account_type = 'Expense' AND JV.voucher_date BETWEEN ? AND ?
+        """, (bs_from_str, bs_to_str))
+        
+        period_inc = pnl_inc_row[0][0] if pnl_inc_row else 0.0
+        period_exp = pnl_exp_row[0][0] if pnl_exp_row else 0.0
+        net_profit_loss = period_inc - period_exp
+
         col_bs1, col_bs2 = st.columns(2)
         with col_bs1:
-            st.markdown("### Assets")
+            st.markdown(f"### Assets (As on {bs_to.strftime('%d-%m-%Y')})")
             asset_rows = []
             total_assets = 0
             
@@ -5891,9 +5921,9 @@ def render_financial_statements():
                 df_assets = pd.DataFrame(asset_rows, columns=["Account Description", "Amount (₹)"])
                 st.dataframe(df_assets, use_container_width=True, hide_index=True)
                 st.metric("Total Assets", f"₹{total_assets:,.2f}")
- 
+
         with col_bs2:
-            st.markdown("### Liabilities & Equity")
+            st.markdown(f"### Liabilities & Equity (As on {bs_to.strftime('%d-%m-%Y')})")
             lia_data = []
             total_lia = 0
             
@@ -5915,43 +5945,28 @@ def render_financial_statements():
                         lia_data.append([f"{info.get('name')} ({code})", f"₹{net:,.2f}"])
                         total_lia += net
                 
-            if USING_SUPABASE:
-                equity_details = cached_query("""
-                    SELECT 
-                        CO.account_name, 
-                        COALESCE(JV.narration, CO.account_name) as narration_label,
-                        COALESCE(SUM(JE.credit - JE.debit), 0) as net_balance
-                    FROM jv_entries JE 
-                    JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-                    JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
-                    WHERE CO.account_type = 'Equity'
-                    GROUP BY CO.account_code, CO.account_name, JV.narration
-                    HAVING COALESCE(SUM(JE.credit - JE.debit), 0) != 0
-                """)
-            else:
-                equity_details = cached_query("""
-                    SELECT 
-                        CO.account_name, 
-                        COALESCE(JV.narration, CO.account_name) as narration_label,
-                        COALESCE(SUM(JE.credit - JE.debit), 0) as net_balance
-                    FROM jv_entries JE 
-                    JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
-                    JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
-                    WHERE CO.account_type = 'Equity'
-                    GROUP BY CO.account_code, JV.narration
-                    HAVING net_balance != 0
-                """)
+            equity_details = cached_query("""
+                SELECT 
+                    CO.account_name, 
+                    COALESCE(JV.narration, CO.account_name) as narration_label,
+                    COALESCE(SUM(JE.credit - JE.debit), 0) as net_balance
+                FROM jv_entries JE 
+                JOIN chart_of_accounts CO ON JE.account_code = CO.account_code
+                JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+                WHERE CO.account_type = 'Equity' AND JV.voucher_date <= ?
+                GROUP BY CO.account_code, CO.account_name, JV.narration
+                HAVING COALESCE(SUM(JE.credit - JE.debit), 0) != 0
+            """, (bs_to_str,))
+
             if equity_details:
                 for row in equity_details:
                     acc_name, narration_label, net_balance = row
                     
-                    # Clean up technical prefixes from narration for a professional statement look
                     display_label = narration_label
                     for prefix in ["Bank Deposit: ", "Cash Receipt: ", "Bank Withdrawal: ", "Cash Payment: "]:
                         if display_label.startswith(prefix):
                             display_label = display_label[len(prefix):]
                     
-                    # If it's a generic auto-posted entry or same as account name, show account name, else include name detail
                     if display_label == acc_name or not display_label:
                         label = acc_name
                     else:
@@ -5961,7 +5976,7 @@ def render_financial_statements():
                     total_lia += net_balance
             
             if net_profit_loss != 0:
-                label_pnl = "Profit / Loss (Current Year)"
+                label_pnl = f"Profit / Loss ({bs_from.strftime('%d-%m-%Y')} to {bs_to.strftime('%d-%m-%Y')})"
                 lia_data.append([label_pnl, f"₹{net_profit_loss:,.2f}"])
                 total_lia += net_profit_loss
                 
@@ -5969,39 +5984,41 @@ def render_financial_statements():
                 df_lia = pd.DataFrame(lia_data, columns=["Account", "Amount"])
                 st.dataframe(df_lia, use_container_width=True, hide_index=True)
                 st.metric("Total Liabilities & Equity", f"₹{total_lia:,.2f}")
- 
+
     with tab3:
         st.subheader("Profit and Loss Account")
-        if USING_SUPABASE:
-            income_details = cached_query("""
-                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as balance
-                FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Income' 
-                GROUP BY CO.account_code, CO.account_name 
-                HAVING COALESCE(SUM(JE.credit - JE.debit), 0) != 0
-            """)
-            expense_details = cached_query("""
-                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as balance
-                FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Expense' 
-                GROUP BY CO.account_code, CO.account_name 
-                HAVING COALESCE(SUM(JE.debit - JE.credit), 0) != 0
-            """)
-        else:
-            income_details = cached_query("""
-                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as balance
-                FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Income' GROUP BY CO.account_code HAVING balance != 0
-            """)
-            expense_details = cached_query("""
-                SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as balance
-                FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
-                WHERE CO.account_type = 'Expense' GROUP BY CO.account_code HAVING balance != 0
-            """)
+        col_pl_d1, col_pl_d2 = st.columns(2)
+        pl_from = col_pl_d1.date_input("From Date", value=date(date.today().year if date.today().month >= 4 else date.today().year - 1, 4, 1), format="DD-MM-YYYY", key="pl_from_date")
+        pl_to = col_pl_d2.date_input("To Date", value=date.today(), format="DD-MM-YYYY", key="pl_to_date")
+        
+        pl_from_str = str(pl_from)
+        pl_to_str = str(pl_to)
+        
+        income_details = cached_query("""
+            SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as balance
+            FROM chart_of_accounts CO 
+            JOIN jv_entries JE ON CO.account_code = JE.account_code
+            JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+            WHERE CO.account_type = 'Income' AND JV.voucher_date BETWEEN ? AND ?
+            GROUP BY CO.account_code, CO.account_name 
+            HAVING COALESCE(SUM(JE.credit - JE.debit), 0) != 0
+            ORDER BY CO.account_code ASC
+        """, (pl_from_str, pl_to_str))
+        
+        expense_details = cached_query("""
+            SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as balance
+            FROM chart_of_accounts CO 
+            JOIN jv_entries JE ON CO.account_code = JE.account_code
+            JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
+            WHERE CO.account_type = 'Expense' AND JV.voucher_date BETWEEN ? AND ?
+            GROUP BY CO.account_code, CO.account_name 
+            HAVING COALESCE(SUM(JE.debit - JE.credit), 0) != 0
+            ORDER BY CO.account_code ASC
+        """, (pl_from_str, pl_to_str))
         
         col_pl1, col_pl2 = st.columns(2)
         with col_pl1:
-            st.markdown("### Expenditure")
+            st.markdown(f"### Expenditure ({pl_from.strftime('%d-%m-%Y')} to {pl_to.strftime('%d-%m-%Y')})")
             exp_rows = [[f"{row[0]} - {row[1]}", f"₹{row[2]:,.2f}"] for row in expense_details] if expense_details else []
             total_exp_v = sum(row[2] for row in expense_details) if expense_details else 0.0
             if exp_rows:
@@ -6009,7 +6026,7 @@ def render_financial_statements():
             st.metric("Total Expenditure", f"₹{total_exp_v:,.2f}")
             
         with col_pl2:
-            st.markdown("### Income")
+            st.markdown(f"### Income ({pl_from.strftime('%d-%m-%Y')} to {pl_to.strftime('%d-%m-%Y')})")
             inc_rows = [[f"{row[0]} - {row[1]}", f"₹{row[2]:,.2f}"] for row in income_details] if income_details else []
             total_inc_v = sum(row[2] for row in income_details) if income_details else 0.0
             if inc_rows:
@@ -6019,9 +6036,11 @@ def render_financial_statements():
         st.divider()
         net_result = total_inc_v - total_exp_v
         if net_result > 0:
-            st.success(f"**Net Profit for the Period:** ₹{net_result:,.2f}")
+            st.success(f"**Net Profit for the Period ({pl_from.strftime('%d-%m-%Y')} to {pl_to.strftime('%d-%m-%Y')}):** ₹{net_result:,.2f}")
         elif net_result < 0:
-            st.error(f"**Net Loss for the Period:** ₹{abs(net_result):,.2f}")
+            st.error(f"**Net Loss for the Period ({pl_from.strftime('%d-%m-%Y')} to {pl_to.strftime('%d-%m-%Y')}):** ₹{abs(net_result):,.2f}")
+        else:
+            st.info(f"**Break-even (Net Profit / Loss = ₹0.00) for the Period ({pl_from.strftime('%d-%m-%Y')} to {pl_to.strftime('%d-%m-%Y')})**")
 
     with tab4:
         st.subheader("🖨️ General Ledger Statement Print")

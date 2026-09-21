@@ -4284,7 +4284,10 @@ def update_rd_account_details(
         new_rate = float(new_rate or 6.0)
         new_inst_paid = int(new_inst_paid or 1)
         new_collected_bal = float(new_collected_bal or (new_monthly_amt * new_inst_paid))
-        approx_maturity = calculate_rd_maturity(new_monthly_amt, new_rate, new_tenure)[1]
+        if (new_status or "").upper() == 'CLOSED' or new_inst_paid < new_tenure:
+            approx_maturity = calculate_rd_accrued_value(new_monthly_amt, new_rate, new_inst_paid)[1]
+        else:
+            approx_maturity = calculate_rd_maturity(new_monthly_amt, new_rate, new_tenure)[1]
         created_dt_str = str(new_created_date)[:10]
         closed_dt_str = str(new_closed_date)[:10] if new_closed_date else None
 

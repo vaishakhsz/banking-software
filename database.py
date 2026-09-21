@@ -2835,10 +2835,15 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
             WHERE account_number = {placeholder} OR (customer_id = {placeholder} AND account_type = 'Savings Account')
         """, (new_acc_no, new_cust_id, new_balance, str(new_created_date), old_acc_no, new_cust_id))
         
-        # 4. Update transactions table (account_no & date)
+        # 4. Update transactions table (account_no & date for opening deposit)
         if new_acc_no != old_acc_no:
             cursor.execute(f"UPDATE transactions SET account_no = {placeholder} WHERE account_no = {placeholder}", (new_acc_no, old_acc_no))
-        cursor.execute(f"UPDATE transactions SET date = {placeholder} WHERE account_no = {placeholder}", (str(new_created_date), new_acc_no))
+        cursor.execute(f"""
+            UPDATE transactions 
+            SET date = {placeholder} 
+            WHERE account_no = {placeholder} 
+              AND (narration LIKE '%Opening%' OR narration LIKE '%Deposit%' OR id = (SELECT MIN(id) FROM transactions WHERE account_no = {placeholder}))
+        """, (str(new_created_date), new_acc_no, new_acc_no))
             
         # 5. Locate existing Bank Book or Cash Book entry for this account
         cursor.execute(f"""
@@ -2978,6 +2983,9 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
             cursor.execute(f"UPDATE bank_book SET balance = {placeholder} WHERE id = {placeholder}", (round(running_bal, 2), r_id))
 
         conn.commit()
+        resequence_cash_book()
+        resequence_bank_book()
+        clear_db_cache()
         return True, f"SB Account {new_acc_no} updated and synchronized with Bank/Cash Book and Journal Vouchers successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -2985,6 +2993,77 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
                 conn.rollback()
             except Exception:
                 pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def create_or_link_sb_opening(cust_id, initial_balance, open_date, interest_rate=3.5, chosen_asset_code="AST-102"):
+    """
+    Creates a new Savings Bank (SB) account with opening balance for an existing customer,
+    generates opening JV (Dr Asset, Cr LIA-101), posts into Cash/Bank book, and transactions table.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+
+        cursor.execute(f"SELECT name, COALESCE(account_no, '') FROM customers WHERE id = {placeholder}", (cust_id,))
+        c_row = cursor.fetchone()
+        if not c_row:
+            return False, "Customer not found."
+        cust_name, cust_acc = c_row
+
+        initial_balance = float(initial_balance or 0.0)
+        open_date_str = str(open_date)[:10]
+        sb_acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
+
+        cursor.execute(f"""
+            INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (sb_acc_no, cust_id, initial_balance, float(interest_rate or 3.5), open_date_str))
+
+        cursor.execute(f"""
+            INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
+            VALUES ({placeholder}, 'Savings Account', {placeholder}, {placeholder}, {placeholder})
+        """, (sb_acc_no, cust_id, initial_balance, open_date_str))
+
+        pay_mode = "Union Bank of India" if chosen_asset_code == "AST-102" else ("State Bank of India" if chosen_asset_code == "AST-103" else "Cash")
+
+        if initial_balance > 0:
+            tx_id = f"TX{datetime.now(IST).strftime('%M%S%f')}"
+            cursor.execute(f"""
+                INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
+                VALUES ({placeholder}, {placeholder}, 'CREDIT', {placeholder}, {placeholder}, 'SB Opening Balance Deposit', {placeholder})
+            """, (tx_id, sb_acc_no, initial_balance, pay_mode, open_date_str))
+
+            post_automated_jv(f"SB Opening Balance - Account {sb_acc_no} ({cust_name})", chosen_asset_code, "LIA-101", initial_balance, voucher_date=open_date_str)
+
+            today_time = f"{open_date_str} 10:00"
+            if chosen_asset_code == 'AST-101':
+                v_no = generate_cash_voucher_no()
+                cursor.execute(f"""
+                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, 'AST-101', {placeholder}, {placeholder})
+                """, (open_date_str, v_no, f"SB Opening Deposit: {sb_acc_no} ({cust_name})", initial_balance, f"SB Opening Balance - {sb_acc_no}", today_time))
+            else:
+                b_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
+                v_no = generate_bank_voucher_no()
+                cursor.execute(f"""
+                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                """, (open_date_str, v_no, f"SB Opening Deposit: {sb_acc_no} ({cust_name})", initial_balance, b_name, chosen_asset_code, f"SB Opening Balance - {sb_acc_no}", today_time))
+
+        conn.commit()
+        resequence_cash_book()
+        resequence_bank_book()
+        clear_db_cache()
+        return True, f"Savings Bank account {sb_acc_no} created successfully for {cust_name} with opening balance ₹{initial_balance:,.2f} on {open_date_str}."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try: conn.rollback()
+            except Exception: pass
         return False, str(e)
     finally:
         release_connection(conn)
@@ -4040,28 +4119,25 @@ def update_fd_account_details(
 
         # 3. Synchronize Opening JV
         cursor.execute(f"""
-            SELECT j.id, j.voucher_no FROM journal_vouchers j
-            WHERE (j.narration ILIKE {placeholder} OR j.narration ILIKE {placeholder})
-            ORDER BY j.id ASC LIMIT 1
-        """ if USING_SUPABASE else f"""
-            SELECT j.id, j.voucher_no FROM journal_vouchers j
-            WHERE (j.narration LIKE {placeholder} OR j.narration LIKE {placeholder})
-            ORDER BY j.id ASC LIMIT 1
+            SELECT jv_id, narration FROM journal_vouchers
+            WHERE (narration LIKE {placeholder} OR narration LIKE {placeholder})
+            ORDER BY jv_id ASC LIMIT 1
         """, (f"%FD #{fd_id}%", f"%FD Opening%Customer {old_c_id}%"))
         jv_match = cursor.fetchone()
 
         if jv_match:
-            jv_id_val, jv_vno = jv_match
-            cursor.execute(f"UPDATE journal_vouchers SET amount = {placeholder}, date = {placeholder} WHERE id = {placeholder}", (new_principal, created_dt_str, jv_id_val))
+            jv_id_val, jv_narr = jv_match
+            cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}", 
+                           (created_dt_str, f"FD #{fd_id} Opening Deposit - {old_c_name}", jv_id_val))
             cursor.execute(f"""
                 UPDATE jv_entries
-                SET account_code = {placeholder}, debit_amount = {placeholder}
-                WHERE jv_id = {placeholder} AND account_code IN ('AST-101', 'AST-102', 'AST-103')
+                SET account_code = {placeholder}, debit = {placeholder}
+                WHERE jv_id = {placeholder} AND debit > 0
             """, (chosen_asset_code, new_principal, jv_id_val))
             cursor.execute(f"""
                 UPDATE jv_entries
-                SET credit_amount = {placeholder}
-                WHERE jv_id = {placeholder} AND account_code = 'LIA-102'
+                SET account_code = 'LIA-102', credit = {placeholder}
+                WHERE jv_id = {placeholder} AND credit > 0
             """, (new_principal, jv_id_val))
 
         # 4. Synchronize Cash Book / Bank Book
@@ -4229,28 +4305,25 @@ def update_rd_account_details(
 
         # Synchronize Opening JV
         cursor.execute(f"""
-            SELECT j.id, j.voucher_no FROM journal_vouchers j
-            WHERE (j.narration ILIKE {placeholder} OR j.narration ILIKE {placeholder})
-            ORDER BY j.id ASC LIMIT 1
-        """ if USING_SUPABASE else f"""
-            SELECT j.id, j.voucher_no FROM journal_vouchers j
-            WHERE (j.narration LIKE {placeholder} OR j.narration LIKE {placeholder})
-            ORDER BY j.id ASC LIMIT 1
-        """, (f"%RD #{rd_id}%", f"%RD Opening%Customer {old_c_id}%"))
+            SELECT jv_id, narration FROM journal_vouchers
+            WHERE (narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+            ORDER BY jv_id ASC LIMIT 1
+        """, (f"%RD #{rd_id}%", f"%{new_rd_no}%", f"%RD Opening%Customer {old_c_id}%"))
         jv_match = cursor.fetchone()
 
         if jv_match:
-            jv_id_val, jv_vno = jv_match
-            cursor.execute(f"UPDATE journal_vouchers SET amount = {placeholder}, date = {placeholder} WHERE id = {placeholder}", (new_collected_bal, created_dt_str, jv_id_val))
+            jv_id_val, jv_narr = jv_match
+            cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}", 
+                           (created_dt_str, f"RD #{rd_id} Opening Deposit - {old_c_name}", jv_id_val))
             cursor.execute(f"""
                 UPDATE jv_entries
-                SET account_code = {placeholder}, debit_amount = {placeholder}
-                WHERE jv_id = {placeholder} AND account_code IN ('AST-101', 'AST-102', 'AST-103')
+                SET account_code = {placeholder}, debit = {placeholder}
+                WHERE jv_id = {placeholder} AND debit > 0
             """, (chosen_asset_code, new_collected_bal, jv_id_val))
             cursor.execute(f"""
                 UPDATE jv_entries
-                SET credit_amount = {placeholder}
-                WHERE jv_id = {placeholder} AND account_code = 'LIA-103'
+                SET account_code = 'LIA-103', credit = {placeholder}
+                WHERE jv_id = {placeholder} AND credit > 0
             """, (new_collected_bal, jv_id_val))
 
         # Clear existing book entries matching this RD

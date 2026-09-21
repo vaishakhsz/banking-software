@@ -26,55 +26,22 @@ import pytz
 import streamlit.components.v1 as components
 
 # Import database layer
-import importlib
-try:
-    import database
-    importlib.reload(database)
-except Exception:
-    pass
-
-try:
-    from database import (
-        IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
-        get_account_balance_from_jv, get_cash_balance, get_bank_balance,
-        generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
-        post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
-        get_connection, release_connection, sync_db_sequences,
-        get_all_gold_loans_bundle, get_all_personal_loans_bundle,
-        delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
-        delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
-        delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
-        resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
-        update_sb_account_details, update_personal_loan_details, update_gold_loan_details,
-        create_or_link_personal_loan_opening, create_or_link_gold_loan_opening,
-        update_fd_account_details, create_or_link_fd_opening,
-        update_rd_account_details, create_or_link_rd_opening
-    )
-except Exception as _db_imp_err:
-    try:
-        import database
-        importlib.reload(database)
-        from database import (
-            IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
-            get_account_balance_from_jv, get_cash_balance, get_bank_balance,
-            generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
-            post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
-            get_connection, release_connection, sync_db_sequences,
-            get_all_gold_loans_bundle, get_all_personal_loans_bundle,
-            delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
-            delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
-            delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
-            resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
-            update_sb_account_details, update_personal_loan_details, update_gold_loan_details,
-            create_or_link_personal_loan_opening, create_or_link_gold_loan_opening,
-            update_fd_account_details, create_or_link_fd_opening,
-            update_rd_account_details, create_or_link_rd_opening
-        )
-    except Exception as _db_imp_err2:
-        import traceback
-        st.error(f"⚠️ Critical Database Module Loading Error: {str(_db_imp_err2)}")
-        st.code(traceback.format_exc())
-        raise _db_imp_err2
+from database import (
+    IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
+    get_account_balance_from_jv, get_cash_balance, get_bank_balance,
+    generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
+    post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
+    get_connection, release_connection, sync_db_sequences,
+    get_all_gold_loans_bundle, get_all_personal_loans_bundle,
+    delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
+    delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
+    delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
+    resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
+    update_sb_account_details, update_personal_loan_details, update_gold_loan_details,
+    create_or_link_personal_loan_opening, create_or_link_gold_loan_opening,
+    update_fd_account_details, create_or_link_fd_opening,
+    update_rd_account_details, create_or_link_rd_opening
+)
 
 try:
     from database import calculate_rd_maturity, calculate_rd_accrued_value
@@ -360,9 +327,9 @@ def render_customer_management():
             col_d1, col_d2 = st.columns(2)
             reg_date = col_d1.date_input("Registration / Opening Date", value=date.today(), format="DD-MM-YYYY", key="cust_reg_date_input")
             
-            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+            asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
-                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+                asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
             if asset_dict:
@@ -745,7 +712,7 @@ def render_customer_management():
 
                 # SECTION 2: Gold Loans Opening Balances
                 with st.expander("🪙 2. Edit Gold Loan Opening Balances & Sanctions", expanded=True):
-                    cust_gls = run_query("""
+                    cust_gls = cached_query("""
                         SELECT id, loan_no, sanction_date, principal_amount, interest_rate, tenure_days,
                                outstanding_due, disbursal_mode, gold_rate_per_gram, ornament_details,
                                item_count, gross_weight, stone_deduction, net_weight, market_value,
@@ -867,7 +834,7 @@ def render_customer_management():
 
                 # SECTION 3: Personal Loans Opening Balances
                 with st.expander("💼 3. Edit Personal & Micro Loan Opening Balances & Sanctions", expanded=True):
-                    cust_pls = run_query("""
+                    cust_pls = cached_query("""
                         SELECT id, loan_no, sanction_date, principal_amount, interest_rate, tenure_days,
                                outstanding_due, disbursal_mode, guarantor_name, guarantor_phone,
                                guarantor_relation, guarantor_address, purpose, status, remarks
@@ -971,7 +938,7 @@ def render_customer_management():
 
                 # SECTION 4: SB Account Opening Balance
                 with st.expander("💰 4. Edit Savings Bank (SB) Opening Balance", expanded=True):
-                    cust_sb = run_query("SELECT account_no, balance, interest_rate, created_at FROM sb_accounts WHERE customer_id = ? ORDER BY account_no ASC LIMIT 1", (cust_id_edit,))
+                    cust_sb = cached_query("SELECT account_no, balance, interest_rate, created_at FROM sb_accounts WHERE customer_id = ? ORDER BY account_no ASC LIMIT 1", (cust_id_edit,))
                     if cust_sb:
                         sb_acc_no, sb_bal, sb_rate, sb_created = cust_sb[0]
                         try:
@@ -1007,7 +974,7 @@ def render_customer_management():
 
                 # SECTION 5: Fixed Deposit (FD) Opening Balances
                 with st.expander("📈 5. Edit Fixed Deposit (FD) Accounts & Opening Balances", expanded=True):
-                    cust_fds = run_query("""
+                    cust_fds = cached_query("""
                         SELECT fd_id, principal, tenure_months, interest_rate, maturity_amount,
                                nominee, status, created_at, closed_date, payment_mode
                         FROM fixed_deposits
@@ -1102,7 +1069,7 @@ def render_customer_management():
 
                 # SECTION 6: Recurring Deposit (RD) Opening Balances
                 with st.expander("🔄 6. Edit Recurring Deposit (RD) Accounts & Opening Balances", expanded=True):
-                    cust_rds = run_query("""
+                    cust_rds = cached_query("""
                         SELECT rd_id, COALESCE(rd_no, 'RD-' || CAST(rd_id AS TEXT)), monthly_amount,
                                tenure_months, interest_rate, installments_paid, collected_balance,
                                maturity_amount, nominee, status, created_at, closed_date, payment_mode
@@ -3262,7 +3229,7 @@ def render_sb_accounts():
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open SB Account", "Transact", "📖 SB Account Passbook", "View Accounts", "✏️ Edit / Update SB Account"])
     
     with tab1:
-        customers = run_query("SELECT id, name FROM customers ORDER BY name ASC")
+        customers = cached_query("SELECT id, name FROM customers ORDER BY name ASC")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
             col_sb1, col_sb2 = st.columns(2)
@@ -3274,7 +3241,7 @@ def render_sb_accounts():
                 sb_open_date = st.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key="sb_open_date_input")
                 sb_int_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=3.5, step=0.25, key="sb_open_rate")
             
-            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
             if asset_dict:
@@ -3329,7 +3296,7 @@ def render_sb_accounts():
 
     with tab2:
         st.subheader("Process Deposit / Withdrawal")
-        sb_accounts = run_query("""
+        sb_accounts = cached_query("""
             SELECT s.account_no, c.name, s.balance 
             FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
             ORDER BY c.name ASC, s.account_no ASC
@@ -3350,9 +3317,9 @@ def render_sb_accounts():
             
             st.info(f"👤 **Selected Customer:** **{cust_name}** &nbsp;|&nbsp; 💳 **SB A/c No:** `{acc_choice}` &nbsp;|&nbsp; 💰 **Current Balance:** **₹{curr_balance:,.2f}**")
             
-            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+            asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
-                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+                asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -3390,7 +3357,7 @@ def render_sb_accounts():
 
     with tab3:
         st.subheader("📖 Savings Bank (SB) Account Passbook & Statement")
-        all_sb_pb = run_query("""
+        all_sb_pb = cached_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, c.phone, c.address, c.id as cust_id
             FROM sb_accounts s 
             JOIN customers c ON s.customer_id = c.id
@@ -3540,7 +3507,7 @@ def render_sb_accounts():
             st.info("No active SB accounts found to generate passbook.")
 
     with tab4:
-        accounts = run_query("""
+        accounts = cached_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at 
             FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
             ORDER BY s.account_no DESC
@@ -3549,13 +3516,24 @@ def render_sb_accounts():
             df_sb = pd.DataFrame(accounts, columns=["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created"])
             df_sb_formatted = format_df_dates(df_sb)
             st.dataframe(df_sb_formatted, use_container_width=True)
-            st.download_button("📥 Download SB Accounts PDF", pdf_generator.create_pdf_report("Savings Bank Accounts Report", df_sb_formatted), "sb_accounts.pdf", "application/pdf", use_container_width=True)
+            
+            # Key SB Metrics
+            m1, m2, m3 = st.columns(3)
+            tot_sb_dep = sum(row[2] for row in accounts)
+            avg_sb_bal = tot_sb_dep / len(accounts) if accounts else 0
+            m1.metric("👥 Total SB Accounts", len(accounts))
+            m2.metric("💰 Total SB Deposits", f"₹{tot_sb_dep:,.2f}")
+            m3.metric("📊 Average SB Balance", f"₹{avg_sb_bal:,.2f}")
+            
+            col_csv, col_pdf = st.columns(2)
+            col_csv.download_button("📥 Download CSV Report", df_sb_formatted.to_csv(index=False).encode('utf-8'), "sb_accounts_report.csv", "text/csv", use_container_width=True)
+            col_pdf.download_button("📥 Download PDF Report", pdf_generator.create_pdf_report("SB Accounts Report", df_sb_formatted), "sb_accounts_report.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("No active SB accounts found.")
 
     with tab5:
         st.subheader("✏️ Edit & Correct Savings Bank (SB) Account")
-        all_sb_edit = run_query("""
+        all_sb_edit = cached_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, s.customer_id
             FROM sb_accounts s 
             JOIN customers c ON s.customer_id = c.id
@@ -3567,7 +3545,7 @@ def render_sb_accounts():
             curr_sb = sb_edit_dict[selected_sb_label]
             c_acc_no, c_name, c_bal, c_rate, c_created, c_cust_id = curr_sb
             
-            customers_all = run_query("SELECT id, name FROM customers ORDER BY name ASC")
+            customers_all = cached_query("SELECT id, name FROM customers ORDER BY name ASC")
             cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0
             
@@ -3587,9 +3565,9 @@ def render_sb_accounts():
                 edit_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=float(c_rate or 3.5), step=0.25, key=f"edit_sb_rate_{c_acc_no}")
                 edit_sb_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_sb_created_{c_acc_no}")
                 
-                edit_asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+                edit_asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
                 if not edit_asset_accounts:
-                    edit_asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+                    edit_asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
                 edit_asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in edit_asset_accounts} if edit_asset_accounts else {}
                 
                 existing_asset_idx = 0
@@ -3643,7 +3621,7 @@ def render_fixed_deposits():
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open FD", "Active FDs", "Print Certificate / Ledger", "Close FD", "✏️ Edit / Update FD"])
     
     with tab1:
-        customers = run_query("SELECT id, name, street, city, state, pincode FROM customers")
+        customers = cached_query("SELECT id, name, street, city, state, pincode FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
             col_fd1, col_fd2 = st.columns(2)
@@ -3656,9 +3634,9 @@ def render_fixed_deposits():
                 interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5)
                 nominee = st.text_input("Nominee Name")
             
-            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+            asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
-                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+                asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -3717,7 +3695,7 @@ def render_fixed_deposits():
             st.warning("Register a customer first.")
 
     with tab2:
-        fds = run_query("""
+        fds = cached_query("""
             SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at, f.payment_mode
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
@@ -3732,7 +3710,7 @@ def render_fixed_deposits():
 
     with tab3:
         st.subheader("🖨️ Printable FD Certificate & Ledger")
-        all_fds = run_query("""
+        all_fds = cached_query("""
             SELECT f.fd_id, c.name, c.street, c.city, c.state, c.pincode, 
                    f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, 
                    f.nominee, f.created_at, f.status, f.closed_date
@@ -3784,7 +3762,7 @@ def render_fixed_deposits():
               .box {{ border: 1px solid #ccc; padding: 10px; margin-top: 15px; background: #fff; }}
               table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }}
               th, td {{ border: 1px solid #999; padding: 6px; text-align: center; }}
-              th {{ background-color: #f2f2f2; }}
+              th {{ background-color: #fcebd9; }}
               .signatures {{ display: flex; justify-content: space-between; margin-top: 50px; font-size: 12px; font-weight: bold; text-align: center; }}
               .closed-info {{ background: #fde8e8; padding: 10px; border-radius: 5px; margin-top: 10px; color: #c0392b; }}
             </style>
@@ -3806,19 +3784,19 @@ def render_fixed_deposits():
               </div>
               <div class="grid-row">
                 <div><b>Name:</b> {c_name}</div>
-                <div><b>Interest Rate:</b> {rate}% p.a.</div>
+                <div><b>Principal Amount:</b> ₹{principal:,.2f}</div>
               </div>
               <div class="grid-row">
                 <div><b>Address:</b> {full_address}</div>
-                <div><b>Status:</b> {status_text}</div>
+                <div><b>Interest Rate:</b> {rate}% p.a.</div>
               </div>
               <div class="grid-row">
-                <div><b>Mode of Op.:</b> Single</div>
-                <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Period / Tenure:</b> {tenure} MONTHS</div>
+                <div><b>Tenure:</b> {tenure} Months</div>
                 <div><b>Maturity Amount:</b> ₹{maturity:,.2f}</div>
+              </div>
+              <div class="grid-row">
+                <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
+                <div><b>Status:</b> {status_text}</div>
               </div>
               {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date_dt}</div><div></div></div>' if status == 'CLOSED' else ''}
               
@@ -3873,7 +3851,7 @@ def render_fixed_deposits():
 
     with tab4:
         st.subheader("Close Fixed Deposit")
-        active_fds = run_query("""
+        active_fds = cached_query("""
             SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
@@ -3918,7 +3896,7 @@ def render_fixed_deposits():
 
     with tab5:
         st.subheader("✏️ Edit & Correct Fixed Deposit (FD) Account")
-        all_fds_edit = run_query("""
+        all_fds_edit = cached_query("""
             SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, 
                    f.maturity_amount, f.nominee, f.status, f.created_at, f.closed_date, 
                    f.payment_mode, f.customer_id
@@ -3936,7 +3914,7 @@ def render_fixed_deposits():
             curr_fd = fd_edit_dict[selected_edit_label]
             c_fd_id, c_name, c_principal, c_tenure, c_rate, c_maturity, c_nominee, c_status, c_created, c_closed, c_pay_mode, c_cust_id = curr_fd
             
-            customers_all = run_query("SELECT id, name FROM customers ORDER BY name ASC")
+            customers_all = cached_query("SELECT id, name FROM customers ORDER BY name ASC")
             cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0
             
@@ -4033,7 +4011,7 @@ def render_recurring_deposits():
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Open RD", "Pay Installment", "Active RDs", "Print Certificate / Ledger", "Close RD", "✏️ Edit / Update RD"])
     
     with tab1:
-        customers = run_query("SELECT id, name, street, city, state, pincode FROM customers")
+        customers = cached_query("SELECT id, name, street, city, state, pincode FROM customers")
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
             col_rd1, col_rd2 = st.columns(2)
@@ -4046,9 +4024,9 @@ def render_recurring_deposits():
                 interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.0, key="rd_rate")
                 nominee = st.text_input("Nominee Name", key="rd_nom")
             
-            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+            asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
-                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+                asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -4116,7 +4094,7 @@ def render_recurring_deposits():
             st.warning("Register customers first.")
 
     with tab2:
-        active_rds = run_query("""
+        active_rds = cached_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.installments_paid, r.maturity_amount
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id 
             WHERE r.status='ACTIVE'
@@ -4133,9 +4111,9 @@ def render_recurring_deposits():
             selected_rd = rd_dict[chosen_rd_str]
             rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt = selected_rd
             
-            asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+            asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
-                asset_accounts = run_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+                asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
             
@@ -4191,7 +4169,7 @@ def render_recurring_deposits():
             st.info("No active recurring deposits found.")
 
     with tab3:
-        rds = run_query("""
+        rds = cached_query("""
             SELECT COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as acc_no, 
                    c.name, COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme,
                    r.monthly_amount, r.tenure_months, r.interest_rate, 
@@ -4212,7 +4190,7 @@ def render_recurring_deposits():
 
     with tab4:
         st.subheader("🖨️ Printable RD Certificate & Ledger")
-        all_rds = run_query("""
+        all_rds = cached_query("""
             SELECT r.rd_id, c.name, c.street, c.city, c.state, c.pincode, 
                    r.monthly_amount, r.tenure_months, r.interest_rate, 
                    r.installments_paid, r.maturity_amount, r.nominee, 
@@ -4364,7 +4342,7 @@ def render_recurring_deposits():
 
     with tab5:
         st.subheader("Close Recurring Deposit")
-        active_rds_close = run_query("""
+        active_rds_close = cached_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.installments_paid, r.maturity_amount, r.interest_rate
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             WHERE r.status = 'ACTIVE'
@@ -4419,7 +4397,7 @@ def render_recurring_deposits():
         st.subheader("✏️ Edit & Correct Recurring Deposit Account")
         st.caption("Enter the exact amount paid/deposited, tenure, and interest rate — maturity amount recalculates live on whatever amount you enter.")
         
-        all_rds_edit = run_query("""
+        all_rds_edit = cached_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, 
                    r.installments_paid, r.nominee, r.status, r.created_at, r.maturity_amount,
                    COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as rd_no,
@@ -4444,7 +4422,7 @@ def render_recurring_deposits():
             
             c_rd_id, c_name, c_monthly, c_tenure, c_rate, c_paid, c_nominee, c_status, c_created, c_maturity, c_rd_no, c_scheme, c_mat_date, c_col_bal, c_cust_id, c_closed = curr_rd
             
-            customers_all = run_query("SELECT id, name FROM customers ORDER BY name ASC")
+            customers_all = cached_query("SELECT id, name FROM customers ORDER BY name ASC")
             cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0
             
@@ -4641,7 +4619,7 @@ def render_chart_of_accounts():
 
     with tab_coa1:
         st.subheader("Existing Accounts Directory")
-        accounts = run_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts ORDER BY account_code")
+        accounts = cached_query("SELECT account_code, account_name, account_type, category FROM chart_of_accounts ORDER BY account_code")
         if accounts:
             df_coa = pd.DataFrame(accounts, columns=["Account Code", "Account Name", "Account Type", "Category"])
             st.dataframe(df_coa, use_container_width=True)
@@ -4715,6 +4693,7 @@ def render_chart_of_accounts():
                                 (input_code, input_name, input_type, input_category),
                                 fetch=False
                             )
+                        clear_db_cache()
                         st.success(f"Account head '{input_code} - {input_name}' saved successfully!")
                         time.sleep(0.1)
                         st.rerun()
@@ -4745,7 +4724,7 @@ def render_cash_book():
                 entry_type = col1.selectbox("Transaction Type", ["DEBIT (Receipt)", "CREDIT (Payment)"])
                 particulars = st.text_input("Particulars / Description")
                 
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
+            coa_list = cached_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
             if is_opening:
@@ -4793,14 +4772,14 @@ def render_cash_book():
                         st.error(f"❌ Failed to record cash entry: {res_val}")
 
     with tab2:
-        min_cb_d = run_query("SELECT MIN(date) FROM cash_book")
+        min_cb_d = cached_query("SELECT MIN(date) FROM cash_book")
         cb_default_from = datetime.strptime(min_cb_d[0][0], "%Y-%m-%d").date() if (min_cb_d and min_cb_d[0][0]) else (date.today() - timedelta(days=365))
         
         col_date1, col_date2 = st.columns(2)
         from_date = col_date1.date_input("From Date", value=cb_default_from, key="cb_view_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_view_to", format="DD-MM-YYYY")
         
-        entries = run_query("""
+        entries = cached_query("""
             SELECT cb.id, cb.date, cb.voucher_no, 
                    COALESCE(co.account_code || ' - ' || co.account_name, cb.account_code) as account_head,
                    cb.particulars, cb.debit_amount, cb.credit_amount, cb.balance, cb.narration 
@@ -4852,12 +4831,12 @@ def render_cash_book():
     with tab3:
         st.subheader("Edit Existing Cash Entry")
         edit_id = st.number_input("Enter Cash Entry ID to Edit", min_value=1, step=1, key="edit_cash_id_input")
-        entry_to_edit = run_query("SELECT id, particulars, debit_amount, credit_amount, narration, account_code, voucher_no, date FROM cash_book WHERE id=?", (edit_id,))
+        entry_to_edit = cached_query("SELECT id, particulars, debit_amount, credit_amount, narration, account_code, voucher_no, date FROM cash_book WHERE id=?", (edit_id,))
         
         if entry_to_edit:
             row = entry_to_edit[0]
             # row = (id, particulars, debit_amount, credit_amount, narration, account_code, voucher_no, date)
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
+            coa_list = cached_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             coa_keys = list(coa_dict.keys())
             
@@ -4894,14 +4873,14 @@ def render_cash_book():
                         st.error(f"❌ Failed to update entry: {res_val}")
 
     with tab4:
-        min_cb_d = run_query("SELECT MIN(date) FROM cash_book")
+        min_cb_d = cached_query("SELECT MIN(date) FROM cash_book")
         cb_default_from = datetime.strptime(min_cb_d[0][0], "%Y-%m-%d").date() if (min_cb_d and min_cb_d[0][0]) else (date.today() - timedelta(days=365))
 
         col_date1, col_date2 = st.columns(2)
         from_date = col_date1.date_input("From Date", value=cb_default_from, key="cb_print_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_print_to", format="DD-MM-YYYY")
         
-        entries = run_query("""
+        entries = cached_query("""
             SELECT cb.date, cb.voucher_no, 
                    COALESCE(co.account_code || ' - ' || co.account_name, cb.account_code) as account_head,
                    cb.particulars, cb.debit_amount, cb.credit_amount, cb.balance, cb.narration 
@@ -4952,7 +4931,7 @@ def render_cash_book():
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="cb_v_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="cb_v_to", format="DD-MM-YYYY")
         
-        cb_records = run_query("""
+        cb_records = cached_query("""
             SELECT voucher_no, particulars, date 
             FROM cash_book 
             WHERE date BETWEEN ? AND ? 
@@ -5117,7 +5096,7 @@ def render_bank_book():
                 entry_type = col1.selectbox("Transaction Type", ["DEBIT (Deposit)", "CREDIT (Withdrawal)"])
                 particulars = st.text_input("Particulars / Description")
                 
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
+            coa_list = cached_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
             if is_opening:
@@ -5163,7 +5142,7 @@ def render_bank_book():
                         st.error(f"❌ Failed to record bank entry: {res_val}")
 
     with tab2:
-        min_bb_d = run_query("SELECT MIN(date) FROM bank_book")
+        min_bb_d = cached_query("SELECT MIN(date) FROM bank_book")
         bb_default_from = datetime.strptime(min_bb_d[0][0], "%Y-%m-%d").date() if (min_bb_d and min_bb_d[0][0]) else (date.today() - timedelta(days=365))
 
         col_date1, col_date2 = st.columns(2)
@@ -5187,9 +5166,9 @@ def render_bank_book():
             WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.id ASC
         """
-        entries = run_query(bb_query, (str(from_date), str(to_date)))
+        entries = cached_query(bb_query, (str(from_date), str(to_date)))
         if entries:
-            cust_list = run_query("SELECT id, name, COALESCE(account_no, '') FROM customers") or []
+            cust_list = cached_query("SELECT id, name, COALESCE(account_no, '') FROM customers") or []
             formatted_entries = []
             for r in entries:
                 party = extract_party_details(r[5], r[11], r[12], cust_list)
@@ -5236,12 +5215,12 @@ def render_bank_book():
     with tab3:
         st.subheader("Edit Existing Bank Entry")
         edit_bank_id = st.number_input("Enter Bank Entry ID to Edit", min_value=1, step=1, key="edit_bank_id_input")
-        bank_row = run_query("SELECT id, particulars, debit_amount, credit_amount, bank_name, narration, account_code, voucher_no, date FROM bank_book WHERE id=?", (edit_bank_id,))
+        bank_row = cached_query("SELECT id, particulars, debit_amount, credit_amount, bank_name, narration, account_code, voucher_no, date FROM bank_book WHERE id=?", (edit_bank_id,))
         
         if bank_row:
             row = bank_row[0]
             # row = (id, particulars, debit_amount, credit_amount, bank_name, narration, account_code, voucher_no, date)
-            coa_list = run_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
+            coa_list = cached_query("SELECT account_code, account_name FROM chart_of_accounts ORDER BY account_code")
             coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
             
             # Find current key
@@ -5306,7 +5285,7 @@ def render_bank_book():
                     st.rerun()
 
     with tab4:
-        min_bb_d = run_query("SELECT MIN(date) FROM bank_book")
+        min_bb_d = cached_query("SELECT MIN(date) FROM bank_book")
         bb_default_from = datetime.strptime(min_bb_d[0][0], "%Y-%m-%d").date() if (min_bb_d and min_bb_d[0][0]) else (date.today() - timedelta(days=365))
 
         col_date1, col_date2 = st.columns(2)
@@ -5330,9 +5309,9 @@ def render_bank_book():
             WHERE bb.date BETWEEN ? AND ?
             ORDER BY bb.date ASC, bb.id ASC
         """
-        entries = run_query(bb_print_query, (str(from_date), str(to_date)))
+        entries = cached_query(bb_print_query, (str(from_date), str(to_date)))
         if entries:
-            cust_list = run_query("SELECT id, name, COALESCE(account_no, '') FROM customers") or []
+            cust_list = cached_query("SELECT id, name, COALESCE(account_no, '') FROM customers") or []
             formatted_print = []
             for r in entries:
                 party = extract_party_details(r[4], r[10], r[11], cust_list)
@@ -5378,7 +5357,7 @@ def render_bank_book():
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="bb_v_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="bb_v_to", format="DD-MM-YYYY")
         
-        bb_records = run_query("""
+        bb_records = cached_query("""
             SELECT voucher_no, bank_name, particulars, date 
             FROM bank_book 
             WHERE date BETWEEN ? AND ? 
@@ -5439,7 +5418,7 @@ def render_journal_vouchers():
         st.subheader("Create Journal Voucher")
         st.info("💡 **Asset Depreciation Calculator:** Expense accounts like EXP-107 to EXP-110 will automatically compute depreciation values based on a selected Asset Base Value.")
         
-        coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts ORDER BY account_code")
+        coa_list = cached_query("SELECT account_code, account_name, account_type FROM chart_of_accounts ORDER BY account_code")
         coa_dict = {f"{c[0]} - {c[1]}": c[0] for c in coa_list}
         coa_names = {c[0]: c[1] for c in coa_list}
         
@@ -5504,7 +5483,7 @@ def render_journal_vouchers():
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="jv_view_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="jv_view_to", format="DD-MM-YYYY")
         
-        jvs = run_query("""
+        jvs = cached_query("""
             SELECT jv_id, voucher_date, narration, status 
             FROM journal_vouchers 
             WHERE voucher_date BETWEEN ? AND ? 
@@ -5534,7 +5513,7 @@ def render_journal_vouchers():
         from_date = col_date1.date_input("From Date", value=date.today() - timedelta(days=30), key="jv_print_from", format="DD-MM-YYYY")
         to_date = col_date2.date_input("To Date", value=date.today(), key="jv_print_to", format="DD-MM-YYYY")
         
-        jv_records = run_query("""
+        jv_records = cached_query("""
             SELECT jv_id, voucher_date, narration 
             FROM journal_vouchers 
             WHERE voucher_date BETWEEN ? AND ? 
@@ -5589,18 +5568,18 @@ def render_journal_vouchers():
 def render_admin_editor():
     st.title("🛠️ Universal Database Record Editor")
     if USING_SUPABASE:
-        tables_res = run_query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name NOT LIKE 'pg_%' ORDER BY table_name")
+        tables_res = cached_query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name NOT LIKE 'pg_%' AND table_name NOT LIKE '_schema_%' ORDER BY table_name")
     else:
-        tables_res = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        tables_res = cached_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_schema_%' ORDER BY name")
     
     table_list = [t[0] for t in tables_res] if tables_res else []
     selected_table = st.selectbox("Select Database Table to Manage", table_list)
     
     if selected_table:
         if USING_SUPABASE:
-            cols = run_query("SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = 'public' ORDER BY ordinal_position", (selected_table,))
+            cols = cached_query("SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = 'public' ORDER BY ordinal_position", (selected_table,))
             col_names = [c[0] for c in cols] if cols else []
-            pk_res = run_query("""
+            pk_res = cached_query("""
                 SELECT kcu.column_name
                 FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
@@ -5608,14 +5587,22 @@ def render_admin_editor():
             """, (selected_table,))
             pk_col = pk_res[0][0] if pk_res else (col_names[0] if col_names else None)
         else:
-            pk_info = run_query(f"PRAGMA table_info({selected_table})")
+            pk_info = cached_query(f"PRAGMA table_info({selected_table})")
             pk_col = next((col[1] for col in pk_info if col[5] == 1), pk_info[0][1] if pk_info else None)
             col_names = [col[1] for col in pk_info] if pk_info else []
         
-        rows = run_query(f"SELECT * FROM {selected_table}")
+        binary_cols = {'adhar_data', 'pan_data', 'signature_data', 'gold_image_data'}
+        preview_cols = []
+        for c in col_names:
+            if c in binary_cols:
+                preview_cols.append(f"CASE WHEN {c} IS NOT NULL THEN '<Binary Document>' ELSE NULL END AS {c}")
+            else:
+                preview_cols.append(c)
+        preview_sql = f"SELECT {', '.join(preview_cols)} FROM {selected_table}" if preview_cols else f"SELECT * FROM {selected_table}"
+        rows = cached_query(preview_sql)
         
         if rows:
-            # Clean display for dataframe (format binary data nicely)
+            # Clean display for dataframe
             clean_rows = []
             for r in rows:
                 clean_r = []
@@ -5721,7 +5708,7 @@ def render_financial_statements():
     with tab1:
         st.subheader("Trial Balance Summary")
         if USING_SUPABASE:
-            entries = run_query("""
+            entries = cached_query("""
                 SELECT CO.account_code, CO.account_name, CO.account_type, 
                        COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
                 FROM chart_of_accounts CO
@@ -5731,7 +5718,7 @@ def render_financial_statements():
                 ORDER BY CO.account_type, CO.account_code
             """)
         else:
-            entries = run_query("""
+            entries = cached_query("""
                 SELECT CO.account_code, CO.account_name, CO.account_type, 
                        COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
                 FROM chart_of_accounts CO
@@ -5752,7 +5739,7 @@ def render_financial_statements():
         st.subheader("Balance Sheet (Assets, Liabilities & Equity)")
         # Fetch all account balances in a single database roundtrip
         if USING_SUPABASE:
-            raw_balances = run_query("""
+            raw_balances = cached_query("""
                 SELECT 
                     CO.account_code, 
                     CO.account_name, 
@@ -5765,7 +5752,7 @@ def render_financial_statements():
                 GROUP BY CO.account_code, CO.account_name, CO.account_type, CO.category
             """)
         else:
-            raw_balances = run_query("""
+            raw_balances = cached_query("""
                 SELECT 
                     CO.account_code, 
                     CO.account_name, 
@@ -5879,7 +5866,7 @@ def render_financial_statements():
                         total_lia += net
                 
             if USING_SUPABASE:
-                equity_details = run_query("""
+                equity_details = cached_query("""
                     SELECT 
                         CO.account_name, 
                         COALESCE(JV.narration, CO.account_name) as narration_label,
@@ -5892,7 +5879,7 @@ def render_financial_statements():
                     HAVING COALESCE(SUM(JE.credit - JE.debit), 0) != 0
                 """)
             else:
-                equity_details = run_query("""
+                equity_details = cached_query("""
                     SELECT 
                         CO.account_name, 
                         COALESCE(JV.narration, CO.account_name) as narration_label,
@@ -5936,14 +5923,14 @@ def render_financial_statements():
     with tab3:
         st.subheader("Profit and Loss Account")
         if USING_SUPABASE:
-            income_details = run_query("""
+            income_details = cached_query("""
                 SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as balance
                 FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
                 WHERE CO.account_type = 'Income' 
                 GROUP BY CO.account_code, CO.account_name 
                 HAVING COALESCE(SUM(JE.credit - JE.debit), 0) != 0
             """)
-            expense_details = run_query("""
+            expense_details = cached_query("""
                 SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as balance
                 FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
                 WHERE CO.account_type = 'Expense' 
@@ -5951,12 +5938,12 @@ def render_financial_statements():
                 HAVING COALESCE(SUM(JE.debit - JE.credit), 0) != 0
             """)
         else:
-            income_details = run_query("""
+            income_details = cached_query("""
                 SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.credit - JE.debit), 0) as balance
                 FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
                 WHERE CO.account_type = 'Income' GROUP BY CO.account_code HAVING balance != 0
             """)
-            expense_details = run_query("""
+            expense_details = cached_query("""
                 SELECT CO.account_code, CO.account_name, COALESCE(SUM(JE.debit - JE.credit), 0) as balance
                 FROM chart_of_accounts CO JOIN jv_entries JE ON CO.account_code = JE.account_code
                 WHERE CO.account_type = 'Expense' GROUP BY CO.account_code HAVING balance != 0
@@ -5995,7 +5982,7 @@ def render_financial_statements():
         to_date = col_date2.date_input("To Date", value=date.today(), format="DD-MM-YYYY")
         
         # Load account heads for select box
-        coa_list = run_query("SELECT account_code, account_name, account_type FROM chart_of_accounts ORDER BY account_code")
+        coa_list = cached_query("SELECT account_code, account_name, account_type FROM chart_of_accounts ORDER BY account_code")
         coa_dict = {f"{c[0]} - {c[1]} ({c[2]})": (c[0], c[1], c[2]) for c in coa_list}
         
         selected_head = st.selectbox("Select Account Head for Ledger", list(coa_dict.keys()))
@@ -6006,7 +5993,7 @@ def render_financial_statements():
             # 1. Calculate Opening Balance before from_date
             if acc_type in ['Asset', 'Expense']:
                 # Balance = Debit - Credit
-                op_bal_row = run_query("""
+                op_bal_row = cached_query("""
                     SELECT COALESCE(SUM(JE.debit - JE.credit), 0)
                     FROM jv_entries JE 
                     JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
@@ -6014,7 +6001,7 @@ def render_financial_statements():
                 """, (acc_code, str(from_date)))
             else:
                 # Balance = Credit - Debit (Liability, Equity, Income)
-                op_bal_row = run_query("""
+                op_bal_row = cached_query("""
                     SELECT COALESCE(SUM(JE.credit - JE.debit), 0)
                     FROM jv_entries JE 
                     JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
@@ -6031,7 +6018,7 @@ def render_financial_statements():
             abs_op_bal = abs(opening_bal)
             
             # 2. Fetch JV entries within date range
-            ledger_rows = run_query("""
+            ledger_rows = cached_query("""
                 SELECT JV.voucher_date, JV.jv_id, JV.narration, JE.debit, JE.credit
                 FROM jv_entries JE 
                 JOIN journal_vouchers JV ON JE.jv_id = JV.jv_id
@@ -6142,29 +6129,29 @@ def render_reports():
         
         if generate_btn:
             if report_type == "Customer List Report":
-                data = run_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
+                data = cached_query("SELECT id, name, phone, email, kyc_status, created_at FROM customers")
                 columns = ["ID", "Name", "Phone", "Email", "KYC Status", "Registered Date"]
             elif report_type == "Daily Transactions Report":
-                data = run_query("SELECT tx_id, account_no, type, amount, mode, narration, date FROM transactions ORDER BY date ASC, tx_id ASC")
+                data = cached_query("SELECT tx_id, account_no, type, amount, mode, narration, date FROM transactions ORDER BY date ASC, tx_id ASC")
                 columns = ["Tx ID", "Account No", "Type", "Amount (₹)", "Mode", "Narration", "Date"]
             elif report_type == "SB Accounts Report":
-                data = run_query("SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at FROM sb_accounts s JOIN customers c ON s.customer_id = c.id")
+                data = cached_query("SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at FROM sb_accounts s JOIN customers c ON s.customer_id = c.id")
                 columns = ["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created Date"]
             elif report_type == "FD Accounts Report":
-                data = run_query("SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id")
+                data = cached_query("SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id")
                 columns = ["FD ID", "Customer Name", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Created Date"]
             elif report_type == "RD Accounts Report":
-                data = run_query("SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.created_at FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id")
+                data = cached_query("SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.created_at FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id")
                 columns = ["RD ID", "Customer Name", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Inst. Paid", "Status", "Created Date"]
             elif report_type == "Cash Book Report":
-                data = run_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration FROM cash_book ORDER BY date ASC, id ASC")
+                data = cached_query("SELECT date, voucher_no, particulars, debit_amount, credit_amount, balance, narration FROM cash_book ORDER BY date ASC, id ASC")
                 columns = ["Date", "Voucher No", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"]
             elif report_type == "Bank Book Report":
-                data = run_query("SELECT date, voucher_no, bank_name, particulars, debit_amount, credit_amount, balance, narration FROM bank_book ORDER BY date ASC, id ASC")
+                data = cached_query("SELECT date, voucher_no, bank_name, particulars, debit_amount, credit_amount, balance, narration FROM bank_book ORDER BY date ASC, id ASC")
                 columns = ["Date", "Voucher No", "Bank", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"]
             elif report_type == "Trial Balance Report":
                 if USING_SUPABASE:
-                    data = run_query("""
+                    data = cached_query("""
                         SELECT CO.account_code, CO.account_name, CO.account_type, 
                                COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
                         FROM chart_of_accounts CO 
@@ -6173,13 +6160,13 @@ def render_reports():
                         HAVING COALESCE(SUM(JE.debit), 0) > 0 OR COALESCE(SUM(JE.credit), 0) > 0
                     """)
                 else:
-                    data = run_query("""
+                    data = cached_query("""
                         SELECT CO.account_code, CO.account_name, CO.account_type, COALESCE(SUM(JE.debit), 0) as total_debit, COALESCE(SUM(JE.credit), 0) as total_credit
                         FROM chart_of_accounts CO LEFT JOIN jv_entries JE ON CO.account_code = JE.account_code GROUP BY CO.account_code HAVING total_debit > 0 OR total_credit > 0
                     """)
                 columns = ["Account Code", "Account Name", "Account Type", "Total Debit (₹)", "Total Credit (₹)"]
             elif report_type == "Journal Vouchers Report":
-                data = run_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY voucher_date ASC, jv_id ASC")
+                data = cached_query("SELECT jv_id, voucher_date, narration, status FROM journal_vouchers ORDER BY voucher_date ASC, jv_id ASC")
                 columns = ["JV ID", "Date", "Narration", "Status"]
                 
             if data:
@@ -6199,7 +6186,7 @@ def render_reports():
         ])
         
         if chart_type == "Customer Registration Trend":
-            cust_trends = run_query("SELECT substr(created_at, 1, 10) as reg_date, COUNT(*) as count FROM customers GROUP BY reg_date ORDER BY reg_date ASC")
+            cust_trends = cached_query("SELECT substr(created_at, 1, 10) as reg_date, COUNT(*) as count FROM customers GROUP BY reg_date ORDER BY reg_date ASC")
             if cust_trends:
                 df_trend = pd.DataFrame(cust_trends, columns=["Date", "Registrations"])
                 fig = px.line(df_trend, x="Date", y="Registrations", title="Customer Registration Trend", markers=True)
@@ -6207,9 +6194,9 @@ def render_reports():
             else:
                 st.info("No customer registration data available.")
         elif chart_type == "Account Distribution":
-            sb_row = run_query("SELECT COUNT(*) FROM sb_accounts")
-            fd_row = run_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")
-            rd_row = run_query("SELECT COUNT(*) FROM recurring_deposits WHERE status='ACTIVE'")
+            sb_row = cached_query("SELECT COUNT(*) FROM sb_accounts")
+            fd_row = cached_query("SELECT COUNT(*) FROM fixed_deposits WHERE status='ACTIVE'")
+            rd_row = cached_query("SELECT COUNT(*) FROM recurring_deposits WHERE status='ACTIVE'")
             sb_count = sb_row[0][0] if sb_row and sb_row[0] else 0
             fd_count = fd_row[0][0] if fd_row and fd_row[0] else 0
             rd_count = rd_row[0][0] if rd_row and rd_row[0] else 0
@@ -6220,20 +6207,20 @@ def render_reports():
             fig = px.pie(df_dist, values="Count", names="Account Type", title="Accounts Share Ratio", hole=0.3)
             st.plotly_chart(fig, use_container_width=True)
         elif chart_type == "SB Account Balances":
-            sb_bals = run_query("SELECT account_no, balance FROM sb_accounts")
+            sb_bals = cached_query("SELECT account_no, balance FROM sb_accounts")
             if sb_bals:
                 df_sb_bal = pd.DataFrame(sb_bals, columns=["Account No", "Balance (₹)"])
                 fig = px.bar(df_sb_bal, x="Account No", y="Balance (₹)", title="SB Account Balances Summary")
                 st.plotly_chart(fig, use_container_width=True)
         elif chart_type == "FD Maturity Distribution":
-            fd_mats = run_query("SELECT fd_id, maturity_amount, principal FROM fixed_deposits WHERE status='ACTIVE'")
+            fd_mats = cached_query("SELECT fd_id, maturity_amount, principal FROM fixed_deposits WHERE status='ACTIVE'")
             if fd_mats:
                 df_fd_mat = pd.DataFrame(fd_mats, columns=["FD ID", "Maturity Amount (₹)", "Principal (₹)"])
                 df_fd_mat["FD ID"] = df_fd_mat["FD ID"].apply(lambda x: f"FD-{x:05d}")
                 fig = px.bar(df_fd_mat, x="FD ID", y="Maturity Amount (₹)", title="FD Maturity Distribution Details", hover_data=["Principal (₹)"])
                 st.plotly_chart(fig, use_container_width=True)
         elif chart_type == "RD Installment Progress":
-            rd_prog = run_query("SELECT rd_id, installments_paid, tenure_months FROM recurring_deposits WHERE status='ACTIVE'")
+            rd_prog = cached_query("SELECT rd_id, installments_paid, tenure_months FROM recurring_deposits WHERE status='ACTIVE'")
             if rd_prog:
                 df_rd_prog = pd.DataFrame(rd_prog, columns=["RD ID", "Paid", "Total"])
                 df_rd_prog["RD ID"] = df_rd_prog["RD ID"].apply(lambda x: f"RD-{x:05d}")
@@ -6247,7 +6234,7 @@ def render_sb_interest_calculation():
     st.title("💸 Savings Bank (SB) Interest Calculation")
     st.info("💡 Interest credit values are computed as: `Balance * (Rate / 100) * (Period Days / 365)`.")
     
-    sb_accs = run_query("SELECT s.account_no, c.name, s.balance, s.interest_rate FROM sb_accounts s JOIN customers c ON s.customer_id = c.id")
+    sb_accs = cached_query("SELECT s.account_no, c.name, s.balance, s.interest_rate FROM sb_accounts s JOIN customers c ON s.customer_id = c.id")
     if sb_accs:
         col1, col2 = st.columns(2)
         calc_period = col1.selectbox("Calculation Period", ["Quarterly (90 Days)", "Half-Yearly (182 Days)", "Annually (365 Days)", "Custom Days"])

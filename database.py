@@ -365,10 +365,12 @@ def reconcile_books():
         release_connection(conn)
 
 
-def init_db():
-    """Initialize database tables lazily on first query execution"""
+SCHEMA_VERSION = 2
+
+def init_db(force=False):
+    """Initialize database tables lazily on first query execution with sub-millisecond fast-path check"""
     global DB_INITIALIZED, DB_INIT_ERROR
-    if DB_INITIALIZED:
+    if DB_INITIALIZED and not force:
         return True
     
     conn = None
@@ -378,9 +380,36 @@ def init_db():
         
         if not USING_SUPABASE:
             cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute("CREATE TABLE IF NOT EXISTS _schema_init_tracker (id INTEGER PRIMARY KEY, version INTEGER NOT NULL, updated_at TEXT)")
+            if not force:
+                cursor.execute("SELECT version FROM _schema_init_tracker WHERE id = 1")
+                row = cursor.fetchone()
+                if row and row[0] >= SCHEMA_VERSION:
+                    DB_INITIALIZED = True
+                    DB_INIT_ERROR = None
+                    return True
+        else:
+            if not force:
+                try:
+                    cursor.execute("SELECT version FROM _schema_init_tracker WHERE id = 1")
+                    row = cursor.fetchone()
+                    if row and row[0] >= SCHEMA_VERSION:
+                        DB_INITIALIZED = True
+                        DB_INIT_ERROR = None
+                        return True
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
         
         # Combined DDL statements for rapid 1-roundtrip schema execution
         tables_sql = """
+            CREATE TABLE IF NOT EXISTS _schema_init_tracker (
+                id INTEGER PRIMARY KEY,
+                version INTEGER NOT NULL,
+                updated_at TEXT
+            );
             CREATE TABLE IF NOT EXISTS customers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -403,6 +432,14 @@ def init_db():
                 kyc_status TEXT DEFAULT 'PENDING',
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_number TEXT,
+                account_type TEXT,
+                customer_id INTEGER,
+                balance REAL DEFAULT 0.0,
+                created_at TEXT
+            );
             CREATE TABLE IF NOT EXISTS sb_accounts (
                 account_no TEXT PRIMARY KEY,
                 customer_id INTEGER,
@@ -419,6 +456,8 @@ def init_db():
                 amount REAL,
                 mode TEXT,
                 narration TEXT,
+                balance_after REAL,
+                account_id INTEGER,
                 date TEXT
             );
             CREATE TABLE IF NOT EXISTS fixed_deposits (
@@ -651,6 +690,35 @@ def init_db():
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_name TEXT;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS gold_image_data BYTEA;
                     ALTER TABLE gold_loans ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                    
+                    -- HIGH-PERFORMANCE POSTGRESQL B-TREE INDEXES FOR SUB-MILLISECOND LOOKUPS & AGGREGATIONS
+                    CREATE INDEX IF NOT EXISTS idx_customers_acc_no ON customers(account_no);
+                    CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);
+                    CREATE INDEX IF NOT EXISTS idx_sb_accounts_cust_id ON sb_accounts(customer_id);
+                    CREATE INDEX IF NOT EXISTS idx_fixed_deposits_cust_id ON fixed_deposits(customer_id);
+                    CREATE INDEX IF NOT EXISTS idx_fixed_deposits_status ON fixed_deposits(status);
+                    CREATE INDEX IF NOT EXISTS idx_recurring_deposits_cust_id ON recurring_deposits(customer_id);
+                    CREATE INDEX IF NOT EXISTS idx_recurring_deposits_status ON recurring_deposits(status);
+                    CREATE INDEX IF NOT EXISTS idx_personal_loans_cust_id ON personal_loans(customer_id);
+                    CREATE INDEX IF NOT EXISTS idx_personal_loans_loan_no ON personal_loans(loan_no);
+                    CREATE INDEX IF NOT EXISTS idx_personal_loans_status ON personal_loans(status);
+                    CREATE INDEX IF NOT EXISTS idx_gold_loans_cust_id ON gold_loans(customer_id);
+                    CREATE INDEX IF NOT EXISTS idx_gold_loans_loan_no ON gold_loans(loan_no);
+                    CREATE INDEX IF NOT EXISTS idx_gold_loans_status ON gold_loans(status);
+                    CREATE INDEX IF NOT EXISTS idx_loan_repayments_type_id ON loan_repayments(loan_type, loan_id);
+                    CREATE INDEX IF NOT EXISTS idx_loan_emi_schedules_type_id ON loan_emi_schedules(loan_type, loan_id);
+                    CREATE INDEX IF NOT EXISTS idx_jv_entries_acc_code ON jv_entries(account_code);
+                    CREATE INDEX IF NOT EXISTS idx_jv_entries_jv_id ON jv_entries(jv_id);
+                    CREATE INDEX IF NOT EXISTS idx_journal_vouchers_date ON journal_vouchers(voucher_date);
+                    CREATE INDEX IF NOT EXISTS idx_cash_book_date ON cash_book(date);
+                    CREATE INDEX IF NOT EXISTS idx_cash_book_vno ON cash_book(voucher_no);
+                    CREATE INDEX IF NOT EXISTS idx_cash_book_acccode ON cash_book(account_code);
+                    CREATE INDEX IF NOT EXISTS idx_bank_book_date ON bank_book(date);
+                    CREATE INDEX IF NOT EXISTS idx_bank_book_vno ON bank_book(voucher_no);
+                    CREATE INDEX IF NOT EXISTS idx_bank_book_bname ON bank_book(bank_name);
+                    CREATE INDEX IF NOT EXISTS idx_transactions_acc_no ON transactions(account_no);
+                    CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
+                    
                     DO $$ 
                     BEGIN
                         BEGIN
@@ -760,11 +828,15 @@ def init_db():
                 VALUES (%s, %s, %s, %s) 
                 ON CONFLICT (account_code) DO NOTHING
             """, default_accounts)
+            cursor.execute("""
+                INSERT INTO _schema_init_tracker (id, version, updated_at)
+                VALUES (1, %s, CURRENT_TIMESTAMP::text)
+                ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, updated_at = CURRENT_TIMESTAMP::text
+            """, (SCHEMA_VERSION,))
+            sync_postgres_sequences(conn)
         else:
             cursor.executemany("INSERT OR IGNORE INTO chart_of_accounts VALUES (?, ?, ?, ?)", default_accounts)
-
-        if USING_SUPABASE:
-            sync_postgres_sequences(conn)
+            cursor.execute("INSERT OR REPLACE INTO _schema_init_tracker (id, version, updated_at) VALUES (1, ?, datetime('now'))", (SCHEMA_VERSION,))
 
         conn.commit()
         DB_INITIALIZED = True
@@ -837,6 +909,15 @@ def sync_postgres_sequences(conn=None):
         if should_close:
             release_connection(conn)
 
+def clear_db_cache():
+    """Clears Streamlit cached queries on data mutations"""
+    try:
+        import streamlit as st
+        if hasattr(st, "cache_data"):
+            st.cache_data.clear()
+    except Exception:
+        pass
+
 def run_query(query, params=(), fetch=True, max_retries=3):
     """Execute a database query with auto-initialization, automatic retry on SSL/connection drops, and connection cleanup"""
     if not DB_INITIALIZED:
@@ -865,6 +946,8 @@ def run_query(query, params=(), fetch=True, max_retries=3):
             res = cursor.fetchall() if fetch else None
             conn.commit()
             release_connection(conn)
+            if not fetch:
+                clear_db_cache()
             if res is not None:
                 sanitized = []
                 for row in res:
@@ -908,15 +991,6 @@ def run_query(query, params=(), fetch=True, max_retries=3):
     except Exception:
         print(f"Database error: {str(last_err)}")
     return None
-
-def clear_db_cache():
-    """Clears Streamlit cached queries on data mutations"""
-    try:
-        import streamlit as st
-        if hasattr(st, "cache_data"):
-            st.cache_data.clear()
-    except Exception:
-        pass
 
 try:
     import streamlit as st

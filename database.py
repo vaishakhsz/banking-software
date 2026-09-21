@@ -2915,6 +2915,758 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
         release_connection(conn)
 
 
+def update_personal_loan_details(
+    pl_id, new_l_no, new_sanction_date, new_princ, new_rate, new_tenure_days,
+    new_out_due, new_disbursal_mode, new_guar_name, new_guar_phone, new_guar_rel,
+    new_guar_addr, new_purpose, new_status, new_remarks
+):
+    """
+    Updates Personal Loan financial terms, borrower & guarantor metadata,
+    recalculates EMI amortization schedule, updates customer account balance,
+    and synchronizes disbursal Journal Voucher, Cash Book, and Bank Book entries with resequenced running balances.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch current loan details & borrower name
+        cursor.execute(f"""
+            SELECT p.loan_no, p.customer_id, c.name, COALESCE(c.account_no, ''), p.voucher_no, p.principal_amount, p.disbursal_mode
+            FROM personal_loans p
+            JOIN customers c ON p.customer_id = c.id
+            WHERE p.id = {placeholder}
+        """, (pl_id,))
+        p_row = cursor.fetchone()
+        if not p_row:
+            return False, "Personal Loan not found."
+            
+        old_l_no, cust_id, cust_name, cust_acc, old_v_no, old_princ, old_d_mode = p_row
+        old_v_no = old_v_no or f"PLV{pl_id:04d}"
+        
+        new_princ = float(new_princ)
+        new_rate = float(new_rate)
+        new_tenure_days = int(new_tenure_days)
+        new_tenure_months = max(1, int(round(new_tenure_days / 30.0)))
+        
+        calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_tenure_days / 365.0), 2)
+        calc_tot_repayable = round(new_princ + calc_tot_interest, 2)
+        calc_p_emi = round(new_princ / float(new_tenure_months), 2)
+        calc_i_emi = round(calc_tot_interest / float(new_tenure_months), 2)
+        calc_installment = round(calc_tot_repayable / float(new_tenure_months), 2)
+        
+        new_scheme_name = f"{new_tenure_days}-Day Loan"
+        
+        # Schedules calculation
+        ed_sched = generate_loan_schedule(new_sanction_date, new_princ, calc_tot_interest, tenure_months=new_tenure_months, loan_type='PERSONAL')
+        ed_loan_from = ed_sched[0]["from_date"] if ed_sched else str(new_sanction_date)
+        ed_loan_to = ed_sched[-1]["to_date"] if ed_sched else str(new_sanction_date)
+        ed_first_due = ed_sched[0]["due_date"] if ed_sched else str(new_sanction_date)
+        ed_last_due = ed_sched[-1]["due_date"] if ed_sched else str(new_sanction_date)
+        
+        # 2. Update personal_loans table
+        cursor.execute(f"""
+            UPDATE personal_loans
+            SET loan_no = {placeholder}, sanction_date = {placeholder}, principal_amount = {placeholder}, interest_rate = {placeholder},
+                interest_type = {placeholder}, tenure_days = {placeholder}, tenure_months = {placeholder}, total_interest = {placeholder},
+                total_repayable = {placeholder}, installment_amount = {placeholder}, monthly_principal_emi = {placeholder},
+                monthly_interest_emi = {placeholder}, loan_from_date = {placeholder}, loan_to_date = {placeholder},
+                first_emi_due = {placeholder}, last_emi_due = {placeholder}, outstanding_due = {placeholder}, disbursal_mode = {placeholder},
+                guarantor_name = {placeholder}, guarantor_phone = {placeholder}, guarantor_relation = {placeholder},
+                guarantor_address = {placeholder}, purpose = {placeholder}, status = {placeholder}, remarks = {placeholder}
+            WHERE id = {placeholder}
+        """, (
+            new_l_no, str(new_sanction_date), new_princ, new_rate,
+            new_scheme_name, new_tenure_days, new_tenure_months, calc_tot_interest,
+            calc_tot_repayable, calc_installment, calc_p_emi,
+            calc_i_emi, ed_loan_from, ed_loan_to,
+            ed_first_due, ed_last_due, new_out_due, new_disbursal_mode,
+            new_guar_name, new_guar_phone, new_guar_rel,
+            new_guar_addr, new_purpose, new_status, new_remarks,
+            pl_id
+        ))
+        
+        # 3. Update customer accounts table
+        cursor.execute(f"""
+            UPDATE accounts 
+            SET balance = {placeholder} 
+            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_number = {placeholder})
+        """, (new_out_due, cust_id, cust_acc))
+        
+        # 4. Regenerate pending schedules
+        cursor.execute(f"DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder} AND status = 'PENDING'", (pl_id,))
+        cursor.execute(f"SELECT emi_number FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder} AND status = 'PAID'", (pl_id,))
+        paid_emis = set(r[0] for r in cursor.fetchall())
+        pending_schedules = [s for s in ed_sched if s['emi_number'] not in paid_emis]
+        for sch in pending_schedules:
+            cursor.execute(f"""
+                INSERT INTO loan_emi_schedules (
+                    loan_type, loan_id, loan_no, emi_number, from_date, to_date, due_date,
+                    principal_component, interest_component, emi_amount, status
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING')
+            """, (
+                'PERSONAL', pl_id, new_l_no, sch['emi_number'],
+                sch['from_date'], sch['to_date'], sch['due_date'],
+                sch['principal_component'], sch['interest_component'], sch['emi_amount']
+            ))
+            
+        # 5. Synchronize Disbursal Journal Voucher & Cash / Bank Book
+        chosen_asset_code = 'AST-101' if 'cash' in new_disbursal_mode.lower() else ('AST-103' if 'state bank' in new_disbursal_mode.lower() or 'sbi' in new_disbursal_mode.lower() else 'AST-102')
+        bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else ("State Bank of India" if chosen_asset_code == 'AST-103' else "Cash")
+        today_time = f"{new_sanction_date} 12:00"
+        
+        # Locate existing JV
+        cursor.execute(f"""
+            SELECT jv_id FROM journal_vouchers 
+            WHERE narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
+            ORDER BY jv_id DESC LIMIT 1
+        """, (f"%Personal Loan Disbursal%{old_l_no}%", f"%Personal Loan Disbursal%{new_l_no}%", f"%{old_v_no}%"))
+        jv_res = cursor.fetchone()
+        
+        if jv_res:
+            jv_id = jv_res[0]
+            cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}",
+                           (str(new_sanction_date), f"Personal Loan Disbursal - {cust_name} ({new_l_no})", jv_id))
+            cursor.execute(f"UPDATE jv_entries SET account_code = 'AST-108', debit = {placeholder} WHERE jv_id = {placeholder} AND debit > 0", (new_princ, jv_id))
+            cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder}, credit = {placeholder} WHERE jv_id = {placeholder} AND credit > 0", (chosen_asset_code, new_princ, jv_id))
+        else:
+            if new_princ > 0:
+                if USING_SUPABASE:
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (str(new_sanction_date), f"Personal Loan Disbursal - {cust_name} ({new_l_no})"))
+                    jv_id = cursor.fetchone()[0]
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-108', %s, 0)", (jv_id, new_princ))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, chosen_asset_code, new_princ))
+                else:
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(new_sanction_date), f"Personal Loan Disbursal - {cust_name} ({new_l_no})"))
+                    jv_id = cursor.lastrowid
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-108', ?, 0)", (jv_id, new_princ))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, chosen_asset_code, new_princ))
+                    
+        # Locate existing Cash / Bank Book entry
+        cursor.execute(f"""
+            SELECT id FROM bank_book 
+            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
+            ORDER BY id ASC LIMIT 1
+        """, (f"%Personal Loan Disbursal%{old_l_no}%", f"%Personal Loan Disbursal%{new_l_no}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+        bb_row = cursor.fetchone()
+        
+        cursor.execute(f"""
+            SELECT id FROM cash_book 
+            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
+            ORDER BY id ASC LIMIT 1
+        """, (f"%Personal Loan Disbursal%{old_l_no}%", f"%Personal Loan Disbursal%{new_l_no}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+        cb_row = cursor.fetchone()
+        
+        if bb_row:
+            bb_id = bb_row[0]
+            if chosen_asset_code in ('AST-102', 'AST-103'):
+                cursor.execute(f"""
+                    UPDATE bank_book 
+                    SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
+                        bank_name = {placeholder}, account_code = 'AST-108', narration = {placeholder}, created_at = {placeholder}
+                    WHERE id = {placeholder}
+                """, (str(new_sanction_date), f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Personal Loan Disbursal - {new_l_no}", today_time, bb_id))
+            else:
+                cursor.execute(f"DELETE FROM bank_book WHERE id = {placeholder}", (bb_id,))
+                c_voucher = generate_cash_voucher_no()
+                cursor.execute(f"""
+                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-108', {placeholder}, {placeholder})
+                """, (str(new_sanction_date), c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
+        elif cb_row:
+            cb_id = cb_row[0]
+            if chosen_asset_code == 'AST-101':
+                cursor.execute(f"""
+                    UPDATE cash_book 
+                    SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
+                        account_code = 'AST-108', narration = {placeholder}, created_at = {placeholder}
+                    WHERE id = {placeholder}
+                """, (str(new_sanction_date), f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time, cb_id))
+            else:
+                cursor.execute(f"DELETE FROM cash_book WHERE id = {placeholder}", (cb_id,))
+                b_voucher = generate_bank_voucher_no()
+                cursor.execute(f"""
+                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-108', {placeholder}, {placeholder})
+                """, (str(new_sanction_date), b_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
+        else:
+            if new_princ > 0:
+                if chosen_asset_code in ('AST-102', 'AST-103'):
+                    b_voucher = generate_bank_voucher_no()
+                    cursor.execute(f"""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-108', {placeholder}, {placeholder})
+                    """, (str(new_sanction_date), b_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
+                else:
+                    c_voucher = generate_cash_voucher_no()
+                    cursor.execute(f"""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-108', {placeholder}, {placeholder})
+                    """, (str(new_sanction_date), c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
+                    
+        conn.commit()
+        resequence_cash_book()
+        resequence_bank_book()
+        
+        return True, f"Personal Loan #{new_l_no} updated and synchronized with schedules, ledgers, and books successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def update_gold_loan_details(
+    gl_id, new_l_no, new_sanction_date, new_princ, new_rate, new_tenure_days,
+    new_out_due, new_disbursal_mode, new_gold_rate, new_orn_desc, new_item_cnt,
+    new_gross_wt, new_stone_ded, new_pkt_no, new_locker_no, new_appr_name,
+    new_status, new_remarks, new_photo_bytes=None, new_photo_name=None
+):
+    """
+    Updates Gold Loan terms, collateral appraisal, weight & valuation,
+    recalculates EMI amortization schedule, updates customer account balance,
+    and synchronizes disbursal Journal Voucher, Cash Book, and Bank Book entries with resequenced running balances.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch current loan details & borrower name
+        cursor.execute(f"""
+            SELECT g.loan_no, g.customer_id, c.name, COALESCE(c.account_no, ''), g.voucher_no, g.principal_amount, g.disbursal_mode
+            FROM gold_loans g
+            JOIN customers c ON g.customer_id = c.id
+            WHERE g.id = {placeholder}
+        """, (gl_id,))
+        g_row = cursor.fetchone()
+        if not g_row:
+            return False, "Gold Loan not found."
+            
+        old_l_no, cust_id, cust_name, cust_acc, old_v_no, old_princ, old_d_mode = g_row
+        old_v_no = old_v_no or f"GLV{gl_id:04d}"
+        
+        new_princ = float(new_princ)
+        new_rate = float(new_rate)
+        new_tenure_days = int(new_tenure_days)
+        new_tenure_months = max(1, int(round(new_tenure_days / 30.0)))
+        
+        ed_net_wt = max(0.01, round(float(new_gross_wt) - float(new_stone_ded), 3))
+        ed_market_val = round(ed_net_wt * float(new_gold_rate), 2)
+        
+        calc_gl_interest = round(new_princ * (new_rate / 100.0) * (new_tenure_days / 365.0), 2)
+        calc_gl_repayable = round(new_princ + calc_gl_interest, 2)
+        calc_gl_p_emi = round(new_princ / float(new_tenure_months), 2)
+        calc_gl_i_emi = round(calc_gl_interest / float(new_tenure_months), 2)
+        calc_gl_installment = round(calc_gl_repayable / float(new_tenure_months), 2)
+        
+        # Schedules calculation
+        ed_gl_sched = generate_loan_schedule(new_sanction_date, new_princ, calc_gl_interest, tenure_months=new_tenure_months, loan_type='GOLD')
+        ed_loan_from = ed_gl_sched[0]["from_date"] if ed_gl_sched else str(new_sanction_date)
+        ed_loan_to = ed_gl_sched[-1]["to_date"] if ed_gl_sched else str(new_sanction_date)
+        ed_first_due = ed_gl_sched[0]["due_date"] if ed_gl_sched else str(new_sanction_date)
+        ed_last_due = ed_gl_sched[-1]["due_date"] if ed_gl_sched else str(new_sanction_date)
+        
+        # Update photo if provided
+        if new_photo_bytes:
+            import psycopg2
+            u_param = psycopg2.Binary(new_photo_bytes) if (USING_SUPABASE and new_photo_bytes) else new_photo_bytes
+            cursor.execute(f"UPDATE gold_loans SET gold_image_file = {placeholder}, gold_image_data = {placeholder} WHERE id = {placeholder}", (new_photo_name, u_param, gl_id))
+            
+        # 2. Update gold_loans table
+        cursor.execute(f"""
+            UPDATE gold_loans
+            SET loan_no = {placeholder}, sanction_date = {placeholder}, gold_rate_per_gram = {placeholder}, ornament_details = {placeholder},
+                item_count = {placeholder}, gross_weight = {placeholder}, stone_deduction = {placeholder}, net_weight = {placeholder},
+                market_value = {placeholder}, principal_amount = {placeholder}, interest_rate = {placeholder},
+                interest_rate_monthly = {placeholder}, tenure_days = {placeholder}, tenure_months = {placeholder}, total_interest = {placeholder},
+                total_repayable = {placeholder}, installment_amount = {placeholder}, monthly_principal_emi = {placeholder},
+                monthly_interest_emi = {placeholder}, monthly_interest_due = {placeholder},
+                loan_from_date = {placeholder}, loan_to_date = {placeholder}, first_emi_due = {placeholder}, last_emi_due = {placeholder},
+                outstanding_due = {placeholder}, vault_packet_no = {placeholder}, locker_no = {placeholder},
+                appraiser_name = {placeholder}, disbursal_mode = {placeholder}, status = {placeholder}, remarks = {placeholder}
+            WHERE id = {placeholder}
+        """, (
+            new_l_no, str(new_sanction_date), new_gold_rate, new_orn_desc,
+            new_item_cnt, new_gross_wt, new_stone_ded, ed_net_wt,
+            ed_market_val, new_princ, new_rate,
+            round(new_rate / 12.0, 2), new_tenure_days, new_tenure_months, calc_gl_interest,
+            calc_gl_repayable, calc_gl_installment, calc_gl_p_emi,
+            calc_gl_i_emi, calc_gl_i_emi,
+            ed_loan_from, ed_loan_to, ed_first_due, ed_last_due,
+            new_out_due, new_pkt_no, new_locker_no,
+            new_appr_name, new_disbursal_mode, new_status, new_remarks,
+            gl_id
+        ))
+        
+        # 3. Update customer accounts table
+        cursor.execute(f"""
+            UPDATE accounts 
+            SET balance = {placeholder} 
+            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_number = {placeholder})
+        """, (new_out_due, cust_id, cust_acc))
+        
+        # 4. Regenerate pending schedules
+        cursor.execute(f"DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = {placeholder} AND status = 'PENDING'", (gl_id,))
+        cursor.execute(f"SELECT emi_number FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = {placeholder} AND status = 'PAID'", (gl_id,))
+        paid_emis = set(r[0] for r in cursor.fetchall())
+        pending_schedules = [s for s in ed_gl_sched if s['emi_number'] not in paid_emis]
+        for sch in pending_schedules:
+            cursor.execute(f"""
+                INSERT INTO loan_emi_schedules (
+                    loan_type, loan_id, loan_no, emi_number, from_date, to_date, due_date,
+                    principal_component, interest_component, emi_amount, status
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING')
+            """, (
+                'GOLD', gl_id, new_l_no, sch['emi_number'],
+                sch['from_date'], sch['to_date'], sch['due_date'],
+                sch['principal_component'], sch['interest_component'], sch['emi_amount']
+            ))
+            
+        # 5. Synchronize Disbursal Journal Voucher & Cash / Bank Book
+        chosen_asset_code = 'AST-101' if 'cash' in new_disbursal_mode.lower() else ('AST-103' if 'state bank' in new_disbursal_mode.lower() or 'sbi' in new_disbursal_mode.lower() else 'AST-102')
+        bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else ("State Bank of India" if chosen_asset_code == 'AST-103' else "Cash")
+        today_time = f"{new_sanction_date} 12:00"
+        
+        # Locate existing JV
+        cursor.execute(f"""
+            SELECT jv_id FROM journal_vouchers 
+            WHERE narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
+            ORDER BY jv_id DESC LIMIT 1
+        """, (f"%Gold Loan Disbursal%{old_l_no}%", f"%Gold Loan Disbursal%{new_l_no}%", f"%{old_v_no}%"))
+        jv_res = cursor.fetchone()
+        
+        if jv_res:
+            jv_id = jv_res[0]
+            cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}",
+                           (str(new_sanction_date), f"Gold Loan Disbursal - {cust_name} ({new_l_no})", jv_id))
+            cursor.execute(f"UPDATE jv_entries SET account_code = 'AST-110', debit = {placeholder} WHERE jv_id = {placeholder} AND debit > 0", (new_princ, jv_id))
+            cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder}, credit = {placeholder} WHERE jv_id = {placeholder} AND credit > 0", (chosen_asset_code, new_princ, jv_id))
+        else:
+            if new_princ > 0:
+                if USING_SUPABASE:
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (str(new_sanction_date), f"Gold Loan Disbursal - {cust_name} ({new_l_no})"))
+                    jv_id = cursor.fetchone()[0]
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-110', %s, 0)", (jv_id, new_princ))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, chosen_asset_code, new_princ))
+                else:
+                    cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (str(new_sanction_date), f"Gold Loan Disbursal - {cust_name} ({new_l_no})"))
+                    jv_id = cursor.lastrowid
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-110', ?, 0)", (jv_id, new_princ))
+                    cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, chosen_asset_code, new_princ))
+                    
+        # Locate existing Cash / Bank Book entry
+        cursor.execute(f"""
+            SELECT id FROM bank_book 
+            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
+            ORDER BY id ASC LIMIT 1
+        """, (f"%Gold Loan Disbursal%{old_l_no}%", f"%Gold Loan Disbursal%{new_l_no}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+        bb_row = cursor.fetchone()
+        
+        cursor.execute(f"""
+            SELECT id FROM cash_book 
+            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
+            ORDER BY id ASC LIMIT 1
+        """, (f"%Gold Loan Disbursal%{old_l_no}%", f"%Gold Loan Disbursal%{new_l_no}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+        cb_row = cursor.fetchone()
+        
+        if bb_row:
+            bb_id = bb_row[0]
+            if chosen_asset_code in ('AST-102', 'AST-103'):
+                cursor.execute(f"""
+                    UPDATE bank_book 
+                    SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
+                        bank_name = {placeholder}, account_code = 'AST-110', narration = {placeholder}, created_at = {placeholder}
+                    WHERE id = {placeholder}
+                """, (str(new_sanction_date), f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Gold Loan Disbursal - {new_l_no}", today_time, bb_id))
+            else:
+                cursor.execute(f"DELETE FROM bank_book WHERE id = {placeholder}", (bb_id,))
+                c_voucher = generate_cash_voucher_no()
+                cursor.execute(f"""
+                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-110', {placeholder}, {placeholder})
+                """, (str(new_sanction_date), c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
+        elif cb_row:
+            cb_id = cb_row[0]
+            if chosen_asset_code == 'AST-101':
+                cursor.execute(f"""
+                    UPDATE cash_book 
+                    SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
+                        account_code = 'AST-110', narration = {placeholder}, created_at = {placeholder}
+                    WHERE id = {placeholder}
+                """, (str(new_sanction_date), f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time, cb_id))
+            else:
+                cursor.execute(f"DELETE FROM cash_book WHERE id = {placeholder}", (cb_id,))
+                b_voucher = generate_bank_voucher_no()
+                cursor.execute(f"""
+                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-110', {placeholder}, {placeholder})
+                """, (str(new_sanction_date), b_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
+        else:
+            if new_princ > 0:
+                if chosen_asset_code in ('AST-102', 'AST-103'):
+                    b_voucher = generate_bank_voucher_no()
+                    cursor.execute(f"""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-110', {placeholder}, {placeholder})
+                    """, (str(new_sanction_date), b_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
+                else:
+                    c_voucher = generate_cash_voucher_no()
+                    cursor.execute(f"""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-110', {placeholder}, {placeholder})
+                    """, (str(new_sanction_date), c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
+                    
+        conn.commit()
+        resequence_cash_book()
+        resequence_bank_book()
+        
+        return True, f"Gold Loan #{new_l_no} updated and synchronized with schedules, ledgers, and books successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, tenure_days=100, int_rate=12.0, disbursal_mode="Union Bank of India", loan_no=None, remarks="Opening Loan Balance"):
+    """
+    Creates a new Personal Loan opening balance for an existing customer, generates 12-month schedule,
+    posts Disbursal JV (AST-108), and logs Cash/Bank book entry.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        cursor.execute(f"SELECT name, COALESCE(account_no, ''), phone FROM customers WHERE id = {placeholder}", (cust_id,))
+        c_row = cursor.fetchone()
+        if not c_row:
+            return False, "Customer not found"
+        cust_name, cust_acc, cust_phone = c_row
+        
+        pl_code = loan_no.strip() if loan_no and loan_no.strip() else f"PL-2026-{cust_id:04d}"
+        s_date_str = str(sanction_date)
+        today_code = s_date_str.replace("-", "")
+        pl_vno = f"PLV{today_code}{cust_id:03d}"
+        
+        princ_amount = float(princ_amount)
+        tenure_days = int(tenure_days)
+        int_rate = float(int_rate)
+        tenure_months = max(1, int(round(tenure_days / 30.0)))
+        
+        calc_tot_interest = round(princ_amount * (int_rate / 100.0) * (tenure_days / 365.0), 2)
+        calc_tot_repayable = round(princ_amount + calc_tot_interest, 2)
+        calc_p_emi = round(princ_amount / float(tenure_months), 2)
+        calc_i_emi = round(calc_tot_interest / float(tenure_months), 2)
+        calc_installment = round(calc_tot_repayable / float(tenure_months), 2)
+        
+        pl_sched = generate_loan_schedule(s_date_str, princ_amount, calc_tot_interest, tenure_months=tenure_months, loan_type='PERSONAL')
+        loan_from = pl_sched[0]["from_date"] if pl_sched else s_date_str
+        loan_to = pl_sched[-1]["to_date"] if pl_sched else s_date_str
+        first_due = pl_sched[0]["due_date"] if pl_sched else s_date_str
+        last_due = pl_sched[-1]["due_date"] if pl_sched else s_date_str
+        
+        if USING_SUPABASE:
+            cursor.execute("""
+                INSERT INTO personal_loans (
+                    loan_no, customer_id, sanction_date, principal_amount, interest_rate,
+                    interest_type, tenure_days, tenure_months, total_interest, total_repayable,
+                    installment_amount, outstanding_due, disbursal_mode, voucher_no,
+                    guarantor_name, guarantor_phone, purpose, status, remarks,
+                    loan_from_date, loan_to_date, first_emi_due, last_emi_due,
+                    monthly_principal_emi, monthly_interest_emi, renewal_count
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    'Member Surety', %s, 'Personal Loan', 'ACTIVE', %s,
+                    %s, %s, %s, %s,
+                    %s, %s, 0
+                ) RETURNING id
+            """, (
+                pl_code, cust_id, s_date_str, princ_amount, int_rate,
+                f"{tenure_days}-Day Loan", tenure_days, tenure_months, calc_tot_interest, calc_tot_repayable,
+                calc_installment, calc_tot_repayable, disbursal_mode, pl_vno,
+                cust_phone or 'N/A', remarks,
+                loan_from, loan_to, first_due, last_due,
+                calc_p_emi, calc_i_emi
+            ))
+            new_pl_id = cursor.fetchone()[0]
+        else:
+            cursor.execute("""
+                INSERT INTO personal_loans (
+                    loan_no, customer_id, sanction_date, principal_amount, interest_rate,
+                    interest_type, tenure_days, tenure_months, total_interest, total_repayable,
+                    installment_amount, outstanding_due, disbursal_mode, voucher_no,
+                    guarantor_name, guarantor_phone, purpose, status, remarks,
+                    loan_from_date, loan_to_date, first_emi_due, last_emi_due,
+                    monthly_principal_emi, monthly_interest_emi, renewal_count
+                ) VALUES (
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    'Member Surety', ?, 'Personal Loan', 'ACTIVE', ?,
+                    ?, ?, ?, ?,
+                    ?, ?, 0
+                )
+            """, (
+                pl_code, cust_id, s_date_str, princ_amount, int_rate,
+                f"{tenure_days}-Day Loan", tenure_days, tenure_months, calc_tot_interest, calc_tot_repayable,
+                calc_installment, calc_tot_repayable, disbursal_mode, pl_vno,
+                cust_phone or 'N/A', remarks,
+                loan_from, loan_to, first_due, last_due,
+                calc_p_emi, calc_i_emi
+            ))
+            new_pl_id = cursor.lastrowid
+            
+        # Schedules
+        for sch in pl_sched:
+            cursor.execute(f"""
+                INSERT INTO loan_emi_schedules (
+                    loan_type, loan_id, loan_no, emi_number, from_date, to_date, due_date,
+                    principal_component, interest_component, emi_amount, status
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING')
+            """, (
+                'PERSONAL', new_pl_id, pl_code, sch['emi_number'],
+                sch['from_date'], sch['to_date'], sch['due_date'],
+                sch['principal_component'], sch['interest_component'], sch['emi_amount']
+            ))
+            
+        # Update accounts table
+        cursor.execute(f"""
+            UPDATE accounts SET balance = {placeholder} WHERE customer_id = {placeholder} AND account_type = 'Loan Account'
+        """, (calc_tot_repayable, cust_id))
+        
+        # Disbursal JV and Cash/Bank book
+        chosen_asset_code = 'AST-101' if 'cash' in disbursal_mode.lower() else ('AST-103' if 'state bank' in disbursal_mode.lower() or 'sbi' in disbursal_mode.lower() else 'AST-102')
+        bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else ("State Bank of India" if chosen_asset_code == 'AST-103' else "Cash")
+        today_time = f"{s_date_str} 12:00"
+        
+        if USING_SUPABASE:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (s_date_str, f"Personal Loan Disbursal - {cust_name} ({pl_code})"))
+            jv_id = cursor.fetchone()[0]
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-108', %s, 0)", (jv_id, princ_amount))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, chosen_asset_code, princ_amount))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (s_date_str, f"Personal Loan Disbursal - {cust_name} ({pl_code})"))
+            jv_id = cursor.lastrowid
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-108', ?, 0)", (jv_id, princ_amount))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, chosen_asset_code, princ_amount))
+            
+        if chosen_asset_code in ('AST-102', 'AST-103'):
+            b_voucher = generate_bank_voucher_no()
+            cursor.execute(f"""
+                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-108', {placeholder}, {placeholder})
+            """, (s_date_str, b_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{pl_code}]", princ_amount, bank_name, f"Opening Personal Loan Disbursal - {pl_code}", today_time))
+        else:
+            c_voucher = generate_cash_voucher_no()
+            cursor.execute(f"""
+                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-108', {placeholder}, {placeholder})
+            """, (s_date_str, c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{pl_code}]", princ_amount, f"Opening Personal Loan Disbursal - {pl_code}", today_time))
+            
+        conn.commit()
+        resequence_cash_book()
+        resequence_bank_book()
+        
+        return True, f"Personal Loan #{pl_code} of ₹{princ_amount:,.2f} created and linked successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenure_days=365, int_rate=12.0, disbursal_mode="Union Bank of India", loan_no=None, gold_rate=6500.0, net_weight=None, gross_weight=None, packet_no=None, locker_no="LOCKER-01", remarks="Opening Gold Loan Balance"):
+    """
+    Creates a new Gold Loan opening balance for an existing customer, creates collateral appraisal record,
+    generates 12-month schedule, posts Disbursal JV (AST-110), and logs Cash/Bank book entry.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        cursor.execute(f"SELECT name, COALESCE(account_no, ''), phone FROM customers WHERE id = {placeholder}", (cust_id,))
+        c_row = cursor.fetchone()
+        if not c_row:
+            return False, "Customer not found"
+        cust_name, cust_acc, cust_phone = c_row
+        
+        gl_code = loan_no.strip() if loan_no and loan_no.strip() else f"GL-2026-{cust_id:04d}"
+        s_date_str = str(sanction_date)
+        today_code = s_date_str.replace("-", "")
+        gl_vno = f"GLV{today_code}{cust_id:03d}"
+        
+        princ_amount = float(princ_amount)
+        tenure_days = int(tenure_days)
+        int_rate = float(int_rate)
+        tenure_months = max(1, int(round(tenure_days / 30.0)))
+        gold_rate = float(gold_rate or 6500.0)
+        
+        calc_weight = float(net_weight) if net_weight else max(1.0, round(princ_amount / 5000.0, 3))
+        calc_gross = float(gross_weight) if gross_weight else calc_weight
+        calc_market_val = round(calc_weight * gold_rate, 2)
+        
+        calc_gl_interest = round(princ_amount * (int_rate / 100.0) * (tenure_days / 365.0), 2)
+        calc_gl_repayable = round(princ_amount + calc_gl_interest, 2)
+        calc_gl_p_emi = round(princ_amount / float(tenure_months), 2)
+        calc_gl_i_emi = round(calc_gl_interest / float(tenure_months), 2)
+        calc_gl_installment = round(calc_gl_repayable / float(tenure_months), 2)
+        
+        gl_sched = generate_loan_schedule(s_date_str, princ_amount, calc_gl_interest, tenure_months=tenure_months, loan_type='GOLD')
+        loan_from = gl_sched[0]["from_date"] if gl_sched else s_date_str
+        loan_to = gl_sched[-1]["to_date"] if gl_sched else s_date_str
+        first_due = gl_sched[0]["due_date"] if gl_sched else s_date_str
+        last_due = gl_sched[-1]["due_date"] if gl_sched else s_date_str
+        pkt_val = packet_no or f"PKT-{cust_id:04d}"
+        
+        if USING_SUPABASE:
+            cursor.execute("""
+                INSERT INTO gold_loans (
+                    loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
+                    item_count, gross_weight, stone_deduction, net_weight, purity,
+                    market_value, ltv_percent, principal_amount, interest_rate,
+                    interest_rate_monthly, tenure_days, tenure_months, total_interest, total_repayable,
+                    installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
+                    loan_from_date, loan_to_date, first_emi_due, last_emi_due,
+                    outstanding_due, vault_packet_no, locker_no, appraiser_name,
+                    disbursal_mode, voucher_no, status, remarks, renewal_count
+                ) VALUES (
+                    %s, %s, %s, %s, 'Gold Ornaments (Opening Loan)',
+                    1, %s, 0.0, %s, '22K',
+                    %s, 75.0, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, 'Approved Nidhi Appraiser',
+                    %s, %s, 'ACTIVE', %s, 0
+                ) RETURNING id
+            """, (
+                gl_code, cust_id, s_date_str, gold_rate,
+                calc_gross, calc_weight,
+                calc_market_val, princ_amount, int_rate,
+                round(int_rate / 12.0, 2), tenure_days, tenure_months, calc_gl_interest, calc_gl_repayable,
+                calc_gl_installment, calc_gl_p_emi, calc_gl_i_emi, calc_gl_i_emi,
+                loan_from, loan_to, first_due, last_due,
+                calc_gl_repayable, pkt_val, locker_no,
+                disbursal_mode, gl_vno, remarks
+            ))
+            new_gl_id = cursor.fetchone()[0]
+        else:
+            cursor.execute("""
+                INSERT INTO gold_loans (
+                    loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
+                    item_count, gross_weight, stone_deduction, net_weight, purity,
+                    market_value, ltv_percent, principal_amount, interest_rate,
+                    interest_rate_monthly, tenure_days, tenure_months, total_interest, total_repayable,
+                    installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
+                    loan_from_date, loan_to_date, first_emi_due, last_emi_due,
+                    outstanding_due, vault_packet_no, locker_no, appraiser_name,
+                    disbursal_mode, voucher_no, status, remarks, renewal_count
+                ) VALUES (
+                    ?, ?, ?, ?, 'Gold Ornaments (Opening Loan)',
+                    1, ?, 0.0, ?, '22K',
+                    ?, 75.0, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, 'Approved Nidhi Appraiser',
+                    ?, ?, 'ACTIVE', ?, 0
+                )
+            """, (
+                gl_code, cust_id, s_date_str, gold_rate,
+                calc_gross, calc_weight,
+                calc_market_val, princ_amount, int_rate,
+                round(int_rate / 12.0, 2), tenure_days, tenure_months, calc_gl_interest, calc_gl_repayable,
+                calc_gl_installment, calc_gl_p_emi, calc_gl_i_emi, calc_gl_i_emi,
+                loan_from, loan_to, first_due, last_due,
+                calc_gl_repayable, pkt_val, locker_no,
+                disbursal_mode, gl_vno, remarks
+            ))
+            new_gl_id = cursor.lastrowid
+            
+        # Schedules
+        for sch in gl_sched:
+            cursor.execute(f"""
+                INSERT INTO loan_emi_schedules (
+                    loan_type, loan_id, loan_no, emi_number, from_date, to_date, due_date,
+                    principal_component, interest_component, emi_amount, status
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING')
+            """, (
+                'GOLD', new_gl_id, gl_code, sch['emi_number'],
+                sch['from_date'], sch['to_date'], sch['due_date'],
+                sch['principal_component'], sch['interest_component'], sch['emi_amount']
+            ))
+            
+        # Update accounts table
+        cursor.execute(f"""
+            UPDATE accounts SET balance = {placeholder} WHERE customer_id = {placeholder} AND account_type = 'Loan Account'
+        """, (calc_gl_repayable, cust_id))
+        
+        # Disbursal JV and Cash/Bank book
+        chosen_asset_code = 'AST-101' if 'cash' in disbursal_mode.lower() else ('AST-103' if 'state bank' in disbursal_mode.lower() or 'sbi' in disbursal_mode.lower() else 'AST-102')
+        bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else ("State Bank of India" if chosen_asset_code == 'AST-103' else "Cash")
+        today_time = f"{s_date_str} 12:00"
+        
+        if USING_SUPABASE:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (s_date_str, f"Gold Loan Disbursal - {cust_name} ({gl_code})"))
+            jv_id = cursor.fetchone()[0]
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-110', %s, 0)", (jv_id, princ_amount))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, 0, %s)", (jv_id, chosen_asset_code, princ_amount))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (s_date_str, f"Gold Loan Disbursal - {cust_name} ({gl_code})"))
+            jv_id = cursor.lastrowid
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-110', ?, 0)", (jv_id, princ_amount))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, chosen_asset_code, princ_amount))
+            
+        if chosen_asset_code in ('AST-102', 'AST-103'):
+            b_voucher = generate_bank_voucher_no()
+            cursor.execute(f"""
+                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-110', {placeholder}, {placeholder})
+            """, (s_date_str, b_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{gl_code}]", princ_amount, bank_name, f"Opening Gold Loan Disbursal - {gl_code}", today_time))
+        else:
+            c_voucher = generate_cash_voucher_no()
+            cursor.execute(f"""
+                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-110', {placeholder}, {placeholder})
+            """, (s_date_str, c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{gl_code}]", princ_amount, f"Opening Gold Loan Disbursal - {gl_code}", today_time))
+            
+        conn.commit()
+        resequence_cash_book()
+        resequence_bank_book()
+        
+        return True, f"Gold Loan #{gl_code} of ₹{princ_amount:,.2f} created and linked successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
 def resequence_customers():
     """Resequences all customers (1..N) and maps all child table customer_id references."""
     conn = None

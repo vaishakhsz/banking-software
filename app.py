@@ -38,7 +38,8 @@ try:
         delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
         delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
         resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
-        update_sb_account_details
+        update_sb_account_details, update_personal_loan_details, update_gold_loan_details,
+        create_or_link_personal_loan_opening, create_or_link_gold_loan_opening
     )
 except Exception as _db_imp_err:
     import traceback
@@ -667,26 +668,290 @@ def render_customer_management():
             cust_data = run_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file FROM customers WHERE id=?", (cust_id_edit,))
             if cust_data:
                 c = cust_data[0]
-                with st.form(f"edit_profile_form_{cust_id_edit}"):
-                    new_name = st.text_input("Name", value=c[0])
-                    new_acc_no = st.text_input("Account Number", value=c[1])
-                    new_email = st.text_input("Email", value=c[2])
-                    new_phone = st.text_input("Phone", value=c[3])
-                    new_street = st.text_input("Street", value=c[4])
-                    new_city = st.text_input("City", value=c[5])
-                    new_state = st.text_input("State", value=c[6])
-                    new_pincode = st.text_input("Pincode", value=c[7])
+                # SECTION 1: Personal Profile
+                with st.expander("👤 1. Edit Customer Profile & Contact Details", expanded=True):
+                    with st.form(f"edit_profile_form_{cust_id_edit}"):
+                        new_name = st.text_input("Name", value=c[0])
+                        new_acc_no = st.text_input("Account Number", value=c[1])
+                        new_email = st.text_input("Email", value=c[2])
+                        new_phone = st.text_input("Phone", value=c[3])
+                        new_street = st.text_input("Street", value=c[4])
+                        new_city = st.text_input("City", value=c[5])
+                        new_state = st.text_input("State", value=c[6])
+                        new_pincode = st.text_input("Pincode", value=c[7])
+                        
+                        if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
+                            run_query("""
+                                UPDATE customers 
+                                SET name=?, account_no=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
+                                WHERE id=?
+                            """, (new_name, new_acc_no, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
+                            clear_db_cache()
+                            st.success("Profile details updated successfully!")
+                            time.sleep(0.1)
+                            st.rerun()
+
+                # SECTION 2: Gold Loans Opening Balances
+                with st.expander("🪙 2. Edit Gold Loan Opening Balances & Sanctions", expanded=True):
+                    cust_gls = run_query("""
+                        SELECT id, loan_no, sanction_date, principal_amount, interest_rate, tenure_days,
+                               outstanding_due, disbursal_mode, gold_rate_per_gram, ornament_details,
+                               item_count, gross_weight, stone_deduction, net_weight, market_value,
+                               vault_packet_no, locker_no, appraiser_name, status, remarks
+                        FROM gold_loans
+                        WHERE customer_id = ?
+                        ORDER BY id ASC
+                    """, (cust_id_edit,))
                     
-                    if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
-                        run_query("""
-                            UPDATE customers 
-                            SET name=?, account_no=?, email=?, phone=?, street=?, city=?, state=?, pincode=? 
-                            WHERE id=?
-                        """, (new_name, new_acc_no, new_email, new_phone, new_street, new_city, new_state, new_pincode, cust_id_edit), fetch=False)
-                        clear_db_cache()
-                        st.success("Profile details updated successfully!")
-                        time.sleep(0.1)
-                        st.rerun()
+                    if cust_gls:
+                        for gl in cust_gls:
+                            gl_id, gl_no, gl_sdate, gl_princ, gl_rate, gl_tdays, gl_outdue, gl_dmode, gl_grate, gl_orn, gl_cnt, gl_gross, gl_stone, gl_net, gl_mval, gl_pkt, gl_lock, gl_appr, gl_stat, gl_rem = gl
+                            
+                            try:
+                                gl_sdate_dt = datetime.strptime(str(gl_sdate)[:10], "%Y-%m-%d").date()
+                            except Exception:
+                                gl_sdate_dt = date.today()
+                                
+                            st.markdown(f"#### 🪙 Gold Loan **#{gl_no}** (Principal: ₹{float(gl_princ):,.2f} | Due: ₹{float(gl_outdue):,.2f} | Status: `{gl_stat}`)")
+                            
+                            with st.container(border=True):
+                                col_g1, col_g2, col_g3 = st.columns(3)
+                                ed_gl_p = col_g1.number_input(f"Sanctioned Principal / Opening Balance (₹) *", min_value=100.0, value=float(gl_princ), step=1000.0, key=f"cust_gl_p_{gl_id}")
+                                ed_gl_sd = col_g2.date_input(f"Sanction Date", value=gl_sdate_dt, format="DD-MM-YYYY", key=f"cust_gl_sd_{gl_id}")
+                                
+                                gl_modes = ["Union Bank of India", "Cash in Hand (Office Drawer)", "State Bank of India"]
+                                gl_dmode_idx = 0
+                                if "cash" in str(gl_dmode).lower(): gl_dmode_idx = 1
+                                elif "sbi" in str(gl_dmode).lower() or "state bank" in str(gl_dmode).lower(): gl_dmode_idx = 2
+                                ed_gl_dm = col_g3.selectbox("Funding / Disbursal Mode", gl_modes, index=gl_dmode_idx, key=f"cust_gl_dm_{gl_id}")
+                                
+                                col_gt1, col_gt2, col_gt3 = st.columns(3)
+                                ed_gl_r = col_gt1.number_input("Interest Rate (% p.a.)", min_value=0.0, value=float(gl_rate or 12.0), step=0.5, key=f"cust_gl_r_{gl_id}")
+                                ed_gl_td = col_gt2.number_input("Tenure (Days)", min_value=1, value=int(gl_tdays or 365), step=10, key=f"cust_gl_td_{gl_id}")
+                                ed_gl_gr = col_gt3.number_input("22K Gold Rate (₹/g)", min_value=1000.0, value=float(gl_grate or 6500.0), step=50.0, key=f"cust_gl_gr_{gl_id}")
+                                
+                                col_gw1, col_gw2, col_gw3, col_gw4 = st.columns(4)
+                                ed_gl_gross = col_gw1.number_input("Gross Weight (g)", min_value=0.1, value=float(gl_gross or 10.0), step=0.1, format="%.3f", key=f"cust_gl_gw_{gl_id}")
+                                ed_gl_stone = col_gw2.number_input("Stone Deduction (g)", min_value=0.0, value=float(gl_stone or 0.0), step=0.05, format="%.3f", key=f"cust_gl_st_{gl_id}")
+                                ed_gl_net_wt = max(0.01, round(float(ed_gl_gross) - float(ed_gl_stone), 3))
+                                col_gw3.metric("Net Gold Weight", f"{ed_gl_net_wt:.3f} g")
+                                ed_gl_mval_calc = round(ed_gl_net_wt * float(ed_gl_gr), 2)
+                                col_gw4.metric("Market Valuation", f"₹{ed_gl_mval_calc:,.2f}")
+                                
+                                col_go1, col_go2, col_go3 = st.columns(3)
+                                ed_gl_orn = col_go1.text_input("Ornaments Description", value=str(gl_orn or "Gold Ornaments"), key=f"cust_gl_orn_{gl_id}")
+                                ed_gl_cnt = col_go2.number_input("Item Count", min_value=1, value=int(gl_cnt or 1), step=1, key=f"cust_gl_cnt_{gl_id}")
+                                ed_gl_pkt = col_go3.text_input("Vault Packet No", value=str(gl_pkt or f"PKT-{cust_id_edit:04d}"), key=f"cust_gl_pkt_{gl_id}")
+                                
+                                col_ga1, col_ga2, col_ga3 = st.columns(3)
+                                ed_gl_lock = col_ga1.text_input("Locker No", value=str(gl_lock or "LOCKER-01"), key=f"cust_gl_lock_{gl_id}")
+                                ed_gl_appr = col_ga2.text_input("Appraiser", value=str(gl_appr or "Approved Nidhi Appraiser"), key=f"cust_gl_appr_{gl_id}")
+                                
+                                gl_stats = ["ACTIVE", "CLOSED", "CLOSED_RELEASED", "COURT_CASE", "AUCTION_PROCEEDING", "NOT_REMITTING"]
+                                gl_st_idx = gl_stats.index(gl_stat) if gl_stat in gl_stats else 0
+                                ed_gl_st = col_ga3.selectbox("Status", gl_stats, index=gl_st_idx, key=f"cust_gl_st_{gl_id}")
+                                
+                                ed_gl_rem = st.text_input("Remarks / Notes", value=str(gl_rem or ""), key=f"cust_gl_rem_{gl_id}")
+                                
+                                gl_tmo = max(1, int(round(int(ed_gl_td) / 30.0)))
+                                calc_gl_int = round(float(ed_gl_p) * (float(ed_gl_r) / 100.0) * (int(ed_gl_td) / 365.0), 2)
+                                calc_gl_rep = round(float(ed_gl_p) + calc_gl_int, 2)
+                                
+                                col_gdue1, col_gdue2 = st.columns(2)
+                                reset_gldue = col_gdue1.checkbox("🔄 Reset Outstanding Due to New Repayable", value=(float(gl_outdue) == calc_gl_rep or float(gl_outdue) == float(gl_princ)), key=f"cust_gl_rdue_{gl_id}")
+                                if reset_gldue:
+                                    ed_gl_outdue = calc_gl_rep
+                                    col_gdue2.info(f"Outstanding Due: **₹{ed_gl_outdue:,.2f}**")
+                                else:
+                                    ed_gl_outdue = col_gdue2.number_input("Custom Outstanding Due (₹)", min_value=0.0, value=float(gl_outdue), step=100.0, key=f"cust_gl_odue_{gl_id}")
+                                    
+                                if st.button(f"💾 Save & Sync Gold Loan #{gl_no} (Update Ledgers, JVs & Books)", type="primary", use_container_width=True, key=f"btn_save_cust_gl_{gl_id}"):
+                                    success, msg = update_gold_loan_details(
+                                        gl_id, gl_no, ed_gl_sd, ed_gl_p, ed_gl_r, ed_gl_td,
+                                        ed_gl_outdue, ed_gl_dm, ed_gl_gr, ed_gl_orn, ed_gl_cnt,
+                                        ed_gl_gross, ed_gl_stone, ed_gl_pkt, ed_gl_lock, ed_gl_appr,
+                                        ed_gl_st, ed_gl_rem
+                                    )
+                                    clear_db_cache()
+                                    if success:
+                                        st.success(f"✅ {msg}")
+                                        time.sleep(0.5)
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed to update Gold Loan: {msg}")
+                    else:
+                        st.info("No existing Gold Loans found for this customer.")
+                        
+                    # Add New Gold Loan Opening Expander
+                    with st.expander("➕ Add New Gold Loan Opening Balance for this Customer", expanded=False):
+                        col_ngl1, col_ngl2, col_ngl3 = st.columns(3)
+                        ngl_princ = col_ngl1.number_input("Sanctioned Principal Amount (₹) *", min_value=500.0, value=10000.0, step=1000.0, key=f"ngl_p_{cust_id_edit}")
+                        ngl_sdate = col_ngl2.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY", key=f"ngl_sd_{cust_id_edit}")
+                        ngl_dmode = col_ngl3.selectbox("Funding / Disbursal Mode", ["Union Bank of India", "Cash in Hand (Office Drawer)", "State Bank of India"], key=f"ngl_dm_{cust_id_edit}")
+                        
+                        col_nglt1, col_nglt2, col_nglt3 = st.columns(3)
+                        ngl_rate = col_nglt1.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key=f"ngl_r_{cust_id_edit}")
+                        ngl_tdays = col_nglt2.number_input("Tenure (Days)", min_value=1, value=365, step=10, key=f"ngl_td_{cust_id_edit}")
+                        ngl_grate = col_nglt3.number_input("22K Gold Rate (₹/g)", min_value=1000.0, value=6500.0, step=50.0, key=f"ngl_gr_{cust_id_edit}")
+                        
+                        col_nglw1, col_nglw2 = st.columns(2)
+                        ngl_gross = col_nglw1.number_input("Gross Weight (g)", min_value=0.1, value=round(ngl_princ / 5000.0, 3), step=0.1, format="%.3f", key=f"ngl_gw_{cust_id_edit}")
+                        ngl_net = col_nglw2.number_input("Net Weight (g)", min_value=0.1, value=round(ngl_princ / 5000.0, 3), step=0.1, format="%.3f", key=f"ngl_nw_{cust_id_edit}")
+                        
+                        ngl_rem = st.text_input("Remarks", value="Opening Gold Loan Balance", key=f"ngl_rem_{cust_id_edit}")
+                        
+                        if st.button("🚀 Create & Link Gold Loan Opening Balance", type="primary", use_container_width=True, key=f"btn_add_gl_{cust_id_edit}"):
+                            success, msg = create_or_link_gold_loan_opening(
+                                cust_id_edit, ngl_princ, ngl_sdate, ngl_tdays, ngl_rate, ngl_dmode,
+                                gold_rate=ngl_grate, net_weight=ngl_net, gross_weight=ngl_gross, remarks=ngl_rem
+                            )
+                            clear_db_cache()
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to create Gold Loan: {msg}")
+
+                # SECTION 3: Personal Loans Opening Balances
+                with st.expander("💼 3. Edit Personal & Micro Loan Opening Balances & Sanctions", expanded=True):
+                    cust_pls = run_query("""
+                        SELECT id, loan_no, sanction_date, principal_amount, interest_rate, tenure_days,
+                               outstanding_due, disbursal_mode, guarantor_name, guarantor_phone,
+                               guarantor_relation, guarantor_address, purpose, status, remarks
+                        FROM personal_loans
+                        WHERE customer_id = ?
+                        ORDER BY id ASC
+                    """, (cust_id_edit,))
+                    
+                    if cust_pls:
+                        for pl in cust_pls:
+                            pl_id, pl_no, pl_sdate, pl_princ, pl_rate, pl_tdays, pl_outdue, pl_dmode, pl_gname, pl_gphone, pl_grel, pl_gaddr, pl_purp, pl_stat, pl_rem = pl
+                            
+                            try:
+                                pl_sdate_dt = datetime.strptime(str(pl_sdate)[:10], "%Y-%m-%d").date()
+                            except Exception:
+                                pl_sdate_dt = date.today()
+                                
+                            st.markdown(f"#### 💼 Personal Loan **#{pl_no}** (Principal: ₹{float(pl_princ):,.2f} | Due: ₹{float(pl_outdue):,.2f} | Status: `{pl_stat}`)")
+                            
+                            with st.container(border=True):
+                                col_p1, col_p2, col_p3 = st.columns(3)
+                                ed_pl_p = col_p1.number_input(f"Sanctioned Principal / Opening Balance (₹) *", min_value=100.0, value=float(pl_princ), step=1000.0, key=f"cust_pl_p_{pl_id}")
+                                ed_pl_sd = col_p2.date_input(f"Sanction Date", value=pl_sdate_dt, format="DD-MM-YYYY", key=f"cust_pl_sd_{pl_id}")
+                                
+                                pl_modes = ["Union Bank of India", "Cash in Hand (Office Drawer)", "State Bank of India"]
+                                pl_dmode_idx = 0
+                                if "cash" in str(pl_dmode).lower(): pl_dmode_idx = 1
+                                elif "sbi" in str(pl_dmode).lower() or "state bank" in str(pl_dmode).lower(): pl_dmode_idx = 2
+                                ed_pl_dm = col_p3.selectbox("Funding / Disbursal Mode", pl_modes, index=pl_dmode_idx, key=f"cust_pl_dm_{pl_id}")
+                                
+                                col_pt1, col_pt2, col_pt3 = st.columns(3)
+                                ed_pl_r = col_pt1.number_input("Interest Rate (% p.a.)", min_value=0.0, value=float(pl_rate or 12.0), step=0.5, key=f"cust_pl_r_{pl_id}")
+                                ed_pl_td = col_pt2.number_input("Tenure (Days)", min_value=1, value=int(pl_tdays or 100), step=5, key=f"cust_pl_td_{pl_id}")
+                                
+                                pl_stats = ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"]
+                                pl_st_idx = pl_stats.index(pl_stat) if pl_stat in pl_stats else 0
+                                ed_pl_st = col_pt3.selectbox("Loan Status", pl_stats, index=pl_st_idx, key=f"cust_pl_st_{pl_id}")
+                                
+                                col_pg1, col_pg2, col_pg3 = st.columns(3)
+                                ed_pl_gn = col_pg1.text_input("Guarantor Name", value=str(pl_gname or ""), key=f"cust_pl_gn_{pl_id}")
+                                ed_pl_gp = col_pg2.text_input("Guarantor Phone", value=str(pl_gphone or ""), key=f"cust_pl_gp_{pl_id}")
+                                ed_pl_gr = col_pg3.text_input("Guarantor Relationship", value=str(pl_grel or "Member Surety"), key=f"cust_pl_gr_{pl_id}")
+                                
+                                col_pga1, col_pga2 = st.columns(2)
+                                ed_pl_ga = col_pga1.text_input("Guarantor Address", value=str(pl_gaddr or ""), key=f"cust_pl_ga_{pl_id}")
+                                ed_pl_purp = col_pga2.text_input("Loan Purpose", value=str(pl_purp or "Personal / Household Finance"), key=f"cust_pl_purp_{pl_id}")
+                                
+                                ed_pl_rem = st.text_input("Remarks / Notes", value=str(pl_rem or ""), key=f"cust_pl_rem_{pl_id}")
+                                
+                                calc_pl_int = round(float(ed_pl_p) * (float(ed_pl_r) / 100.0) * (int(ed_pl_td) / 365.0), 2)
+                                calc_pl_rep = round(float(ed_pl_p) + calc_pl_int, 2)
+                                
+                                col_pdue1, col_pdue2 = st.columns(2)
+                                reset_pldue = col_pdue1.checkbox("🔄 Reset Outstanding Due to New Repayable", value=(float(pl_outdue) == calc_pl_rep or float(pl_outdue) == float(pl_princ)), key=f"cust_pl_rdue_{pl_id}")
+                                if reset_pldue:
+                                    ed_pl_outdue = calc_pl_rep
+                                    col_pdue2.info(f"Outstanding Due: **₹{ed_pl_outdue:,.2f}**")
+                                else:
+                                    ed_pl_outdue = col_pdue2.number_input("Custom Outstanding Due (₹)", min_value=0.0, value=float(pl_outdue), step=100.0, key=f"cust_pl_odue_{pl_id}")
+                                    
+                                if st.button(f"💾 Save & Sync Personal Loan #{pl_no} (Update Ledgers, JVs & Books)", type="primary", use_container_width=True, key=f"btn_save_cust_pl_{pl_id}"):
+                                    success, msg = update_personal_loan_details(
+                                        pl_id, pl_no, ed_pl_sd, ed_pl_p, ed_pl_r, ed_pl_td,
+                                        ed_pl_outdue, ed_pl_dm, ed_pl_gn, ed_pl_gp, ed_pl_gr,
+                                        ed_pl_ga, ed_pl_purp, ed_pl_st, ed_pl_rem
+                                    )
+                                    clear_db_cache()
+                                    if success:
+                                        st.success(f"✅ {msg}")
+                                        time.sleep(0.5)
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed to update Personal Loan: {msg}")
+                    else:
+                        st.info("No existing Personal Loans found for this customer.")
+                        
+                    # Add New Personal Loan Opening Expander
+                    with st.expander("➕ Add New Personal Loan Opening Balance for this Customer", expanded=False):
+                        col_npl1, col_npl2, col_npl3 = st.columns(3)
+                        npl_princ = col_npl1.number_input("Sanctioned Principal Amount (₹) *", min_value=500.0, value=10000.0, step=1000.0, key=f"npl_p_{cust_id_edit}")
+                        npl_sdate = col_npl2.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY", key=f"npl_sd_{cust_id_edit}")
+                        npl_dmode = col_npl3.selectbox("Funding / Disbursal Mode", ["Union Bank of India", "Cash in Hand (Office Drawer)", "State Bank of India"], key=f"npl_dm_{cust_id_edit}")
+                        
+                        col_nplt1, col_nplt2 = st.columns(2)
+                        npl_rate = col_nplt1.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key=f"npl_r_{cust_id_edit}")
+                        npl_tdays = col_nplt2.number_input("Tenure (Days)", min_value=1, value=100, step=5, key=f"npl_td_{cust_id_edit}")
+                        
+                        npl_rem = st.text_input("Remarks", value="Opening Loan Balance", key=f"npl_rem_{cust_id_edit}")
+                        
+                        if st.button("🚀 Create & Link Personal Loan Opening Balance", type="primary", use_container_width=True, key=f"btn_add_pl_{cust_id_edit}"):
+                            success, msg = create_or_link_personal_loan_opening(
+                                cust_id_edit, npl_princ, npl_sdate, npl_tdays, npl_rate, npl_dmode, remarks=npl_rem
+                            )
+                            clear_db_cache()
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to create Personal Loan: {msg}")
+
+                # SECTION 4: SB Account Opening Balance
+                with st.expander("💰 4. Edit Savings Bank (SB) Opening Balance", expanded=True):
+                    cust_sb = run_query("SELECT account_no, balance, interest_rate, created_at FROM sb_accounts WHERE customer_id = ? ORDER BY account_no ASC LIMIT 1", (cust_id_edit,))
+                    if cust_sb:
+                        sb_acc_no, sb_bal, sb_rate, sb_created = cust_sb[0]
+                        try:
+                            sb_created_dt = pd.to_datetime(sb_created).date() if sb_created else date.today()
+                        except Exception:
+                            sb_created_dt = date.today()
+                            
+                        col_sb_1, col_sb_2 = st.columns(2)
+                        with col_sb_1:
+                            e_sb_acc = st.text_input("SB Account Number", value=str(sb_acc_no), key=f"cust_sb_acc_{cust_id_edit}")
+                            e_sb_bal = st.number_input("SB Balance / Opening Balance (₹)", min_value=0.0, value=float(sb_bal or 0.0), step=100.0, key=f"cust_sb_bal_{cust_id_edit}")
+                        with col_sb_2:
+                            e_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, value=float(sb_rate or 3.5), step=0.25, key=f"cust_sb_rate_{cust_id_edit}")
+                            e_sb_date = st.date_input("Opening Date", value=sb_created_dt, format="DD-MM-YYYY", key=f"cust_sb_dt_{cust_id_edit}")
+                            
+                        sb_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
+                        e_sb_asset_lbl = st.selectbox("Funding / Settlement Account", list(sb_asset_opts.keys()), key=f"cust_sb_asset_{cust_id_edit}")
+                        e_sb_asset_code = sb_asset_opts[e_sb_asset_lbl]
+                        
+                        if st.button("💾 Save & Sync SB Opening Balance (Update Ledgers, JVs & Books)", type="primary", use_container_width=True, key=f"btn_save_cust_sb_{cust_id_edit}"):
+                            success, msg = update_sb_account_details(
+                                sb_acc_no, e_sb_acc, cust_id_edit, e_sb_bal, e_sb_rate, str(e_sb_date), e_sb_asset_code
+                            )
+                            clear_db_cache()
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to update SB Account: {msg}")
+                    else:
+                        st.info("No SB Account found for this customer.")
 
                 st.markdown("---")
                 st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")
@@ -1579,46 +1844,18 @@ def render_personal_loans():
                     st.info("ℹ️ *This loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Personal Loan'** button above.*")
                 else:
                     if st.button("💾 Save & Apply Updated Loan Terms", type="primary", use_container_width=True, key=f"btn_save_pl_{sel_pl_id}"):
-                        new_t_days = int(new_t_days)
-                        new_scheme_name = f"{new_t_days}-Day Loan"
-                        
-                        ed_loan_from = ed_sched[0]["from_date"] if ed_sched else str(new_s_date)
-                        ed_loan_to = ed_sched[-1]["to_date"] if ed_sched else str(new_s_date)
-                        ed_first_due = ed_sched[0]["due_date"] if ed_sched else str(new_s_date)
-                        ed_last_due = ed_sched[-1]["due_date"] if ed_sched else str(new_s_date)
-                        
-                        run_query("""
-                            UPDATE personal_loans
-                            SET loan_no = ?, sanction_date = ?, principal_amount = ?, interest_rate = ?,
-                                interest_type = ?, tenure_days = ?, tenure_months = ?, total_interest = ?,
-                                total_repayable = ?, installment_amount = ?, monthly_principal_emi = ?,
-                                monthly_interest_emi = ?, loan_from_date = ?, loan_to_date = ?,
-                                first_emi_due = ?, last_emi_due = ?, outstanding_due = ?, disbursal_mode = ?,
-                                guarantor_name = ?, guarantor_phone = ?, guarantor_relation = ?,
-                                guarantor_address = ?, purpose = ?, status = ?, remarks = ?
-                            WHERE id = ?
-                        """, (
-                            new_l_no, str(new_s_date), new_princ, new_rate,
-                            new_scheme_name, new_t_days, new_t_months, calc_tot_interest,
-                            calc_tot_repayable, calc_installment, calc_p_emi,
-                            calc_i_emi, ed_loan_from, ed_loan_to,
-                            ed_first_due, ed_last_due, new_out_due, new_d_mode,
-                            new_g_name, new_g_phone, new_g_rel,
-                            new_g_addr, new_purp, new_status, new_rem,
-                            sel_pl_id
-                        ), fetch=False)
-                        
-                        # Regenerate pending schedules
-                        run_query("DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ? AND status = 'PENDING'", (sel_pl_id,), fetch=False)
-                        paid_pl_emis = set(r[0] for r in (run_query("SELECT emi_number FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ? AND status = 'PAID'", (sel_pl_id,)) or []))
-                        pending_to_insert = [s for s in ed_sched if s['emi_number'] not in paid_pl_emis]
-                        batch_insert_loan_schedules('PERSONAL', sel_pl_id, new_l_no, pending_to_insert, new_s_date)
-                                
-                        run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_out_due, c_id), fetch=False)
+                        success, msg = update_personal_loan_details(
+                            sel_pl_id, new_l_no, new_s_date, new_princ, new_rate, new_t_days,
+                            new_out_due, new_d_mode, new_g_name, new_g_phone, new_g_rel,
+                            new_g_addr, new_purp, new_status, new_rem
+                        )
                         clear_db_cache()
-                        st.success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
-                        time.sleep(0.5)
-                        st.rerun()
+                        if success:
+                            st.success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to update loan: {msg}")
 
             st.write("---")
             with st.expander(f"🚨 Danger Zone: Delete Loan #{l_no}", expanded=False):
@@ -2523,58 +2760,23 @@ def render_gold_loans():
                     st.info("ℹ️ *This gold loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Gold Loan'** button above.*")
                 else:
                     if st.button("💾 Save & Apply Updated Gold Loan Details", type="primary", use_container_width=True, key=f"btn_save_gl_{sel_egl_id}"):
-                        ed_loan_from = ed_gl_sched[0]["from_date"] if ed_gl_sched else str(new_gl_sdate)
-                        ed_loan_to = ed_gl_sched[-1]["to_date"] if ed_gl_sched else str(new_gl_sdate)
-                        ed_first_due = ed_gl_sched[0]["due_date"] if ed_gl_sched else str(new_gl_sdate)
-                        ed_last_due = ed_gl_sched[-1]["due_date"] if ed_gl_sched else str(new_gl_sdate)
-                        
-                        # Check if new photo was uploaded
-                        import psycopg2
+                        u_photo_bytes, u_photo_name = None, None
                         if new_gl_photo:
-                            u_name, u_bytes = save_uploaded_file(new_gl_photo)
-                            u_param = psycopg2.Binary(u_bytes) if (USING_SUPABASE and u_bytes) else u_bytes
-                            run_query("""
-                                UPDATE gold_loans
-                                SET gold_image_file = ?, gold_image_data = ?
-                                WHERE id = ?
-                            """, (u_name, u_param, sel_egl_id), fetch=False)
+                            u_photo_name, u_photo_bytes = save_uploaded_file(new_gl_photo)
                             
-                        run_query("""
-                            UPDATE gold_loans
-                            SET loan_no = ?, sanction_date = ?, gold_rate_per_gram = ?, ornament_details = ?,
-                                item_count = ?, gross_weight = ?, stone_deduction = ?, net_weight = ?,
-                                market_value = ?, principal_amount = ?, interest_rate = ?,
-                                interest_rate_monthly = ?, tenure_days = ?, tenure_months = ?, total_interest = ?,
-                                total_repayable = ?, installment_amount = ?, monthly_principal_emi = ?,
-                                monthly_interest_emi = ?, monthly_interest_due = ?,
-                                loan_from_date = ?, loan_to_date = ?, first_emi_due = ?, last_emi_due = ?,
-                                outstanding_due = ?, vault_packet_no = ?, locker_no = ?,
-                                appraiser_name = ?, disbursal_mode = ?, status = ?, remarks = ?
-                            WHERE id = ?
-                        """, (
-                            new_gl_lno, str(new_gl_sdate), ed_gold_rate, ed_orn_desc,
-                            ed_item_cnt, ed_gross_wt, ed_stone_ded, ed_net_wt,
-                            ed_market_val, ed_princ, ed_int_rate,
-                            round(ed_int_rate / 12.0, 2), ed_tenure_days, ed_tenure_mo, calc_gl_interest,
-                            calc_gl_repayable, calc_gl_installment, calc_gl_p_emi,
-                            calc_gl_i_emi, calc_gl_i_emi,
-                            ed_loan_from, ed_loan_to, ed_first_due, ed_last_due,
-                            new_gl_out_due, new_pkt_no, new_locker_no,
-                            new_appr_name, new_gl_dmode, new_gl_status, new_gl_remarks,
-                            sel_egl_id
-                        ), fetch=False)
-                    
-                        # Regenerate pending schedules
-                        run_query("DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = ? AND status = 'PENDING'", (sel_egl_id,), fetch=False)
-                        paid_gl_emis = set(r[0] for r in (run_query("SELECT emi_number FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = ? AND status = 'PAID'", (sel_egl_id,)) or []))
-                        pending_gl_to_insert = [s for s in ed_gl_sched if s['emi_number'] not in paid_gl_emis]
-                        batch_insert_loan_schedules('GOLD', sel_egl_id, new_gl_lno, pending_gl_to_insert, new_gl_sdate)
-                                
-                        run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_gl_out_due, eg_cid), fetch=False)
+                        success, msg = update_gold_loan_details(
+                            sel_egl_id, new_gl_lno, new_gl_sdate, ed_princ, ed_int_rate, ed_tenure_days,
+                            new_gl_out_due, new_gl_dmode, ed_gold_rate, ed_orn_desc, ed_item_cnt,
+                            ed_gross_wt, ed_stone_ded, new_pkt_no, new_locker_no, new_appr_name,
+                            new_gl_status, new_gl_remarks, new_photo_bytes=u_photo_bytes, new_photo_name=u_photo_name
+                        )
                         clear_db_cache()
-                        st.success(f"🎉 Gold Loan **#{new_gl_lno}** updated successfully! New Total Repayable: **₹{calc_gl_repayable:,.2f}** | Monthly EMI: **₹{calc_gl_installment:,.2f}/mo**")
-                        time.sleep(0.5)
-                        st.rerun()
+                        if success:
+                            st.success(f"🎉 Gold Loan **#{new_gl_lno}** updated successfully! New Total Repayable: **₹{calc_gl_repayable:,.2f}** | Monthly EMI: **₹{calc_gl_installment:,.2f}/mo**")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to update Gold Loan: {msg}")
 
             st.write("---")
             with st.expander(f"🚨 Danger Zone: Delete Gold Loan #{eg_lno}", expanded=False):
@@ -2808,7 +3010,7 @@ def render_gold_loans():
 
 def render_sb_accounts():
     st.title("💰 Savings Bank (SB) Management")
-    tab1, tab2, tab3, tab4 = st.tabs(["Open SB Account", "Transact", "View Accounts", "✏️ Edit / Update SB Account"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open SB Account", "Transact", "📖 SB Account Passbook", "View Accounts", "✏️ Edit / Update SB Account"])
     
     with tab1:
         customers = run_query("SELECT id, name FROM customers ORDER BY name ASC")
@@ -2938,6 +3140,157 @@ def render_sb_accounts():
             st.info("No active SB accounts found.")
 
     with tab3:
+        st.subheader("📖 Savings Bank (SB) Account Passbook & Statement")
+        all_sb_pb = run_query("""
+            SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, c.phone, c.address, c.id as cust_id
+            FROM sb_accounts s 
+            JOIN customers c ON s.customer_id = c.id
+            ORDER BY c.name ASC, s.account_no ASC
+        """)
+        if all_sb_pb:
+            sb_pb_dict = {f"👤 {r[1]} | A/c: {r[0]} (Bal: ₹{r[2]:,.2f})": r for r in all_sb_pb}
+            sel_pb_label = st.selectbox("Select Customer & SB Account", list(sb_pb_dict.keys()), key="sb_pb_select_acc")
+            sel_sb = sb_pb_dict[sel_pb_label]
+            pb_acc_no, pb_cust_name, pb_balance, pb_rate, pb_created, pb_phone, pb_address, pb_cust_id = sel_sb
+
+            # Fetch transaction history
+            tx_data = run_query("""
+                SELECT date, tx_id, narration, mode, type, amount, created_at
+                FROM transactions
+                WHERE account_no = ?
+                ORDER BY date ASC, id ASC
+            """, (pb_acc_no,))
+
+            # Build ledger & calculate running balances
+            ledger_rows = []
+            running_bal = 0.0
+            tot_deposits = 0.0
+            tot_withdrawals = 0.0
+            op_balance = 0.0
+
+            if tx_data:
+                for tx in tx_data:
+                    t_date, t_id, t_narr, t_mode, t_type, t_amt, t_created = tx
+                    t_amt = float(t_amt or 0.0)
+                    t_type_str = str(t_type or "").upper()
+                    is_opening = "opening" in str(t_narr or "").lower()
+
+                    if t_type_str in ["CREDIT", "DEPOSIT"]:
+                        dr = 0.0
+                        cr = t_amt
+                        running_bal = round(running_bal + t_amt, 2)
+                        if is_opening:
+                            op_balance = t_amt
+                        else:
+                            tot_deposits = round(tot_deposits + t_amt, 2)
+                    else: # DEBIT / WITHDRAWAL
+                        dr = t_amt
+                        cr = 0.0
+                        running_bal = round(running_bal - t_amt, 2)
+                        tot_withdrawals = round(tot_withdrawals + t_amt, 2)
+
+                    ledger_rows.append({
+                        "Date": str(t_date),
+                        "Tx ID": str(t_id or "-"),
+                        "Particulars": str(t_narr or "-"),
+                        "Mode": str(t_mode or "CASH"),
+                        "Debit (₹)": dr,
+                        "Credit (₹)": cr,
+                        "Balance (₹)": running_bal
+                    })
+            else:
+                # If no transactions in DB, show opening balance row
+                op_balance = float(pb_balance or 0.0)
+                running_bal = op_balance
+                ledger_rows.append({
+                    "Date": str(pb_created or date.today()),
+                    "Tx ID": "OP-BAL",
+                    "Particulars": "Opening Balance Deposit",
+                    "Mode": "CASH",
+                    "Debit (₹)": 0.0,
+                    "Credit (₹)": op_balance,
+                    "Balance (₹)": op_balance
+                })
+
+            df_tx_ledger = pd.DataFrame(ledger_rows)
+
+            # Prepare data dict for export functions
+            sb_data_dict = {
+                "acc_no": pb_acc_no,
+                "cust_name": pb_cust_name,
+                "phone": pb_phone or "N/A",
+                "created_at": str(pb_created or date.today()),
+                "rate": float(pb_rate or 3.5),
+                "balance": float(pb_balance or running_bal),
+                "opening_balance": op_balance,
+                "total_deposits": tot_deposits,
+                "total_withdrawals": tot_withdrawals,
+                "street": pb_address or "",
+                "city": "Balaramapuram"
+            }
+
+            # Summary Cards
+            st.markdown(f"""
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="font-size: 16px; font-weight: bold; color: #1e293b;">👤 {pb_cust_name} &nbsp;|&nbsp; 💳 A/c No: <code style="color: #0369a1;">{pb_acc_no}</code></span>
+                    <span style="background-color: #e0f2fe; color: #0369a1; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;">Savings Bank (SB)</span>
+                </div>
+                <div style="color: #64748b; font-size: 13px;">
+                    📞 <b>Contact:</b> {pb_phone or 'N/A'} &nbsp;|&nbsp; 📅 <b>Opened:</b> {pb_created} &nbsp;|&nbsp; 📈 <b>Interest Rate:</b> {pb_rate}% p.a. &nbsp;|&nbsp; 🏠 <b>Address:</b> {pb_address or 'Balaramapuram'}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("💰 Opening Balance", f"₹{op_balance:,.2f}")
+            m2.metric("📥 Total Deposits", f"₹{tot_deposits:,.2f}")
+            m3.metric("📤 Total Withdrawals", f"₹{tot_withdrawals:,.2f}")
+            m4.metric("💳 Available Balance", f"₹{float(pb_balance or running_bal):,.2f}")
+
+            st.markdown("#### 📜 **TRANSACTION HISTORY & PASSBOOK ENTRIES**")
+            st.dataframe(format_df_dates(df_tx_ledger), use_container_width=True, hide_index=True, height=280)
+
+            # Export actions
+            exp_col1, exp_col2, exp_col3 = st.columns(3)
+            with exp_col1:
+                if st.button("📊 Prepare Passbook (.xlsx)", key=f"btn_prep_sb_xl_{pb_acc_no}", use_container_width=True):
+                    st.session_state[f"sb_xl_bytes_{pb_acc_no}"] = pdf_generator.create_sb_passbook_excel(sb_data_dict, df_tx_ledger)
+                if f"sb_xl_bytes_{pb_acc_no}" in st.session_state:
+                    st.download_button(
+                        "📥 Click to Download Passbook (.xlsx)",
+                        data=st.session_state[f"sb_xl_bytes_{pb_acc_no}"],
+                        file_name=f"SB_Passbook_{pb_acc_no}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key=f"sb_tab_xl_dl_{pb_acc_no}"
+                    )
+            with exp_col2:
+                if st.button("📄 Prepare Passbook PDF", key=f"btn_prep_sb_pdf_{pb_acc_no}", use_container_width=True):
+                    st.session_state[f"sb_pdf_bytes_{pb_acc_no}"] = pdf_generator.create_sb_passbook_pdf(sb_data_dict, df_tx_ledger)
+                if f"sb_pdf_bytes_{pb_acc_no}" in st.session_state:
+                    st.download_button(
+                        "📥 Click to Download Passbook PDF",
+                        data=st.session_state[f"sb_pdf_bytes_{pb_acc_no}"],
+                        file_name=f"SB_Passbook_{pb_acc_no}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key=f"sb_tab_pdf_dl_{pb_acc_no}"
+                    )
+            with exp_col3:
+                csv_bytes = df_tx_ledger.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    "📥 Download Statement CSV",
+                    data=csv_bytes,
+                    file_name=f"SB_Statement_{pb_acc_no}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"sb_tab_csv_dl_{pb_acc_no}"
+                )
+        else:
+            st.info("No active SB accounts found to generate passbook.")
+
+    with tab4:
         accounts = run_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at 
             FROM sb_accounts s JOIN customers c ON s.customer_id = c.id
@@ -2951,7 +3304,7 @@ def render_sb_accounts():
         else:
             st.info("No active SB accounts found.")
 
-    with tab4:
+    with tab5:
         st.subheader("✏️ Edit & Correct Savings Bank (SB) Account")
         all_sb_edit = run_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, s.customer_id

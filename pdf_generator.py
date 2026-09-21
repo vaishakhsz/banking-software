@@ -2675,4 +2675,389 @@ def create_gold_loan_passbook_pdf(loan_data, schedule_df, repayments_df=None):
     return buffer.getvalue()
 
 
+def create_sb_passbook_excel(sb_data, tx_df):
+    """
+    Exports a styled Excel (.xlsx) Savings Bank Passbook & Statement:
+    - Company & Passbook Header
+    - Customer & Account Information Block
+    - Summary Metrics Block (Opening Balance, Deposits, Withdrawals, Available Balance)
+    - Full Transaction History with Running Balances
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return b""
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "SB Passbook"
+    ws.views.sheetView[0].showGridLines = True
+
+    # Styles
+    navy_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    light_blue_fill = PatternFill(start_color="EBF5FB", end_color="EBF5FB", fill_type="solid")
+    soft_gray_fill = PatternFill(start_color="F2F4F7", end_color="F2F4F7", fill_type="solid")
+    header_section_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    font_title = Font(name="Segoe UI", size=14, bold=True, color="1F4E78")
+    font_sub = Font(name="Segoe UI", size=9, color="4B5563")
+    font_section = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
+    font_header_white = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+    font_bold = Font(name="Segoe UI", size=10, bold=True, color="111827")
+    font_normal = Font(name="Segoe UI", size=9.5, color="111827")
+
+    border_color = "D0D5DD"
+    thin_side = Side(style='thin', color=border_color)
+    double_bottom_side = Side(style='double', color="1F4E78")
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    summary_border = Border(top=thin_side, bottom=double_bottom_side, left=thin_side, right=thin_side)
+
+    # 1. Company Header
+    ws.merge_cells("A1:G1")
+    ws["A1"] = "AARSHA NIDHI LIMITED"
+    ws["A1"].font = font_title
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 22
+
+    ws.merge_cells("A2:G2")
+    ws["A2"] = "6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501"
+    ws["A2"].font = font_sub
+    ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 14
+
+    ws.merge_cells("A3:G3")
+    ws["A3"] = "CIN: U65990KL2021PLN069978 | Ph: 0471-2994535"
+    ws["A3"].font = font_sub
+    ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[3].height = 14
+
+    ws.merge_cells("A4:G4")
+    ws["A4"] = "SAVINGS BANK (SB) PASSBOOK & STATEMENT OF ACCOUNT"
+    ws["A4"].font = Font(name="Segoe UI", size=12, bold=True, color="FFFFFF")
+    ws["A4"].fill = navy_fill
+    ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[4].height = 22
+
+    # 2. Account Details Section
+    acc_no = sb_data.get("acc_no", "N/A")
+    c_name = sb_data.get("cust_name", "N/A")
+    phone = sb_data.get("phone", "N/A")
+    created_at = sb_data.get("created_at", "N/A")
+    rate = float(sb_data.get("rate", 3.5))
+    balance = float(sb_data.get("balance", 0.0))
+    addr = f"{sb_data.get('street', '')}, {sb_data.get('city', '')}".strip(" ,") or "Balaramapuram"
+
+    ws["A6"] = "Account Number:"
+    ws["B6"] = str(acc_no)
+    ws["D6"] = "Customer Name:"
+    ws["E6"] = str(c_name)
+
+    ws["A7"] = "Account Type:"
+    ws["B7"] = "Savings Bank (SB) Account"
+    ws["D7"] = "Phone / Contact:"
+    ws["E7"] = str(phone)
+
+    ws["A8"] = "Opening Date:"
+    ws["B8"] = str(created_at)
+    ws["D8"] = "Interest Rate:"
+    ws["E8"] = f"{rate}% p.a."
+
+    ws["A9"] = "Address:"
+    ws["B9"] = str(addr)
+    ws["D9"] = "Available Balance:"
+    ws["E9"] = f"₹{balance:,.2f}"
+
+    for r in range(6, 10):
+        for c_idx in [1, 4]:
+            cell = ws.cell(row=r, column=c_idx)
+            cell.font = font_bold
+            cell.fill = light_blue_fill
+            cell.border = thin_border
+        for c_idx in [2, 3, 5, 6, 7]:
+            cell = ws.cell(row=r, column=c_idx)
+            cell.font = font_normal
+            cell.border = thin_border
+
+    # 3. Summary Metrics
+    op_bal = float(sb_data.get("opening_balance", 0.0))
+    tot_dep = float(sb_data.get("total_deposits", 0.0))
+    tot_wdr = float(sb_data.get("total_withdrawals", 0.0))
+
+    ws["A11"] = "Opening Balance"
+    ws["B11"] = f"₹{op_bal:,.2f}"
+    ws["C11"] = "Total Deposits"
+    ws["D11"] = f"₹{tot_dep:,.2f}"
+    ws["E11"] = "Total Withdrawals"
+    ws["F11"] = f"₹{tot_wdr:,.2f}"
+    ws["G11"] = f"₹{balance:,.2f}"
+
+    for c in range(1, 8):
+        cell = ws.cell(row=11, column=c)
+        cell.font = font_bold
+        cell.fill = header_section_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # 4. Transactions Table Header
+    headers = ["Date", "Tx ID / Ref", "Particulars / Narration", "Payment Mode", "Debit / Withdrawal (₹)", "Credit / Deposit (₹)", "Running Balance (₹)"]
+    row_num = 13
+    for col_num, h_text in enumerate(headers, 1):
+        cell = ws.cell(row=row_num, column=col_num, value=h_text)
+        cell.font = font_header_white
+        cell.fill = navy_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+    ws.row_dimensions[row_num].height = 20
+
+    # 5. Data Rows
+    row_num = 14
+    if hasattr(tx_df, 'empty') and not tx_df.empty:
+        for idx, r in tx_df.iterrows():
+            d_val = str(r.get("Date", r.get("date", "")))
+            tx_val = str(r.get("Tx ID", r.get("tx_id", "")))
+            p_val = str(r.get("Particulars", r.get("narration", "")))
+            m_val = str(r.get("Mode", r.get("mode", "CASH")))
+            dr_val = float(r.get("Debit", r.get("debit_amount", 0.0)) or 0.0)
+            cr_val = float(r.get("Credit", r.get("credit_amount", 0.0)) or 0.0)
+            bal_val = float(r.get("Balance", r.get("balance", 0.0)) or 0.0)
+
+            ws.cell(row=row_num, column=1, value=d_val).alignment = Alignment(horizontal="center")
+            ws.cell(row=row_num, column=2, value=tx_val).alignment = Alignment(horizontal="center")
+            ws.cell(row=row_num, column=3, value=p_val).alignment = Alignment(horizontal="left")
+            ws.cell(row=row_num, column=4, value=m_val).alignment = Alignment(horizontal="center")
+            
+            c_dr = ws.cell(row=row_num, column=5, value=dr_val if dr_val > 0 else "-")
+            c_dr.alignment = Alignment(horizontal="right")
+            if dr_val > 0: c_dr.number_format = '#,##0.00'
+
+            c_cr = ws.cell(row=row_num, column=6, value=cr_val if cr_val > 0 else "-")
+            c_cr.alignment = Alignment(horizontal="right")
+            if cr_val > 0: c_cr.number_format = '#,##0.00'
+
+            c_bal = ws.cell(row=row_num, column=7, value=bal_val)
+            c_bal.alignment = Alignment(horizontal="right")
+            c_bal.number_format = '#,##0.00'
+
+            fill_to_use = soft_gray_fill if (idx % 2 == 1) else None
+            for col in range(1, 8):
+                cell = ws.cell(row=row_num, column=col)
+                cell.font = font_normal
+                cell.border = thin_border
+                if fill_to_use:
+                    cell.fill = fill_to_use
+
+            ws.row_dimensions[row_num].height = 18
+            row_num += 1
+
+    # Totals Row
+    ws.cell(row=row_num, column=1, value="TOTAL").alignment = Alignment(horizontal="center")
+    ws.cell(row=row_num, column=2, value="-").alignment = Alignment(horizontal="center")
+    ws.cell(row=row_num, column=3, value="Statement Closing Summary").alignment = Alignment(horizontal="left")
+    ws.cell(row=row_num, column=4, value="-").alignment = Alignment(horizontal="center")
+    
+    t_dr = ws.cell(row=row_num, column=5, value=tot_wdr)
+    t_dr.number_format = '#,##0.00'
+    t_dr.alignment = Alignment(horizontal="right")
+    
+    t_cr = ws.cell(row=row_num, column=6, value=tot_dep)
+    t_cr.number_format = '#,##0.00'
+    t_cr.alignment = Alignment(horizontal="right")
+
+    t_b = ws.cell(row=row_num, column=7, value=balance)
+    t_b.number_format = '#,##0.00'
+    t_b.alignment = Alignment(horizontal="right")
+
+    for col in range(1, 8):
+        cell = ws.cell(row=row_num, column=col)
+        cell.font = font_bold
+        cell.fill = light_blue_fill
+        cell.border = summary_border
+
+    # Adjust column widths
+    ws.column_dimensions['A'].width = 14
+    ws.column_dimensions['B'].width = 18
+    ws.column_dimensions['C'].width = 34
+    ws.column_dimensions['D'].width = 16
+    ws.column_dimensions['E'].width = 22
+    ws.column_dimensions['F'].width = 22
+    ws.column_dimensions['G'].width = 22
+
+    from io import BytesIO
+    out = BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def create_sb_passbook_pdf(sb_data, tx_df):
+    """
+    Generates an official high-resolution printable Savings Bank Passbook & Statement PDF:
+    - Company & Passbook Header
+    - Account & Customer Details Card
+    - Metrics Summary
+    - Transaction History with Running Balances
+    - Signatures Footer
+    """
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter, landscape
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    except ImportError:
+        return b""
+
+    from io import BytesIO
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        leftMargin=10 * mm,
+        rightMargin=10 * mm,
+        topMargin=8 * mm,
+        bottomMargin=8 * mm
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('SBTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=14, leading=16, alignment=1, textColor=colors.HexColor('#1f4e78'))
+    sub_style = ParagraphStyle('SBSub', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11, alignment=1, textColor=colors.HexColor('#4b5563'))
+    sec_title = ParagraphStyle('SBSec', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=10.5, leading=13, textColor=colors.HexColor('#1f4e78'))
+    th_style = ParagraphStyle('SBTH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8.5, leading=10, alignment=1, textColor=colors.white)
+    cell_left = ParagraphStyle('SBCellL', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, alignment=0)
+    cell_center = ParagraphStyle('SBCellC', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, alignment=1)
+    cell_right = ParagraphStyle('SBCellR', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, alignment=2)
+
+    elements = []
+
+    # 1. Company Header
+    elements.append(Paragraph("<b>AARSHA NIDHI LIMITED</b>", title_style))
+    elements.append(Paragraph("6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501", sub_style))
+    elements.append(Paragraph("CIN: U65990KL2021PLN069978 | Ph: 0471-2994535", sub_style))
+    elements.append(Spacer(1, 4))
+
+    # Banner
+    t_banner = Table([[Paragraph("<b>SAVINGS BANK (SB) PASSBOOK & STATEMENT OF ACCOUNT</b>", th_style)]], colWidths=[260 * mm])
+    t_banner.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#1f4e78')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 3),
+    ]))
+    elements.append(t_banner)
+    elements.append(Spacer(1, 4))
+
+    # 2. Account Details Block
+    acc_no = sb_data.get("acc_no", "N/A")
+    c_name = sb_data.get("cust_name", "N/A")
+    phone = sb_data.get("phone", "N/A")
+    created_at = sb_data.get("created_at", "N/A")
+    rate = float(sb_data.get("rate", 3.5))
+    balance = float(sb_data.get("balance", 0.0))
+    op_bal = float(sb_data.get("opening_balance", 0.0))
+    tot_dep = float(sb_data.get("total_deposits", 0.0))
+    tot_wdr = float(sb_data.get("total_withdrawals", 0.0))
+    addr = f"{sb_data.get('street', '')}, {sb_data.get('city', '')}".strip(" ,") or "Balaramapuram"
+
+    info_data = [
+        [
+            Paragraph("<b>Account Number:</b>", cell_left), Paragraph(str(acc_no), cell_left),
+            Paragraph("<b>Customer Name:</b>", cell_left), Paragraph(str(c_name), cell_left),
+            Paragraph("<b>Interest Rate:</b>", cell_left), Paragraph(f"{rate}% p.a.", cell_left)
+        ],
+        [
+            Paragraph("<b>Account Type:</b>", cell_left), Paragraph("Savings Bank (SB)", cell_left),
+            Paragraph("<b>Phone / Mobile:</b>", cell_left), Paragraph(str(phone), cell_left),
+            Paragraph("<b>Opening Date:</b>", cell_left), Paragraph(str(created_at), cell_left)
+        ],
+        [
+            Paragraph("<b>Opening Balance:</b>", cell_left), Paragraph(f"₹{op_bal:,.2f}", cell_left),
+            Paragraph("<b>Total Deposits:</b>", cell_left), Paragraph(f"₹{tot_dep:,.2f}", cell_left),
+            Paragraph("<b>Available Balance:</b>", cell_left), Paragraph(f"<b>₹{balance:,.2f}</b>", cell_left)
+        ]
+    ]
+    t_info = Table(info_data, colWidths=[32*mm, 52*mm, 32*mm, 58*mm, 34*mm, 52*mm])
+    t_info.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#ebf5fb')),
+        ('BACKGROUND', (2,0), (2,-1), colors.HexColor('#ebf5fb')),
+        ('BACKGROUND', (4,0), (4,-1), colors.HexColor('#ebf5fb')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    elements.append(t_info)
+    elements.append(Spacer(1, 5))
+
+    # 3. Transactions Table
+    elements.append(Paragraph("<b>TRANSACTION LEDGER & PASSBOOK ENTRIES</b>", sec_title))
+    tx_table_data = [[
+        Paragraph("Date", th_style),
+        Paragraph("Tx Ref", th_style),
+        Paragraph("Particulars / Narration", th_style),
+        Paragraph("Mode", th_style),
+        Paragraph("Debit / Withdrawal (₹)", th_style),
+        Paragraph("Credit / Deposit (₹)", th_style),
+        Paragraph("Running Balance (₹)", th_style)
+    ]]
+
+    if hasattr(tx_df, 'empty') and not tx_df.empty:
+        for _, r in tx_df.iterrows():
+            d_val = str(r.get("Date", r.get("date", "")))
+            tx_val = str(r.get("Tx ID", r.get("tx_id", "")))
+            p_val = str(r.get("Particulars", r.get("narration", "")))
+            m_val = str(r.get("Mode", r.get("mode", "CASH")))
+            dr_val = float(r.get("Debit", r.get("debit_amount", 0.0)) or 0.0)
+            cr_val = float(r.get("Credit", r.get("credit_amount", 0.0)) or 0.0)
+            bal_val = float(r.get("Balance", r.get("balance", 0.0)) or 0.0)
+
+            tx_table_data.append([
+                Paragraph(d_val, cell_center),
+                Paragraph(tx_val, cell_center),
+                Paragraph(p_val, cell_left),
+                Paragraph(m_val, cell_center),
+                Paragraph(f"{dr_val:,.2f}" if dr_val > 0 else "-", cell_right),
+                Paragraph(f"{cr_val:,.2f}" if cr_val > 0 else "-", cell_right),
+                Paragraph(f"{bal_val:,.2f}", cell_right)
+            ])
+
+    # Totals
+    tx_table_data.append([
+        Paragraph("<b>TOTAL</b>", cell_center),
+        Paragraph("-", cell_center),
+        Paragraph("<b>Closing Balance Summary</b>", cell_left),
+        Paragraph("-", cell_center),
+        Paragraph(f"<b>{tot_wdr:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{tot_dep:,.2f}</b>", cell_right),
+        Paragraph(f"<b>{balance:,.2f}</b>", cell_right)
+    ])
+
+    t_tx = Table(tx_table_data, colWidths=[24*mm, 28*mm, 82*mm, 26*mm, 32*mm, 32*mm, 36*mm])
+    t_tx.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1f4e78')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#d0d5dd')),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#ebf5fb')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_tx)
+    elements.append(Spacer(1, 8))
+
+    # Signatures
+    sig_data = [
+        [Paragraph("<b>Customer / Account Holder Signature</b>", cell_center), Paragraph("<b>Cashier / Accountant Signature</b>", cell_center), Paragraph("<b>Authorized Signatory / Branch Manager</b>", cell_center)]
+    ]
+    t_sig = Table(sig_data, colWidths=[85*mm, 85*mm, 90*mm])
+    t_sig.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 2),
+    ]))
+    elements.append(t_sig)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+
 

@@ -3808,7 +3808,8 @@ def render_fixed_deposits():
         all_fds = cached_query("""
             SELECT f.fd_id, c.name, c.street, c.city, c.state, c.pincode, 
                    f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, 
-                   f.nominee, f.created_at, f.status, f.closed_date
+                   f.nominee, f.created_at, f.status, f.closed_date,
+                   f.customer_id
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             ORDER BY f.fd_id DESC
         """)
@@ -3822,12 +3823,20 @@ def render_fixed_deposits():
             selected_print_str = st.selectbox("Select FD Account for Printing/View", list(fd_print_dict.keys()), key="fd_print_select")
             fd_data = fd_print_dict[selected_print_str]
             
-            fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date = fd_data
+            fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date, cust_id = fd_data
+            
+            fd_op_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%FD #{fd_id}%", f"%FD Opening%Customer {cust_id}%"))
+            fd_op_bal = fd_op_res[0][0] if (fd_op_res and fd_op_res[0] and fd_op_res[0][0]) else created_at
             
             try:
                 created_at_dt = pd.to_datetime(created_at).strftime('%d-%m-%Y')
             except Exception:
                 created_at_dt = created_at
+                
+            try:
+                fd_op_bal_dt = pd.to_datetime(fd_op_bal).strftime('%d-%m-%Y')
+            except Exception:
+                fd_op_bal_dt = fd_op_bal
                 
             try:
                 closed_date_dt = pd.to_datetime(closed_date).strftime('%d-%m-%Y') if closed_date else ""
@@ -3879,21 +3888,24 @@ def render_fixed_deposits():
               </div>
               <div class="grid-row">
                 <div><b>Name:</b> {c_name}</div>
-                <div><b>Principal Amount:</b> ₹{principal:,.2f}</div>
+                <div><b>Opening Balance Date:</b> {fd_op_bal_dt}</div>
               </div>
               <div class="grid-row">
                 <div><b>Address:</b> {full_address}</div>
-                <div><b>Interest Rate:</b> {rate}% p.a.</div>
+                <div><b>Principal Amount:</b> ₹{principal:,.2f}</div>
               </div>
               <div class="grid-row">
                 <div><b>Tenure:</b> {tenure} Months</div>
-                <div><b>Maturity Amount:</b> ₹{maturity:,.2f}</div>
+                <div><b>Interest Rate:</b> {rate}% p.a.</div>
               </div>
               <div class="grid-row">
                 <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
-                <div><b>Status:</b> {status_text}</div>
+                <div><b>Maturity Amount:</b> ₹{maturity:,.2f}</div>
               </div>
-              {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date_dt}</div><div></div></div>' if status == 'CLOSED' else ''}
+              <div class="grid-row">
+                <div><b>Status:</b> {status_text}</div>
+                <div>{f'<b>Closed Date:</b> {closed_date_dt}' if status == 'CLOSED' else ''}</div>
+              </div>
               
               <div class="box">
                 <b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.
@@ -3910,7 +3922,7 @@ def render_fixed_deposits():
                   <th>TDS</th>
                 </tr>
                 <tr>
-                  <td>{created_at}</td>
+                  <td>{fd_op_bal_dt}</td>
                   <td>Opening Balance / Principal Deposit</td>
                   <td>-</td>
                   <td>₹{principal:,.2f}</td>
@@ -3918,7 +3930,7 @@ def render_fixed_deposits():
                   <td>0</td>
                   <td>0</td>
                 </tr>
-                {f'<tr><td>{closed_date}</td><td>FD Closed / Maturity Payment</td><td>₹{maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>₹{maturity - principal:,.2f}</td><td>0</td></tr>' if status == 'CLOSED' else ''}
+                {f'<tr><td>{closed_date_dt}</td><td>FD Closed / Maturity Payment</td><td>₹{maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>₹{maturity - principal:,.2f}</td><td>0</td></tr>' if status == 'CLOSED' else ''}
               </table>
 
               <div class="signatures">
@@ -3926,13 +3938,15 @@ def render_fixed_deposits():
                 <div>Accountant</div>
                 <div>Chairman / MD</div>
               </div>
-              {f'<div class="closed-info">⚠️ This Fixed Deposit has been CLOSED on {closed_date}</div>' if status == 'CLOSED' else ''}
+              {f'<div class="closed-info">⚠️ This Fixed Deposit has been CLOSED on {closed_date_dt}</div>' if status == 'CLOSED' else ''}
             </div>
             """
             st.markdown(receipt_html, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
             
-            fd_pdf_data = pdf_generator.generate_fd_pdf(fd_data)
+            fd_data_pdf = list(fd_data[:14])
+            fd_data_pdf.append(fd_op_bal)
+            fd_pdf_data = pdf_generator.generate_fd_pdf(fd_data_pdf)
             st.download_button(
                 label=f"📥 Download FD Certificate FD-{fd_id:05d} (PDF)",
                 data=fd_pdf_data,
@@ -4311,7 +4325,8 @@ def render_recurring_deposits():
                    COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as acc_no,
                    COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
                    COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name,
-                   COALESCE(r.maturity_date, '2026-12-20') as maturity_date
+                   COALESCE(r.maturity_date, '2026-12-20') as maturity_date,
+                   r.customer_id
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             ORDER BY r.rd_id DESC
         """)
@@ -4325,7 +4340,10 @@ def render_recurring_deposits():
             selected_rd_print = st.selectbox("Select RD Account for Printing/View", list(rd_print_dict.keys()), key="rd_print_select")
             rd_data = rd_print_dict[selected_rd_print]
             
-            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name, maturity_date = rd_data
+            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name, maturity_date, cust_id = rd_data
+            
+            rd_op_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%RD #{rd_id}%", f"%{rd_acc_no}%", f"%RD Opening%Customer {cust_id}%"))
+            op_bal_date = rd_op_res[0][0] if (rd_op_res and rd_op_res[0] and rd_op_res[0][0]) else created_at
             
             full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
             total_deposited = col_balance
@@ -4395,11 +4413,11 @@ def render_recurring_deposits():
               </div>
               <div class="grid-row">
                 <div><b>Name:</b> {c_name}</div>
-                <div><b>Interest Rate:</b> {rate}% p.a.</div>
+                <div><b>Opening Balance Date:</b> {op_bal_date}</div>
               </div>
               <div class="grid-row">
                 <div><b>Address:</b> {full_address}</div>
-                <div><b>Status:</b> {status_text}</div>
+                <div><b>Interest Rate:</b> {rate}% p.a.</div>
               </div>
               <div class="grid-row">
                 <div><b>Monthly Installment:</b> ₹{monthly_amt:,.2f}</div>
@@ -4413,7 +4431,10 @@ def render_recurring_deposits():
                 <div><b>Total Balance Deposited:</b> ₹{col_balance:,.2f}</div>
                 <div><b>Maturity Amount:</b> <span style="color:#1b4f72;font-weight:bold;">₹{display_maturity:,.2f}</span></div>
               </div>
-              {f'<div class="grid-row"><div><b>Closed Date:</b> {closed_date}</div><div></div></div>' if status == 'CLOSED' else ''}
+              <div class="grid-row">
+                <div><b>Status:</b> {status_text}</div>
+                <div>{f'<b>Closed Date:</b> {closed_date}' if status == 'CLOSED' else ''}</div>
+              </div>
               
               <div class="box">
                 <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Total balance accumulated: <b>₹{col_balance:,.2f}</b>.
@@ -4429,7 +4450,7 @@ def render_recurring_deposits():
                   <th>Installments Paid</th>
                 </tr>
                 <tr>
-                  <td>{created_at}</td>
+                  <td>{op_bal_date}</td>
                   <td>RD Account Opening & Installments</td>
                   <td>-</td>
                   <td>₹{col_balance:,.2f}</td>
@@ -4450,8 +4471,9 @@ def render_recurring_deposits():
             st.markdown(rd_receipt_html, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
             
-            rd_data_pdf = list(rd_data)
+            rd_data_pdf = list(rd_data[:19])
             rd_data_pdf[10] = display_maturity
+            rd_data_pdf.append(op_bal_date)
             rd_pdf_data = pdf_generator.generate_rd_pdf(rd_data_pdf)
             st.download_button(
                 label=f"📥 Download RD Certificate {rd_acc_no} (PDF)",

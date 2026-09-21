@@ -325,9 +325,10 @@ def render_customer_management():
             )
             initial_balance = col_b2.number_input("Opening Balance / Loan Due Balance (₹)", min_value=0.0, value=0.0, step=500.0)
             
-            col_d1, col_d2 = st.columns(2)
+            col_d1, col_d2, col_d3 = st.columns(3)
             reg_date = col_d1.date_input("Customer Registration / Joining Date", value=date.today(), format="DD-MM-YYYY", key="cust_reg_date_input")
             opening_date = col_d2.date_input("Account Opening / Sanction Date", value=date.today(), format="DD-MM-YYYY", key="cust_op_date_input")
+            op_bal_date = col_d3.date_input("Opening Balance / Deposit Date", value=date.today(), format="DD-MM-YYYY", key="cust_op_bal_date_input")
             
             col_f1, col_f2 = st.columns(2)
             asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
@@ -378,8 +379,9 @@ def render_customer_management():
                             
                             today_str = reg_date.strftime("%Y-%m-%d")
                             op_date_str = opening_date.strftime("%Y-%m-%d")
+                            op_bal_date_str = op_bal_date.strftime("%Y-%m-%d")
                             now_str = f"{today_str} {datetime.now(IST).strftime('%H:%M')}"
-                            op_time_str = f"{op_date_str} {datetime.now(IST).strftime('%H:%M')}"
+                            op_time_str = f"{op_bal_date_str} {datetime.now(IST).strftime('%H:%M')}"
                             
                             # 1. Insert into customers
                             run_query("""
@@ -408,7 +410,7 @@ def render_customer_management():
                                 run_query("""
                                     INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
                                     VALUES (?, ?, ?, ?, ?)
-                                厚""", (final_acc_no, db_acc_type, new_c_id, initial_balance, op_date_str), fetch=False)
+                                """, (final_acc_no, db_acc_type, new_c_id, initial_balance, op_date_str), fetch=False)
                                 
                                 # 4. Insert into sb_accounts for standard SB tracking
                                 sb_open_bal = initial_balance if ('Savings' in acc_type or 'SB' in acc_type) else 0.0
@@ -471,7 +473,7 @@ def render_customer_management():
                                             
                                         batch_insert_loan_schedules('GOLD', new_gl_id, gl_code, gl_sched, opening_date)
                                         
-                                        post_automated_jv(f"Gold Loan Disbursal - {name.strip()} ({gl_code})", "AST-110", chosen_asset_code, initial_balance, voucher_date=op_date_str)
+                                        post_automated_jv(f"Gold Loan Disbursal - {name.strip()} ({gl_code})", "AST-110", chosen_asset_code, initial_balance, voucher_date=op_bal_date_str)
                                         
                                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
                                         if chosen_asset_code == 'AST-101':
@@ -479,14 +481,14 @@ def render_customer_management():
                                             run_query("""
                                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                                 VALUES (?, ?, ?, 0, ?, ?, 'AST-110', ?, ?)
-                                            """, (op_date_str, voucher_no, f"Gold Loan Disbursal: {final_acc_no} ({name.strip()}) [{gl_code}]", initial_balance, new_asset_balance, f"Opening Gold Loan Disbursal - {gl_code}", today_time), fetch=False)
+                                            """, (op_bal_date_str, voucher_no, f"Gold Loan Disbursal: {final_acc_no} ({name.strip()}) [{gl_code}]", initial_balance, new_asset_balance, f"Opening Gold Loan Disbursal - {gl_code}", today_time), fetch=False)
                                         elif chosen_asset_code in ['AST-102', 'AST-103']:
                                             bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                                             voucher_no = generate_bank_voucher_no()
                                             run_query("""
                                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                                 VALUES (?, ?, ?, 0, ?, ?, bank_name, 'AST-110', ?, ?)
-                                            """, (op_date_str, voucher_no, f"Gold Loan Disbursal: {final_acc_no} ({name.strip()}) [{gl_code}]", initial_balance, new_asset_balance, f"Opening Gold Loan Disbursal - {gl_code}", today_time), fetch=False)
+                                            """, (op_bal_date_str, voucher_no, f"Gold Loan Disbursal: {final_acc_no} ({name.strip()}) [{gl_code}]", initial_balance, new_asset_balance, f"Opening Gold Loan Disbursal - {gl_code}", today_time), fetch=False)
 
                                     elif 'Personal' in acc_type or 'Loan' in acc_type:
                                         pl_code = f"PL-2026-{new_c_id:04d}"
@@ -532,7 +534,7 @@ def render_customer_management():
                                             
                                         batch_insert_loan_schedules('PERSONAL', new_pl_id, pl_code, pl_sched, opening_date)
                                         
-                                        post_automated_jv(f"Personal Loan Disbursal - {name.strip()} ({pl_code})", "AST-108", chosen_asset_code, initial_balance, voucher_date=op_date_str)
+                                        post_automated_jv(f"Personal Loan Disbursal - {name.strip()} ({pl_code})", "AST-108", chosen_asset_code, initial_balance, voucher_date=op_bal_date_str)
                                         
                                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
                                         if chosen_asset_code == 'AST-101':
@@ -540,26 +542,27 @@ def render_customer_management():
                                             run_query("""
                                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                                 VALUES (?, ?, ?, 0, ?, ?, 'AST-108', ?, ?)
-                                            """, (op_date_str, voucher_no, f"Personal Loan Disbursal: {final_acc_no} ({name.strip()}) [{pl_code}]", initial_balance, new_asset_balance, f"Opening Personal Loan Disbursal - {pl_code}", today_time), fetch=False)
+                                            """, (op_bal_date_str, voucher_no, f"Personal Loan Disbursal: {final_acc_no} ({name.strip()}) [{pl_code}]", initial_balance, new_asset_balance, f"Opening Personal Loan Disbursal - {pl_code}", today_time), fetch=False)
                                         elif chosen_asset_code in ['AST-102', 'AST-103']:
                                             bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                                             voucher_no = generate_bank_voucher_no()
                                             run_query("""
                                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                                 VALUES (?, ?, ?, 0, ?, ?, bank_name, 'AST-108', ?, ?)
-                                            """, (op_date_str, voucher_no, f"Personal Loan Disbursal: {final_acc_no} ({name.strip()}) [{pl_code}]", initial_balance, new_asset_balance, f"Opening Personal Loan Disbursal - {pl_code}", today_time), fetch=False)
+                                            """, (op_bal_date_str, voucher_no, f"Personal Loan Disbursal: {final_acc_no} ({name.strip()}) [{pl_code}]", initial_balance, new_asset_balance, f"Opening Personal Loan Disbursal - {pl_code}", today_time), fetch=False)
 
                                     elif 'Fixed' in acc_type or 'FD' in acc_type:
                                         create_or_link_fd_opening(
                                             new_c_id, initial_balance, op_date_str, tenure_months=12, interest_rate=6.5,
-                                            nominee="Family Nominee", payment_mode=pay_mode, chosen_asset_code=chosen_asset_code
+                                            nominee="Family Nominee", payment_mode=pay_mode, chosen_asset_code=chosen_asset_code,
+                                            op_bal_date=op_bal_date_str
                                         )
 
                                     elif 'Recurring' in acc_type or 'RD' in acc_type:
                                         create_or_link_rd_opening(
                                             new_c_id, initial_balance, op_date_str, tenure_months=12, interest_rate=6.0,
                                             nominee="Family Nominee", payment_mode=pay_mode, chosen_asset_code=chosen_asset_code,
-                                            rd_no=f"RD-{final_acc_no}"
+                                            rd_no=f"RD-{final_acc_no}", op_bal_date=op_bal_date_str
                                         )
 
                                     else:
@@ -567,9 +570,9 @@ def render_customer_management():
                                         run_query("""
                                             INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
                                             VALUES (?, ?, 'CREDIT', ?, ?, 'SB Opening Balance Deposit', ?)
-                                        """, (f"TX{datetime.now(IST).strftime('%M%S%f')}", final_acc_no, initial_balance, pay_mode, op_date_str), fetch=False)
+                                        """, (f"TX{datetime.now(IST).strftime('%M%S%f')}", final_acc_no, initial_balance, pay_mode, op_bal_date_str), fetch=False)
                                         
-                                        jv_result = post_automated_jv(f"SB Opening Balance - Account {final_acc_no} ({name.strip()})", chosen_asset_code, "LIA-101", initial_balance, voucher_date=op_date_str)
+                                        jv_result = post_automated_jv(f"SB Opening Balance - Account {final_acc_no} ({name.strip()})", chosen_asset_code, "LIA-101", initial_balance, voucher_date=op_bal_date_str)
                                         
                                         if jv_result:
                                             new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -578,14 +581,14 @@ def render_customer_management():
                                                 run_query("""
                                                     INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                                                     VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
-                                                """, (op_date_str, voucher_no, f"SB Opening Deposit: {final_acc_no} ({name.strip()})", initial_balance, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {final_acc_no}", today_time), fetch=False)
+                                                """, (op_bal_date_str, voucher_no, f"SB Opening Deposit: {final_acc_no} ({name.strip()})", initial_balance, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {final_acc_no}", today_time), fetch=False)
                                             elif chosen_asset_code in ['AST-102', 'AST-103']:
                                                 bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                                                 voucher_no = generate_bank_voucher_no()
                                                 run_query("""
                                                     INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                                     VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
-                                                """, (op_date_str, voucher_no, f"SB Opening Deposit: {final_acc_no} ({name.strip()})", initial_balance, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {final_acc_no}", today_time), fetch=False)
+                                                """, (op_bal_date_str, voucher_no, f"SB Opening Deposit: {final_acc_no} ({name.strip()})", initial_balance, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {final_acc_no}", today_time), fetch=False)
                                           
                                 clear_db_cache()
                                 st.success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: {new_c_id}) registered successfully on {today_str}! Primary Account opened with date {op_date_str} and initial balance ₹{initial_balance:,.2f} recorded in {pay_mode}.")
@@ -961,21 +964,27 @@ def render_customer_management():
                         except Exception:
                             sb_created_dt = date.today()
                             
+                        sb_op_bal_res = cached_query("SELECT date FROM transactions WHERE account_no = ? AND (narration LIKE '%Opening%' OR narration LIKE '%Deposit%') ORDER BY id ASC LIMIT 1", (sb_acc_no,))
+                        try:
+                            sb_op_bal_dt = pd.to_datetime(sb_op_bal_res[0][0]).date() if sb_op_bal_res and sb_op_bal_res[0][0] else sb_created_dt
+                        except Exception:
+                            sb_op_bal_dt = sb_created_dt
+                            
                         col_sb_1, col_sb_2 = st.columns(2)
                         with col_sb_1:
                             e_sb_acc = st.text_input("SB Account Number", value=str(sb_acc_no), key=f"cust_sb_acc_{cust_id_edit}")
                             e_sb_bal = st.number_input("SB Balance / Opening Balance (₹)", min_value=0.0, value=float(sb_bal or 0.0), step=100.0, key=f"cust_sb_bal_{cust_id_edit}")
+                            sb_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
+                            e_sb_asset_lbl = st.selectbox("Funding / Settlement Account", list(sb_asset_opts.keys()), key=f"cust_sb_asset_{cust_id_edit}")
+                            e_sb_asset_code = sb_asset_opts[e_sb_asset_lbl]
                         with col_sb_2:
                             e_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, value=float(sb_rate or 3.5), step=0.25, key=f"cust_sb_rate_{cust_id_edit}")
-                            e_sb_date = st.date_input("Opening Date", value=sb_created_dt, format="DD-MM-YYYY", key=f"cust_sb_dt_{cust_id_edit}")
-                            
-                        sb_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
-                        e_sb_asset_lbl = st.selectbox("Funding / Settlement Account", list(sb_asset_opts.keys()), key=f"cust_sb_asset_{cust_id_edit}")
-                        e_sb_asset_code = sb_asset_opts[e_sb_asset_lbl]
+                            e_sb_cdate = st.date_input("A/c Opening Date", value=sb_created_dt, format="DD-MM-YYYY", key=f"cust_sb_cdt_{cust_id_edit}")
+                            e_sb_op_date = st.date_input("Opening Balance Date", value=sb_op_bal_dt, format="DD-MM-YYYY", key=f"cust_sb_opdt_{cust_id_edit}")
                         
                         if st.button("💾 Save & Sync SB Opening Balance (Update Ledgers, JVs & Books)", type="primary", use_container_width=True, key=f"btn_save_cust_sb_{cust_id_edit}"):
                             success, msg = update_sb_account_details(
-                                sb_acc_no, e_sb_acc, cust_id_edit, e_sb_bal, e_sb_rate, str(e_sb_date), e_sb_asset_code
+                                sb_acc_no, e_sb_acc, cust_id_edit, e_sb_bal, e_sb_rate, str(e_sb_cdate), e_sb_asset_code, new_op_bal_date=str(e_sb_op_date)
                             )
                             clear_db_cache()
                             if success:
@@ -991,17 +1000,19 @@ def render_customer_management():
                     with st.expander("➕ Add New Savings Bank (SB) Opening Balance for this Customer", expanded=False):
                         col_nsb1, col_nsb2 = st.columns(2)
                         nsb_bal = col_nsb1.number_input("Initial Opening Balance (₹) *", min_value=0.0, value=500.0, step=100.0, key=f"nsb_bal_{cust_id_edit}")
-                        nsb_date = col_nsb2.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key=f"nsb_dt_{cust_id_edit}")
+                        nsb_rate = col_nsb2.number_input("Annual Interest Rate (%)", min_value=0.0, value=3.5, step=0.25, key=f"nsb_r_{cust_id_edit}")
                         
                         col_nsb3, col_nsb4 = st.columns(2)
-                        nsb_rate = col_nsb3.number_input("Annual Interest Rate (%)", min_value=0.0, value=3.5, step=0.25, key=f"nsb_r_{cust_id_edit}")
+                        nsb_date = col_nsb3.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key=f"nsb_dt_{cust_id_edit}")
+                        nsb_op_date = col_nsb4.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key=f"nsb_opdt_{cust_id_edit}")
+                        
                         nsb_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
-                        nsb_asset_lbl = col_nsb4.selectbox("Funding / Settlement Account", list(nsb_asset_opts.keys()), key=f"nsb_asset_{cust_id_edit}")
+                        nsb_asset_lbl = st.selectbox("Funding / Settlement Account", list(nsb_asset_opts.keys()), key=f"nsb_asset_{cust_id_edit}")
                         nsb_asset_code = nsb_asset_opts[nsb_asset_lbl]
                         
                         if st.button("🚀 Create & Link SB Opening Balance", type="primary", use_container_width=True, key=f"btn_add_sb_{cust_id_edit}"):
                             success, msg = create_or_link_sb_opening(
-                                cust_id_edit, nsb_bal, str(nsb_date), interest_rate=nsb_rate, chosen_asset_code=nsb_asset_code
+                                cust_id_edit, nsb_bal, str(nsb_date), interest_rate=nsb_rate, chosen_asset_code=nsb_asset_code, op_bal_date=str(nsb_op_date)
                             )
                             clear_db_cache()
                             if success:
@@ -1033,6 +1044,12 @@ def render_customer_management():
                             except Exception:
                                 fd_closed_dt = date.today()
 
+                            fd_op_bal_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%FD #{fd_id}%", f"%FD Opening%Customer {cust_id_edit}%"))
+                            try:
+                                fd_op_bal_dt = datetime.strptime(str(fd_op_bal_res[0][0])[:10], "%Y-%m-%d").date() if fd_op_bal_res and fd_op_bal_res[0][0] else fd_created_dt
+                            except Exception:
+                                fd_op_bal_dt = fd_created_dt
+
                             st.markdown(f"#### 📈 Fixed Deposit **#FD-{fd_id:05d}** (Principal: ₹{float(fd_princ):,.2f} | Maturity: ₹{float(fd_mat):,.2f} | Status: `{fd_stat}`)")
                             with st.container(border=True):
                                 col_f1, col_f2, col_f3 = st.columns(3)
@@ -1043,19 +1060,20 @@ def render_customer_management():
                                 col_f4, col_f5, col_f6 = st.columns(3)
                                 ed_fd_nom = col_f4.text_input("Nominee Name", value=str(fd_nom or "Family Nominee"), key=f"cust_fd_nom_{fd_id}")
                                 ed_fd_stat = col_f5.selectbox("Status", ["ACTIVE", "CLOSED"], index=0 if fd_stat == "ACTIVE" else 1, key=f"cust_fd_stat_{fd_id}")
-                                ed_fd_cdate = col_f6.date_input("Opening Date", value=fd_created_dt, format="DD-MM-YYYY", key=f"cust_fd_cd_{fd_id}")
+                                ed_fd_cdate = col_f6.date_input("A/c Opening Date", value=fd_created_dt, format="DD-MM-YYYY", key=f"cust_fd_cd_{fd_id}")
 
                                 col_f7, col_f8 = st.columns(2)
+                                ed_fd_op_date = col_f7.date_input("Opening Balance Date", value=fd_op_bal_dt, format="DD-MM-YYYY", key=f"cust_fd_opdt_{fd_id}")
                                 fd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
                                 fd_pm_idx = 0
                                 if "cash" in str(fd_pm).lower(): fd_pm_idx = 1
                                 elif "sbi" in str(fd_pm).lower() or "state bank" in str(fd_pm).lower(): fd_pm_idx = 2
-                                ed_fd_asset_lbl = col_f7.selectbox("Funding / Settlement Asset Mode", list(fd_asset_opts.keys()), index=fd_pm_idx, key=f"cust_fd_asset_{fd_id}")
+                                ed_fd_asset_lbl = col_f8.selectbox("Funding / Settlement Asset Mode", list(fd_asset_opts.keys()), index=fd_pm_idx, key=f"cust_fd_asset_{fd_id}")
                                 ed_fd_asset_code = fd_asset_opts[ed_fd_asset_lbl]
                                 ed_fd_pay_mode = ed_fd_asset_lbl.split(" - ")[1]
 
                                 if ed_fd_stat == "CLOSED":
-                                    ed_fd_closed_dt = col_f8.date_input("Closed Date", value=fd_closed_dt, format="DD-MM-YYYY", key=f"cust_fd_cld_{fd_id}")
+                                    ed_fd_closed_dt = st.date_input("Closed Date", value=fd_closed_dt, format="DD-MM-YYYY", key=f"cust_fd_cld_{fd_id}")
                                 else:
                                     ed_fd_closed_dt = None
 
@@ -1066,7 +1084,7 @@ def render_customer_management():
                                     success, msg = update_fd_account_details(
                                         fd_id, cust_id_edit, ed_fd_p, ed_fd_tenure, ed_fd_rate,
                                         ed_fd_nom, ed_fd_stat, str(ed_fd_cdate), str(ed_fd_closed_dt) if ed_fd_closed_dt else None,
-                                        ed_fd_pay_mode, ed_fd_asset_code
+                                        ed_fd_pay_mode, ed_fd_asset_code, new_op_bal_date=str(ed_fd_op_date)
                                     )
                                     clear_db_cache()
                                     if success:
@@ -1085,18 +1103,22 @@ def render_customer_management():
                         nfd_tenure = col_nfd2.number_input("Tenure (Months)", min_value=1, max_value=120, value=12, step=1, key=f"nfd_t_{cust_id_edit}")
                         nfd_rate = col_nfd3.number_input("Annual Interest Rate (%)", min_value=0.0, value=6.5, step=0.25, key=f"nfd_r_{cust_id_edit}")
 
-                        col_nfd4, col_nfd5, col_nfd6 = st.columns(3)
+                        col_nfd4, col_nfd5 = st.columns(2)
                         nfd_sdate = col_nfd4.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key=f"nfd_sd_{cust_id_edit}")
-                        nfd_nom = col_nfd5.text_input("Nominee Name", value="Family Nominee", key=f"nfd_nom_{cust_id_edit}")
+                        nfd_op_sdate = col_nfd5.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key=f"nfd_opsd_{cust_id_edit}")
+
+                        col_nfd6, col_nfd7 = st.columns(2)
+                        nfd_nom = col_nfd6.text_input("Nominee Name", value="Family Nominee", key=f"nfd_nom_{cust_id_edit}")
                         nfd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
-                        nfd_asset_lbl = col_nfd6.selectbox("Funding Mode", list(nfd_asset_opts.keys()), key=f"nfd_asset_{cust_id_edit}")
+                        nfd_asset_lbl = col_nfd7.selectbox("Funding Mode", list(nfd_asset_opts.keys()), key=f"nfd_asset_{cust_id_edit}")
                         nfd_asset_code = nfd_asset_opts[nfd_asset_lbl]
                         nfd_pay_mode = nfd_asset_lbl.split(" - ")[1]
 
                         if st.button("🚀 Create & Link Fixed Deposit (FD) Opening Balance", type="primary", use_container_width=True, key=f"btn_add_fd_{cust_id_edit}"):
                             success, msg = create_or_link_fd_opening(
                                 cust_id_edit, nfd_princ, str(nfd_sdate), nfd_tenure, nfd_rate,
-                                nominee=nfd_nom, payment_mode=nfd_pay_mode, chosen_asset_code=nfd_asset_code
+                                nominee=nfd_nom, payment_mode=nfd_pay_mode, chosen_asset_code=nfd_asset_code,
+                                op_bal_date=str(nfd_op_sdate)
                             )
                             clear_db_cache()
                             if success:
@@ -1129,6 +1151,12 @@ def render_customer_management():
                             except Exception:
                                 rd_closed_dt = date.today()
 
+                            rd_op_bal_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%RD #{rd_id}%", f"%{rd_no}%", f"%RD Opening%Customer {cust_id_edit}%"))
+                            try:
+                                rd_op_bal_dt = datetime.strptime(str(rd_op_bal_res[0][0])[:10], "%Y-%m-%d").date() if rd_op_bal_res and rd_op_bal_res[0][0] else rd_created_dt
+                            except Exception:
+                                rd_op_bal_dt = rd_created_dt
+
                             st.markdown(f"#### 🔄 Recurring Deposit **#{rd_no}** (Monthly: ₹{float(rd_mamt):,.2f} | Paid: {rd_inst}/{rd_tenure}M | Collected: ₹{float(rd_colbal or 0):,.2f} | Status: `{rd_stat}`)")
                             with st.container(border=True):
                                 col_r1, col_r2, col_r3 = st.columns(3)
@@ -1141,22 +1169,23 @@ def render_customer_management():
                                 ed_rd_inst = col_r5.number_input("Installments Paid", min_value=0, max_value=int(ed_rd_tenure), value=int(rd_inst or 1), step=1, key=f"cust_rd_inst_{rd_id}")
                                 ed_rd_colbal = col_r6.number_input("Opening Balance / Total Collected (₹)", min_value=0.0, value=float(rd_colbal or (float(ed_rd_mamt) * int(ed_rd_inst))), step=100.0, key=f"cust_rd_cbal_{rd_id}")
 
-                                col_r7, col_r8, col_r9 = st.columns(3)
-                                ed_rd_nom = col_r7.text_input("Nominee Name", value=str(rd_nom or "Family Nominee"), key=f"cust_rd_nom_{rd_id}")
-                                ed_rd_stat = col_r8.selectbox("Status", ["ACTIVE", "CLOSED"], index=0 if rd_stat == "ACTIVE" else 1, key=f"cust_rd_stat_{rd_id}")
-                                ed_rd_cdate = col_r9.date_input("A/c Opening Date / Opening Balance Date", value=rd_created_dt, format="DD-MM-YYYY", key=f"cust_rd_cd_{rd_id}")
+                                col_r7, col_r8 = st.columns(2)
+                                ed_rd_cdate = col_r7.date_input("A/c Opening Date", value=rd_created_dt, format="DD-MM-YYYY", key=f"cust_rd_cd_{rd_id}")
+                                ed_rd_op_date = col_r8.date_input("Opening Balance Date / First Installment Date", value=rd_op_bal_dt, format="DD-MM-YYYY", key=f"cust_rd_opdt_{rd_id}")
 
-                                col_r10, col_r11 = st.columns(2)
+                                col_r9, col_r10, col_r11 = st.columns(3)
+                                ed_rd_nom = col_r9.text_input("Nominee Name", value=str(rd_nom or "Family Nominee"), key=f"cust_rd_nom_{rd_id}")
+                                ed_rd_stat = col_r10.selectbox("Status", ["ACTIVE", "CLOSED"], index=0 if rd_stat == "ACTIVE" else 1, key=f"cust_rd_stat_{rd_id}")
                                 rd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
                                 rd_pm_idx = 0
                                 if "cash" in str(rd_pm).lower(): rd_pm_idx = 1
                                 elif "sbi" in str(rd_pm).lower() or "state bank" in str(rd_pm).lower(): rd_pm_idx = 2
-                                ed_rd_asset_lbl = col_r10.selectbox("Funding / Settlement Asset Mode", list(rd_asset_opts.keys()), index=rd_pm_idx, key=f"cust_rd_asset_{rd_id}")
+                                ed_rd_asset_lbl = col_r11.selectbox("Funding / Settlement Asset Mode", list(rd_asset_opts.keys()), index=rd_pm_idx, key=f"cust_rd_asset_{rd_id}")
                                 ed_rd_asset_code = rd_asset_opts[ed_rd_asset_lbl]
                                 ed_rd_pay_mode = ed_rd_asset_lbl.split(" - ")[1]
 
                                 if ed_rd_stat == "CLOSED":
-                                    ed_rd_closed_dt = col_r11.date_input("Closed Date", value=rd_closed_dt, format="DD-MM-YYYY", key=f"cust_rd_cld_{rd_id}")
+                                    ed_rd_closed_dt = st.date_input("Closed Date", value=rd_closed_dt, format="DD-MM-YYYY", key=f"cust_rd_cld_{rd_id}")
                                 else:
                                     ed_rd_closed_dt = None
 
@@ -1168,7 +1197,7 @@ def render_customer_management():
                                         rd_id, cust_id_edit, ed_rd_no, ed_rd_mamt, ed_rd_tenure, ed_rd_rate,
                                         ed_rd_inst, ed_rd_colbal, ed_rd_nom, ed_rd_stat,
                                         str(ed_rd_cdate), str(ed_rd_closed_dt) if ed_rd_closed_dt else None,
-                                        ed_rd_pay_mode, ed_rd_asset_code
+                                        ed_rd_pay_mode, ed_rd_asset_code, new_op_bal_date=str(ed_rd_op_date)
                                     )
                                     clear_db_cache()
                                     if success:
@@ -1187,18 +1216,22 @@ def render_customer_management():
                         nrd_tenure = col_nrd2.number_input("Tenure (Months)", min_value=1, max_value=120, value=12, step=1, key=f"nrd_t_{cust_id_edit}")
                         nrd_rate = col_nrd3.number_input("Annual Interest Rate (%)", min_value=0.0, value=6.0, step=0.25, key=f"nrd_r_{cust_id_edit}")
 
-                        col_nrd4, col_nrd5, col_nrd6 = st.columns(3)
+                        col_nrd4, col_nrd5 = st.columns(2)
                         nrd_sdate = col_nrd4.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key=f"nrd_sd_{cust_id_edit}")
-                        nrd_nom = col_nrd5.text_input("Nominee Name", value="Family Nominee", key=f"nrd_nom_{cust_id_edit}")
+                        nrd_op_sdate = col_nrd5.date_input("Opening Balance Date / First Installment Date", value=date.today(), format="DD-MM-YYYY", key=f"nrd_opsd_{cust_id_edit}")
+
+                        col_nrd6, col_nrd7 = st.columns(2)
+                        nrd_nom = col_nrd6.text_input("Nominee Name", value="Family Nominee", key=f"nrd_nom_{cust_id_edit}")
                         nrd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
-                        nrd_asset_lbl = col_nrd6.selectbox("Funding Mode", list(nrd_asset_opts.keys()), key=f"nrd_asset_{cust_id_edit}")
+                        nrd_asset_lbl = col_nrd7.selectbox("Funding Mode", list(nrd_asset_opts.keys()), key=f"nrd_asset_{cust_id_edit}")
                         nrd_asset_code = nrd_asset_opts[nrd_asset_lbl]
                         nrd_pay_mode = nrd_asset_lbl.split(" - ")[1]
 
                         if st.button("🚀 Create & Link Recurring Deposit (RD) Opening Balance", type="primary", use_container_width=True, key=f"btn_add_rd_{cust_id_edit}"):
                             success, msg = create_or_link_rd_opening(
                                 cust_id_edit, nrd_mamt, str(nrd_sdate), nrd_tenure, nrd_rate,
-                                nominee=nrd_nom, payment_mode=nrd_pay_mode, chosen_asset_code=nrd_asset_code
+                                nominee=nrd_nom, payment_mode=nrd_pay_mode, chosen_asset_code=nrd_asset_code,
+                                op_bal_date=str(nrd_op_sdate)
                             )
                             clear_db_cache()
                             if success:
@@ -3276,9 +3309,10 @@ def render_sb_accounts():
                 selected_cust = st.selectbox("Select Customer Name", list(cust_dict.keys()), key="sb_open_cust")
                 cust_id = cust_dict[selected_cust]
                 init_bal = st.number_input("Opening Balance (₹)", min_value=0.0, value=500.0, step=100.0, key="sb_open_bal")
+                sb_int_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=3.5, step=0.25, key="sb_open_rate")
             with col_sb2:
                 sb_open_date = st.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key="sb_open_date_input")
-                sb_int_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=3.5, step=0.25, key="sb_open_rate")
+                sb_op_bal_date = st.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key="sb_op_bal_date_input")
             
             asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
             asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
@@ -3297,37 +3331,38 @@ def render_sb_accounts():
             
             if st.button("Create SB Account", use_container_width=True, type="primary"):
                 op_date_str = sb_open_date.strftime("%Y-%m-%d")
+                op_bal_date_str = sb_op_bal_date.strftime("%Y-%m-%d")
                 acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
                 run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, ?, ?, ?)", 
                           (acc_no, cust_id, init_bal, sb_int_rate, op_date_str), fetch=False)
                 
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
-                              (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_no, init_bal, mode, op_date_str), fetch=False)
+                              (f"TX{datetime.now(IST).strftime('%M%S%f')}", acc_no, init_bal, mode, op_bal_date_str), fetch=False)
                     
-                    jv_result = post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal, voucher_date=op_date_str)
+                    jv_result = post_automated_jv(f"SB Opening Balance - Account {acc_no}", chosen_asset_code, "LIA-101", init_bal, voucher_date=op_bal_date_str)
                     
                     if jv_result:
                         new_asset_balance = get_account_balance_from_jv(chosen_asset_code)
-                        today_code = op_date_str.replace("-", "")
-                        today_time = f"{op_date_str} {datetime.now(IST).strftime('%H:%M')}"
+                        today_code = op_bal_date_str.replace("-", "")
+                        today_time = f"{op_bal_date_str} {datetime.now(IST).strftime('%H:%M')}"
                         
                         if chosen_asset_code == 'AST-101':
                             voucher_no = generate_cash_voucher_no()
                             run_query("""
                                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (op_date_str, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, 0, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {acc_no}", today_time), fetch=False)
+                                VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+                            """, (op_bal_date_str, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, new_asset_balance, chosen_asset_code, f"SB Opening Balance - {acc_no}", today_time), fetch=False)
                         elif chosen_asset_code in ['AST-102', 'AST-103']:
                             bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                             voucher_no = generate_bank_voucher_no()
                             run_query("""
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (op_date_str, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, 0, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {acc_no}", today_time), fetch=False)
+                                VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                            """, (op_bal_date_str, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {acc_no}", today_time), fetch=False)
 
                 clear_db_cache()
-                st.success(f"🎉 SB Account created successfully on {op_date_str}! Account No: **{acc_no}**")
+                st.success(f"🎉 SB Account created successfully on {op_date_str}! Account No: **{acc_no}** (Opening balance recorded on {op_bal_date_str})")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -3603,6 +3638,12 @@ def render_sb_accounts():
                 c_created_dt = pd.to_datetime(c_created).date() if c_created else date.today()
             except Exception:
                 c_created_dt = date.today()
+
+            sb_op_bal_res = cached_query("SELECT date FROM transactions WHERE account_no = ? AND (narration LIKE '%Opening%' OR narration LIKE '%Deposit%') ORDER BY id ASC LIMIT 1", (c_acc_no,))
+            try:
+                sb_op_bal_dt = pd.to_datetime(sb_op_bal_res[0][0]).date() if sb_op_bal_res and sb_op_bal_res[0][0] else c_created_dt
+            except Exception:
+                sb_op_bal_dt = c_created_dt
             
             st.markdown("---")
             col_sb_e1, col_sb_e2 = st.columns(2)
@@ -3614,6 +3655,7 @@ def render_sb_accounts():
             with col_sb_e2:
                 edit_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=float(c_rate or 3.5), step=0.25, key=f"edit_sb_rate_{c_acc_no}")
                 edit_sb_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_sb_created_{c_acc_no}")
+                edit_sb_op_date = st.date_input("Opening Balance Date", value=sb_op_bal_dt, format="DD-MM-YYYY", key=f"edit_sb_op_date_{c_acc_no}")
                 
                 edit_asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
                 if not edit_asset_accounts:
@@ -3639,8 +3681,9 @@ def render_sb_accounts():
             with btn_sb1:
                 if st.button("💾 Save & Update SB Account Details", key=f"btn_save_sb_{c_acc_no}", type="primary", use_container_width=True):
                     edit_created_str = edit_sb_created.strftime("%Y-%m-%d")
+                    edit_op_bal_str = edit_sb_op_date.strftime("%Y-%m-%d")
                     success, msg = update_sb_account_details(
-                        c_acc_no, edit_sb_acc_no, edit_sb_cust_id, edit_sb_bal, edit_sb_rate, edit_created_str, edit_chosen_asset
+                        c_acc_no, edit_sb_acc_no, edit_sb_cust_id, edit_sb_bal, edit_sb_rate, edit_created_str, edit_chosen_asset, new_op_bal_date=edit_op_bal_str
                     )
                     clear_db_cache()
                     if success:
@@ -3681,6 +3724,7 @@ def render_fixed_deposits():
                 tenure = st.slider("Tenure (Months)", 1, 60, 12)
             with col_fd2:
                 fd_open_date = st.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key="fd_open_date_input")
+                fd_op_bal_date = st.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key="fd_op_bal_date_input")
                 interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5)
                 nominee = st.text_input("Nominee Name")
             
@@ -3712,15 +3756,16 @@ def render_fixed_deposits():
                     st.stop()
                 
                 open_date_str = fd_open_date.strftime("%Y-%m-%d")
+                op_bal_date_str = fd_op_bal_date.strftime("%Y-%m-%d")
                 run_query("""
                     INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, open_date_str, payment_mode), fetch=False)
                 
-                jv_result = post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal, voucher_date=open_date_str)
+                jv_result = post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal, voucher_date=op_bal_date_str)
                 
                 if jv_result:
-                    today_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+                    today_time = f"{op_bal_date_str} 10:00"
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
                     
                     if chosen_asset_code == 'AST-101':
@@ -3728,17 +3773,17 @@ def render_fixed_deposits():
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (open_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
+                        """, (op_bal_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
                     elif chosen_asset_code in ['AST-102', 'AST-103']:
                         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                         voucher_no = generate_bank_voucher_no()
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (open_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
+                        """, (op_bal_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
                 
                 clear_db_cache()
-                st.success(f"🎉 Fixed Deposit opened & recorded successfully on {open_date_str} via {payment_mode}!")
+                st.success(f"🎉 Fixed Deposit opened & recorded successfully (Opened: {open_date_str} | Op Bal: {op_bal_date_str}) via {payment_mode}!")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -3978,6 +4023,12 @@ def render_fixed_deposits():
             except Exception:
                 c_closed_dt = date.today()
 
+            fd_op_bal_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%FD #{c_fd_id}%", f"%FD Opening%Customer {c_cust_id}%"))
+            try:
+                fd_op_bal_dt = pd.to_datetime(fd_op_bal_res[0][0]).date() if fd_op_bal_res and fd_op_bal_res[0][0] else c_created_dt
+            except Exception:
+                fd_op_bal_dt = c_created_dt
+
             st.markdown("---")
             col_fe1, col_fe2 = st.columns(2)
             with col_fe1:
@@ -3990,11 +4041,12 @@ def render_fixed_deposits():
                 edit_fd_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_fd_nom_{c_fd_id}")
                 edit_fd_status = st.selectbox("Status", ["ACTIVE", "CLOSED"], index=0 if c_status == "ACTIVE" else 1, key=f"edit_fd_status_{c_fd_id}")
                 edit_fd_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_fd_created_{c_fd_id}")
+                edit_fd_op_date = st.date_input("Opening Balance Date", value=fd_op_bal_dt, format="DD-MM-YYYY", key=f"edit_fd_op_{c_fd_id}")
                 if edit_fd_status == "CLOSED":
                     edit_fd_closed = st.date_input("Closed Date", value=c_closed_dt, format="DD-MM-YYYY", key=f"edit_fd_closed_{c_fd_id}")
                 else:
                     edit_fd_closed = None
-                edit_fd_pay_mode = st.selectbox("Payment Mode", ["Cash", "Union Bank of India", "State Bank of India"], index=0 if (c_pay_mode or "").lower() == "cash" else (1 if "union" in (c_pay_mode or "").lower() else 2), key=f"edit_fd_pm_{c_fd_id}")
+                edit_fd_pay_mode = st.selectbox("Payment Mode", ["Union Bank of India", "Cash", "State Bank of India"], index=1 if (c_pay_mode or "").lower() == "cash" else (2 if "state" in (c_pay_mode or "").lower() else 0), key=f"edit_fd_pm_{c_fd_id}")
 
             # Live recalculation
             calc_fd_maturity = edit_fd_principal + (edit_fd_principal * edit_fd_rate * (edit_fd_tenure / 12.0) / 100.0)
@@ -4026,20 +4078,29 @@ def render_fixed_deposits():
             with btn_f1:
                 if st.button("💾 Save & Update FD Details", key=f"btn_save_fd_{c_fd_id}", type="primary", use_container_width=True):
                     created_str = edit_fd_created.strftime("%Y-%m-%d")
+                    op_bal_str = edit_fd_op_date.strftime("%Y-%m-%d")
                     closed_str = edit_fd_closed.strftime("%Y-%m-%d") if edit_fd_closed else None
-                    run_query("""
-                        UPDATE fixed_deposits
-                        SET customer_id = ?, principal = ?, tenure_months = ?, interest_rate = ?,
-                            maturity_amount = ?, nominee = ?, status = ?, created_at = ?,
-                            closed_date = ?, payment_mode = ?
-                        WHERE fd_id = ?
-                    """, (edit_fd_cust_id, edit_fd_principal, edit_fd_tenure, edit_fd_rate,
-                          final_fd_mat, edit_fd_nominee, edit_fd_status, created_str,
-                          closed_str, edit_fd_pay_mode, c_fd_id), fetch=False)
+                    
+                    if "cash" in edit_fd_pay_mode.lower():
+                        chosen_asset = "AST-101"
+                    elif "state" in edit_fd_pay_mode.lower() or "sbi" in edit_fd_pay_mode.lower():
+                        chosen_asset = "AST-103"
+                    else:
+                        chosen_asset = "AST-102"
+                        
+                    success, msg = update_fd_account_details(
+                        c_fd_id, edit_fd_cust_id, edit_fd_principal, edit_fd_tenure, edit_fd_rate,
+                        edit_fd_nominee, edit_fd_status, created_str, closed_str,
+                        edit_fd_pay_mode, chosen_asset_code=chosen_asset, new_op_bal_date=op_bal_str,
+                        new_maturity_amount=final_fd_mat
+                    )
                     clear_db_cache()
-                    st.success(f"✅ Fixed Deposit #{c_fd_id} updated successfully!")
-                    time.sleep(0.5)
-                    st.rerun()
+                    if success:
+                        st.success(f"✅ {msg}")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed to update FD: {msg}")
             with btn_f2:
                 with st.popover("🗑️ Delete FD"):
                     st.error(f"⚠️ Are you sure you want to permanently delete FD #{c_fd_id}?")
@@ -4071,6 +4132,7 @@ def render_recurring_deposits():
                 tenure = st.slider("Tenure (Months)", 6, 60, 12, key="rd_tenure")
             with col_rd2:
                 rd_open_date = st.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key="rd_open_date_input")
+                rd_op_bal_date = st.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key="rd_op_bal_date_input")
                 interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.0, key="rd_rate")
                 nominee = st.text_input("Nominee Name", key="rd_nom")
             
@@ -4103,13 +4165,14 @@ def render_recurring_deposits():
                     st.stop()
                 
                 open_date_str = rd_open_date.strftime("%Y-%m-%d")
+                op_bal_date_str = rd_op_bal_date.strftime("%Y-%m-%d")
                 run_query("""
                     INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance)
                     VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?, 0)
                 """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
                       open_date_str, payment_mode, approx_maturity), fetch=False)
                 
-                jv_result = post_automated_jv(f"RD Opening - First Installment via {payment_mode}", chosen_asset_code, "LIA-103", monthly_amt, voucher_date=open_date_str)
+                jv_result = post_automated_jv(f"RD Opening - First Installment via {payment_mode}", chosen_asset_code, "LIA-103", monthly_amt, voucher_date=op_bal_date_str)
                 
                 if USING_SUPABASE:
                     rd_id_result = run_query("SELECT LASTVAL()")
@@ -4119,7 +4182,7 @@ def render_recurring_deposits():
                     rd_id = rd_id_result[0][0]
                     run_query("UPDATE recurring_deposits SET installments_paid=1, collected_balance=? WHERE rd_id=?", (monthly_amt, rd_id), fetch=False)
                     
-                    today_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+                    today_time = f"{op_bal_date_str} 10:00"
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
                     
                     if chosen_asset_code == 'AST-101':
@@ -4127,17 +4190,17 @@ def render_recurring_deposits():
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (open_date_str, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
+                        """, (op_bal_date_str, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
                     elif chosen_asset_code in ['AST-102', 'AST-103']:
                         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                         voucher_no = generate_bank_voucher_no()
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (open_date_str, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
+                        """, (op_bal_date_str, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
                 
                 clear_db_cache()
-                st.success(f"🎉 Recurring Deposit opened successfully on {open_date_str} via {payment_mode}! First installment paid.")
+                st.success(f"🎉 Recurring Deposit opened & recorded successfully (Opened: {open_date_str} | Op Bal: {op_bal_date_str}) via {payment_mode}! First installment paid.")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -4502,6 +4565,12 @@ def render_recurring_deposits():
             except Exception:
                 c_closed_dt = date.today()
 
+            rd_op_bal_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%RD #{c_rd_id}%", f"%{c_rd_no}%", f"%RD Opening%Customer {c_cust_id}%"))
+            try:
+                rd_op_bal_dt = pd.to_datetime(rd_op_bal_res[0][0]).date() if rd_op_bal_res and rd_op_bal_res[0][0] else c_created_dt
+            except Exception:
+                rd_op_bal_dt = c_created_dt
+
             st.markdown("---")
             col_e1, col_e2 = st.columns(2)
             
@@ -4529,7 +4598,8 @@ def render_recurring_deposits():
             col_e3, col_e4 = st.columns(2)
             with col_e3:
                 edit_status = st.selectbox("Account Status", ["ACTIVE", "CLOSED"], index=0 if c_status == 'ACTIVE' else 1, key=f"edit_status_{c_rd_id}")
-                edit_created = st.date_input("A/c Opening Date / Opening Balance Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_created_{c_rd_id}")
+                edit_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_created_{c_rd_id}")
+                edit_op_bal_date = st.date_input("Opening Balance Date", value=rd_op_bal_dt, format="DD-MM-YYYY", key=f"edit_op_bal_{c_rd_id}")
                 
                 rd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
                 rd_pm_idx = 0
@@ -4605,13 +4675,15 @@ def render_recurring_deposits():
             with btn_col1:
                 if st.button("💾 Save & Sync RD Account (Update Ledgers, JVs & Books)", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
                     edit_created_str = edit_created.strftime("%Y-%m-%d")
+                    edit_op_bal_str = edit_op_bal_date.strftime("%Y-%m-%d")
                     edit_mat_str = edit_mat_date.strftime("%Y-%m-%d")
                     closed_date_val = edit_closed_date.strftime("%Y-%m-%d") if (edit_status == 'CLOSED' and edit_closed_date) else (datetime.now(IST).strftime("%Y-%m-%d") if edit_status == 'CLOSED' else None)
                     
                     success, msg = update_rd_account_details(
                         c_rd_id, edit_rd_cust_id, edit_rd_no, edit_monthly, edit_tenure, edit_rate,
                         edit_paid, edit_col_balance, edit_nominee, edit_status,
-                        edit_created_str, closed_date_val, edit_rd_pay_mode, edit_rd_asset_code
+                        edit_created_str, closed_date_val, edit_rd_pay_mode, edit_rd_asset_code,
+                        new_op_bal_date=edit_op_bal_str
                     )
                     
                     run_query("""

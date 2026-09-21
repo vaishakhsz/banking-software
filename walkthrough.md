@@ -1,61 +1,62 @@
 # Walkthrough - Aarsha Nidhi Banking Software
 
-The Aarsha Nidhi Banking Software is a robust, double-entry banking system built using Streamlit, SQLite, Plotly, and ReportLab. It has been successfully implemented using a clean, modular architecture.
+## Changes Summary: Independent Account Opening Date vs. Opening Balance Date & RD #1 Correction
 
-## Implementation Details
+### 1. Separation of Account Opening Date and Opening Balance Date
+A fundamental distinction has been implemented across the entire software between:
+- **A/c Opening Date (`created_at` / `open_date`)**: The contractual date when the customer registered or opened the account (used for tenure calculations, maturity date projections, passbook/certificate headers, and account masters).
+- **Opening Balance Date (`op_bal_date` / `voucher_date` / `tx_date`)**: The date when opening funds were deposited / recorded into the accounting ledger (used for Journal Vouchers, Day Book, Cash Book, Bank Book, Trial Balance, Profit & Loss, and Balance Sheet date filtering).
 
-The codebase is organized as follows:
-- [`database.py`](file:///C:/Users/vaish/.gemini/antigravity/scratch/aarsha-nidhi-banking/database.py): Handles the SQLite connection, schema initialization, auto-migration of missing columns, default accounts injection (32 default accounting heads), balance lookup functions, voucher generators, and automated double-entry journal voucher (JV) posting.
-- [`pdf_generator.py`](file:///C:/Users/vaish/.gemini/antigravity/scratch/aarsha-nidhi-banking/pdf_generator.py): Implements clean, professional ReportLab PDF layout generation for ledger print books, cash/bank/journal vouchers, and FD/RD certificates.
-- [`app.py`](file:///C:/Users/vaish/.gemini/antigravity/scratch/aarsha-nidhi-banking/app.py): The complete monolithic entry point containing all Streamlit views (Dashboard, Customer, KYC, SB, FD, RD, Chart of Accounts, Cash Book, Bank Book, JVs, Admin Record Editor, Statements, Reports, and Interest calculation), routing logic, sidebar configurations, custom linear-gradient styling, and backup/restore controls.
-- [`requirements.txt`](file:///C:/Users/vaish/.gemini/antigravity/scratch/aarsha-nidhi-banking/requirements.txt): Lists all necessary third-party Python modules.
+---
 
-## Completed Missing Functionality
+### 2. UI & Backend Implementation Across Modules
 
-### 1. Interactive Plotly Charts in Reports
-Added the complete set of interactive graphs:
-- **Customer Registration Trend**: Line chart tracking customer registration dates.
-- **Account Distribution**: Pie chart illustrating the proportions of SB, FD, and RD accounts.
-- **SB Account Balances**: Bar chart displaying account numbers and current balances.
-- **FD Maturity Distribution**: Bar chart presenting Fixed Deposit IDs and estimated maturity values.
-- **RD Installment Progress**: Stacked bar chart comparing paid installments vs remaining ones.
+#### A. Customer Management Module
+1. **Tab 1 (Register Customer)**:
+   - Added 3 distinct date pickers:
+     - **Registration Date**: For customer KYC / master records.
+     - **A/c Opening Date**: For SB, FD, RD, Gold Loan, or Personal Loan account creation.
+     - **Opening Balance Date**: For the initial funding JV, Cash Book, and Bank Book entries.
+2. **Tab 3 (Edit Customer)**:
+   - **Section 4 (Savings Bank)**: Separate inputs for `A/c Opening Date` and `Opening Balance Date`. Updates both `sb_accounts.created_at` and linked opening JV/transactions.
+   - **Section 5 (Fixed Deposits)**: Separate inputs for `A/c Opening Date` and `Opening Balance Date`. Updates `fixed_deposits.created_at` and opening JV/Bank Book/Cash Book entries.
+   - **Section 6 (Recurring Deposits)**: Separate inputs for `A/c Opening Date` and `Opening Balance Date`. Updates `recurring_deposits.created_at` and opening JV/Bank Book/Cash Book entries.
 
-### 2. Savings Bank (SB) Interest Calculation
-Implemented the periodic SB interest calculation module:
-- Computes interest as: `Balance * (Interest Rate / 100) * (Period in Days / 365)`
-- Defaults to a rate of 3.5% p.a. as per database configurations.
-- Shows a preview table of all accounts, names, current balances, and calculated interest.
-- Posts a consolidated automated Journal Voucher (debiting Interest Paid `EXP-101`, crediting SB Deposits Control `LIA-101`).
-- Sequentially credits each active SB account balance and inserts interest credit transaction logs.
+#### B. Savings Bank Module (SB)
+- **Tab 1 (Open SB)**: Added separate `sb_open_date` and `sb_op_bal_date`.
+- **Tab 5 (Edit SB)**: Added `edit_sb_op_date` input. Synchronizes `sb_accounts.created_at` with opening date and linked transactions/JVs with opening balance date via `update_sb_account_details`.
 
-### 3. Strict Non-Negative Balance Enforcement & Detailed Capital Accounts
-Implemented comprehensive asset safety and compliance rules:
-- **Cash Book Checks**: Blocks payment/withdrawal transactions if they exceed the available physical Cash in Hand (`AST-101`). Checks corresponding bank account balances during cash receipts to prevent bank ledger deficits.
-- **Bank Book Checks**: Blocks bank deposits (from cash) and bank-to-bank transfers if the funding source has insufficient funds. Blocks bank withdrawals exceeding the selected bank's current ledger balance.
-- **Manual Journal Vouchers Validation**: Evaluates manual JV postings. Blocks JVs where the credited account is an asset (Cash/Bank) and the transaction amount exceeds the current asset balance.
-- **Detailed Share Capital Accounts**: Groups and displays Equity entries in the Balance Sheet individually based on the transaction particulars/narration (e.g. tracking individual capital contributions), while consolidating Union Bank and SBI balances as single overall Asset rows.
+#### C. Fixed Deposits Module (FD)
+- **Tab 1 (Open FD)**: Added separate `fd_open_date` and `fd_op_bal_date`.
+- **Tab 5 (Edit FD)**: Added `edit_fd_op_date` input. Invokes `update_fd_account_details(..., new_created_date=created_str, new_op_bal_date=op_bal_str, new_maturity_amount=final_fd_mat)` to synchronize all ledger entries and books.
+
+#### D. Recurring Deposits Module (RD)
+- **Tab 1 (Open RD)**: Added separate `rd_open_date` and `rd_op_bal_date`.
+- **Tab 6 (Edit RD)**: Added separate `edit_created` (A/c Opening Date) and `edit_op_bal_date` (Opening Balance Date). Invokes `update_rd_account_details(..., new_created_date=edit_created_str, new_op_bal_date=edit_op_bal_str)`.
+
+---
+
+### 3. Database Layer (`database.py`)
+- Updated functions to accept `new_op_bal_date=None` and `op_bal_date=None`:
+  - `update_sb_account_details` & `create_or_link_sb_opening`
+  - `update_fd_account_details` & `create_or_link_fd_opening`
+  - `update_rd_account_details` & `create_or_link_rd_opening`
+- Backwards compatible: defaults `new_op_bal_date` to `new_created_date` if omitted.
+
+---
+
+### 4. Data Migration & Correction for RD #1
+- **Customer**: VANDYA OMPRAKASH (Customer #65 / `RD-01641028`)
+- **A/c Opening Date (`created_at`)**: `10-03-2022` (Preserved intact)
+- **Opening Balance Date**: Updated to `01-04-2023` in Opening Journal Voucher #1214 and Bank Book entry #1.
+- **Balance**: ₹5,000.00 debit AST-102 (Union Bank of India), credit LIA-103 (RD Deposits Control).
+- Bank Book re-sequenced and verified.
+
+---
 
 ## Verification Results
-
-### Automated Verification
-Compiling code using the virtual environment interpreter compiled successfully with exit code 0:
-```powershell
-.venv\Scripts\python.exe -m py_compile database.py pdf_generator.py views_core.py views_accounting.py app.py
-```
-
-Database schema verified successfully:
-```powershell
-.venv\Scripts\python.exe -c "import database; print('Default accounts count:', database.run_query('SELECT COUNT(*) FROM chart_of_accounts')[0][0])"
-# Output: Default accounts count: 32
-```
-
-## Running the Application
-
-To run the banking software, open a PowerShell terminal in the project directory and execute:
-```powershell
-.venv\Scripts\streamlit run app.py
-```
-> [!TIP]
-> Use the default admin credentials to login:
-> - **Username**: `admin`
-> - **Password**: `admin123`
+- **Syntax and Import Checks**: `.\.venv\Scripts\python -c "import database, app, pdf_generator; print('PASSED')"` completed with 0 errors.
+- **Database Consistency Verification**:
+  - `recurring_deposits` (rd_id=1): `created_at = '2022-03-10'`, `collected_balance = 5000.0`, `status = 'CLOSED'`.
+  - JV #1214: `voucher_date = '2023-04-01'`, `AST-102 (Dr 5000.0) / LIA-103 (Cr 5000.0)`.
+  - Bank Book #1: `date = '2023-04-01'`, `debit_amount = 5000.0`.

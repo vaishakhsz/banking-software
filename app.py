@@ -3358,7 +3358,8 @@ def render_sb_accounts():
     with tab3:
         st.subheader("📖 Savings Bank (SB) Account Passbook & Statement")
         all_sb_pb = cached_query("""
-            SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, c.phone, c.address, c.id as cust_id
+            SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, c.phone, 
+                   c.street, c.city, c.state, c.pincode, c.id as cust_id
             FROM sb_accounts s 
             JOIN customers c ON s.customer_id = c.id
             ORDER BY c.name ASC, s.account_no ASC
@@ -3367,7 +3368,14 @@ def render_sb_accounts():
             sb_pb_dict = {f"👤 {r[1]} | A/c: {r[0]} (Bal: ₹{r[2]:,.2f})": r for r in all_sb_pb}
             sel_pb_label = st.selectbox("Select Customer & SB Account", list(sb_pb_dict.keys()), key="sb_pb_select_acc")
             sel_sb = sb_pb_dict[sel_pb_label]
-            pb_acc_no, pb_cust_name, pb_balance, pb_rate, pb_created, pb_phone, pb_address, pb_cust_id = sel_sb
+            pb_acc_no, pb_cust_name, pb_balance, pb_rate, pb_created, pb_phone, pb_street, pb_city, pb_state, pb_pincode, pb_cust_id = sel_sb
+
+            pb_addr_parts = [p.strip() for p in [pb_street, pb_city, pb_state] if p and str(p).strip()]
+            pb_address = ", ".join(pb_addr_parts)
+            if pb_pincode and str(pb_pincode).strip():
+                pb_address = f"{pb_address} - {pb_pincode}" if pb_address else str(pb_pincode)
+            if not pb_address:
+                pb_address = "Balaramapuram, Trivandrum"
 
             # Fetch transaction history
             tx_data = run_query("""
@@ -3441,8 +3449,11 @@ def render_sb_accounts():
                 "opening_balance": op_balance,
                 "total_deposits": tot_deposits,
                 "total_withdrawals": tot_withdrawals,
-                "street": pb_address or "",
-                "city": "Balaramapuram"
+                "street": pb_street or "",
+                "city": pb_city or "Balaramapuram",
+                "state": pb_state or "Kerala",
+                "pincode": pb_pincode or "",
+                "address": pb_address
             }
 
             # Summary Cards
@@ -3453,7 +3464,7 @@ def render_sb_accounts():
                     <span style="background-color: #e0f2fe; color: #0369a1; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;">Savings Bank (SB)</span>
                 </div>
                 <div style="color: #64748b; font-size: 13px;">
-                    📞 <b>Contact:</b> {pb_phone or 'N/A'} &nbsp;|&nbsp; 📅 <b>Opened:</b> {pb_created} &nbsp;|&nbsp; 📈 <b>Interest Rate:</b> {pb_rate}% p.a. &nbsp;|&nbsp; 🏠 <b>Address:</b> {pb_address or 'Balaramapuram'}
+                    📞 <b>Contact:</b> {pb_phone or 'N/A'} &nbsp;|&nbsp; 📅 <b>Opened:</b> {pb_created} &nbsp;|&nbsp; 📈 <b>Interest Rate:</b> {pb_rate}% p.a. &nbsp;|&nbsp; 🏠 <b>Address:</b> {pb_address}
                 </div>
             </div>
             """, unsafe_allow_html=True)

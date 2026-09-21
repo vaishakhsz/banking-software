@@ -964,9 +964,9 @@ def render_customer_management():
                         except Exception:
                             sb_created_dt = date.today()
                             
-                        sb_op_bal_res = cached_query("SELECT date FROM transactions WHERE account_no = ? AND (narration LIKE '%Opening%' OR narration LIKE '%Deposit%') ORDER BY id ASC LIMIT 1", (sb_acc_no,))
+                        sb_op_bal_res = cached_query("SELECT date FROM transactions WHERE account_no = ? AND (narration LIKE ? OR narration LIKE ?) ORDER BY id ASC LIMIT 1", (sb_acc_no, "%Opening%", "%Deposit%"))
                         try:
-                            sb_op_bal_dt = pd.to_datetime(sb_op_bal_res[0][0]).date() if sb_op_bal_res and sb_op_bal_res[0][0] else sb_created_dt
+                            sb_op_bal_dt = pd.to_datetime(sb_op_bal_res[0][0]).date() if sb_op_bal_res and len(sb_op_bal_res) > 0 and len(sb_op_bal_res[0]) > 0 and sb_op_bal_res[0][0] else sb_created_dt
                         except Exception:
                             sb_op_bal_dt = sb_created_dt
                             
@@ -3639,9 +3639,9 @@ def render_sb_accounts():
             except Exception:
                 c_created_dt = date.today()
 
-            sb_op_bal_res = cached_query("SELECT date FROM transactions WHERE account_no = ? AND (narration LIKE '%Opening%' OR narration LIKE '%Deposit%') ORDER BY id ASC LIMIT 1", (c_acc_no,))
+            sb_op_bal_res = cached_query("SELECT date FROM transactions WHERE account_no = ? AND (narration LIKE ? OR narration LIKE ?) ORDER BY id ASC LIMIT 1", (c_acc_no, "%Opening%", "%Deposit%"))
             try:
-                sb_op_bal_dt = pd.to_datetime(sb_op_bal_res[0][0]).date() if sb_op_bal_res and sb_op_bal_res[0][0] else c_created_dt
+                sb_op_bal_dt = pd.to_datetime(sb_op_bal_res[0][0]).date() if sb_op_bal_res and len(sb_op_bal_res) > 0 and len(sb_op_bal_res[0]) > 0 and sb_op_bal_res[0][0] else c_created_dt
             except Exception:
                 sb_op_bal_dt = c_created_dt
             

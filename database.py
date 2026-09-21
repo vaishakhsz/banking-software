@@ -935,7 +935,10 @@ def run_query(query, params=(), fetch=True, max_retries=3):
             # Automatic translation for SQLite/Postgres placeholder compatibility
             if USING_SUPABASE:
                 if "%s" not in query and "?" in query:
+                    query = re.sub(r'%(?!%)', '%%', query)
                     query = query.replace("?", "%s")
+                elif params and len(params) > 0:
+                    query = re.sub(r'%(?!s|%)', '%%', query)
             else:
                 if "?" not in query and "%s" in query:
                     query = query.replace("%s", "?")
@@ -2846,8 +2849,8 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
             UPDATE transactions 
             SET date = {placeholder} 
             WHERE account_no = {placeholder} 
-              AND (narration LIKE '%Opening%' OR narration LIKE '%Deposit%' OR id = (SELECT MIN(id) FROM transactions WHERE account_no = {placeholder}))
-        """, (op_bal_dt_str, new_acc_no, new_acc_no))
+              AND (narration LIKE {placeholder} OR narration LIKE {placeholder} OR id = (SELECT MIN(id) FROM transactions WHERE account_no = {placeholder}))
+        """, (op_bal_dt_str, new_acc_no, "%Opening%", "%Deposit%", new_acc_no))
             
         # 5. Locate existing Bank Book or Cash Book entry for this account
         cursor.execute(f"""

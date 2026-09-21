@@ -46,7 +46,9 @@ try:
         delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
         resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
         update_sb_account_details, update_personal_loan_details, update_gold_loan_details,
-        create_or_link_personal_loan_opening, create_or_link_gold_loan_opening
+        create_or_link_personal_loan_opening, create_or_link_gold_loan_opening,
+        update_fd_account_details, create_or_link_fd_opening,
+        update_rd_account_details, create_or_link_rd_opening
     )
 except Exception as _db_imp_err:
     try:
@@ -64,7 +66,9 @@ except Exception as _db_imp_err:
             delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
             resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
             update_sb_account_details, update_personal_loan_details, update_gold_loan_details,
-            create_or_link_personal_loan_opening, create_or_link_gold_loan_opening
+            create_or_link_personal_loan_opening, create_or_link_gold_loan_opening,
+            update_fd_account_details, create_or_link_fd_opening,
+            update_rd_account_details, create_or_link_rd_opening
         )
     except Exception as _db_imp_err2:
         import traceback
@@ -346,7 +350,9 @@ def render_customer_management():
                 [
                     "Savings Bank (SB) & Member Account", 
                     "Personal / Micro Loan Account",
-                    "Gold Loan Account (Jewel / Pawn Loan)"
+                    "Gold Loan Account (Jewel / Pawn Loan)",
+                    "Fixed Deposit (FD) Account",
+                    "Recurring Deposit (RD) Account"
                 ]
             )
             initial_balance = col_b2.number_input("Opening Balance / Loan Due Balance (₹)", min_value=0.0, value=0.0, step=500.0)
@@ -418,7 +424,15 @@ def render_customer_management():
                                 new_c_id = new_cust_id_row[0][0]
                                 
                                 # 3. Automatically create Account in accounts table
-                                db_acc_type = 'Loan Account' if ('Loan' in acc_type or 'Gold' in acc_type) else 'Savings Account'
+                                if 'Loan' in acc_type or 'Gold' in acc_type:
+                                    db_acc_type = 'Loan Account'
+                                elif 'Fixed' in acc_type or 'FD' in acc_type:
+                                    db_acc_type = 'Fixed Deposit'
+                                elif 'Recurring' in acc_type or 'RD' in acc_type:
+                                    db_acc_type = 'Recurring Deposit'
+                                else:
+                                    db_acc_type = 'Savings Account'
+
                                 run_query("""
                                     INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
                                     VALUES (?, ?, ?, ?, ?)
@@ -562,6 +576,19 @@ def render_customer_management():
                                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                                 VALUES (?, ?, ?, 0, ?, ?, bank_name, 'AST-108', ?, ?)
                                             """, (today_str, voucher_no, f"Personal Loan Disbursal: {final_acc_no} ({name.strip()}) [{pl_code}]", initial_balance, new_asset_balance, f"Opening Personal Loan Disbursal - {pl_code}", today_time), fetch=False)
+
+                                    elif 'Fixed' in acc_type or 'FD' in acc_type:
+                                        create_or_link_fd_opening(
+                                            new_c_id, initial_balance, today_str, tenure_months=12, interest_rate=6.5,
+                                            nominee="Family Nominee", payment_mode=pay_mode, chosen_asset_code=chosen_asset_code
+                                        )
+
+                                    elif 'Recurring' in acc_type or 'RD' in acc_type:
+                                        create_or_link_rd_opening(
+                                            new_c_id, initial_balance, today_str, tenure_months=12, interest_rate=6.0,
+                                            nominee="Family Nominee", payment_mode=pay_mode, chosen_asset_code=chosen_asset_code,
+                                            rd_no=f"RD-{final_acc_no}"
+                                        )
 
                                     else:
                                         # Standard SB Opening Deposit
@@ -977,6 +1004,203 @@ def render_customer_management():
                                 st.error(f"❌ Failed to update SB Account: {msg}")
                     else:
                         st.info("No SB Account found for this customer.")
+
+                # SECTION 5: Fixed Deposit (FD) Opening Balances
+                with st.expander("📈 5. Edit Fixed Deposit (FD) Accounts & Opening Balances", expanded=True):
+                    cust_fds = run_query("""
+                        SELECT fd_id, principal, tenure_months, interest_rate, maturity_amount,
+                               nominee, status, created_at, closed_date, payment_mode
+                        FROM fixed_deposits
+                        WHERE customer_id = ?
+                        ORDER BY fd_id ASC
+                    """, (cust_id_edit,))
+                    
+                    if cust_fds:
+                        for fd in cust_fds:
+                            fd_id, fd_princ, fd_tenure, fd_rate, fd_mat, fd_nom, fd_stat, fd_created, fd_closed, fd_pm = fd
+                            try:
+                                fd_created_dt = datetime.strptime(str(fd_created)[:10], "%Y-%m-%d").date()
+                            except Exception:
+                                fd_created_dt = date.today()
+                            try:
+                                fd_closed_dt = datetime.strptime(str(fd_closed)[:10], "%Y-%m-%d").date() if fd_closed else date.today()
+                            except Exception:
+                                fd_closed_dt = date.today()
+
+                            st.markdown(f"#### 📈 Fixed Deposit **#FD-{fd_id:05d}** (Principal: ₹{float(fd_princ):,.2f} | Maturity: ₹{float(fd_mat):,.2f} | Status: `{fd_stat}`)")
+                            with st.container(border=True):
+                                col_f1, col_f2, col_f3 = st.columns(3)
+                                ed_fd_p = col_f1.number_input(f"Principal / Opening Deposit (₹) *", min_value=100.0, value=float(fd_princ), step=1000.0, key=f"cust_fd_p_{fd_id}")
+                                ed_fd_tenure = col_f2.number_input(f"Tenure (Months)", min_value=1, max_value=120, value=int(fd_tenure or 12), step=1, key=f"cust_fd_t_{fd_id}")
+                                ed_fd_rate = col_f3.number_input(f"Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(fd_rate or 6.5), step=0.25, key=f"cust_fd_r_{fd_id}")
+
+                                col_f4, col_f5, col_f6 = st.columns(3)
+                                ed_fd_nom = col_f4.text_input("Nominee Name", value=str(fd_nom or "Family Nominee"), key=f"cust_fd_nom_{fd_id}")
+                                ed_fd_stat = col_f5.selectbox("Status", ["ACTIVE", "CLOSED"], index=0 if fd_stat == "ACTIVE" else 1, key=f"cust_fd_stat_{fd_id}")
+                                ed_fd_cdate = col_f6.date_input("Opening Date", value=fd_created_dt, format="DD-MM-YYYY", key=f"cust_fd_cd_{fd_id}")
+
+                                col_f7, col_f8 = st.columns(2)
+                                fd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
+                                fd_pm_idx = 0
+                                if "cash" in str(fd_pm).lower(): fd_pm_idx = 1
+                                elif "sbi" in str(fd_pm).lower() or "state bank" in str(fd_pm).lower(): fd_pm_idx = 2
+                                ed_fd_asset_lbl = col_f7.selectbox("Funding / Settlement Asset Mode", list(fd_asset_opts.keys()), index=fd_pm_idx, key=f"cust_fd_asset_{fd_id}")
+                                ed_fd_asset_code = fd_asset_opts[ed_fd_asset_lbl]
+                                ed_fd_pay_mode = ed_fd_asset_lbl.split(" - ")[1]
+
+                                if ed_fd_stat == "CLOSED":
+                                    ed_fd_closed_dt = col_f8.date_input("Closed Date", value=fd_closed_dt, format="DD-MM-YYYY", key=f"cust_fd_cld_{fd_id}")
+                                else:
+                                    ed_fd_closed_dt = None
+
+                                calc_fd_mat = round(float(ed_fd_p) + (float(ed_fd_p) * float(ed_fd_rate) * (int(ed_fd_tenure) / 12.0) / 100.0), 2)
+                                st.caption(f"💡 Calculated Maturity Value: **₹{calc_fd_mat:,.2f}** (Interest: ₹{calc_fd_mat - float(ed_fd_p):,.2f})")
+
+                                if st.button(f"💾 Save & Sync FD #{fd_id:05d} (Update Ledgers, JVs & Books)", type="primary", use_container_width=True, key=f"btn_save_cust_fd_{fd_id}"):
+                                    success, msg = update_fd_account_details(
+                                        fd_id, cust_id_edit, ed_fd_p, ed_fd_tenure, ed_fd_rate,
+                                        ed_fd_nom, ed_fd_stat, str(ed_fd_cdate), str(ed_fd_closed_dt) if ed_fd_closed_dt else None,
+                                        ed_fd_pay_mode, ed_fd_asset_code
+                                    )
+                                    clear_db_cache()
+                                    if success:
+                                        st.success(f"✅ {msg}")
+                                        time.sleep(0.5)
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed to update Fixed Deposit: {msg}")
+                    else:
+                        st.info("No existing Fixed Deposits found for this customer.")
+
+                    # Add New FD Expander
+                    with st.expander("➕ Add New Fixed Deposit (FD) Opening Balance for this Customer", expanded=False):
+                        col_nfd1, col_nfd2, col_nfd3 = st.columns(3)
+                        nfd_princ = col_nfd1.number_input("Principal Deposit Amount (₹) *", min_value=500.0, value=10000.0, step=1000.0, key=f"nfd_p_{cust_id_edit}")
+                        nfd_tenure = col_nfd2.number_input("Tenure (Months)", min_value=1, max_value=120, value=12, step=1, key=f"nfd_t_{cust_id_edit}")
+                        nfd_rate = col_nfd3.number_input("Annual Interest Rate (%)", min_value=0.0, value=6.5, step=0.25, key=f"nfd_r_{cust_id_edit}")
+
+                        col_nfd4, col_nfd5, col_nfd6 = st.columns(3)
+                        nfd_sdate = col_nfd4.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key=f"nfd_sd_{cust_id_edit}")
+                        nfd_nom = col_nfd5.text_input("Nominee Name", value="Family Nominee", key=f"nfd_nom_{cust_id_edit}")
+                        nfd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
+                        nfd_asset_lbl = col_nfd6.selectbox("Funding Mode", list(nfd_asset_opts.keys()), key=f"nfd_asset_{cust_id_edit}")
+                        nfd_asset_code = nfd_asset_opts[nfd_asset_lbl]
+                        nfd_pay_mode = nfd_asset_lbl.split(" - ")[1]
+
+                        if st.button("🚀 Create & Link Fixed Deposit (FD) Opening Balance", type="primary", use_container_width=True, key=f"btn_add_fd_{cust_id_edit}"):
+                            success, msg = create_or_link_fd_opening(
+                                cust_id_edit, nfd_princ, str(nfd_sdate), nfd_tenure, nfd_rate,
+                                nominee=nfd_nom, payment_mode=nfd_pay_mode, chosen_asset_code=nfd_asset_code
+                            )
+                            clear_db_cache()
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to create Fixed Deposit: {msg}")
+
+                # SECTION 6: Recurring Deposit (RD) Opening Balances
+                with st.expander("🔄 6. Edit Recurring Deposit (RD) Accounts & Opening Balances", expanded=True):
+                    cust_rds = run_query("""
+                        SELECT rd_id, COALESCE(rd_no, 'RD-' || CAST(rd_id AS TEXT)), monthly_amount,
+                               tenure_months, interest_rate, installments_paid, collected_balance,
+                               maturity_amount, nominee, status, created_at, closed_date, payment_mode
+                        FROM recurring_deposits
+                        WHERE customer_id = ?
+                        ORDER BY rd_id ASC
+                    """, (cust_id_edit,))
+
+                    if cust_rds:
+                        for rd in cust_rds:
+                            rd_id, rd_no, rd_mamt, rd_tenure, rd_rate, rd_inst, rd_colbal, rd_mat, rd_nom, rd_stat, rd_created, rd_closed, rd_pm = rd
+                            try:
+                                rd_created_dt = datetime.strptime(str(rd_created)[:10], "%Y-%m-%d").date()
+                            except Exception:
+                                rd_created_dt = date.today()
+                            try:
+                                rd_closed_dt = datetime.strptime(str(rd_closed)[:10], "%Y-%m-%d").date() if rd_closed else date.today()
+                            except Exception:
+                                rd_closed_dt = date.today()
+
+                            st.markdown(f"#### 🔄 Recurring Deposit **#{rd_no}** (Monthly: ₹{float(rd_mamt):,.2f} | Paid: {rd_inst}/{rd_tenure}M | Collected: ₹{float(rd_colbal or 0):,.2f} | Status: `{rd_stat}`)")
+                            with st.container(border=True):
+                                col_r1, col_r2, col_r3 = st.columns(3)
+                                ed_rd_no = col_r1.text_input("RD Account Number", value=str(rd_no), key=f"cust_rd_no_{rd_id}")
+                                ed_rd_mamt = col_r2.number_input("Monthly Installment Amount (₹) *", min_value=50.0, value=float(rd_mamt), step=100.0, key=f"cust_rd_ma_{rd_id}")
+                                ed_rd_tenure = col_r3.number_input("Tenure (Months)", min_value=1, max_value=120, value=int(rd_tenure or 12), step=1, key=f"cust_rd_t_{rd_id}")
+
+                                col_r4, col_r5, col_r6 = st.columns(3)
+                                ed_rd_rate = col_r4.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(rd_rate or 6.0), step=0.25, key=f"cust_rd_r_{rd_id}")
+                                ed_rd_inst = col_r5.number_input("Installments Paid", min_value=0, max_value=int(ed_rd_tenure), value=int(rd_inst or 1), step=1, key=f"cust_rd_inst_{rd_id}")
+                                ed_rd_colbal = col_r6.number_input("Total Collected / Paid Balance (₹)", min_value=0.0, value=float(rd_colbal or (float(ed_rd_mamt) * int(ed_rd_inst))), step=100.0, key=f"cust_rd_cbal_{rd_id}")
+
+                                col_r7, col_r8, col_r9 = st.columns(3)
+                                ed_rd_nom = col_r7.text_input("Nominee Name", value=str(rd_nom or "Family Nominee"), key=f"cust_rd_nom_{rd_id}")
+                                ed_rd_stat = col_r8.selectbox("Status", ["ACTIVE", "CLOSED"], index=0 if rd_stat == "ACTIVE" else 1, key=f"cust_rd_stat_{rd_id}")
+                                ed_rd_cdate = col_r9.date_input("Opening Date", value=rd_created_dt, format="DD-MM-YYYY", key=f"cust_rd_cd_{rd_id}")
+
+                                col_r10, col_r11 = st.columns(2)
+                                rd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
+                                rd_pm_idx = 0
+                                if "cash" in str(rd_pm).lower(): rd_pm_idx = 1
+                                elif "sbi" in str(rd_pm).lower() or "state bank" in str(rd_pm).lower(): rd_pm_idx = 2
+                                ed_rd_asset_lbl = col_r10.selectbox("Funding / Settlement Asset Mode", list(rd_asset_opts.keys()), index=rd_pm_idx, key=f"cust_rd_asset_{rd_id}")
+                                ed_rd_asset_code = rd_asset_opts[ed_rd_asset_lbl]
+                                ed_rd_pay_mode = ed_rd_asset_lbl.split(" - ")[1]
+
+                                if ed_rd_stat == "CLOSED":
+                                    ed_rd_closed_dt = col_r11.date_input("Closed Date", value=rd_closed_dt, format="DD-MM-YYYY", key=f"cust_rd_cld_{rd_id}")
+                                else:
+                                    ed_rd_closed_dt = None
+
+                                calc_rd_mat = calculate_rd_maturity(float(ed_rd_mamt), float(ed_rd_rate), int(ed_rd_tenure))[1]
+                                st.caption(f"💡 Approx Maturity Value: **₹{calc_rd_mat:,.2f}** (Total Payable on completion)")
+
+                                if st.button(f"💾 Save & Sync RD #{ed_rd_no} (Update Ledgers, JVs & Books)", type="primary", use_container_width=True, key=f"btn_save_cust_rd_{rd_id}"):
+                                    success, msg = update_rd_account_details(
+                                        rd_id, cust_id_edit, ed_rd_no, ed_rd_mamt, ed_rd_tenure, ed_rd_rate,
+                                        ed_rd_inst, ed_rd_colbal, ed_rd_nom, ed_rd_stat,
+                                        str(ed_rd_cdate), str(ed_rd_closed_dt) if ed_rd_closed_dt else None,
+                                        ed_rd_pay_mode, ed_rd_asset_code
+                                    )
+                                    clear_db_cache()
+                                    if success:
+                                        st.success(f"✅ {msg}")
+                                        time.sleep(0.5)
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed to update Recurring Deposit: {msg}")
+                    else:
+                        st.info("No existing Recurring Deposits found for this customer.")
+
+                    # Add New RD Expander
+                    with st.expander("➕ Add New Recurring Deposit (RD) Opening Balance for this Customer", expanded=False):
+                        col_nrd1, col_nrd2, col_nrd3 = st.columns(3)
+                        nrd_mamt = col_nrd1.number_input("Monthly Installment Amount (₹) *", min_value=100.0, value=1000.0, step=100.0, key=f"nrd_ma_{cust_id_edit}")
+                        nrd_tenure = col_nrd2.number_input("Tenure (Months)", min_value=1, max_value=120, value=12, step=1, key=f"nrd_t_{cust_id_edit}")
+                        nrd_rate = col_nrd3.number_input("Annual Interest Rate (%)", min_value=0.0, value=6.0, step=0.25, key=f"nrd_r_{cust_id_edit}")
+
+                        col_nrd4, col_nrd5, col_nrd6 = st.columns(3)
+                        nrd_sdate = col_nrd4.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key=f"nrd_sd_{cust_id_edit}")
+                        nrd_nom = col_nrd5.text_input("Nominee Name", value="Family Nominee", key=f"nrd_nom_{cust_id_edit}")
+                        nrd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
+                        nrd_asset_lbl = col_nrd6.selectbox("Funding Mode", list(nrd_asset_opts.keys()), key=f"nrd_asset_{cust_id_edit}")
+                        nrd_asset_code = nrd_asset_opts[nrd_asset_lbl]
+                        nrd_pay_mode = nrd_asset_lbl.split(" - ")[1]
+
+                        if st.button("🚀 Create & Link Recurring Deposit (RD) Opening Balance", type="primary", use_container_width=True, key=f"btn_add_rd_{cust_id_edit}"):
+                            success, msg = create_or_link_rd_opening(
+                                cust_id_edit, nrd_mamt, str(nrd_sdate), nrd_tenure, nrd_rate,
+                                nominee=nrd_nom, payment_mode=nrd_pay_mode, chosen_asset_code=nrd_asset_code
+                            )
+                            clear_db_cache()
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to create Recurring Deposit: {msg}")
 
                 st.markdown("---")
                 st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")

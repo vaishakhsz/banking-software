@@ -3648,7 +3648,7 @@ def render_recurring_deposits():
                 try:
                     op_v_no = voucher_no if 'voucher_no' in locals() else f"OP-{final_rd_no}"
                     inst_lbl = f"1 to {opening_paid_inst}" if opening_paid_inst > 1 else "1"
-                    part_lbl = f"RD Opening Balance ({opening_paid_inst} Installments)" if opening_paid_inst > 1 else "RD Opening Balance / Installment #1"
+                    part_lbl = f"RD Opening Balance ({opening_paid_inst} Installments)" if opening_paid_inst > 1 else "RD Opening Balance"
                     run_query("""
                         INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
                         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
@@ -3709,7 +3709,7 @@ def render_recurring_deposits():
                     jv_result = post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt, voucher_date=pay_date_str)
                     
                     if jv_result:
-                        today_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+                        today_time = f"{pay_date_str} 10:00"
                         new_balance = get_account_balance_from_jv(chosen_asset_code)
                         
                         if chosen_asset_code == 'AST-101':
@@ -3771,18 +3771,20 @@ def render_recurring_deposits():
                     col_t2_1, col_t2_2 = st.columns(2)
                     with col_t2_1:
                         t2_edit_date = st.date_input("Correct Payment Date", value=t2_pdate_dt, format="DD-MM-YYYY", key=f"t2_pdate_{t2_iid}")
+                        t2_edit_ino = st.text_input("Installment No / Reference", value=str(t2_ino), key=f"t2_ino_{t2_iid}")
                         t2_edit_cr = st.number_input("Correct Amount (₹)", min_value=0.0, value=float(t2_cr), step=500.0, key=f"t2_cr_{t2_iid}")
                     with col_t2_2:
                         t2_pm_opts = ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)", "State Bank of India"]
                         t2_pm_idx = 0 if "union" in str(t2_pm).lower() else (1 if "cash" in str(t2_pm).lower() else 2)
                         t2_edit_pm = st.selectbox("Payment Mode", t2_pm_opts, index=t2_pm_idx, key=f"t2_pm_{t2_iid}")
                         t2_edit_part = st.text_input("Particulars", value=str(t2_part), key=f"t2_part_{t2_iid}")
+                        t2_edit_narr = st.text_input("Narration / Remarks", value=str(t2_narr), key=f"t2_narr_{t2_iid}")
                     
                     col_t2_b1, col_t2_b2 = st.columns([3, 1])
                     with col_t2_b1:
                         if st.button("💾 Save Installment Date & Details", key=f"t2_save_{t2_iid}", type="primary", use_container_width=True):
                             pm_str = "Union Bank of India" if "Union" in t2_edit_pm else ("Cash" if "Cash" in t2_edit_pm else "State Bank of India")
-                            success, msg = update_rd_installment(t2_iid, rd_id, t2_edit_date, t2_edit_cr, pm_str, t2_edit_part, str(t2_narr))
+                            success, msg = update_rd_installment(t2_iid, rd_id, t2_edit_date, t2_edit_cr, pm_str, t2_edit_part, str(t2_edit_narr), installment_no=t2_edit_ino)
                             clear_db_cache()
                             if success:
                                 st.success("✅ Installment corrected & synced with all books successfully!")
@@ -4357,11 +4359,11 @@ th {{ background-color: #ebf5fb; }}
                         if st.button("💾 Save Installment Changes", key=f"btn_save_inst_{c_inst_id}", type="primary", use_container_width=True):
                             pmode_name = "Union Bank of India" if "Union" in new_inst_pmode else ("Cash" if "Cash" in new_inst_pmode else "State Bank of India")
                             success, msg = update_rd_installment(
-                                c_inst_id, c_rd_id, new_inst_date, new_inst_cr, pmode_name, new_inst_part, new_inst_narr
+                                c_inst_id, c_rd_id, new_inst_date, new_inst_cr, pmode_name, new_inst_part, new_inst_narr, installment_no=new_inst_no
                             )
                             clear_db_cache()
                             if success:
-                                st.success(f"✅ Installment #{new_inst_no} updated successfully on {new_inst_date.strftime('%d-%m-%Y')}!")
+                                st.success(f"✅ Installment {new_inst_no} updated successfully on {new_inst_date.strftime('%d-%m-%Y')}!")
                                 time.sleep(0.5)
                                 st.rerun()
                             else:
@@ -4384,18 +4386,43 @@ th {{ background-color: #ebf5fb; }}
                     
                 st.markdown("---")
                 with st.expander("➕ Add Past / Missed Installment Entry"):
-                    st.caption("Manually insert an installment for a past date with automatic voucher and ledger generation.")
+                    st.caption("Manually insert a missed installment or missed opening balance for a past date with automatic voucher and chronological ledger generation.")
+                    entry_kind = st.radio(
+                        "Entry Category",
+                        ["Regular Monthly Installment", "RD Opening Balance / Prior Installments"],
+                        horizontal=True,
+                        key=f"add_entry_kind_{c_rd_id}"
+                    )
+                    
                     col_ai1, col_ai2 = st.columns(2)
-                    with col_ai1:
-                        add_inst_no = st.text_input("Installment No", value=str(int(c_paid) + 1), key=f"add_inst_no_{c_rd_id}")
-                        add_inst_date = st.date_input("Installment Date", value=date.today(), format="DD-MM-YYYY", key=f"add_inst_date_{c_rd_id}")
-                        add_inst_amt = st.number_input("Amount (₹)", min_value=0.0, value=float(c_monthly), step=500.0, key=f"add_inst_amt_{c_rd_id}")
-                    with col_ai2:
-                        add_inst_pmode = st.selectbox("Payment Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)", "State Bank of India"], key=f"add_inst_pmode_{c_rd_id}")
-                        add_inst_part = st.text_input("Particulars", value=f"Installment #{add_inst_no} Deposit", key=f"add_inst_part_{c_rd_id}")
-                        add_inst_narr = st.text_input("Narration", value=f"RD Installment #{add_inst_no}", key=f"add_inst_narr_{c_rd_id}")
+                    if entry_kind == "Regular Monthly Installment":
+                        with col_ai1:
+                            add_inst_no = st.text_input("Installment No", value=str(int(c_paid) + 1), key=f"add_inst_no_{c_rd_id}")
+                            add_inst_date = st.date_input("Installment Date", value=date.today(), format="DD-MM-YYYY", key=f"add_inst_date_{c_rd_id}")
+                            add_inst_amt = st.number_input("Amount (₹)", min_value=0.0, value=float(c_monthly), step=500.0, key=f"add_inst_amt_{c_rd_id}")
+                        with col_ai2:
+                            add_inst_pmode = st.selectbox("Payment Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)", "State Bank of India"], key=f"add_inst_pmode_{c_rd_id}")
+                            add_inst_part = st.text_input("Particulars", value=f"Installment #{add_inst_no} Deposit", key=f"add_inst_part_{c_rd_id}")
+                            add_inst_narr = st.text_input("Narration", value=f"RD Installment #{add_inst_no}", key=f"add_inst_narr_{c_rd_id}")
+                    else:
+                        with col_ai1:
+                            try:
+                                default_op_date = pd.to_datetime(c_created).date() if c_created else date.today()
+                            except Exception:
+                                default_op_date = date.today()
+                            add_inst_date = st.date_input("Opening Balance Date", value=default_op_date, format="DD-MM-YYYY", key=f"add_op_date_{c_rd_id}")
+                            op_inst_covered = st.number_input("Number of Prior Installments Covered", min_value=1, max_value=120, value=1, step=1, key=f"add_op_covered_{c_rd_id}")
+                            def_op_amt = float(op_inst_covered * c_monthly)
+                            add_inst_amt = st.number_input("Opening Balance Amount (₹)", min_value=0.0, value=def_op_amt, step=500.0, key=f"add_op_amt_{c_rd_id}")
+                            def_op_ino = f"1 to {op_inst_covered}" if op_inst_covered > 1 else "1"
+                            add_inst_no = st.text_input("Installment Reference", value=def_op_ino, key=f"add_op_ino_{c_rd_id}")
+                        with col_ai2:
+                            add_inst_pmode = st.selectbox("Payment Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)", "State Bank of India"], key=f"add_op_pmode_{c_rd_id}")
+                            def_op_part = f"RD Opening Balance ({op_inst_covered} Installments)" if op_inst_covered > 1 else "RD Opening Balance"
+                            add_inst_part = st.text_input("Particulars", value=def_op_part, key=f"add_op_part_{c_rd_id}")
+                            add_inst_narr = st.text_input("Narration", value=f"RD Opening Balance - {op_inst_covered} Inst.", key=f"add_op_narr_{c_rd_id}")
                         
-                    if st.button("➕ Record Missed Installment", key=f"btn_add_missed_inst_{c_rd_id}", type="primary", use_container_width=True):
+                    if st.button("➕ Record Missed Entry", key=f"btn_add_missed_inst_{c_rd_id}", type="primary", use_container_width=True):
                         pm_str = "Union Bank of India" if "Union" in add_inst_pmode else ("Cash" if "Cash" in add_inst_pmode else "State Bank of India")
                         success, msg = add_custom_rd_installment(
                             c_rd_id, add_inst_no, add_inst_date, add_inst_amt, pm_str, add_inst_part, add_inst_narr
@@ -4406,7 +4433,7 @@ th {{ background-color: #ebf5fb; }}
                             time.sleep(0.5)
                             st.rerun()
                         else:
-                            st.error(f"❌ Error adding installment: {msg}")
+                            st.error(f"❌ Error adding entry: {msg}")
         else:
             st.info("No Recurring Deposits available to edit.")
 

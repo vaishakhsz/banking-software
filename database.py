@@ -2258,10 +2258,11 @@ def resequence_rd_installments(target_rd_id=None):
     1. Opening balance / earliest deposit comes FIRST (lowest ID).
     2. Subsequent installments follow in exact payment date order (payment_date ASC).
     3. The latest payment date comes LAST (highest ID).
-    4. Installment numbers (installment_no) and particulars are normalized cleanly (e.g. 1 to K, K+1, K+2...).
-    5. Progressive running balances (balance) are recalculated from top to bottom.
-    6. Master recurring_deposits table (collected_balance, installments_paid) is synchronized.
-    7. Primary key `id` of rd_installments is re-assigned 1..N with zero sequence gaps.
+    4. Opening balances and regular installments are kept distinct (never forcing 'RD Opening Balance / Installment #1').
+    5. Custom user edits to particulars/installment numbers are respected and preserved.
+    6. Progressive running balances (balance) are recalculated from top to bottom.
+    7. Master recurring_deposits table (collected_balance, installments_paid) is synchronized.
+    8. Primary key `id` of rd_installments is re-assigned 1..N with zero sequence gaps.
     """
     conn = None
     try:
@@ -2285,7 +2286,7 @@ def resequence_rd_installments(target_rd_id=None):
                 FROM rd_installments
                 WHERE rd_id = {placeholder}
                 ORDER BY payment_date ASC, 
-                         CASE WHEN particulars LIKE '%%Opening%%' OR installment_no LIKE '%%to%%' THEN 0 ELSE 1 END, 
+                         CASE WHEN particulars LIKE '%%Opening%%' OR particulars LIKE '%%opening%%' OR installment_no LIKE '%%to%%' THEN 0 ELSE 1 END, 
                          id ASC
             """, (rd_id,))
             rows = cursor.fetchall()
@@ -2297,38 +2298,74 @@ def resequence_rd_installments(target_rd_id=None):
             first_part = str(first_row[3] or '').strip()
             first_cr = float(first_row[5] or 0.0)
             
+            # Check if row 0 represents an opening balance
+            is_first_opening = bool(
+                'opening' in first_part.lower() or 
+                'to' in first_inst_no.lower() or 
+                first_inst_no.lower() in ['ob', 'op', 'opening']
+            )
+            
             start_count = 1
-            m = re.search(r'1\s*to\s*(\d+)', first_inst_no, re.I)
-            if not m:
-                m = re.search(r'\((\d+)\s*Installments?\)', first_part, re.I)
-            if m:
-                start_count = int(m.group(1))
-            elif ('Opening' in first_part or 'opening' in first_inst_no.lower()) and monthly_amt > 0:
-                calc_c = int(round(first_cr / monthly_amt))
-                if calc_c > 1:
-                    start_count = calc_c
-            elif first_inst_no.isdigit() and int(first_inst_no) > 1 and len(rows) == 1:
-                start_count = int(first_inst_no)
-                
+            if is_first_opening:
+                m = re.search(r'1\s*to\s*(\d+)', first_inst_no, re.I)
+                if not m:
+                    m = re.search(r'\((\d+)\s*Installments?\)', first_part, re.I)
+                if m:
+                    start_count = int(m.group(1))
+                elif monthly_amt > 0:
+                    calc_c = int(round(first_cr / monthly_amt))
+                    if calc_c > 1:
+                        start_count = calc_c
+            
             curr_bal = 0.0
-            curr_inst_num = start_count
+            curr_inst_num = 0
             
             for idx, r in enumerate(rows):
                 r_id, r_ino, r_pdate, r_part, r_dr, r_cr, r_vno, r_narr, r_pm = r
                 r_dr = float(r_dr or 0.0)
                 r_cr = float(r_cr or 0.0)
+                r_part = str(r_part or '').strip()
+                r_ino = str(r_ino or '').strip()
                 curr_bal += (r_cr - r_dr)
                 
-                if idx == 0 and start_count > 1:
-                    new_ino = f"1 to {start_count}"
-                    new_part = f"RD Opening Balance ({start_count} Installments)"
-                elif idx == 0:
-                    new_ino = "1"
-                    new_part = r_part if "Opening" in r_part else "RD Opening Balance / Installment #1"
+                # Clean up legacy hybrid label if present
+                if r_part == "RD Opening Balance / Installment #1":
+                    if is_first_opening and idx == 0:
+                        r_part = f"RD Opening Balance ({start_count} Installments)" if start_count > 1 else "RD Opening Balance"
+                    else:
+                        r_part = "Installment #1 Deposit"
+                
+                is_row_opening = bool(
+                    'opening' in r_part.lower() or 
+                    'to' in r_ino.lower() or 
+                    r_ino.lower() in ['ob', 'op', 'opening']
+                )
+                
+                if idx == 0 and is_row_opening:
+                    curr_inst_num = start_count
+                    if start_count > 1:
+                        new_ino = f"1 to {start_count}"
+                        new_part = r_part if ('Opening' in r_part and ('Installment' in r_part or 'Installments' in r_part)) else f"RD Opening Balance ({start_count} Installments)"
+                    else:
+                        new_ino = r_ino if r_ino.lower() in ['ob', 'opening'] else "1"
+                        new_part = r_part if 'Opening' in r_part else "RD Opening Balance"
                 else:
-                    curr_inst_num += 1
+                    if idx == 0 and not is_row_opening:
+                        curr_inst_num = 1
+                    else:
+                        curr_inst_num += 1
+                        
                     new_ino = str(curr_inst_num)
-                    new_part = f"Installment #{curr_inst_num} Deposit"
+                    
+                    if not r_part:
+                        new_part = f"Installment #{curr_inst_num} Deposit"
+                    elif re.match(r'^Installment\s*#?\d+\s*Deposit$', r_part, re.I):
+                        new_part = f"Installment #{curr_inst_num} Deposit"
+                    elif re.match(r'^Installment\s*#?\d+$', r_part, re.I):
+                        new_part = f"Installment {curr_inst_num}"
+                    else:
+                        # User-defined custom text (e.g. "Installment 1", "Deposit for May", etc.)
+                        new_part = r_part
                     
                 cursor.execute(f"""
                     UPDATE rd_installments 
@@ -2354,7 +2391,7 @@ def resequence_rd_installments(target_rd_id=None):
                     FOR rec IN 
                         SELECT id FROM rd_installments 
                         ORDER BY rd_id ASC, payment_date ASC, 
-                                 CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                                 CASE WHEN particulars LIKE '%Opening%' OR particulars LIKE '%opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
                                  -id ASC
                     LOOP
                         UPDATE rd_installments SET id = new_id WHERE id = rec.id;
@@ -2372,7 +2409,7 @@ def resequence_rd_installments(target_rd_id=None):
                 SELECT id, rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at
                 FROM rd_installments
                 ORDER BY rd_id ASC, payment_date ASC, 
-                         CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                         CASE WHEN particulars LIKE '%Opening%' OR particulars LIKE '%opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
                          id ASC
             """)
             all_insts = cursor.fetchall()
@@ -2409,7 +2446,7 @@ def ensure_rd_installments_populated(rd_id):
         FROM rd_installments 
         WHERE rd_id = ? 
         ORDER BY payment_date ASC, 
-                 CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                 CASE WHEN particulars LIKE '%Opening%' OR particulars LIKE '%opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
                  id ASC
     """, (rd_id,))
     
@@ -2444,14 +2481,14 @@ def ensure_rd_installments_populated(rd_id):
         FROM rd_installments 
         WHERE rd_id = ? 
         ORDER BY payment_date ASC, 
-                 CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                 CASE WHEN particulars LIKE '%Opening%' OR particulars LIKE '%opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
                  id ASC
     """, (rd_id,))
 
 
-def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, particulars, narration):
+def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, particulars, narration, installment_no=None):
     """
-    Updates an installment's date, amount, payment mode, particulars, narration.
+    Updates an installment's date, amount, payment mode, particulars, narration, and reference number.
     Syncs changes across rd_installments, bank_book, cash_book, and journal_vouchers.
     """
     try:
@@ -2459,16 +2496,17 @@ def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, pa
         if not inst_res:
             return False, "Installment not found"
             
-        _, old_vno, old_pm, old_amt, inst_no = inst_res[0]
+        _, old_vno, old_pm, old_amt, old_inst_no = inst_res[0]
         pay_date_str = str(payment_date)[:10]
         amount = float(amount or 0.0)
+        final_inst_no = str(installment_no).strip() if installment_no is not None and str(installment_no).strip() else str(old_inst_no)
         
         # 1. Update rd_installments
         run_query("""
             UPDATE rd_installments 
-            SET payment_date = ?, credit_amount = ?, payment_mode = ?, particulars = ?, narration = ?
+            SET payment_date = ?, credit_amount = ?, payment_mode = ?, particulars = ?, narration = ?, installment_no = ?
             WHERE id = ?
-        """, (pay_date_str, amount, payment_mode, particulars, narration, inst_id), fetch=False)
+        """, (pay_date_str, amount, payment_mode, particulars, narration, final_inst_no, inst_id), fetch=False)
         
         # 2. Sync with bank_book / cash_book & JV
         if old_vno:
@@ -2477,14 +2515,14 @@ def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, pa
                 UPDATE bank_book 
                 SET date = ?, credit_amount = ?, narration = ?, particulars = ?
                 WHERE voucher_no = ?
-            """, (pay_date_str, amount, narration or f"RD Installment #{inst_no}", particulars or f"RD #{rd_id} - Inst #{inst_no}", old_vno), fetch=False)
+            """, (pay_date_str, amount, narration or f"RD Installment #{final_inst_no}", particulars or f"RD #{rd_id} - Inst #{final_inst_no}", old_vno), fetch=False)
             
             # Check cash_book
             run_query("""
                 UPDATE cash_book 
                 SET date = ?, credit_amount = ?, narration = ?, particulars = ?
                 WHERE voucher_no = ?
-            """, (pay_date_str, amount, narration or f"RD Installment #{inst_no}", particulars or f"RD #{rd_id} - Inst #{inst_no}", old_vno), fetch=False)
+            """, (pay_date_str, amount, narration or f"RD Installment #{final_inst_no}", particulars or f"RD #{rd_id} - Inst #{final_inst_no}", old_vno), fetch=False)
             
             # Update journal_vouchers
             run_query("""
@@ -2720,7 +2758,7 @@ def get_rd_ledger_rows(rd_id):
         running_balance += op_amount
         op_inst_count = max(1, int(round(op_amount / monthly_amt))) if monthly_amt > 0 else 1
         inst_label = f"1 to {op_inst_count}" if op_inst_count > 1 else "1"
-        part_label = f"RD Opening Balance ({op_inst_count} Installments)" if op_inst_count > 1 else "RD Opening Balance / Installment #1"
+        part_label = f"RD Opening Balance ({op_inst_count} Installments)" if op_inst_count > 1 else "RD Opening Balance"
         rows.append({
             "installment_no": inst_label,
             "payment_date": opening_tx["date"],
@@ -2742,7 +2780,7 @@ def get_rd_ledger_rows(rd_id):
         op_amount = op_inst_count * monthly_amt
         running_balance += op_amount
         inst_label = f"1 to {op_inst_count}" if op_inst_count > 1 else "1"
-        part_label = f"RD Opening Balance ({op_inst_count} Installments)" if op_inst_count > 1 else "RD Opening Balance / Installment #1"
+        part_label = f"RD Opening Balance ({op_inst_count} Installments)" if op_inst_count > 1 else "RD Opening Balance"
         rows.append({
             "installment_no": inst_label,
             "payment_date": op_date,

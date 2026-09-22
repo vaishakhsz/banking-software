@@ -3336,7 +3336,8 @@ def render_fixed_deposits():
               {f'<div class="closed-info">⚠️ This Fixed Deposit has been CLOSED on {closed_date_dt}</div>' if status == 'CLOSED' else ''}
             </div>
             """
-            st.markdown(receipt_html, unsafe_allow_html=True)
+            clean_fd_html = "\n".join([line.strip() for line in receipt_html.strip().split("\n")])
+            st.markdown(clean_fd_html, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
             
             fd_data_pdf = list(fd_data[:14])
@@ -3813,133 +3814,107 @@ def render_recurring_deposits():
                     cr_txt = f"₹{lr['credit_amount']:,.2f}" if lr.get("credit_amount", 0) > 0 else "-"
                     bal_txt = f"₹{lr.get('balance', 0):,.2f}"
                     inst_txt = str(lr.get("installment_no", ""))
-                    ledger_html_rows += f"""
-                    <tr>
-                      <td>{p_date_fmt}</td>
-                      <td style="text-align:left; padding-left:10px;">{part_txt}</td>
-                      <td style="text-align:right; padding-right:10px;">{dr_txt}</td>
-                      <td style="text-align:right; padding-right:10px; font-weight:bold; color:#1b4f72;">{cr_txt}</td>
-                      <td style="text-align:right; padding-right:10px; font-weight:bold;">{bal_txt}</td>
-                      <td><b>{inst_txt}</b></td>
-                    </tr>
-                    """
+                    ledger_html_rows += f"<tr><td>{p_date_fmt}</td><td style='text-align:left; padding-left:10px;'>{part_txt}</td><td style='text-align:right; padding-right:10px;'>{dr_txt}</td><td style='text-align:right; padding-right:10px; font-weight:bold; color:#1b4f72;'>{cr_txt}</td><td style='text-align:right; padding-right:10px; font-weight:bold;'>{bal_txt}</td><td><b>{inst_txt}</b></td></tr>\n"
             else:
-                ledger_html_rows = f"""
-                <tr>
-                  <td>{op_bal_date_dt}</td>
-                  <td style="text-align:left; padding-left:10px;">RD Account Opening Balance</td>
-                  <td>-</td>
-                  <td style="text-align:right; padding-right:10px; font-weight:bold; color:#1b4f72;">₹{col_balance:,.2f}</td>
-                  <td style="text-align:right; padding-right:10px; font-weight:bold;">₹{col_balance:,.2f}</td>
-                  <td><b>{paid_inst}</b></td>
-                </tr>
-                """
+                ledger_html_rows = f"<tr><td>{op_bal_date_dt}</td><td style='text-align:left; padding-left:10px;'>RD Account Opening Balance</td><td>-</td><td style='text-align:right; padding-right:10px; font-weight:bold; color:#1b4f72;'>₹{col_balance:,.2f}</td><td style='text-align:right; padding-right:10px; font-weight:bold;'>₹{col_balance:,.2f}</td><td><b>{paid_inst}</b></td></tr>\n"
                 
             if status == 'CLOSED':
-                ledger_html_rows += f"""
-                <tr style="background-color:#fde8e8;">
-                  <td>{closed_date_dt}</td>
-                  <td style="text-align:left; padding-left:10px; font-weight:bold; color:#c0392b;">RD Closed / Maturity Payment</td>
-                  <td style="text-align:right; padding-right:10px; font-weight:bold; color:#c0392b;">₹{display_maturity:,.2f}</td>
-                  <td style="text-align:right; padding-right:10px;">-</td>
-                  <td style="text-align:right; padding-right:10px; font-weight:bold;">₹0.00</td>
-                  <td><b>{paid_inst}</b></td>
-                </tr>
-                """
+                ledger_html_rows += f"<tr style='background-color:#fde8e8;'><td>{closed_date_dt}</td><td style='text-align:left; padding-left:10px; font-weight:bold; color:#c0392b;'>RD Closed / Maturity Payment</td><td style='text-align:right; padding-right:10px; font-weight:bold; color:#c0392b;'>₹{display_maturity:,.2f}</td><td style='text-align:right; padding-right:10px;'>-</td><td style='text-align:right; padding-right:10px; font-weight:bold;'>₹0.00</td><td><b>{paid_inst}</b></td></tr>\n"
 
             rd_receipt_html = f"""
-            <style>
-              .rd-receipt {{
-                border: 2px solid #2980b9;
-                padding: 25px;
-                background-color: #f4f9fd;
-                font-family: Arial, sans-serif;
-                color: #000;
-                border-radius: 6px;
-              }}
-              .header {{ text-align: center; border-bottom: 2px solid #2980b9; padding-bottom: 10px; margin-bottom: 15px; }}
-              .header h2 {{ color: #1b4f72; margin: 0; font-size: 22px; }}
-              .header p {{ margin: 2px; font-size: 11px; color: #555; }}
-              .badge {{ background: #2980b9; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; }}
-              .status-badge {{ background: {status_color}; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; margin-left: 10px; }}
-              .grid-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }}
-              .box {{ border: 1px solid #ccc; padding: 10px; margin-top: 15px; background: #fff; }}
-              table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }}
-              th, td {{ border: 1px solid #999; padding: 6px; text-align: center; }}
-              th {{ background-color: #ebf5fb; }}
-              .signatures {{ display: flex; justify-content: space-between; margin-top: 50px; font-size: 12px; font-weight: bold; text-align: center; }}
-              .closed-info {{ background: #fde8e8; padding: 10px; border-radius: 5px; margin-top: 10px; color: #c0392b; }}
-            </style>
-            
-            <div class="rd-receipt">
-              <div class="header">
-                <h2>AARSHA NIDHI LIMITED</h2>
-                <p>6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
-                <p>CIN: U65990KL2021PLN069978 | Ph: 0471-2994535</p>
-              </div>
-              <div style="text-align:center;">
-                <span class="badge">RECURRING DEPOSIT RECEIPT / LEDGER</span>
-                <span class="status-badge">{status_text}</span>
-              </div>
-              
-              <div class="grid-row">
-                <div><b>RDR No. / A/c No:</b> {rd_acc_no}</div>
-                <div><b>Scheme:</b> <span style="color:#1b4f72;font-weight:bold;">{scheme_name}</span></div>
-              </div>
-              <div class="grid-row">
-                <div><b>A/c Opening Date:</b> {created_at_dt}</div>
-                <div><b>Maturity Date:</b> <span style="color:#27ae60;font-weight:bold;">{maturity_date_dt}</span></div>
-              </div>
-              <div class="grid-row">
-                <div><b>Name:</b> {c_name}</div>
-                <div><b>Opening Balance Date:</b> {op_bal_date_dt}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Address:</b> {full_address}</div>
-                <div><b>Interest Rate:</b> {rate}% p.a.</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Monthly Installment:</b> ₹{monthly_amt:,.2f}</div>
-                <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Tenure:</b> {tenure_display_str}</div>
-                <div><b>Installments Paid:</b> {paid_inst} / {tenure}</div>
-              </div>
-              <div class="grid-row">
-                <div><b>Total Balance Deposited:</b> ₹{col_balance:,.2f}</div>
-                <div><b>Maturity Amount:</b> <span style="color:#1b4f72;font-weight:bold;">₹{display_maturity:,.2f}</span></div>
-              </div>
-              <div class="grid-row">
-                <div><b>Status:</b> {status_text}</div>
-                <div>{f'<b>Closed Date:</b> {closed_date_dt}' if status == 'CLOSED' else ''}</div>
-              </div>
-              
-              <div class="box">
-                <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure_display_str}. Total balance accumulated: <b>₹{col_balance:,.2f}</b>.
-              </div>
+<style>
+.rd-receipt {{
+  border: 2px solid #2980b9;
+  padding: 25px;
+  background-color: #f4f9fd;
+  font-family: Arial, sans-serif;
+  color: #000;
+  border-radius: 6px;
+}}
+.header {{ text-align: center; border-bottom: 2px solid #2980b9; padding-bottom: 10px; margin-bottom: 15px; }}
+.header h2 {{ color: #1b4f72; margin: 0; font-size: 22px; }}
+.header p {{ margin: 2px; font-size: 11px; color: #555; }}
+.badge {{ background: #2980b9; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; }}
+.status-badge {{ background: {status_color}; color: white; padding: 4px 12px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 15px; margin-left: 10px; }}
+.grid-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }}
+.box {{ border: 1px solid #ccc; padding: 10px; margin-top: 15px; background: #fff; }}
+table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }}
+th, td {{ border: 1px solid #999; padding: 6px; text-align: center; }}
+th {{ background-color: #ebf5fb; }}
+.signatures {{ display: flex; justify-content: space-between; margin-top: 50px; font-size: 12px; font-weight: bold; text-align: center; }}
+.closed-info {{ background: #fde8e8; padding: 10px; border-radius: 5px; margin-top: 10px; color: #c0392b; }}
+</style>
 
-              <table>
-                <tr>
-                  <th>Date</th>
-                  <th>Particulars</th>
-                  <th>Payment / Debit</th>
-                  <th>Receipt / Credit</th>
-                  <th>Balance</th>
-                  <th>Installment No</th>
-                </tr>
-                {ledger_html_rows}
-              </table>
+<div class="rd-receipt">
+  <div class="header">
+    <h2>AARSHA NIDHI LIMITED</h2>
+    <p>6/614, ARS Complex, Kattakada Road, Balaramapuram P.O, Thiruvananthapuram - 695501</p>
+    <p>CIN: U65990KL2021PLN069978 | Ph: 0471-2994535</p>
+  </div>
+  <div style="text-align:center;">
+    <span class="badge">RECURRING DEPOSIT RECEIPT / LEDGER</span>
+    <span class="status-badge">{status_text}</span>
+  </div>
+  
+  <div class="grid-row">
+    <div><b>RDR No. / A/c No:</b> {rd_acc_no}</div>
+    <div><b>Scheme:</b> <span style="color:#1b4f72;font-weight:bold;">{scheme_name}</span></div>
+  </div>
+  <div class="grid-row">
+    <div><b>A/c Opening Date:</b> {created_at_dt}</div>
+    <div><b>Maturity Date:</b> <span style="color:#27ae60;font-weight:bold;">{maturity_date_dt}</span></div>
+  </div>
+  <div class="grid-row">
+    <div><b>Name:</b> {c_name}</div>
+    <div><b>Opening Balance Date:</b> {op_bal_date_dt}</div>
+  </div>
+  <div class="grid-row">
+    <div><b>Address:</b> {full_address}</div>
+    <div><b>Interest Rate:</b> {rate}% p.a.</div>
+  </div>
+  <div class="grid-row">
+    <div><b>Monthly Installment:</b> ₹{monthly_amt:,.2f}</div>
+    <div><b>Nominee:</b> {nominee if nominee else 'N/A'}</div>
+  </div>
+  <div class="grid-row">
+    <div><b>Tenure:</b> {tenure_display_str}</div>
+    <div><b>Installments Paid:</b> {paid_inst} / {tenure}</div>
+  </div>
+  <div class="grid-row">
+    <div><b>Total Balance Deposited:</b> ₹{col_balance:,.2f}</div>
+    <div><b>Maturity Amount:</b> <span style="color:#1b4f72;font-weight:bold;">₹{display_maturity:,.2f}</span></div>
+  </div>
+  <div class="grid-row">
+    <div><b>Status:</b> {status_text}</div>
+    <div>{f'<b>Closed Date:</b> {closed_date_dt}' if status == 'CLOSED' else ''}</div>
+  </div>
+  
+  <div class="box">
+    <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure_display_str}. Total balance accumulated: <b>₹{col_balance:,.2f}</b>.
+  </div>
 
-              <div class="signatures">
-                <div>Manager</div>
-                <div>Accountant</div>
-                <div>Chairman / MD</div>
-              </div>
-              {f'<div class="closed-info">⚠️ This Recurring Deposit has been CLOSED on {closed_date_dt}</div>' if status == 'CLOSED' else ''}
-            </div>
-            """
-            st.markdown(rd_receipt_html, unsafe_allow_html=True)
+  <table>
+    <tr>
+      <th>Date</th>
+      <th>Particulars</th>
+      <th>Payment / Debit</th>
+      <th>Receipt / Credit</th>
+      <th>Balance</th>
+      <th>Installment No</th>
+    </tr>
+{ledger_html_rows}
+  </table>
+
+  <div class="signatures">
+    <div>Manager</div>
+    <div>Accountant</div>
+    <div>Chairman / MD</div>
+  </div>
+  {f'<div class="closed-info">⚠️ This Recurring Deposit has been CLOSED on {closed_date_dt}</div>' if status == 'CLOSED' else ''}
+</div>
+"""
+            clean_rd_html = "\n".join([line.strip() for line in rd_receipt_html.strip().split("\n")])
+            st.markdown(clean_rd_html, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
             
             rd_data_pdf = list(rd_data[:19])

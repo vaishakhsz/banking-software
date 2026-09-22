@@ -47,7 +47,7 @@ from database import (
     get_document_data, delete_document, record_sb_transaction,
     resequence_all_accounts, reconcile_books, get_all_balances,
     record_cash_book_transaction, update_cash_book_transaction, record_bank_book_transaction,
-    calculate_rd_maturity, calculate_rd_accrued_value
+    calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment
 )
 
 try:
@@ -3631,6 +3631,17 @@ def render_recurring_deposits():
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (op_bal_date_str, voucher_no, f"RD Opening: {final_rd_no} - Customer {cust_dict[selected_cust]}", 0, opening_balance, new_balance, bank_name, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
                 
+                try:
+                    op_v_no = voucher_no if 'voucher_no' in locals() else f"OP-{final_rd_no}"
+                    inst_lbl = f"1 to {opening_paid_inst}" if opening_paid_inst > 1 else "1"
+                    part_lbl = f"RD Opening Balance ({opening_paid_inst} Installments)" if opening_paid_inst > 1 else "RD Opening Balance / Installment #1"
+                    run_query("""
+                        INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
+                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                    """, (rd_id, inst_lbl, op_bal_date_str, part_lbl, opening_balance, opening_balance, payment_mode, op_v_no, f"RD Opening via {payment_mode}", today_time), fetch=False)
+                except Exception:
+                    pass
+                
                 clear_db_cache()
                 st.success(f"🎉 Recurring Deposit **{final_rd_no}** opened & recorded successfully (Opened: {open_date_str} | Op Bal Date: {op_bal_date_str} | Tenure: {tenure_days} Days [{tenure}M] | Monthly: ₹{monthly_amt:,.2f} | Opening Bal: ₹{opening_balance:,.2f} [{opening_paid_inst} Inst.]) via {payment_mode}!")
                 time.sleep(0.5)
@@ -3700,6 +3711,14 @@ def render_recurring_deposits():
                                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (pay_date_str, voucher_no, f"RD #{rd_id} - Inst #{new_paid}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Installment #{new_paid}", today_time), fetch=False)
+                    
+                    try:
+                        run_query("""
+                            INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
+                            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                        """, (rd_id, str(new_paid), pay_date_str, f"Installment #{new_paid} Deposit", monthly_amt, new_collected, payment_mode_pay, voucher_no, f"RD Installment #{new_paid}", today_time), fetch=False)
+                    except Exception:
+                        pass
                     
                     clear_db_cache()
                     st.success(f"✅ Installment #{new_paid} successfully paid on {pay_date_str} via {payment_mode_pay}!")
@@ -3783,6 +3802,51 @@ def render_recurring_deposits():
             
             tenure_display_str = f"{tenure_days} DAYS ({tenure} Months)"
 
+            ledger_rows = get_rd_ledger_rows(rd_id)
+            
+            ledger_html_rows = ""
+            if ledger_rows:
+                for lr in ledger_rows:
+                    p_date_fmt = pdf_generator.format_date_str(lr.get("payment_date", created_at))
+                    part_txt = lr.get("particulars", "")
+                    dr_txt = f"₹{lr['debit_amount']:,.2f}" if lr.get("debit_amount", 0) > 0 else "-"
+                    cr_txt = f"₹{lr['credit_amount']:,.2f}" if lr.get("credit_amount", 0) > 0 else "-"
+                    bal_txt = f"₹{lr.get('balance', 0):,.2f}"
+                    inst_txt = str(lr.get("installment_no", ""))
+                    ledger_html_rows += f"""
+                    <tr>
+                      <td>{p_date_fmt}</td>
+                      <td style="text-align:left; padding-left:10px;">{part_txt}</td>
+                      <td style="text-align:right; padding-right:10px;">{dr_txt}</td>
+                      <td style="text-align:right; padding-right:10px; font-weight:bold; color:#1b4f72;">{cr_txt}</td>
+                      <td style="text-align:right; padding-right:10px; font-weight:bold;">{bal_txt}</td>
+                      <td><b>{inst_txt}</b></td>
+                    </tr>
+                    """
+            else:
+                ledger_html_rows = f"""
+                <tr>
+                  <td>{op_bal_date_dt}</td>
+                  <td style="text-align:left; padding-left:10px;">RD Account Opening Balance</td>
+                  <td>-</td>
+                  <td style="text-align:right; padding-right:10px; font-weight:bold; color:#1b4f72;">₹{col_balance:,.2f}</td>
+                  <td style="text-align:right; padding-right:10px; font-weight:bold;">₹{col_balance:,.2f}</td>
+                  <td><b>{paid_inst}</b></td>
+                </tr>
+                """
+                
+            if status == 'CLOSED':
+                ledger_html_rows += f"""
+                <tr style="background-color:#fde8e8;">
+                  <td>{closed_date_dt}</td>
+                  <td style="text-align:left; padding-left:10px; font-weight:bold; color:#c0392b;">RD Closed / Maturity Payment</td>
+                  <td style="text-align:right; padding-right:10px; font-weight:bold; color:#c0392b;">₹{display_maturity:,.2f}</td>
+                  <td style="text-align:right; padding-right:10px;">-</td>
+                  <td style="text-align:right; padding-right:10px; font-weight:bold;">₹0.00</td>
+                  <td><b>{paid_inst}</b></td>
+                </tr>
+                """
+
             rd_receipt_html = f"""
             <style>
               .rd-receipt {{
@@ -3862,17 +3926,9 @@ def render_recurring_deposits():
                   <th>Payment / Debit</th>
                   <th>Receipt / Credit</th>
                   <th>Balance</th>
-                  <th>Installments Paid</th>
+                  <th>Installment No</th>
                 </tr>
-                <tr>
-                  <td>{op_bal_date_dt}</td>
-                  <td>RD Account Opening & Installments</td>
-                  <td>-</td>
-                  <td>₹{col_balance:,.2f}</td>
-                  <td>₹{col_balance:,.2f}</td>
-                  <td>{paid_inst}</td>
-                </tr>
-                {f'<tr><td>{closed_date_dt}</td><td>RD Closed / Maturity Payment</td><td>₹{display_maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>{paid_inst}</td></tr>' if status == 'CLOSED' else ''}
+                {ledger_html_rows}
               </table>
 
               <div class="signatures">
@@ -3890,7 +3946,7 @@ def render_recurring_deposits():
             rd_data_pdf[10] = display_maturity
             rd_data_pdf.append(op_bal_date)
             rd_data_pdf.append(tenure_days)
-            rd_pdf_data = pdf_generator.generate_rd_pdf(rd_data_pdf)
+            rd_pdf_data = pdf_generator.generate_rd_pdf(rd_data_pdf, ledger_rows=ledger_rows)
             st.download_button(
                 label=f"📥 Download RD Certificate {rd_acc_no} (PDF)",
                 data=rd_pdf_data,

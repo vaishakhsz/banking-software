@@ -885,7 +885,7 @@ def generate_fd_pdf(fd_data):
     buffer.seek(0)
     return buffer.getvalue()
 
-def generate_rd_pdf(rd_data):
+def generate_rd_pdf(rd_data, ledger_rows=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
                            rightMargin=15*mm, leftMargin=15*mm,
@@ -1093,17 +1093,34 @@ def generate_rd_pdf(rd_data):
          Paragraph("<b>Payment / Debit</b>", table_header_style),
          Paragraph("<b>Receipt / Credit</b>", table_header_style),
          Paragraph("<b>Balance</b>", table_header_style),
-         Paragraph("<b>Inst. Paid</b>", table_header_style)]
+         Paragraph("<b>Inst. No</b>", table_header_style)]
     ]
     
-    ledger_data.append([
-        Paragraph(format_date_str(op_bal_date), table_cell_center),
-        Paragraph("RD Account Opening & Installments", table_cell_left),
-        Paragraph("-", table_cell_center),
-        Paragraph(f"₹{total_deposited:,.2f}", table_cell_right),
-        Paragraph(f"₹{total_deposited:,.2f}", table_cell_right),
-        Paragraph(str(paid_inst), table_cell_center)
-    ])
+    if ledger_rows:
+        for r in ledger_rows:
+            p_date = format_date_str(r.get("payment_date", created_at))
+            part = str(r.get("particulars", "RD Installment Deposit"))
+            dr = f"₹{r['debit_amount']:,.2f}" if r.get("debit_amount", 0) > 0 else "-"
+            cr = f"₹{r['credit_amount']:,.2f}" if r.get("credit_amount", 0) > 0 else "-"
+            bal = f"₹{r.get('balance', 0):,.2f}"
+            inst_no = str(r.get("installment_no", ""))
+            ledger_data.append([
+                Paragraph(p_date, table_cell_center),
+                Paragraph(part, table_cell_left),
+                Paragraph(dr, table_cell_right if dr != '-' else table_cell_center),
+                Paragraph(cr, table_cell_right if cr != '-' else table_cell_center),
+                Paragraph(bal, table_cell_right),
+                Paragraph(inst_no, table_cell_center)
+            ])
+    else:
+        ledger_data.append([
+            Paragraph(format_date_str(op_bal_date), table_cell_center),
+            Paragraph("RD Account Opening Balance", table_cell_left),
+            Paragraph("-", table_cell_center),
+            Paragraph(f"₹{total_deposited:,.2f}", table_cell_right),
+            Paragraph(f"₹{total_deposited:,.2f}", table_cell_right),
+            Paragraph(str(paid_inst), table_cell_center)
+        ])
     
     if status == 'CLOSED':
         ledger_data.append([
@@ -1115,7 +1132,7 @@ def generate_rd_pdf(rd_data):
             Paragraph(str(paid_inst), table_cell_center)
         ])
     
-    ledger_table = Table(ledger_data, colWidths=[30*mm, 40*mm, 28*mm, 28*mm, 28*mm, 26*mm])
+    ledger_table = Table(ledger_data, colWidths=[25*mm, 55*mm, 25*mm, 25*mm, 28*mm, 22*mm])
     ledger_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ebf5fb')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),

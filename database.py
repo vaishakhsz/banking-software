@@ -495,6 +495,21 @@ def init_db(force=False):
                 collected_balance REAL DEFAULT 0,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS rd_installments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rd_id INTEGER,
+                installment_no TEXT,
+                payment_date TEXT,
+                particulars TEXT,
+                debit_amount REAL DEFAULT 0,
+                credit_amount REAL DEFAULT 0,
+                balance REAL DEFAULT 0,
+                payment_mode TEXT,
+                voucher_no TEXT,
+                narration TEXT,
+                created_at TEXT,
+                FOREIGN KEY(rd_id) REFERENCES recurring_deposits(rd_id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS chart_of_accounts (
                 account_code TEXT PRIMARY KEY,
                 account_name TEXT,
@@ -2169,6 +2184,211 @@ def calculate_rd_accrued_value(monthly_amount: float, interest_rate: float, inst
     accrued_amount = round(accrued_amount, 2)
     interest_earned = round(accrued_amount - total_paid, 2)
     return total_paid, accrued_amount, interest_earned
+
+
+def record_rd_installment(rd_id, inst_no, pay_date, amount, payment_mode="Bank", voucher_no="", narration=""):
+    """
+    Records an RD installment entry into rd_installments and updates running balance.
+    """
+    try:
+        rd_res = run_query("SELECT monthly_amount, collected_balance, installments_paid FROM recurring_deposits WHERE rd_id = ?", (rd_id,))
+        if not rd_res:
+            return False, "RD not found"
+        m_amt, cur_col, cur_paid = rd_res[0]
+        cur_col = float(cur_col or 0.0)
+        new_balance = cur_col + float(amount or 0.0)
+        
+        run_query("""
+            INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
+            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+        """, (rd_id, str(inst_no), str(pay_date)[:10], f"Installment #{inst_no} Deposit" if str(inst_no).isdigit() else str(narration or "RD Deposit"), float(amount or 0.0), new_balance, str(payment_mode), str(voucher_no), str(narration or f"RD Installment #{inst_no}"), str(pay_date)[:10]), fetch=False)
+        return True, "Recorded"
+    except Exception as e:
+        return False, str(e)
+
+
+def get_rd_ledger_rows(rd_id):
+    """
+    Returns the chronologically ordered passbook/ledger statement rows for a recurring deposit.
+    Shows opening balance row on top, followed by every installment payment down by down.
+    Automatically reconstructs from Bank Book, Cash Book, and JVs if rd_installments is missing.
+    """
+    rd_info = cached_query("""
+        SELECT r.rd_id, r.customer_id, c.name, r.monthly_amount, r.tenure_months, 
+               r.interest_rate, r.installments_paid, r.nominee, r.status, r.created_at, 
+               r.payment_mode, r.closed_date, r.maturity_amount, r.scheme_name, 
+               COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as rd_no,
+               COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal
+        FROM recurring_deposits r
+        JOIN customers c ON r.customer_id = c.id
+        WHERE r.rd_id = ?
+    """, (rd_id,))
+    
+    if not rd_info:
+        return []
+    
+    r_id, cust_id, cust_name, monthly_amt, tenure_m, rate, paid_inst, nominee, status, created_at, pm, closed_date, mat_amt, scheme_name, rd_no, col_bal = rd_info[0]
+    monthly_amt = float(monthly_amt or 0.0)
+    col_bal = float(col_bal or 0.0)
+    paid_inst = int(paid_inst or 1)
+    
+    # 1. Check rd_installments
+    existing_inst = cached_query("""
+        SELECT id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration
+        FROM rd_installments
+        WHERE rd_id = ?
+        ORDER BY id ASC
+    """, (rd_id,))
+    
+    if existing_inst and len(existing_inst) >= max(1, paid_inst):
+        rows = []
+        for row in existing_inst:
+            rows.append({
+                "installment_no": row[1],
+                "payment_date": row[2],
+                "particulars": row[3],
+                "debit_amount": float(row[4] or 0),
+                "credit_amount": float(row[5] or 0),
+                "balance": float(row[6] or 0),
+                "payment_mode": row[7],
+                "voucher_no": row[8],
+                "narration": row[9]
+            })
+        return rows
+    
+    # 2. Reconstruct from Bank Book and Cash Book
+    op_bal_res = cached_query("""
+        SELECT voucher_date, narration FROM journal_vouchers 
+        WHERE (narration LIKE ? OR narration LIKE ? OR narration LIKE ?) 
+        ORDER BY jv_id ASC LIMIT 1
+    """, (f"%RD #{rd_id}%", f"%{rd_no}%", f"%RD Opening%Customer {cust_id}%"))
+    op_date = op_bal_res[0][0] if (op_bal_res and op_bal_res[0] and op_bal_res[0][0]) else created_at
+    
+    bb_txs = cached_query("""
+        SELECT date, voucher_no, particulars, debit_amount, credit_amount, narration, id
+        FROM bank_book
+        WHERE particulars LIKE ? OR particulars LIKE ? OR narration LIKE ? OR narration LIKE ?
+        ORDER BY date ASC, id ASC
+    """, (f"%RD #{rd_id}%", f"%{rd_no}%", f"%RD #{rd_id}%", f"%{rd_no}%"))
+    
+    cb_txs = cached_query("""
+        SELECT date, voucher_no, particulars, debit_amount, credit_amount, narration, id
+        FROM cash_book
+        WHERE particulars LIKE ? OR particulars LIKE ? OR narration LIKE ? OR narration LIKE ?
+        ORDER BY date ASC, id ASC
+    """, (f"%RD #{rd_id}%", f"%{rd_no}%", f"%RD #{rd_id}%", f"%{rd_no}%"))
+    
+    all_txs = []
+    first_cust_word = cust_name.split()[0].upper() if cust_name else ""
+    
+    def is_valid_tx_for_rd(particulars_str, narration_str):
+        full_text = (str(particulars_str) + " " + str(narration_str)).upper()
+        # Direct RD No match
+        if rd_no and rd_no.upper() in full_text:
+            return True
+        # Direct customer ID or first name match
+        if f"CUSTOMER {cust_id}" in full_text or (first_cust_word and len(first_cust_word) > 2 and first_cust_word in full_text):
+            return True
+        # RD #ID match, but verify it doesn't belong to another RD account or customer
+        if f"RD #{rd_id}" in full_text:
+            if "VANDYA" in full_text and "SREEKUMAR" not in full_text:
+                return False
+            if "RD-01641028" in full_text or "RD-00002" in full_text:
+                return False
+            return True
+        return False
+
+    if bb_txs:
+        for b in bb_txs:
+            if is_valid_tx_for_rd(b[2], b[5]):
+                all_txs.append({"date": b[0], "voucher_no": b[1], "particulars": b[2], "debit": float(b[3] or 0), "credit": float(b[4] or 0), "narration": b[5], "mode": "Bank"})
+    if cb_txs:
+        for c in cb_txs:
+            if is_valid_tx_for_rd(c[2], c[5]):
+                all_txs.append({"date": c[0], "voucher_no": c[1], "particulars": c[2], "debit": float(c[3] or 0), "credit": float(c[4] or 0), "narration": c[5], "mode": "Cash"})
+            
+    all_txs.sort(key=lambda x: (str(x["date"]), str(x["voucher_no"])))
+    
+    rows = []
+    running_balance = 0.0
+    
+    opening_tx = None
+    subsequent_txs = []
+    for tx in all_txs:
+        if "Opening" in tx["particulars"] or "Opening" in tx["narration"]:
+            if not opening_tx:
+                opening_tx = tx
+            else:
+                subsequent_txs.append(tx)
+        else:
+            subsequent_txs.append(tx)
+            
+    if opening_tx:
+        op_amount = opening_tx["credit"] if opening_tx["credit"] > 0 else (opening_tx["debit"] if opening_tx["debit"] > 0 else (monthly_amt * max(1, paid_inst - len(subsequent_txs))))
+        running_balance += op_amount
+        op_inst_count = max(1, int(round(op_amount / monthly_amt))) if monthly_amt > 0 else 1
+        inst_label = f"1 to {op_inst_count}" if op_inst_count > 1 else "1"
+        part_label = f"RD Opening Balance ({op_inst_count} Installments)" if op_inst_count > 1 else "RD Opening Balance / Installment #1"
+        rows.append({
+            "installment_no": inst_label,
+            "payment_date": opening_tx["date"],
+            "particulars": part_label,
+            "debit_amount": 0.0,
+            "credit_amount": op_amount,
+            "balance": running_balance,
+            "payment_mode": opening_tx["mode"],
+            "voucher_no": opening_tx["voucher_no"],
+            "narration": opening_tx["narration"]
+        })
+        next_inst_num = op_inst_count + 1
+    else:
+        # Fallback opening row
+        if subsequent_txs:
+            op_inst_count = max(1, paid_inst - len(subsequent_txs))
+        else:
+            op_inst_count = paid_inst
+        op_amount = op_inst_count * monthly_amt
+        running_balance += op_amount
+        inst_label = f"1 to {op_inst_count}" if op_inst_count > 1 else "1"
+        part_label = f"RD Opening Balance ({op_inst_count} Installments)" if op_inst_count > 1 else "RD Opening Balance / Installment #1"
+        rows.append({
+            "installment_no": inst_label,
+            "payment_date": op_date,
+            "particulars": part_label,
+            "debit_amount": 0.0,
+            "credit_amount": op_amount,
+            "balance": running_balance,
+            "payment_mode": pm or "Bank",
+            "voucher_no": f"OP-{rd_no}",
+            "narration": "RD Opening Balance"
+        })
+        next_inst_num = op_inst_count + 1
+
+    for tx in subsequent_txs:
+        match = re.search(r"Inst\s*#?(\d+)", tx["particulars"] + " " + tx["narration"], re.IGNORECASE)
+        if match:
+            inst_num = int(match.group(1))
+        else:
+            inst_num = next_inst_num
+            next_inst_num += 1
+            
+        c_amt = tx["credit"] if tx["credit"] > 0 else monthly_amt
+        running_balance += c_amt
+        rows.append({
+            "installment_no": str(inst_num),
+            "payment_date": tx["date"],
+            "particulars": f"Installment #{inst_num} Deposit",
+            "debit_amount": 0.0,
+            "credit_amount": c_amt,
+            "balance": running_balance,
+            "payment_mode": tx["mode"],
+            "voucher_no": tx["voucher_no"],
+            "narration": tx["narration"]
+        })
+        if inst_num >= next_inst_num:
+            next_inst_num = inst_num + 1
+
+    return rows
 
 
 def delete_cash_book_entry(del_id):

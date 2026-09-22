@@ -957,10 +957,11 @@ def render_personal_loans():
             })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
             st.dataframe(format_df_dates(df_prev_display), use_container_width=True)
 
-        st.markdown("### 3️⃣ Disbursal Account & Guarantor / Surety Details")
-        col_d1, col_d2 = st.columns(2)
+        st.markdown("### 3️⃣ Disbursal Account, Opening Balance & Guarantor Details")
+        col_d1, col_d2, col_d3 = st.columns(3)
         disb_mode = col_d1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], key="pl_disb_mode")
-        custom_loan_no = col_d2.text_input("Custom Loan Number (Optional - leave blank to auto-generate)", key="pl_cust_lno")
+        opening_balance = col_d2.number_input("Opening Balance / Initial Due (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="pl_op_bal_amt", help="Initial outstanding due balance at opening. Defaults to Total Repayable (Principal + Interest).")
+        custom_loan_no = col_d3.text_input("Custom Loan Number (Optional - leave blank to auto-generate)", key="pl_cust_lno")
         
         g_col1, g_col2 = st.columns(2)
         guarantor_name = g_col1.text_input("Guarantor / Surety Member Name", value="SARITHA", key="pl_g_name")
@@ -1008,7 +1009,7 @@ def render_personal_loans():
             """, (
                 loan_no, selected_cust_id, str(sanction_date), principal, int_rate,
                 loan_scheme_name, tenure_days, tenure_months, tot_interest, tot_repayable,
-                installment, tot_repayable, disb_mode, voucher_no,
+                installment, opening_balance, disb_mode, voucher_no,
                 guarantor_name, guarantor_relation, guarantor_phone, guarantor_address,
                 loan_from_date, loan_to_date, first_emi_due, last_emi_due,
                 p_emi, i_emi,
@@ -1060,18 +1061,18 @@ def render_personal_loans():
             acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
             if acc_row:
                 acc_id, old_bal = acc_row[0]
-                new_bal = float(old_bal) + float(tot_repayable)
+                new_bal = float(old_bal) + float(opening_balance)
                 run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_bal, acc_id), fetch=False)
-                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, new_bal, str(sanction_date)), fetch=False)
+                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", opening_balance, new_bal, str(sanction_date)), fetch=False)
             else:
-                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (selected_cust_acc, selected_cust_id, tot_repayable, str(sanction_date)), fetch=False)
+                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (selected_cust_acc, selected_cust_id, opening_balance, str(sanction_date)), fetch=False)
                 acc_lookup = run_query("SELECT id FROM accounts WHERE customer_id = ?", (selected_cust_id,))
                 acc_id = acc_lookup[0][0] if acc_lookup and acc_lookup[0] else None
                 if acc_id:
-                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, tot_repayable, str(sanction_date)), fetch=False)
+                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", opening_balance, opening_balance, str(sanction_date)), fetch=False)
                 
             clear_db_cache()
-            st.success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}**.")
+            st.success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{opening_balance:,.2f}**.")
             time.sleep(0.5)
             st.rerun()
 
@@ -1825,13 +1826,15 @@ def render_gold_loans():
             })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
             st.dataframe(format_df_dates(df_prev_display), use_container_width=True)
 
-        st.markdown("### 4️⃣ Automated 1-Click Disbursal Mode")
-        col_dm1, col_dm2 = st.columns(2)
+        st.markdown("### 4️⃣ Disbursal Mode & Opening Balance")
+        col_dm1, col_dm2, col_dm3 = st.columns(3)
         disb_mode = col_dm1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0, key="gl_disb_mode")
-        remarks = col_dm2.text_input("Remarks / Condition Notes", value="Gold Pledged in Safe Vault", key="gl_remarks_input")
+        opening_balance = col_dm2.number_input("Opening Balance / Initial Due (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="gl_op_bal_amt", help="Initial outstanding due balance at opening. Defaults to Total Repayable (Principal + Interest).")
+        custom_gl_no = col_dm3.text_input("Custom Gold Loan Number (Optional - leave blank to auto-generate)", key="gl_cust_lno")
+        remarks = st.text_input("Remarks / Condition Notes", value="Gold Pledged in Safe Vault", key="gl_remarks_input")
         
         if st.button("🪙 Confirm Appraisal & Disburse Gold Loan", use_container_width=True, type="primary", key="btn_confirm_gl_disb"):
-            loan_no = f"GL-2026-{cur_gl_cnt:04d}"
+            loan_no = custom_gl_no.strip() if custom_gl_no and custom_gl_no.strip() else f"GL-2026-{cur_gl_cnt:04d}"
             voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{cur_gl_cnt:03d}"
             
             if "Cash" in disb_mode:
@@ -1880,7 +1883,7 @@ def render_gold_loans():
                 round(int_rate / 12.0, 2), tenure_days, tenure_months, tot_interest, tot_repayable,
                 installment, p_emi, i_emi, i_emi,
                 loan_from, loan_to, first_due, last_due,
-                tot_repayable, packet_no, locker_no, appraiser_name,
+                opening_balance, packet_no, locker_no, appraiser_name,
                 disb_mode, voucher_no, remarks,
                 img_name, img_param
             ))
@@ -1930,14 +1933,14 @@ def render_gold_loans():
             acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
             if acc_row:
                 acc_id, old_bal = acc_row[0]
-                new_bal = float(old_bal) + float(tot_repayable)
+                new_bal = float(old_bal) + float(opening_balance)
                 run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_bal, acc_id), fetch=False)
-                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"GOLD LOAN DISBURSAL [{loan_no}] (DEBIT)", tot_repayable, new_bal, str(sanction_date)), fetch=False)
+                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"GOLD LOAN DISBURSAL [{loan_no}] (DEBIT)", opening_balance, new_bal, str(sanction_date)), fetch=False)
             else:
-                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, tot_repayable, str(sanction_date)), fetch=False)
+                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, opening_balance, str(sanction_date)), fetch=False)
                 
             clear_db_cache()
-            st.success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Monthly EMI: **₹{installment:,.2f}/mo**")
+            st.success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{opening_balance:,.2f}**.")
             time.sleep(0.5)
             st.rerun()
 
@@ -3112,13 +3115,14 @@ def render_fixed_deposits():
             col_fd1, col_fd2 = st.columns(2)
             with col_fd1:
                 selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
-                principal = st.number_input("Principal Amount (₹)", min_value=1000.0, value=10000.0, step=500.0)
-                tenure = st.slider("Tenure (Months)", 1, 60, 12)
+                principal = st.number_input("Principal Amount (Contracted) (₹)", min_value=100.0, value=10000.0, step=500.0, key="fd_prin")
+                opening_balance = st.number_input("Opening Balance / Deposited Amount (₹)", min_value=0.0, value=float(principal), step=500.0, key="fd_open_bal", help="Initial deposit funded into the account at opening. Defaults to Principal.")
+                tenure = st.slider("Tenure (Months)", 1, 60, 12, key="fd_tenure")
             with col_fd2:
                 fd_open_date = st.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key="fd_open_date_input")
                 fd_op_bal_date = st.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key="fd_op_bal_date_input")
-                interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5)
-                nominee = st.text_input("Nominee Name")
+                interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.5, step=0.25, key="fd_rate")
+                nominee = st.text_input("Nominee Name", key="fd_nom")
             
             asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
@@ -3143,8 +3147,8 @@ def render_fixed_deposits():
             
             if st.button("Open FD Account", use_container_width=True, type="primary"):
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
-                if principal > available_balance:
-                    st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{principal:,.2f}")
+                if opening_balance > available_balance:
+                    st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required Opening Balance: ₹{opening_balance:,.2f}")
                     st.stop()
                 
                 open_date_str = fd_open_date.strftime("%Y-%m-%d")
@@ -3154,7 +3158,7 @@ def render_fixed_deposits():
                     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, open_date_str, payment_mode), fetch=False)
                 
-                jv_result = post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} via {payment_mode}", chosen_asset_code, "LIA-102", principal, voucher_date=op_bal_date_str)
+                jv_result = post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} (Op Bal: ₹{opening_balance}) via {payment_mode}", chosen_asset_code, "LIA-102", opening_balance, voucher_date=op_bal_date_str)
                 
                 if jv_result:
                     today_time = f"{op_bal_date_str} 10:00"
@@ -3165,17 +3169,17 @@ def render_fixed_deposits():
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (op_bal_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
+                        """, (op_bal_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, opening_balance, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
                     elif chosen_asset_code in ['AST-102', 'AST-103']:
                         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                         voucher_no = generate_bank_voucher_no()
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (op_bal_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, principal, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
+                        """, (op_bal_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, opening_balance, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
                 
                 clear_db_cache()
-                st.success(f"🎉 Fixed Deposit opened & recorded successfully (Opened: {open_date_str} | Op Bal: {op_bal_date_str}) via {payment_mode}!")
+                st.success(f"🎉 Fixed Deposit opened & recorded successfully (Opened: {open_date_str} | Op Bal Date: {op_bal_date_str} | Principal: ₹{principal:,.2f} | Opening Bal: ₹{opening_balance:,.2f}) via {payment_mode}!")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -3548,12 +3552,17 @@ def render_recurring_deposits():
             col_rd1, col_rd2 = st.columns(2)
             with col_rd1:
                 selected_cust = st.selectbox("Select Customer Name for RD", list(cust_dict.keys()), key="rd_cust")
-                monthly_amt = st.number_input("Monthly Installment Amount (₹)", min_value=100.0, value=1000.0)
-                tenure = st.slider("Tenure (Months)", 6, 60, 12, key="rd_tenure")
+                monthly_amt = st.number_input("Monthly Installment Amount (Contracted) (₹)", min_value=100.0, value=1000.0, step=100.0, key="rd_monthly_inp")
+                opening_balance = st.number_input("Opening Balance / Total Amount Deposited (₹)", min_value=0.0, value=float(monthly_amt), step=500.0, key="rd_open_bal_inp", help="Total cumulative amount deposited into this RD account at opening. (e.g. ₹1,000 for 1st installment, or ₹10,000 for 10 installments).")
+                calc_default_inst = max(1, int(round(opening_balance / monthly_amt))) if monthly_amt > 0 else 1
+                opening_paid_inst = st.number_input("Installments Paid at Opening", min_value=1, max_value=120, value=calc_default_inst, step=1, key="rd_open_paid_inst_inp")
+                tenure = st.slider("Tenure (Months)", 1, 120, 12, key="rd_tenure")
             with col_rd2:
+                custom_rd_no = st.text_input("Custom RD Account No (Optional)", placeholder="e.g. RD-00001", key="rd_custom_no_inp")
+                scheme_name = st.text_input("Scheme Name", value="SWAYAMVARA KSHEMANIDHI", key="rd_scheme_name_inp")
                 rd_open_date = st.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key="rd_open_date_input")
                 rd_op_bal_date = st.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key="rd_op_bal_date_input")
-                interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.0, key="rd_rate")
+                interest_rate = st.number_input("Interest Rate (% p.a.)", value=6.0, step=0.25, key="rd_rate")
                 nominee = st.text_input("Nominee Name", key="rd_nom")
             
             asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
@@ -3575,33 +3584,40 @@ def render_recurring_deposits():
                 payment_mode = "Cash"
             
             total_deposits, approx_maturity, approx_interest = calculate_rd_maturity(monthly_amt, interest_rate, tenure)
+            mat_date_calc = (rd_open_date + timedelta(days=30*tenure)).strftime("%Y-%m-%d")
             
-            st.info(f"**Estimated Maturity (Quarterly Compounded):** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f}")
+            st.info(f"**Estimated Maturity (Quarterly Compounded):** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f} | Maturity Date: **{pdf_generator.format_date_str(mat_date_calc)}**")
             
             if st.button("Open RD Account", use_container_width=True, type="primary"):
                 available_balance = get_account_balance_from_jv(chosen_asset_code)
-                if monthly_amt > available_balance:
-                    st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required: ₹{monthly_amt:,.2f}")
+                if opening_balance > available_balance:
+                    st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required Opening Balance: ₹{opening_balance:,.2f}")
                     st.stop()
                 
                 open_date_str = rd_open_date.strftime("%Y-%m-%d")
                 op_bal_date_str = rd_op_bal_date.strftime("%Y-%m-%d")
-                run_query("""
-                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance)
-                    VALUES (?, ?, ?, ?, 0, ?, 'ACTIVE', ?, ?, ?, 0)
-                """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, nominee, 
-                      open_date_str, payment_mode, approx_maturity), fetch=False)
+                mat_date_str = (rd_open_date + timedelta(days=30*tenure)).strftime("%Y-%m-%d")
                 
-                jv_result = post_automated_jv(f"RD Opening - First Installment via {payment_mode}", chosen_asset_code, "LIA-103", monthly_amt, voucher_date=op_bal_date_str)
+                cur_rd_cnt = run_query("SELECT COUNT(*) FROM recurring_deposits")
+                rd_seq = (cur_rd_cnt[0][0] + 1) if cur_rd_cnt and cur_rd_cnt[0] else 1
+                final_rd_no = custom_rd_no.strip() if custom_rd_no and custom_rd_no.strip() else f"RD-{rd_seq:05d}"
                 
-                if USING_SUPABASE:
-                    rd_id_result = run_query("SELECT LASTVAL()")
+                new_rd_res = run_query("""
+                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance, scheme_name, rd_no, maturity_date)
+                    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING rd_id
+                """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, opening_paid_inst, nominee, 
+                      open_date_str, payment_mode, approx_maturity, opening_balance, scheme_name, final_rd_no, mat_date_str))
+                
+                if new_rd_res and new_rd_res[0]:
+                    rd_id = new_rd_res[0][0]
                 else:
-                    rd_id_result = run_query("SELECT last_insert_rowid()")
-                if rd_id_result and jv_result:
-                    rd_id = rd_id_result[0][0]
-                    run_query("UPDATE recurring_deposits SET installments_paid=1, collected_balance=? WHERE rd_id=?", (monthly_amt, rd_id), fetch=False)
-                    
+                    rd_lookup = run_query("SELECT rd_id FROM recurring_deposits WHERE rd_no = ? ORDER BY rd_id DESC LIMIT 1", (final_rd_no,))
+                    rd_id = rd_lookup[0][0] if rd_lookup and rd_lookup[0] else rd_seq
+                
+                jv_result = post_automated_jv(f"RD Opening [{final_rd_no}] - Total Deposited ₹{opening_balance} via {payment_mode}", chosen_asset_code, "LIA-103", opening_balance, voucher_date=op_bal_date_str)
+                
+                if jv_result:
                     today_time = f"{op_bal_date_str} 10:00"
                     new_balance = get_account_balance_from_jv(chosen_asset_code)
                     
@@ -3610,17 +3626,17 @@ def render_recurring_deposits():
                         run_query("""
                             INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (op_bal_date_str, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
+                        """, (op_bal_date_str, voucher_no, f"RD Opening: {final_rd_no} - Customer {cust_dict[selected_cust]}", 0, opening_balance, new_balance, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
                     elif chosen_asset_code in ['AST-102', 'AST-103']:
                         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                         voucher_no = generate_bank_voucher_no()
                         run_query("""
                             INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (op_bal_date_str, voucher_no, f"RD Opening - Inst 1 - Customer {cust_dict[selected_cust]}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
+                        """, (op_bal_date_str, voucher_no, f"RD Opening: {final_rd_no} - Customer {cust_dict[selected_cust]}", 0, opening_balance, new_balance, bank_name, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
                 
                 clear_db_cache()
-                st.success(f"🎉 Recurring Deposit opened & recorded successfully (Opened: {open_date_str} | Op Bal: {op_bal_date_str}) via {payment_mode}! First installment paid.")
+                st.success(f"🎉 Recurring Deposit **{final_rd_no}** opened & recorded successfully (Opened: {open_date_str} | Op Bal Date: {op_bal_date_str} | Monthly: ₹{monthly_amt:,.2f} | Opening Bal: ₹{opening_balance:,.2f} [{opening_paid_inst} Inst.]) via {payment_mode}!")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -3756,6 +3772,11 @@ def render_recurring_deposits():
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#2980b9"
             
+            created_at_dt = pdf_generator.format_date_str(created_at)
+            op_bal_date_dt = pdf_generator.format_date_str(op_bal_date)
+            maturity_date_dt = pdf_generator.format_date_str(maturity_date)
+            closed_date_dt = pdf_generator.format_date_str(closed_date) if closed_date else ""
+            
             if status == 'CLOSED' or int(paid_inst or 0) < int(tenure or 1):
                 try:
                     _, accrued_mat, _ = calculate_rd_accrued_value(float(monthly_amt or 0), float(rate or 0), int(paid_inst or 0))
@@ -3814,12 +3835,12 @@ def render_recurring_deposits():
                 <div><b>Scheme:</b> <span style="color:#1b4f72;font-weight:bold;">{scheme_name}</span></div>
               </div>
               <div class="grid-row">
-                <div><b>A/c Opening Date:</b> {created_at}</div>
-                <div><b>Maturity Date:</b> <span style="color:#27ae60;font-weight:bold;">{maturity_date}</span></div>
+                <div><b>A/c Opening Date:</b> {created_at_dt}</div>
+                <div><b>Maturity Date:</b> <span style="color:#27ae60;font-weight:bold;">{maturity_date_dt}</span></div>
               </div>
               <div class="grid-row">
                 <div><b>Name:</b> {c_name}</div>
-                <div><b>Opening Balance Date:</b> {op_bal_date}</div>
+                <div><b>Opening Balance Date:</b> {op_bal_date_dt}</div>
               </div>
               <div class="grid-row">
                 <div><b>Address:</b> {full_address}</div>
@@ -3839,7 +3860,7 @@ def render_recurring_deposits():
               </div>
               <div class="grid-row">
                 <div><b>Status:</b> {status_text}</div>
-                <div>{f'<b>Closed Date:</b> {closed_date}' if status == 'CLOSED' else ''}</div>
+                <div>{f'<b>Closed Date:</b> {closed_date_dt}' if status == 'CLOSED' else ''}</div>
               </div>
               
               <div class="box">
@@ -3856,14 +3877,14 @@ def render_recurring_deposits():
                   <th>Installments Paid</th>
                 </tr>
                 <tr>
-                  <td>{op_bal_date}</td>
+                  <td>{op_bal_date_dt}</td>
                   <td>RD Account Opening & Installments</td>
                   <td>-</td>
                   <td>₹{col_balance:,.2f}</td>
                   <td>₹{col_balance:,.2f}</td>
                   <td>{paid_inst}</td>
                 </tr>
-                {f'<tr><td>{closed_date}</td><td>RD Closed / Maturity Payment</td><td>₹{display_maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>{paid_inst}</td></tr>' if status == 'CLOSED' else ''}
+                {f'<tr><td>{closed_date_dt}</td><td>RD Closed / Maturity Payment</td><td>₹{display_maturity:,.2f}</td><td>-</td><td>₹0.00</td><td>{paid_inst}</td></tr>' if status == 'CLOSED' else ''}
               </table>
 
               <div class="signatures">
@@ -3871,7 +3892,7 @@ def render_recurring_deposits():
                 <div>Accountant</div>
                 <div>Chairman / MD</div>
               </div>
-              {f'<div class="closed-info">⚠️ This Recurring Deposit has been CLOSED on {closed_date}</div>' if status == 'CLOSED' else ''}
+              {f'<div class="closed-info">⚠️ This Recurring Deposit has been CLOSED on {closed_date_dt}</div>' if status == 'CLOSED' else ''}
             </div>
             """
             st.markdown(rd_receipt_html, unsafe_allow_html=True)

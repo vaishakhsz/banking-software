@@ -13,10 +13,16 @@ def format_date_str(d):
     """Universal DD-MM-YYYY date formatter for strings, dates, and timestamps"""
     if d is None or str(d).strip() in ('', 'None', 'NaT', 'nan'):
         return ""
-    s = str(d).strip()
-    if re.match(r'^\d{4}-\d{2}-\d{2}', s):
+    if hasattr(d, 'strftime'):
         try:
-            return datetime.strptime(s[:10], '%Y-%m-%d').strftime('%d-%m-%Y')
+            return d.strftime('%d-%m-%Y')
+        except Exception:
+            pass
+    s = str(d).strip()
+    if re.match(r'^\d{4}[-/]\d{2}[-/]\d{2}', s):
+        try:
+            s_clean = s[:10].replace('/', '-')
+            return datetime.strptime(s_clean, '%Y-%m-%d').strftime('%d-%m-%Y')
         except Exception:
             return s
     return s
@@ -816,7 +822,7 @@ def generate_fd_pdf(fd_data):
     ]
     
     ledger_data.append([
-        Paragraph(str(op_bal_date), table_cell_center),
+        Paragraph(format_date_str(op_bal_date), table_cell_center),
         Paragraph("Opening Balance / Principal Deposit", table_cell_left),
         Paragraph("-", table_cell_center),
         Paragraph(f"₹{principal:,.2f}", table_cell_right),
@@ -827,7 +833,7 @@ def generate_fd_pdf(fd_data):
     
     if status == 'CLOSED':
         ledger_data.append([
-            Paragraph(closed_date, table_cell_center),
+            Paragraph(format_date_str(closed_date), table_cell_center),
             Paragraph("FD Closed / Maturity Payment", table_cell_left),
             Paragraph(f"₹{maturity:,.2f}", table_cell_right),
             Paragraph("-", table_cell_center),
@@ -873,7 +879,7 @@ def generate_fd_pdf(fd_data):
             fontName='Helvetica-Bold',
             spaceAfter=4
         )
-        elements.append(Paragraph("⚠️ This Fixed Deposit has been CLOSED", warning_style))
+        elements.append(Paragraph(f"⚠️ This Fixed Deposit has been CLOSED on {format_date_str(closed_date)}" if closed_date else "⚠️ This Fixed Deposit has been CLOSED", warning_style))
     
     doc.build(elements)
     buffer.seek(0)
@@ -1086,7 +1092,7 @@ def generate_rd_pdf(rd_data):
     ]
     
     ledger_data.append([
-        Paragraph(str(op_bal_date), table_cell_center),
+        Paragraph(format_date_str(op_bal_date), table_cell_center),
         Paragraph("RD Account Opening & Installments", table_cell_left),
         Paragraph("-", table_cell_center),
         Paragraph(f"₹{total_deposited:,.2f}", table_cell_right),
@@ -1096,7 +1102,7 @@ def generate_rd_pdf(rd_data):
     
     if status == 'CLOSED':
         ledger_data.append([
-            Paragraph(closed_date, table_cell_center),
+            Paragraph(format_date_str(closed_date), table_cell_center),
             Paragraph("RD Closed / Maturity Payment", table_cell_left),
             Paragraph(f"₹{maturity:,.2f}", table_cell_right),
             Paragraph("-", table_cell_center),
@@ -1141,7 +1147,7 @@ def generate_rd_pdf(rd_data):
             fontName='Helvetica-Bold',
             spaceAfter=4
         )
-        elements.append(Paragraph("⚠️ This Recurring Deposit has been CLOSED", warning_style))
+        elements.append(Paragraph(f"⚠️ This Recurring Deposit has been CLOSED on {format_date_str(closed_date)}" if closed_date else "⚠️ This Recurring Deposit has been CLOSED", warning_style))
     
     doc.build(elements)
     buffer.seek(0)

@@ -2223,7 +2223,9 @@ def recalculate_rd_installments_balances(rd_id):
         SELECT id, debit_amount, credit_amount, installment_no 
         FROM rd_installments 
         WHERE rd_id = ? 
-        ORDER BY payment_date ASC, id ASC
+        ORDER BY payment_date ASC, 
+                 CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                 id ASC
     """, (rd_id,))
     
     if not rows:
@@ -2233,7 +2235,6 @@ def recalculate_rd_installments_balances(rd_id):
         
     curr_bal = 0.0
     total_credit = 0.0
-    total_paid_installments = 0
     
     for r in rows:
         r_id, dr, cr, inst_no = r
@@ -2251,6 +2252,153 @@ def recalculate_rd_installments_balances(rd_id):
     clear_db_cache()
 
 
+def resequence_rd_installments(target_rd_id=None):
+    """
+    Chronologically sorts and re-sequences RD installments so that:
+    1. Opening balance / earliest deposit comes FIRST (lowest ID).
+    2. Subsequent installments follow in exact payment date order (payment_date ASC).
+    3. The latest payment date comes LAST (highest ID).
+    4. Installment numbers (installment_no) and particulars are normalized cleanly (e.g. 1 to K, K+1, K+2...).
+    5. Progressive running balances (balance) are recalculated from top to bottom.
+    6. Master recurring_deposits table (collected_balance, installments_paid) is synchronized.
+    7. Primary key `id` of rd_installments is re-assigned 1..N with zero sequence gaps.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        if target_rd_id is not None:
+            cursor.execute(f"SELECT rd_id, monthly_amount FROM recurring_deposits WHERE rd_id = {placeholder}", (target_rd_id,))
+        else:
+            cursor.execute("SELECT rd_id, monthly_amount FROM recurring_deposits ORDER BY rd_id ASC")
+        rds = cursor.fetchall()
+        
+        import re
+        for r_item in rds:
+            rd_id, monthly_amt = r_item
+            monthly_amt = float(monthly_amt or 0.0)
+            
+            cursor.execute(f"""
+                SELECT id, installment_no, payment_date, particulars, debit_amount, credit_amount, voucher_no, narration, payment_mode
+                FROM rd_installments
+                WHERE rd_id = {placeholder}
+                ORDER BY payment_date ASC, 
+                         CASE WHEN particulars LIKE '%%Opening%%' OR installment_no LIKE '%%to%%' THEN 0 ELSE 1 END, 
+                         id ASC
+            """, (rd_id,))
+            rows = cursor.fetchall()
+            if not rows:
+                continue
+                
+            first_row = rows[0]
+            first_inst_no = str(first_row[1] or '').strip()
+            first_part = str(first_row[3] or '').strip()
+            first_cr = float(first_row[5] or 0.0)
+            
+            start_count = 1
+            m = re.search(r'1\s*to\s*(\d+)', first_inst_no, re.I)
+            if not m:
+                m = re.search(r'\((\d+)\s*Installments?\)', first_part, re.I)
+            if m:
+                start_count = int(m.group(1))
+            elif ('Opening' in first_part or 'opening' in first_inst_no.lower()) and monthly_amt > 0:
+                calc_c = int(round(first_cr / monthly_amt))
+                if calc_c > 1:
+                    start_count = calc_c
+            elif first_inst_no.isdigit() and int(first_inst_no) > 1 and len(rows) == 1:
+                start_count = int(first_inst_no)
+                
+            curr_bal = 0.0
+            curr_inst_num = start_count
+            
+            for idx, r in enumerate(rows):
+                r_id, r_ino, r_pdate, r_part, r_dr, r_cr, r_vno, r_narr, r_pm = r
+                r_dr = float(r_dr or 0.0)
+                r_cr = float(r_cr or 0.0)
+                curr_bal += (r_cr - r_dr)
+                
+                if idx == 0 and start_count > 1:
+                    new_ino = f"1 to {start_count}"
+                    new_part = f"RD Opening Balance ({start_count} Installments)"
+                elif idx == 0:
+                    new_ino = "1"
+                    new_part = r_part if "Opening" in r_part else "RD Opening Balance / Installment #1"
+                else:
+                    curr_inst_num += 1
+                    new_ino = str(curr_inst_num)
+                    new_part = f"Installment #{curr_inst_num} Deposit"
+                    
+                cursor.execute(f"""
+                    UPDATE rd_installments 
+                    SET installment_no = {placeholder}, particulars = {placeholder}, balance = {placeholder}
+                    WHERE id = {placeholder}
+                """, (new_ino, new_part, curr_bal, r_id))
+                
+            cursor.execute(f"""
+                UPDATE recurring_deposits 
+                SET collected_balance = {placeholder}, installments_paid = {placeholder}
+                WHERE rd_id = {placeholder}
+            """, (curr_bal, curr_inst_num, rd_id))
+            
+        # Re-assign primary key `id` 1..N across rd_installments in exact chronological order
+        if USING_SUPABASE:
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    rec RECORD;
+                    new_id INT := 1;
+                BEGIN
+                    UPDATE rd_installments SET id = -id;
+                    FOR rec IN 
+                        SELECT id FROM rd_installments 
+                        ORDER BY rd_id ASC, payment_date ASC, 
+                                 CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                                 -id ASC
+                    LOOP
+                        UPDATE rd_installments SET id = new_id WHERE id = rec.id;
+                        new_id := new_id + 1;
+                    END LOOP;
+                    IF (SELECT COUNT(*) FROM rd_installments) = 0 THEN
+                        EXECUTE 'ALTER SEQUENCE rd_installments_id_seq RESTART WITH 1';
+                    ELSE
+                        PERFORM setval('rd_installments_id_seq', (SELECT MAX(id) FROM rd_installments), true);
+                    END IF;
+                END $$;
+            """)
+        else:
+            cursor.execute("""
+                SELECT id, rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at
+                FROM rd_installments
+                ORDER BY rd_id ASC, payment_date ASC, 
+                         CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                         id ASC
+            """)
+            all_insts = cursor.fetchall()
+            cursor.execute("DELETE FROM rd_installments")
+            try:
+                cursor.execute("DELETE FROM sqlite_sequence WHERE name='rd_installments'")
+            except Exception:
+                pass
+            for idx, item in enumerate(all_insts, 1):
+                cursor.execute("""
+                    INSERT INTO rd_installments (id, rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (idx, item[1], item[2], item[3], item[4], item[5], item[6], item[7], item[8], item[9], item[10], item[11]))
+                
+        conn.commit()
+        clear_db_cache()
+        return True, "RD Installments re-sequenced chronologically with clean sequential IDs (Opening first, latest last)!"
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try: conn.rollback()
+            except Exception: pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
 def ensure_rd_installments_populated(rd_id):
     """
     Ensures that rd_installments table has concrete persistent rows for this rd_id.
@@ -2260,7 +2408,9 @@ def ensure_rd_installments_populated(rd_id):
         SELECT id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration 
         FROM rd_installments 
         WHERE rd_id = ? 
-        ORDER BY payment_date ASC, id ASC
+        ORDER BY payment_date ASC, 
+                 CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                 id ASC
     """, (rd_id,))
     
     if existing and len(existing) > 0:
@@ -2293,7 +2443,9 @@ def ensure_rd_installments_populated(rd_id):
         SELECT id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration 
         FROM rd_installments 
         WHERE rd_id = ? 
-        ORDER BY payment_date ASC, id ASC
+        ORDER BY payment_date ASC, 
+                 CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                 id ASC
     """, (rd_id,))
 
 
@@ -2347,8 +2499,8 @@ def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, pa
                 for j in jv_rows:
                     run_query("UPDATE jv_entries SET debit = CASE WHEN debit > 0 THEN ? ELSE debit END, credit = CASE WHEN credit > 0 THEN ? ELSE credit END WHERE jv_id = ?", (amount, amount, j[0]), fetch=False)
         
-        # 3. Recalculate progressive balances
-        recalculate_rd_installments_balances(rd_id)
+        # 3. Recalculate progressive balances and resequence cleanly
+        resequence_rd_installments(rd_id)
         return True, "Installment updated successfully!"
     except Exception as e:
         return False, str(e)
@@ -2386,8 +2538,8 @@ def delete_rd_installment(inst_id, rd_id):
                         run_query("DELETE FROM jv_entries WHERE jv_id = ?", (j[0],), fetch=False)
                         run_query("DELETE FROM journal_vouchers WHERE jv_id = ?", (j[0],), fetch=False)
                         
-        # 3. Recalculate balances
-        recalculate_rd_installments_balances(rd_id)
+        # 3. Recalculate balances and resequence cleanly
+        resequence_rd_installments(rd_id)
         return True, "Installment deleted successfully!"
     except Exception as e:
         return False, str(e)
@@ -2439,7 +2591,7 @@ def add_custom_rd_installment(rd_id, inst_no, payment_date, amount, payment_mode
             VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?)
         """, (rd_id, str(inst_no), pay_date_str, part_txt, amount, payment_mode, voucher_no, narr_txt, today_time), fetch=False)
         
-        recalculate_rd_installments_balances(rd_id)
+        resequence_rd_installments(rd_id)
         return True, f"Installment #{inst_no} added successfully!"
     except Exception as e:
         return False, str(e)
@@ -2475,10 +2627,12 @@ def get_rd_ledger_rows(rd_id):
         SELECT id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration
         FROM rd_installments
         WHERE rd_id = ?
-        ORDER BY id ASC
+        ORDER BY payment_date ASC, 
+                 CASE WHEN particulars LIKE '%Opening%' OR installment_no LIKE '%to%' THEN 0 ELSE 1 END, 
+                 id ASC
     """, (rd_id,))
     
-    if existing_inst and len(existing_inst) >= max(1, paid_inst):
+    if existing_inst and len(existing_inst) > 0:
         rows = []
         for row in existing_inst:
             rows.append({
@@ -4564,6 +4718,7 @@ def resequence_entire_database():
             """)
         
         conn.commit()
+        resequence_rd_installments()
         sync_db_sequences()
         return True, "Entire database resequenced and all sequences synced successfully."
     except Exception as e:

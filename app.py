@@ -48,7 +48,8 @@ from database import (
     resequence_all_accounts, reconcile_books, get_all_balances,
     record_cash_book_transaction, update_cash_book_transaction, record_bank_book_transaction,
     calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment,
-    ensure_rd_installments_populated, update_rd_installment, delete_rd_installment, add_custom_rd_installment, recalculate_rd_installments_balances
+    ensure_rd_installments_populated, update_rd_installment, delete_rd_installment, add_custom_rd_installment, recalculate_rd_installments_balances,
+    resequence_rd_installments
 )
 
 try:
@@ -3745,6 +3746,18 @@ def render_recurring_deposits():
                 st.caption(f"Fix wrong payment dates, amounts, or remove installments for **{chosen_rd_str}**:")
                 t2_inst_list = ensure_rd_installments_populated(rd_id)
                 if t2_inst_list:
+                    col_t2_res1, col_t2_res2 = st.columns([3, 1])
+                    with col_t2_res1:
+                        if st.button("🔄 Resequence All Installments Chronologically (Opening First, Latest Last)", key=f"t2_btn_reseq_{rd_id}", use_container_width=True):
+                            success, msg = resequence_rd_installments(rd_id)
+                            clear_db_cache()
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {msg}")
+                    st.markdown("<br>", unsafe_allow_html=True)
                     t2_inst_dict = {f"Inst #{r[1]} | {pdf_generator.format_date_str(r[2])} | ₹{r[5]:,.2f} | {r[7]} (ID: {r[0]})": r for r in t2_inst_list}
                     t2_chosen_lbl = st.selectbox("Choose Installment to Modify", list(t2_inst_dict.keys()), key=f"t2_sel_inst_{rd_id}")
                     t2_row = t2_inst_dict[t2_chosen_lbl]
@@ -4213,7 +4226,7 @@ th {{ background-color: #ebf5fb; }}
                 m_col3.metric("🎯 Total Maturity Amount", f"₹{final_maturity_amt:,.2f}")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                btn_col1, btn_col2 = st.columns([3, 1])
+                btn_col1, btn_col2, btn_col3 = st.columns([2.5, 1.5, 1])
                 
                 with btn_col1:
                     if st.button("💾 Save & Sync RD Account (Update Ledgers, JVs & Books)", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
@@ -4248,6 +4261,17 @@ th {{ background-color: #ebf5fb; }}
                             st.error(f"❌ Failed to update RD: {msg}")
                 
                 with btn_col2:
+                    if st.button("🔄 Resequence This RD Account", key=f"btn_reseq_rd_master_{c_rd_id}", use_container_width=True):
+                        success, msg = resequence_rd_installments(c_rd_id)
+                        clear_db_cache()
+                        if success:
+                            st.success(f"✅ {msg}")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to resequence: {msg}")
+
+                with btn_col3:
                     with st.popover("🗑️ Delete RD"):
                         st.error(f"Are you sure you want to delete RD #{edit_rd_no}?")
                         st.caption("This will delete the RD and resequence without gaps.")
@@ -4265,6 +4289,29 @@ th {{ background-color: #ebf5fb; }}
                 st.markdown("### 📋 Manage & Correct Individual RD Installments")
                 st.caption(f"View, correct wrong dates/amounts, or delete installments specifically for Account **{c_rd_no}** ({c_name}):")
                 
+                res_col1, res_col2 = st.columns(2)
+                with res_col1:
+                    if st.button("🔄 Resequence Current RD Installments (Opening First, Latest Last)", key=f"btn_reseq_rd_inst_{c_rd_id}", use_container_width=True):
+                        success, msg = resequence_rd_installments(c_rd_id)
+                        clear_db_cache()
+                        if success:
+                            st.success(f"✅ {msg}")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to resequence: {msg}")
+                with res_col2:
+                    if st.button("🌐 Resequence ALL RDs Globally (All Accounts)", key=f"btn_reseq_all_rds_inst_{c_rd_id}", use_container_width=True):
+                        success, msg = resequence_rd_installments(None)
+                        clear_db_cache()
+                        if success:
+                            st.success(f"✅ {msg}")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to resequence: {msg}")
+                
+                st.markdown("<br>", unsafe_allow_html=True)
                 inst_list = ensure_rd_installments_populated(c_rd_id)
                 if inst_list:
                     df_inst = pd.DataFrame(inst_list, columns=["ID", "Inst No", "Payment Date", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Mode", "Voucher No", "Narration"])

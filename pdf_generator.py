@@ -764,6 +764,7 @@ def generate_fd_pdf(fd_data):
     
     fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date = fd_data[:14]
     op_bal_date = fd_data[14] if len(fd_data) > 14 else created_at
+    fd_no = fd_data[15] if len(fd_data) > 15 and fd_data[15] else (f"FD-{fd_id:05d}" if isinstance(fd_id, int) else str(fd_id))
     full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
     status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
     
@@ -777,7 +778,7 @@ def generate_fd_pdf(fd_data):
     elements.append(Paragraph(f"<font color='{status_color}'><b>{status_text}</b></font>", status_style))
     
     detail_data = [
-        [Paragraph("<b>FDR No. / A/c No:</b>", detail_label), Paragraph(f"FD-{fd_id:05d}", detail_value),
+        [Paragraph("<b>FDR No. / A/c No:</b>", detail_label), Paragraph(str(fd_no), detail_value),
          Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(format_date_str(created_at), detail_value)],
         [Paragraph("<b>Name:</b>", detail_label), Paragraph(str(c_name), detail_value),
          Paragraph("<b>Opening Balance Date:</b>", detail_label), Paragraph(format_date_str(op_bal_date), detail_value)],

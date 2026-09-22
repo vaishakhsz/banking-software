@@ -473,6 +473,7 @@ def init_db(force=False):
                 created_at TEXT,
                 payment_mode TEXT,
                 closed_date TEXT,
+                fd_no TEXT,
                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS recurring_deposits (
@@ -665,6 +666,7 @@ def init_db(force=False):
                     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS balance_after REAL;
                     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id INTEGER;
                     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_at TEXT;
+                    ALTER TABLE fixed_deposits ADD COLUMN IF NOT EXISTS fd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS scheme_name TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
@@ -767,6 +769,11 @@ def init_db(force=False):
             for col in [("tx_id", "TEXT"), ("account_no", "TEXT"), ("mode", "TEXT"), ("narration", "TEXT"), ("balance_after", "REAL"), ("account_id", "INTEGER"), ("created_at", "TEXT")]:
                 try:
                     cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col[0]} {col[1]};")
+                except Exception:
+                    pass
+            for col in [("fd_no", "TEXT")]:
+                try:
+                    cursor.execute(f"ALTER TABLE fixed_deposits ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
             for col in [("scheme_name", "TEXT"), ("rd_no", "TEXT"), ("maturity_date", "TEXT"), ("collected_balance", "REAL")]:
@@ -4574,10 +4581,10 @@ def update_fd_account_details(
     fd_id, new_cust_id, new_principal, new_tenure, new_rate,
     new_nominee, new_status, new_created_date, new_closed_date,
     new_pay_mode, chosen_asset_code='AST-102', new_op_bal_date=None,
-    new_maturity_amount=None
+    new_maturity_amount=None, new_fd_no=None, new_fd_id=None
 ):
     """
-    Updates Fixed Deposit parameters (principal, tenure, interest rate, status, nominee, dates, payment mode)
+    Updates Fixed Deposit parameters (principal, tenure, interest rate, status, nominee, dates, payment mode, fd_no, fd_id)
     and synchronizes opening Journal Voucher (AST-101/102/103 vs LIA-102), Cash Book, and Bank Book entries.
     """
     conn = None
@@ -4586,12 +4593,12 @@ def update_fd_account_details(
         cursor = conn.cursor()
         placeholder = "%s" if USING_SUPABASE else "?"
 
-        cursor.execute(f"SELECT f.customer_id, c.name, COALESCE(c.account_no, ''), f.principal, f.created_at, f.payment_mode FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id WHERE f.fd_id = {placeholder}", (fd_id,))
+        cursor.execute(f"SELECT f.customer_id, c.name, COALESCE(c.account_no, ''), f.principal, f.created_at, f.payment_mode, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id WHERE f.fd_id = {placeholder}", (fd_id,))
         fd_row = cursor.fetchone()
         if not fd_row:
             return False, "Fixed Deposit not found."
 
-        old_c_id, old_c_name, old_c_acc, old_principal, old_created, old_pm = fd_row
+        old_c_id, old_c_name, old_c_acc, old_principal, old_created, old_pm, old_fd_no = fd_row
         new_principal = float(new_principal or 0.0)
         new_tenure = int(new_tenure or 12)
         new_rate = float(new_rate or 6.5)
@@ -4600,6 +4607,16 @@ def update_fd_account_details(
         created_dt_str = str(new_created_date)[:10]
         op_bal_dt_str = str(new_op_bal_date)[:10] if new_op_bal_date else created_dt_str
         closed_dt_str = str(new_closed_date)[:10] if new_closed_date else None
+        
+        target_fd_id = int(new_fd_id) if (new_fd_id is not None and str(new_fd_id).isdigit()) else int(fd_id)
+        final_fd_no = str(new_fd_no).strip() if (new_fd_no and str(new_fd_no).strip()) else f"FD-{target_fd_id:05d}"
+
+        # If user changed fd_id, verify uniqueness
+        if target_fd_id != int(fd_id):
+            cursor.execute(f"SELECT fd_id FROM fixed_deposits WHERE fd_id = {placeholder}", (target_fd_id,))
+            if cursor.fetchone():
+                return False, f"Fixed Deposit ID #{target_fd_id} is already in use. Please choose another ID."
+            cursor.execute(f"UPDATE fixed_deposits SET fd_id = {placeholder} WHERE fd_id = {placeholder}", (target_fd_id, fd_id))
 
         # 1. Update fixed_deposits table
         cursor.execute(f"""
@@ -4607,12 +4624,12 @@ def update_fd_account_details(
             SET customer_id = {placeholder}, principal = {placeholder}, tenure_months = {placeholder},
                 interest_rate = {placeholder}, maturity_amount = {placeholder}, nominee = {placeholder},
                 status = {placeholder}, created_at = {placeholder}, closed_date = {placeholder},
-                payment_mode = {placeholder}
+                payment_mode = {placeholder}, fd_no = {placeholder}
             WHERE fd_id = {placeholder}
         """, (
             new_cust_id, new_principal, new_tenure, new_rate, final_maturity,
             new_nominee or "Family Nominee", new_status or "ACTIVE",
-            created_dt_str, closed_dt_str, new_pay_mode or "Union Bank of India", fd_id
+            created_dt_str, closed_dt_str, new_pay_mode or "Union Bank of India", final_fd_no, target_fd_id
         ))
 
         # 2. Update accounts table if exists
@@ -4625,15 +4642,15 @@ def update_fd_account_details(
         # 3. Synchronize Opening JV
         cursor.execute(f"""
             SELECT jv_id, narration FROM journal_vouchers
-            WHERE (narration LIKE {placeholder} OR narration LIKE {placeholder})
+            WHERE (narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
             ORDER BY jv_id ASC LIMIT 1
-        """, (f"%FD #{fd_id}%", f"%FD Opening%Customer {old_c_id}%"))
+        """, (f"%FD #{fd_id}%", f"%FD #{target_fd_id}%", f"%{old_fd_no}%", f"%FD Opening%Customer {old_c_id}%"))
         jv_match = cursor.fetchone()
 
         if jv_match:
             jv_id_val, jv_narr = jv_match
             cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}", 
-                           (op_bal_dt_str, f"FD #{fd_id} Opening Deposit - {old_c_name}", jv_id_val))
+                           (op_bal_dt_str, f"Fixed Deposit [{final_fd_no}] Opening Deposit - {old_c_name}", jv_id_val))
             cursor.execute(f"""
                 UPDATE jv_entries
                 SET account_code = {placeholder}, debit = {placeholder}
@@ -4646,8 +4663,8 @@ def update_fd_account_details(
             """, (new_principal, jv_id_val))
 
         # 4. Synchronize Cash Book / Bank Book
-        cursor.execute(f"DELETE FROM cash_book WHERE narration LIKE {placeholder} OR particulars LIKE {placeholder}", (f"%FD #{fd_id}%", f"%FD Opening%Customer {old_c_id}%"))
-        cursor.execute(f"DELETE FROM bank_book WHERE narration LIKE {placeholder} OR particulars LIKE {placeholder}", (f"%FD #{fd_id}%", f"%FD Opening%Customer {old_c_id}%"))
+        cursor.execute(f"DELETE FROM cash_book WHERE narration LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR particulars LIKE {placeholder}", (f"%FD #{fd_id}%", f"%FD #{target_fd_id}%", f"%{old_fd_no}%", f"%FD Opening%Customer {old_c_id}%"))
+        cursor.execute(f"DELETE FROM bank_book WHERE narration LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR particulars LIKE {placeholder}", (f"%FD #{fd_id}%", f"%FD #{target_fd_id}%", f"%{old_fd_no}%", f"%FD Opening%Customer {old_c_id}%"))
 
         if new_principal > 0:
             today_time = f"{op_bal_dt_str} 10:00"
@@ -4656,20 +4673,20 @@ def update_fd_account_details(
                 cursor.execute(f"""
                     INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                     VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, 'AST-101', {placeholder}, {placeholder})
-                """, (op_bal_dt_str, v_no, f"FD Opening: FD #{fd_id} ({old_c_name})", new_principal, f"FD #{fd_id} Opening Deposit", today_time))
+                """, (op_bal_dt_str, v_no, f"FD Opening: {final_fd_no} ({old_c_name})", new_principal, f"Fixed Deposit [{final_fd_no}] Opening Deposit", today_time))
             else:
                 b_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
                 v_no = generate_bank_voucher_no()
                 cursor.execute(f"""
                     INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                     VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
-                """, (op_bal_dt_str, v_no, f"FD Opening: FD #{fd_id} ({old_c_name})", new_principal, b_name, chosen_asset_code, f"FD #{fd_id} Opening Deposit", today_time))
+                """, (op_bal_dt_str, v_no, f"FD Opening: {final_fd_no} ({old_c_name})", new_principal, b_name, chosen_asset_code, f"Fixed Deposit [{final_fd_no}] Opening Deposit", today_time))
 
         conn.commit()
         resequence_cash_book()
         resequence_bank_book()
         clear_db_cache()
-        return True, f"Fixed Deposit FD #{fd_id} updated and synchronized successfully."
+        return True, f"Fixed Deposit {final_fd_no} updated and synchronized successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
             try: conn.rollback()
@@ -4682,7 +4699,7 @@ def update_fd_account_details(
 def create_or_link_fd_opening(
     cust_id, principal, open_date, tenure_months=12, interest_rate=6.5,
     nominee="Family Nominee", payment_mode="Union Bank of India", chosen_asset_code="AST-102",
-    op_bal_date=None
+    op_bal_date=None, custom_fd_no=None, custom_fd_id=None
 ):
     """
     Creates a new Fixed Deposit opening balance for an existing customer,
@@ -4707,34 +4724,62 @@ def create_or_link_fd_opening(
         open_date_str = str(open_date)[:10]
         op_bal_date_str = str(op_bal_date)[:10] if op_bal_date else open_date_str
 
-        cursor.execute(f"""
-            INSERT INTO fixed_deposits (
-                customer_id, principal, tenure_months, interest_rate, maturity_amount,
-                nominee, status, created_at, payment_mode
-            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
-            RETURNING fd_id
-        """ if USING_SUPABASE else f"""
-            INSERT INTO fixed_deposits (
-                customer_id, principal, tenure_months, interest_rate, maturity_amount,
-                nominee, status, created_at, payment_mode
-            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
-        """, (
-            cust_id, principal, tenure_months, interest_rate, calc_maturity,
-            nominee or "Family Nominee", open_date_str, payment_mode
-        ))
-
-        if USING_SUPABASE:
-            ret = cursor.fetchone()
-            new_fd_id = ret[0] if ret else None
+        if custom_fd_id is not None and str(custom_fd_id).isdigit():
+            target_fd_id = int(custom_fd_id)
+            cursor.execute(f"SELECT fd_id FROM fixed_deposits WHERE fd_id = {placeholder}", (target_fd_id,))
+            if cursor.fetchone():
+                return False, f"Fixed Deposit ID #{target_fd_id} already exists."
+            final_fd_no = str(custom_fd_no).strip() if (custom_fd_no and str(custom_fd_no).strip()) else f"FD-{target_fd_id:05d}"
+            cursor.execute(f"""
+                INSERT INTO fixed_deposits (
+                    fd_id, customer_id, principal, tenure_months, interest_rate, maturity_amount,
+                    nominee, status, created_at, payment_mode, fd_no
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder})
+            """, (
+                target_fd_id, cust_id, principal, tenure_months, interest_rate, calc_maturity,
+                nominee or "Family Nominee", open_date_str, payment_mode, final_fd_no
+            ))
+            new_fd_id = target_fd_id
+            if USING_SUPABASE:
+                try:
+                    cursor.execute("SELECT setval('fixed_deposits_fd_id_seq', (SELECT GREATEST(MAX(fd_id), (SELECT last_value FROM fixed_deposits_fd_id_seq)) FROM fixed_deposits), true)")
+                except Exception:
+                    pass
         else:
-            new_fd_id = cursor.lastrowid
+            cursor.execute(f"""
+                INSERT INTO fixed_deposits (
+                    customer_id, principal, tenure_months, interest_rate, maturity_amount,
+                    nominee, status, created_at, payment_mode, fd_no
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder})
+                RETURNING fd_id
+            """ if USING_SUPABASE else f"""
+                INSERT INTO fixed_deposits (
+                    customer_id, principal, tenure_months, interest_rate, maturity_amount,
+                    nominee, status, created_at, payment_mode, fd_no
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder})
+            """, (
+                cust_id, principal, tenure_months, interest_rate, calc_maturity,
+                nominee or "Family Nominee", open_date_str, payment_mode, custom_fd_no
+            ))
 
-        if not new_fd_id:
-            cursor.execute("SELECT MAX(fd_id) FROM fixed_deposits")
-            m_id = cursor.fetchone()
-            new_fd_id = m_id[0] if m_id else 1
+            if USING_SUPABASE:
+                ret = cursor.fetchone()
+                new_fd_id = ret[0] if ret else None
+            else:
+                new_fd_id = cursor.lastrowid
 
-        post_automated_jv(f"FD #{new_fd_id} Opening Deposit - {cust_name}", chosen_asset_code, "LIA-102", principal, voucher_date=op_bal_date_str)
+            if not new_fd_id:
+                cursor.execute("SELECT MAX(fd_id) FROM fixed_deposits")
+                m_id = cursor.fetchone()
+                new_fd_id = m_id[0] if m_id else 1
+
+            if not custom_fd_no or not str(custom_fd_no).strip():
+                final_fd_no = f"FD-{new_fd_id:05d}"
+                cursor.execute(f"UPDATE fixed_deposits SET fd_no = {placeholder} WHERE fd_id = {placeholder}", (final_fd_no, new_fd_id))
+            else:
+                final_fd_no = str(custom_fd_no).strip()
+
+        post_automated_jv(f"Fixed Deposit [{final_fd_no}] Opening Deposit - {cust_name}", chosen_asset_code, "LIA-102", principal, voucher_date=op_bal_date_str)
 
         today_time = f"{op_bal_date_str} 10:00"
         if chosen_asset_code == 'AST-101':
@@ -4742,20 +4787,20 @@ def create_or_link_fd_opening(
             cursor.execute(f"""
                 INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                 VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, 'AST-101', {placeholder}, {placeholder})
-            """, (op_bal_date_str, v_no, f"FD Opening: FD #{new_fd_id} ({cust_name})", principal, f"FD #{new_fd_id} Opening Deposit", today_time))
+            """, (op_bal_date_str, v_no, f"FD Opening: {final_fd_no} ({cust_name})", principal, f"Fixed Deposit [{final_fd_no}] Opening Deposit", today_time))
         else:
             b_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
             v_no = generate_bank_voucher_no()
             cursor.execute(f"""
                 INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
                 VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
-            """, (op_bal_date_str, v_no, f"FD Opening: FD #{new_fd_id} ({cust_name})", principal, b_name, chosen_asset_code, f"FD #{new_fd_id} Opening Deposit", today_time))
+            """, (op_bal_date_str, v_no, f"FD Opening: {final_fd_no} ({cust_name})", principal, b_name, chosen_asset_code, f"Fixed Deposit [{final_fd_no}] Opening Deposit", today_time))
 
         conn.commit()
         resequence_cash_book()
         resequence_bank_book()
         clear_db_cache()
-        return True, f"Fixed Deposit FD #{new_fd_id} for {cust_name} created successfully with principal ₹{principal:,.2f}."
+        return True, f"Fixed Deposit {final_fd_no} for {cust_name} created successfully with principal ₹{principal:,.2f}."
     except Exception as e:
         if conn and USING_SUPABASE:
             try: conn.rollback()

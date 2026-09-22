@@ -3117,6 +3117,15 @@ def render_fixed_deposits():
         """)
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
+            next_fd_res = cached_query("SELECT COALESCE(MAX(fd_id), 0) + 1 FROM fixed_deposits")
+            next_fd_id = next_fd_res[0][0] if next_fd_res and next_fd_res[0] else 1
+
+            col_fd_id1, col_fd_id2 = st.columns(2)
+            with col_fd_id1:
+                custom_fd_no = st.text_input("FDR No / FD Account Number", value=f"FD-{next_fd_id:05d}", key="open_fd_no", help="Enter FDR Certificate No or Account No, e.g., 01540001 or FD-00001")
+            with col_fd_id2:
+                custom_fd_id = st.number_input("Numeric FD ID", min_value=1, value=int(next_fd_id), step=1, key="open_fd_id", help="Internal unique ID for this Fixed Deposit")
+
             col_fd1, col_fd2 = st.columns(2)
             with col_fd1:
                 selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
@@ -3153,47 +3162,39 @@ def render_fixed_deposits():
             if st.button("Open FD Account", use_container_width=True, type="primary"):
                 open_date_str = fd_open_date.strftime("%Y-%m-%d")
                 op_bal_date_str = fd_op_bal_date.strftime("%Y-%m-%d")
-                run_query("""
-                    INSERT INTO fixed_deposits (customer_id, principal, tenure_months, interest_rate, maturity_amount, nominee, status, created_at, payment_mode)
-                    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
-                """, (cust_dict[selected_cust], principal, tenure, interest_rate, maturity_amount, nominee, open_date_str, payment_mode), fetch=False)
-                
-                jv_result = post_automated_jv(f"Fixed Deposit Opening - Principal ₹{principal} (Op Bal: ₹{opening_balance}) via {payment_mode}", chosen_asset_code, "LIA-102", opening_balance, voucher_date=op_bal_date_str)
-                
-                if jv_result:
-                    today_time = f"{op_bal_date_str} 10:00"
-                    new_balance = get_account_balance_from_jv(chosen_asset_code)
-                    
-                    if chosen_asset_code == 'AST-101':
-                        voucher_no = generate_cash_voucher_no()
-                        run_query("""
-                            INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (op_bal_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, opening_balance, new_balance, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
-                    elif chosen_asset_code in ['AST-102', 'AST-103']:
-                        bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else "State Bank of India"
-                        voucher_no = generate_bank_voucher_no()
-                        run_query("""
-                            INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (op_bal_date_str, voucher_no, f"FD Opening - Customer {cust_dict[selected_cust]}", 0, opening_balance, new_balance, bank_name, chosen_asset_code, f"FD Opening via {payment_mode}", today_time), fetch=False)
-                
+                success, msg = create_or_link_fd_opening(
+                    cust_id=cust_dict[selected_cust],
+                    principal=principal,
+                    open_date=open_date_str,
+                    tenure_months=tenure,
+                    interest_rate=interest_rate,
+                    nominee=nominee,
+                    payment_mode=payment_mode,
+                    chosen_asset_code=chosen_asset_code,
+                    op_bal_date=op_bal_date_str,
+                    custom_fd_no=custom_fd_no,
+                    custom_fd_id=custom_fd_id
+                )
                 clear_db_cache()
-                st.success(f"🎉 Fixed Deposit opened & recorded successfully (Opened: {open_date_str} | Op Bal Date: {op_bal_date_str} | Principal: ₹{principal:,.2f} | Opening Bal: ₹{opening_balance:,.2f}) via {payment_mode}!")
-                time.sleep(0.5)
-                st.rerun()
+                if success:
+                    st.success(f"🎉 {msg}")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed to open FD: {msg}")
         else:
             st.warning("Register a customer first.")
 
     with tab2:
         fds = cached_query("""
-            SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at, f.payment_mode
+            SELECT f.fd_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no,
+                   c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at, f.payment_mode
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
             ORDER BY f.fd_id DESC
         """)
         if fds:
-            df_fds = pd.DataFrame(fds, columns=["FD ID", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Opened Date", "Payment Mode"])
+            df_fds = pd.DataFrame(fds, columns=["FD ID", "FDR No / A/c No", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Opened Date", "Payment Mode"])
             df_fds_formatted = format_df_dates(df_fds)
             st.dataframe(df_fds_formatted, use_container_width=True)
         else:
@@ -3205,7 +3206,7 @@ def render_fixed_deposits():
             SELECT f.fd_id, c.name, c.street, c.city, c.state, c.pincode, 
                    f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, 
                    f.nominee, f.created_at, f.status, f.closed_date,
-                   f.customer_id
+                   f.customer_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             ORDER BY f.fd_id DESC
         """)
@@ -3213,15 +3214,15 @@ def render_fixed_deposits():
             fd_print_dict = {}
             for r in all_fds:
                 status_display = "🔴 CLOSED" if r[12] == 'CLOSED' else "🟢 ACTIVE"
-                label = f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[6]:,.2f}) - {status_display}"
+                label = f"FD ID: {r[0]} | FDR No: {r[15]} - {r[1]} (Principal: ₹{r[6]:,.2f}) - {status_display}"
                 fd_print_dict[label] = r
             
             selected_print_str = st.selectbox("Select FD Account for Printing/View", list(fd_print_dict.keys()), key="fd_print_select")
             fd_data = fd_print_dict[selected_print_str]
             
-            fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date, cust_id = fd_data
+            fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date, cust_id, fd_no = fd_data
             
-            fd_op_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%FD #{fd_id}%", f"%FD Opening%Customer {cust_id}%"))
+            fd_op_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%FD #{fd_id}%", f"%{fd_no}%", f"%FD Opening%Customer {cust_id}%"))
             fd_op_bal = fd_op_res[0][0] if (fd_op_res and fd_op_res[0] and fd_op_res[0][0]) else created_at
             
             try:
@@ -3279,7 +3280,7 @@ def render_fixed_deposits():
               </div>
               
               <div class="grid-row">
-                <div><b>FDR No. / A/c No:</b> FD-{fd_id:05d}</div>
+                <div><b>FDR No. / A/c No:</b> {fd_no}</div>
                 <div><b>A/c Opening Date:</b> {created_at_dt}</div>
               </div>
               <div class="grid-row">
@@ -3343,11 +3344,12 @@ def render_fixed_deposits():
             
             fd_data_pdf = list(fd_data[:14])
             fd_data_pdf.append(fd_op_bal)
+            fd_data_pdf.append(fd_no)
             fd_pdf_data = pdf_generator.generate_fd_pdf(fd_data_pdf)
             st.download_button(
-                label=f"📥 Download FD Certificate FD-{fd_id:05d} (PDF)",
+                label=f"📥 Download FD Certificate {fd_no} (PDF)",
                 data=fd_pdf_data,
-                file_name=f"FD_Certificate_FD-{fd_id:05d}.pdf",
+                file_name=f"FD_Certificate_{fd_no}.pdf",
                 mime="application/pdf",
                 key=f"download_fd_pdf_{fd_id}",
                 use_container_width=True
@@ -3358,14 +3360,15 @@ def render_fixed_deposits():
     with tab4:
         st.subheader("Close Fixed Deposit")
         active_fds = cached_query("""
-            SELECT f.fd_id, c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months
+            SELECT f.fd_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no,
+                   c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
             ORDER BY f.fd_id ASC
         """)
         
         if active_fds:
-            fd_dict = {f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[2]:,.2f}, Maturity: ₹{r[3]:,.2f})": r for r in active_fds}
+            fd_dict = {f"FD ID: {r[0]} | FDR No: {r[1]} - {r[2]} (Principal: ₹{r[3]:,.2f}, Maturity: ₹{r[4]:,.2f})": r for r in active_fds}
             col_fc1, col_fc2 = st.columns(2)
             with col_fc1:
                 selected_fd_str = st.selectbox("Select FD to Close", list(fd_dict.keys()), key="fd_close_select")
@@ -3373,7 +3376,7 @@ def render_fixed_deposits():
                 fd_close_date = st.date_input("Closing Date", value=date.today(), format="DD-MM-YYYY", key="fd_close_date_input")
                 
             selected_fd = fd_dict[selected_fd_str]
-            fd_id, cust_name, principal, maturity_amount, interest_rate, tenure = selected_fd
+            fd_id, fd_no, cust_name, principal, maturity_amount, interest_rate, tenure = selected_fd
             
             interest_earned = maturity_amount - principal
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
@@ -3388,12 +3391,12 @@ def render_fixed_deposits():
                 """, (close_date_str, fd_id), fetch=False)
                 
                 if interest_earned > 0:
-                    post_automated_jv(f"FD #{fd_id} Interest Accrued", "EXP-102", "LIA-102", interest_earned, voucher_date=close_date_str)
+                    post_automated_jv(f"Fixed Deposit [{fd_no}] Interest Accrued", "EXP-102", "LIA-102", interest_earned, voucher_date=close_date_str)
                 
-                post_automated_jv(f"FD #{fd_id} Maturity - Transfer to SB", "LIA-102", "LIA-101", maturity_amount, voucher_date=close_date_str)
+                post_automated_jv(f"Fixed Deposit [{fd_no}] Maturity - Transfer to SB", "LIA-102", "LIA-101", maturity_amount, voucher_date=close_date_str)
                 
                 clear_db_cache()
-                st.success(f"FD #{fd_id} closed successfully on {close_date_str}!")
+                st.success(f"Fixed Deposit {fd_no} closed successfully on {close_date_str}!")
                 st.info(f"₹{maturity_amount:,.2f} transferred from FD Deposits Control to SB Deposits Control")
                 time.sleep(0.5)
                 st.rerun()
@@ -3405,7 +3408,8 @@ def render_fixed_deposits():
         all_fds_edit = cached_query("""
             SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, 
                    f.maturity_amount, f.nominee, f.status, f.created_at, f.closed_date, 
-                   f.payment_mode, f.customer_id
+                   f.payment_mode, f.customer_id,
+                   COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             ORDER BY f.fd_id DESC
         """)
@@ -3413,12 +3417,12 @@ def render_fixed_deposits():
             fd_edit_dict = {}
             for r in all_fds_edit:
                 status_icon = "🔴 CLOSED" if r[7] == 'CLOSED' else "🟢 ACTIVE"
-                label = f"FD ID: {r[0]} - {r[1]} (Principal: ₹{r[2]:,.2f} | Opened: {r[8]}) - {status_icon}"
+                label = f"FD ID: {r[0]} | FDR No: {r[12]} - {r[1]} (Principal: ₹{r[2]:,.2f} | Opened: {r[8]}) - {status_icon}"
                 fd_edit_dict[label] = r
                 
             selected_edit_label = st.selectbox("Select FD Account to Edit", list(fd_edit_dict.keys()), key="fd_edit_select")
             curr_fd = fd_edit_dict[selected_edit_label]
-            c_fd_id, c_name, c_principal, c_tenure, c_rate, c_maturity, c_nominee, c_status, c_created, c_closed, c_pay_mode, c_cust_id = curr_fd
+            c_fd_id, c_name, c_principal, c_tenure, c_rate, c_maturity, c_nominee, c_status, c_created, c_closed, c_pay_mode, c_cust_id, c_fd_no = curr_fd
             
             customers_all = cached_query("""
                 SELECT c.id, c.name, COALESCE(c.account_no, '') 
@@ -3441,13 +3445,19 @@ def render_fixed_deposits():
             except Exception:
                 c_closed_dt = date.today()
 
-            fd_op_bal_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%FD #{c_fd_id}%", f"%FD Opening%Customer {c_cust_id}%"))
+            fd_op_bal_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%FD #{c_fd_id}%", f"%{c_fd_no}%", f"%FD Opening%Customer {c_cust_id}%"))
             try:
                 fd_op_bal_dt = pd.to_datetime(fd_op_bal_res[0][0]).date() if fd_op_bal_res and fd_op_bal_res[0][0] else c_created_dt
             except Exception:
                 fd_op_bal_dt = c_created_dt
 
             st.markdown("---")
+            col_fe0_1, col_fe0_2 = st.columns(2)
+            with col_fe0_1:
+                edit_fd_no = st.text_input("FDR No / FD Account Number", value=str(c_fd_no), key=f"edit_fd_no_{c_fd_id}", help="Enter FDR certificate number or custom account number, e.g. 01540001 or FD-00002")
+            with col_fe0_2:
+                edit_fd_id_num = st.number_input("Numeric FD ID", min_value=1, value=int(c_fd_id), step=1, key=f"edit_fd_id_num_{c_fd_id}", help="You can change the internal numeric FD ID.")
+
             col_fe1, col_fe2 = st.columns(2)
             with col_fe1:
                 edit_fd_cust_label = st.selectbox("Assigned Customer", list(cust_all_dict.keys()), index=cust_idx, key=f"edit_fd_cust_{c_fd_id}")
@@ -3510,7 +3520,8 @@ def render_fixed_deposits():
                         c_fd_id, edit_fd_cust_id, edit_fd_principal, edit_fd_tenure, edit_fd_rate,
                         edit_fd_nominee, edit_fd_status, created_str, closed_str,
                         edit_fd_pay_mode, chosen_asset_code=chosen_asset, new_op_bal_date=op_bal_str,
-                        new_maturity_amount=final_fd_mat
+                        new_maturity_amount=final_fd_mat,
+                        new_fd_no=edit_fd_no, new_fd_id=edit_fd_id_num
                     )
                     clear_db_cache()
                     if success:
@@ -5909,8 +5920,8 @@ def render_reports():
                 data = cached_query("SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at FROM sb_accounts s JOIN customers c ON s.customer_id = c.id")
                 columns = ["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created Date"]
             elif report_type == "FD Accounts Report":
-                data = cached_query("SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id")
-                columns = ["FD ID", "Customer Name", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Created Date"]
+                data = cached_query("SELECT f.fd_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id")
+                columns = ["FD ID", "FDR No / A/c No", "Customer Name", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Created Date"]
             elif report_type == "RD Accounts Report":
                 data = cached_query("SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.created_at FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id")
                 columns = ["RD ID", "Customer Name", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Inst. Paid", "Status", "Created Date"]

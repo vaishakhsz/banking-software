@@ -977,7 +977,10 @@ def generate_rd_pdf(rd_data):
         alignment=2  
     )
     
-    if len(rd_data) > 19:
+    tenure_days = None
+    if len(rd_data) > 20:
+        rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name, maturity_date, op_bal_date, tenure_days = rd_data[:21]
+    elif len(rd_data) == 20:
         rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name, maturity_date = rd_data[:19]
         op_bal_date = rd_data[19]
     elif len(rd_data) == 19:
@@ -1036,7 +1039,9 @@ def generate_rd_pdf(rd_data):
     
     years = int(tenure) // 12
     months = int(tenure) % 12
-    if years > 0 and months > 0:
+    if tenure_days and int(tenure_days) > 0:
+        tenure_display = f"{tenure_days} DAYS ({tenure} Months)"
+    elif years > 0 and months > 0:
         tenure_display = f"{tenure} MONTHS ({years}Y {months}M)"
     elif years > 0:
         tenure_display = f"{tenure} MONTHS ({years} Years)"
@@ -1079,7 +1084,7 @@ def generate_rd_pdf(rd_data):
         alignment=0,
         borderPadding=6,
     )
-    elements.append(Paragraph(f"<b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Total balance accumulated: <b>₹{total_deposited:,.2f}</b>.", box_style))
+    elements.append(Paragraph(f"<b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure_display}. Total balance accumulated: <b>₹{total_deposited:,.2f}</b>.", box_style))
     elements.append(Spacer(1, 8))
     
     ledger_data = [

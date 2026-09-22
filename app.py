@@ -992,8 +992,7 @@ def render_personal_loans():
             if "Cash" in disb_mode:
                 cur_cash = get_cash_balance()
                 if cur_cash < principal:
-                    st.error(f"❌ Insufficient Cash Balance in Drawer! Available: ₹{cur_cash:,.2f}")
-                    st.stop()
+                    st.warning(f"⚠️ Cash balance alert: Available ₹{cur_cash:,.2f}. Disbursing ₹{principal:,.2f}.")
             
             preview_schedule = generate_loan_schedule(sanction_date, principal, tot_interest, tenure_months=tenure_months)
             loan_from_date = preview_schedule[0]["from_date"] if preview_schedule else str(sanction_date)
@@ -1846,8 +1845,7 @@ def render_gold_loans():
             if "Cash" in disb_mode:
                 cur_cash = get_cash_balance()
                 if cur_cash < principal:
-                    st.error(f"❌ Insufficient Cash Balance in Drawer! Available: ₹{cur_cash:,.2f}")
-                    st.stop()
+                    st.warning(f"⚠️ Cash balance alert: Available ₹{cur_cash:,.2f}. Disbursing ₹{principal:,.2f}.")
                     
             gl_schedule = generate_loan_schedule(sanction_date, principal, tot_interest, tenure_months=tenure_months, loan_type='GOLD')
             loan_from = gl_schedule[0]["from_date"] if gl_schedule else str(sanction_date)
@@ -3152,11 +3150,6 @@ def render_fixed_deposits():
             st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
             
             if st.button("Open FD Account", use_container_width=True, type="primary"):
-                available_balance = get_account_balance_from_jv(chosen_asset_code)
-                if opening_balance > available_balance:
-                    st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required Opening Balance: ₹{opening_balance:,.2f}")
-                    st.stop()
-                
                 open_date_str = fd_open_date.strftime("%Y-%m-%d")
                 op_bal_date_str = fd_op_bal_date.strftime("%Y-%m-%d")
                 run_query("""
@@ -3562,7 +3555,9 @@ def render_recurring_deposits():
                 opening_balance = st.number_input("Opening Balance / Total Amount Deposited (₹)", min_value=0.0, value=float(monthly_amt), step=500.0, key="rd_open_bal_inp", help="Total cumulative amount deposited into this RD account at opening. (e.g. ₹1,000 for 1st installment, or ₹10,000 for 10 installments).")
                 calc_default_inst = max(1, int(round(opening_balance / monthly_amt))) if monthly_amt > 0 else 1
                 opening_paid_inst = st.number_input("Installments Paid at Opening", min_value=1, max_value=120, value=calc_default_inst, step=1, key="rd_open_paid_inst_inp")
-                tenure = st.slider("Tenure (Months)", 1, 120, 12, key="rd_tenure")
+                tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=365, step=10, key="rd_tenure_days", help="e.g. 100 days, 365 days, 400 days, 730 days")
+                tenure = max(1, int(round(tenure_days / 30.0)))
+                st.caption(f"🗓️ Equivalent Tenure: ~**{tenure} Months** ({tenure_days} Days)")
             with col_rd2:
                 custom_rd_no = st.text_input("Custom RD Account No (Optional)", placeholder="e.g. RD-00001", key="rd_custom_no_inp")
                 scheme_name = st.text_input("Scheme Name", value="SWAYAMVARA KSHEMANIDHI", key="rd_scheme_name_inp")
@@ -3590,29 +3585,24 @@ def render_recurring_deposits():
                 payment_mode = "Cash"
             
             total_deposits, approx_maturity, approx_interest = calculate_rd_maturity(monthly_amt, interest_rate, tenure)
-            mat_date_calc = (rd_open_date + timedelta(days=30*tenure)).strftime("%Y-%m-%d")
+            mat_date_calc = (rd_open_date + timedelta(days=int(tenure_days))).strftime("%Y-%m-%d")
             
-            st.info(f"**Estimated Maturity (Quarterly Compounded):** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f} | Maturity Date: **{pdf_generator.format_date_str(mat_date_calc)}**")
+            st.info(f"**Estimated Maturity (Quarterly Compounded):** Total Deposits ₹{total_deposits:,.2f} + Interest ₹{approx_interest:,.2f} = ₹{approx_maturity:,.2f} | Maturity Date: **{pdf_generator.format_date_str(mat_date_calc)}** ({tenure_days} Days)")
             
             if st.button("Open RD Account", use_container_width=True, type="primary"):
-                available_balance = get_account_balance_from_jv(chosen_asset_code)
-                if opening_balance > available_balance:
-                    st.error(f"❌ Insufficient balance in {payment_mode}! Available: ₹{available_balance:,.2f}, Required Opening Balance: ₹{opening_balance:,.2f}")
-                    st.stop()
-                
                 open_date_str = rd_open_date.strftime("%Y-%m-%d")
                 op_bal_date_str = rd_op_bal_date.strftime("%Y-%m-%d")
-                mat_date_str = (rd_open_date + timedelta(days=30*tenure)).strftime("%Y-%m-%d")
+                mat_date_str = (rd_open_date + timedelta(days=int(tenure_days))).strftime("%Y-%m-%d")
                 
                 cur_rd_cnt = run_query("SELECT COUNT(*) FROM recurring_deposits")
                 rd_seq = (cur_rd_cnt[0][0] + 1) if cur_rd_cnt and cur_rd_cnt[0] else 1
                 final_rd_no = custom_rd_no.strip() if custom_rd_no and custom_rd_no.strip() else f"RD-{rd_seq:05d}"
                 
                 new_rd_res = run_query("""
-                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance, scheme_name, rd_no, maturity_date)
-                    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, tenure_days, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance, scheme_name, rd_no, maturity_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?)
                     RETURNING rd_id
-                """, (cust_dict[selected_cust], monthly_amt, tenure, interest_rate, opening_paid_inst, nominee, 
+                """, (cust_dict[selected_cust], monthly_amt, tenure, tenure_days, interest_rate, opening_paid_inst, nominee, 
                       open_date_str, payment_mode, approx_maturity, opening_balance, scheme_name, final_rd_no, mat_date_str))
                 
                 if new_rd_res and new_rd_res[0]:
@@ -3642,7 +3632,7 @@ def render_recurring_deposits():
                         """, (op_bal_date_str, voucher_no, f"RD Opening: {final_rd_no} - Customer {cust_dict[selected_cust]}", 0, opening_balance, new_balance, bank_name, chosen_asset_code, f"RD Opening via {payment_mode}", today_time), fetch=False)
                 
                 clear_db_cache()
-                st.success(f"🎉 Recurring Deposit **{final_rd_no}** opened & recorded successfully (Opened: {open_date_str} | Op Bal Date: {op_bal_date_str} | Monthly: ₹{monthly_amt:,.2f} | Opening Bal: ₹{opening_balance:,.2f} [{opening_paid_inst} Inst.]) via {payment_mode}!")
+                st.success(f"🎉 Recurring Deposit **{final_rd_no}** opened & recorded successfully (Opened: {open_date_str} | Op Bal Date: {op_bal_date_str} | Tenure: {tenure_days} Days [{tenure}M] | Monthly: ₹{monthly_amt:,.2f} | Opening Bal: ₹{opening_balance:,.2f} [{opening_paid_inst} Inst.]) via {payment_mode}!")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -3650,13 +3640,13 @@ def render_recurring_deposits():
 
     with tab2:
         active_rds = cached_query("""
-            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.installments_paid, r.maturity_amount
+            SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.installments_paid, r.maturity_amount, COALESCE(r.tenure_days, r.tenure_months * 30) as tenure_days
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id 
             WHERE r.status='ACTIVE'
             ORDER BY r.rd_id ASC
         """)
         if active_rds:
-            rd_dict = {f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[2]:,.2f}, Paid: {r[4]}/{r[3]})": r for r in active_rds}
+            rd_dict = {f"RD ID: {r[0]} - {r[1]} (Monthly: ₹{r[2]:,.2f}, Paid: {r[4]}/{r[3]} [{r[6]} Days])": r for r in active_rds}
             col_rp1, col_rp2 = st.columns(2)
             with col_rp1:
                 chosen_rd_str = st.selectbox("Select Active RD Account", list(rd_dict.keys()), key="rd_pay_select")
@@ -3664,7 +3654,7 @@ def render_recurring_deposits():
                 rd_pay_date = st.date_input("Installment Payment Date", value=date.today(), format="DD-MM-YYYY", key="rd_pay_date_input")
                 
             selected_rd = rd_dict[chosen_rd_str]
-            rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt = selected_rd
+            rd_id, cust_name, monthly_amt, tenure_m, paid_inst, maturity_amt, t_days = selected_rd
             
             asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
             if not asset_accounts:
@@ -3685,11 +3675,6 @@ def render_recurring_deposits():
                 payment_mode_pay = "Cash"
             
             if st.button("Confirm & Pay Installment", use_container_width=True, type="primary"):
-                available_balance = get_account_balance_from_jv(chosen_asset_code)
-                if monthly_amt > available_balance:
-                    st.error(f"❌ Insufficient balance in {payment_mode_pay}! Available: ₹{available_balance:,.2f}, Required: ₹{monthly_amt:,.2f}")
-                    st.stop()
-                
                 if paid_inst < tenure_m:
                     new_paid = paid_inst + 1
                     new_collected = float(new_paid * monthly_amt)
@@ -3720,6 +3705,8 @@ def render_recurring_deposits():
                     st.success(f"✅ Installment #{new_paid} successfully paid on {pay_date_str} via {payment_mode_pay}!")
                     time.sleep(0.5)
                     st.rerun()
+                else:
+                    st.info("All installments for this RD have already been paid.")
         else:
             st.info("No active recurring deposits found.")
 
@@ -3727,7 +3714,8 @@ def render_recurring_deposits():
         rds = cached_query("""
             SELECT COALESCE(r.rd_no, 'RD-' || CAST(r.rd_id AS TEXT)) as acc_no, 
                    c.name, COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme,
-                   r.monthly_amount, r.tenure_months, r.interest_rate, 
+                   r.monthly_amount, COALESCE(r.tenure_days, r.tenure_months * 30) as tenure_days,
+                   r.tenure_months, r.interest_rate, 
                    r.installments_paid, COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
                    r.created_at,
                    COALESCE(r.maturity_date, '2026-12-20') as mat_date,
@@ -3737,7 +3725,7 @@ def render_recurring_deposits():
             ORDER BY r.rd_id DESC
         """)
         if rds:
-            df_rds = pd.DataFrame(rds, columns=["A/C No", "Customer Name", "Scheme", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Paid Inst.", "Total Deposited (₹)", "Opened Date", "Maturity Date", "Maturity Amount (₹)", "Nominee", "Status"])
+            df_rds = pd.DataFrame(rds, columns=["A/C No", "Customer Name", "Scheme", "Monthly (₹)", "Tenure (Days)", "Tenure (Months)", "Rate (%)", "Paid Inst.", "Total Deposited (₹)", "Opened Date", "Maturity Date", "Maturity Amount (₹)", "Nominee", "Status"])
             df_rds_formatted = format_df_dates(df_rds)
             st.dataframe(df_rds_formatted, use_container_width=True)
         else:
@@ -3754,7 +3742,8 @@ def render_recurring_deposits():
                    COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as col_bal,
                    COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name,
                    COALESCE(r.maturity_date, '2026-12-20') as maturity_date,
-                   r.customer_id
+                   r.customer_id,
+                   COALESCE(r.tenure_days, r.tenure_months * 30) as tenure_days
             FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id
             ORDER BY r.rd_id DESC
         """)
@@ -3762,13 +3751,13 @@ def render_recurring_deposits():
             rd_print_dict = {}
             for r in all_rds:
                 status_display = "🔴 CLOSED" if r[13] == 'CLOSED' else "🟢 ACTIVE"
-                label = f"A/C: {r[15]} - {r[1]} ({r[17]} | Paid: {r[9]}/{r[7]} | Balance: ₹{r[16]:,.2f}) - {status_display}"
+                label = f"A/C: {r[15]} - {r[1]} ({r[17]} | Paid: {r[9]}/{r[7]} [{r[20]} Days] | Balance: ₹{r[16]:,.2f}) - {status_display}"
                 rd_print_dict[label] = r
             
             selected_rd_print = st.selectbox("Select RD Account for Printing/View", list(rd_print_dict.keys()), key="rd_print_select")
             rd_data = rd_print_dict[selected_rd_print]
             
-            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name, maturity_date, cust_id = rd_data
+            rd_id, c_name, street, city, state, pincode, monthly_amt, tenure, rate, paid_inst, maturity, nominee, created_at, status, closed_date, rd_acc_no, col_balance, scheme_name, maturity_date, cust_id, tenure_days = rd_data
             
             rd_op_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%RD #{rd_id}%", f"%{rd_acc_no}%", f"%RD Opening%Customer {cust_id}%"))
             op_bal_date = rd_op_res[0][0] if (rd_op_res and rd_op_res[0] and rd_op_res[0][0]) else created_at
@@ -3792,14 +3781,7 @@ def render_recurring_deposits():
             else:
                 display_maturity = float(maturity)
             
-            years = int(tenure) // 12
-            months = int(tenure) % 12
-            if years > 0 and months > 0:
-                tenure_display_str = f"{tenure} MONTHS ({years} Years {months} Months)"
-            elif years > 0:
-                tenure_display_str = f"{tenure} MONTHS ({years} Years)"
-            else:
-                tenure_display_str = f"{tenure} MONTHS"
+            tenure_display_str = f"{tenure_days} DAYS ({tenure} Months)"
 
             rd_receipt_html = f"""
             <style>
@@ -3870,7 +3852,7 @@ def render_recurring_deposits():
               </div>
               
               <div class="box">
-                <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure} months. Total balance accumulated: <b>₹{col_balance:,.2f}</b>.
+                <b>Deposit Repayable:</b> Recurring Deposit of <b>₹{monthly_amt:,.2f}</b> monthly for {tenure_display_str}. Total balance accumulated: <b>₹{col_balance:,.2f}</b>.
               </div>
 
               <table>
@@ -3907,6 +3889,7 @@ def render_recurring_deposits():
             rd_data_pdf = list(rd_data[:19])
             rd_data_pdf[10] = display_maturity
             rd_data_pdf.append(op_bal_date)
+            rd_data_pdf.append(tenure_days)
             rd_pdf_data = pdf_generator.generate_rd_pdf(rd_data_pdf)
             st.download_button(
                 label=f"📥 Download RD Certificate {rd_acc_no} (PDF)",
@@ -3974,7 +3957,7 @@ def render_recurring_deposits():
 
     with tab6:
         st.subheader("✏️ Edit & Correct Recurring Deposit Account")
-        st.caption("Enter the exact amount paid/deposited, tenure, and interest rate — maturity amount recalculates live on whatever amount you enter.")
+        st.caption("Enter the exact amount paid/deposited, tenure in days, and interest rate — maturity amount recalculates live on whatever amount you enter.")
         
         all_rds_edit = cached_query("""
             SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, 
@@ -3983,7 +3966,8 @@ def render_recurring_deposits():
                    COALESCE(r.scheme_name, 'SWAYAMVARA KSHEMANIDHI') as scheme_name,
                    COALESCE(r.maturity_date, '2026-12-20') as maturity_date,
                    COALESCE(r.collected_balance, r.monthly_amount * r.installments_paid) as collected_balance,
-                   r.customer_id, r.closed_date, COALESCE(r.payment_mode, 'Union Bank of India') as payment_mode
+                   r.customer_id, r.closed_date, COALESCE(r.payment_mode, 'Union Bank of India') as payment_mode,
+                   COALESCE(r.tenure_days, r.tenure_months * 30) as tenure_days
             FROM recurring_deposits r 
             JOIN customers c ON r.customer_id = c.id
             ORDER BY r.rd_id DESC
@@ -3993,13 +3977,13 @@ def render_recurring_deposits():
             rd_edit_dict = {}
             for r in all_rds_edit:
                 status_icon = "🔴 CLOSED" if r[7] == 'CLOSED' else "🟢 ACTIVE"
-                label = f"A/C: {r[10]} - {r[1]} ({r[11]} | Amount Paid: ₹{r[13]:,.2f} | Tenure: {r[3]}M) - {status_icon}"
+                label = f"A/C: {r[10]} - {r[1]} ({r[11]} | Amount Paid: ₹{r[13]:,.2f} | Tenure: {r[17]} Days [{r[3]}M]) - {status_icon}"
                 rd_edit_dict[label] = r
             
             selected_edit_label = st.selectbox("Select RD Account to Edit", list(rd_edit_dict.keys()), key="rd_edit_select")
             curr_rd = rd_edit_dict[selected_edit_label]
             
-            c_rd_id, c_name, c_monthly, c_tenure, c_rate, c_paid, c_nominee, c_status, c_created, c_maturity, c_rd_no, c_scheme, c_mat_date, c_col_bal, c_cust_id, c_closed, c_pm = curr_rd
+            c_rd_id, c_name, c_monthly, c_tenure, c_rate, c_paid, c_nominee, c_status, c_created, c_maturity, c_rd_no, c_scheme, c_mat_date, c_col_bal, c_cust_id, c_closed, c_pm, c_tenure_days = curr_rd
             
             customers_all = cached_query("""
                 SELECT c.id, c.name, COALESCE(c.account_no, '') 
@@ -4018,7 +4002,7 @@ def render_recurring_deposits():
                 c_created_dt = date.today()
                 
             try:
-                c_mat_dt = pd.to_datetime(c_mat_date).date() if c_mat_date else (c_created_dt + timedelta(days=30*int(c_tenure or 12)))
+                c_mat_dt = pd.to_datetime(c_mat_date).date() if c_mat_date else (c_created_dt + timedelta(days=int(c_tenure_days or (c_tenure * 30))))
             except Exception:
                 c_mat_dt = date.today() + timedelta(days=365)
                 
@@ -4052,7 +4036,9 @@ def render_recurring_deposits():
                 edit_monthly = st.number_input("Monthly Installment (₹)", min_value=0.0, value=float(c_monthly), step=500.0, key=f"edit_monthly_{c_rd_id}")
             
             with col_e2:
-                edit_tenure = st.number_input("Tenure (Months)", min_value=1, max_value=120, value=int(c_tenure), step=1, key=f"edit_tenure_{c_rd_id}")
+                edit_tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=int(c_tenure_days or (c_tenure * 30)), step=10, key=f"edit_tenure_days_{c_rd_id}")
+                edit_tenure = max(1, int(round(edit_tenure_days / 30.0)))
+                st.caption(f"🗓️ Equivalent Tenure: ~**{edit_tenure} Months** ({edit_tenure_days} Days)")
                 edit_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(c_rate), step=0.25, key=f"edit_rate_{c_rd_id}")
                 edit_paid = st.number_input("Installments Paid Count", min_value=0, max_value=120, value=int(c_paid), step=1, key=f"edit_paid_{c_rd_id}")
                 edit_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_nominee_{c_rd_id}")
@@ -4145,16 +4131,18 @@ def render_recurring_deposits():
                         c_rd_id, edit_rd_cust_id, edit_rd_no, edit_monthly, edit_tenure, edit_rate,
                         edit_paid, edit_col_balance, edit_nominee, edit_status,
                         edit_created_str, closed_date_val, edit_rd_pay_mode, edit_rd_asset_code,
-                        new_op_bal_date=edit_op_bal_str
+                        new_op_bal_date=edit_op_bal_str, new_tenure_days=edit_tenure_days
                     )
                     
                     run_query("""
                         UPDATE recurring_deposits 
                         SET scheme_name = ?,
                             maturity_date = ?,
-                            maturity_amount = ?
+                            maturity_amount = ?,
+                            tenure_days = ?,
+                            tenure_months = ?
                         WHERE rd_id = ?
-                    """, (edit_scheme, edit_mat_str, final_maturity_amt, c_rd_id), fetch=False)
+                    """, (edit_scheme, edit_mat_str, final_maturity_amt, edit_tenure_days, edit_tenure, c_rd_id), fetch=False)
                     
                     clear_db_cache()
                     if success:
@@ -4352,13 +4340,7 @@ def render_cash_book():
                             st.stop()
                     
                     elif entry_type == "DEBIT (Receipt)":
-                        if account_code == 'AST-102' and current_union_balance < amount:
-                            st.error(f"❌ Insufficient Union Bank Balance! Available: ₹{current_union_balance:,.2f}")
-                            st.stop()
-                        elif account_code == 'AST-103' and current_sbi_balance < amount:
-                            st.error(f"❌ Insufficient SBI Balance! Available: ₹{current_sbi_balance:,.2f}")
-                            st.stop()
-                        elif account_code == 'AST-101':
+                        if account_code == 'AST-101':
                             st.error("❌ Cannot receipt cash from itself!")
                             st.stop()
                     
@@ -5068,9 +5050,6 @@ def render_journal_vouchers():
                     st.error("❌ Journal Voucher unbalanced! Total Debits must equal Credits.")
                 elif acc1_code == acc2_code:
                     st.error("❌ Debit and Credit accounts cannot be the same!")
-                elif acc2_code in ['AST-101', 'AST-102', 'AST-103'] and get_account_balance_from_jv(acc2_code) < dr1:
-                    avail_bal = get_account_balance_from_jv(acc2_code)
-                    st.error(f"❌ Insufficient balance in credit account {acc2_code}! Available: ₹{avail_bal:,.2f}, Required: ₹{dr1:,.2f}")
                 else:
                     jv_id = post_automated_jv(narration, acc1_code, acc2_code, dr1)
                     if jv_id:

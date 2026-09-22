@@ -481,6 +481,7 @@ def init_db(force=False):
                 scheme_name TEXT DEFAULT 'SWAYAMVARA KSHEMANIDHI',
                 rd_no TEXT,
                 monthly_amount REAL,
+                tenure_days INTEGER DEFAULT 365,
                 tenure_months INTEGER,
                 interest_rate REAL,
                 installments_paid INTEGER DEFAULT 0,
@@ -653,6 +654,7 @@ def init_db(force=False):
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS collected_balance DOUBLE PRECISION DEFAULT 0;
+                    ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS tenure_days INTEGER;
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS renewal_count INTEGER DEFAULT 0;
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS last_renewal_date TEXT;
                     ALTER TABLE personal_loans ADD COLUMN IF NOT EXISTS guarantor_relation TEXT;
@@ -4316,7 +4318,7 @@ def update_rd_account_details(
     rd_id, new_cust_id, new_rd_no, new_monthly_amt, new_tenure, new_rate,
     new_inst_paid, new_collected_bal, new_nominee, new_status,
     new_created_date, new_closed_date, new_pay_mode, chosen_asset_code='AST-102',
-    new_op_bal_date=None
+    new_op_bal_date=None, new_tenure_days=None
 ):
     """
     Updates Recurring Deposit parameters and synchronizes opening Journal Voucher (AST vs LIA-103),
@@ -4335,7 +4337,12 @@ def update_rd_account_details(
 
         old_c_id, old_c_name, old_c_acc, old_monthly, old_created, old_pm = rd_row
         new_monthly_amt = float(new_monthly_amt or 0.0)
-        new_tenure = int(new_tenure or 12)
+        if new_tenure_days is not None and int(new_tenure_days) > 0:
+            new_tenure_days = int(new_tenure_days)
+            new_tenure = max(1, int(round(new_tenure_days / 30.0)))
+        else:
+            new_tenure = int(new_tenure or 12)
+            new_tenure_days = int(new_tenure * 30)
         new_rate = float(new_rate or 6.0)
         new_inst_paid = int(new_inst_paid or 1)
         new_collected_bal = float(new_collected_bal or (new_monthly_amt * new_inst_paid))
@@ -4350,14 +4357,14 @@ def update_rd_account_details(
         cursor.execute(f"""
             UPDATE recurring_deposits
             SET customer_id = {placeholder}, rd_no = {placeholder}, monthly_amount = {placeholder},
-                tenure_months = {placeholder}, interest_rate = {placeholder}, installments_paid = {placeholder},
+                tenure_months = {placeholder}, tenure_days = {placeholder}, interest_rate = {placeholder}, installments_paid = {placeholder},
                 collected_balance = {placeholder}, maturity_amount = {placeholder}, nominee = {placeholder},
                 status = {placeholder}, created_at = {placeholder}, closed_date = {placeholder},
                 payment_mode = {placeholder}
             WHERE rd_id = {placeholder}
         """, (
             new_cust_id, new_rd_no or f"RD-{rd_id:05d}", new_monthly_amt,
-            new_tenure, new_rate, new_inst_paid, new_collected_bal, approx_maturity,
+            new_tenure, new_tenure_days, new_rate, new_inst_paid, new_collected_bal, approx_maturity,
             new_nominee or "Family Nominee", new_status or "ACTIVE",
             created_dt_str, closed_dt_str, new_pay_mode or "Union Bank of India", rd_id
         ))
@@ -4422,7 +4429,7 @@ def update_rd_account_details(
 def create_or_link_rd_opening(
     cust_id, monthly_amt, open_date, tenure_months=12, interest_rate=6.0,
     nominee="Family Nominee", payment_mode="Union Bank of India", chosen_asset_code="AST-102",
-    rd_no=None, op_bal_date=None
+    rd_no=None, op_bal_date=None, tenure_days=None
 ):
     """
     Creates a new Recurring Deposit opening balance for an existing customer,
@@ -4441,7 +4448,12 @@ def create_or_link_rd_opening(
         cust_name, cust_acc = c_row
 
         monthly_amt = float(monthly_amt or 0.0)
-        tenure_months = int(tenure_months or 12)
+        if tenure_days is not None and int(tenure_days) > 0:
+            tenure_days = int(tenure_days)
+            tenure_months = max(1, int(round(tenure_days / 30.0)))
+        else:
+            tenure_months = int(tenure_months or 12)
+            tenure_days = int(tenure_months * 30)
         interest_rate = float(interest_rate or 6.0)
         approx_maturity = calculate_rd_maturity(monthly_amt, interest_rate, tenure_months)[1]
         open_date_str = str(open_date)[:10]
@@ -4449,17 +4461,17 @@ def create_or_link_rd_opening(
 
         cursor.execute(f"""
             INSERT INTO recurring_deposits (
-                customer_id, monthly_amount, tenure_months, interest_rate, installments_paid,
+                customer_id, monthly_amount, tenure_months, tenure_days, interest_rate, installments_paid,
                 collected_balance, maturity_amount, nominee, status, created_at, payment_mode
-            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
+            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
             RETURNING rd_id
         """ if USING_SUPABASE else f"""
             INSERT INTO recurring_deposits (
-                customer_id, monthly_amount, tenure_months, interest_rate, installments_paid,
+                customer_id, monthly_amount, tenure_months, tenure_days, interest_rate, installments_paid,
                 collected_balance, maturity_amount, nominee, status, created_at, payment_mode
-            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
+            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
         """, (
-            cust_id, monthly_amt, tenure_months, interest_rate, monthly_amt,
+            cust_id, monthly_amt, tenure_months, tenure_days, interest_rate, monthly_amt,
             approx_maturity, nominee or "Family Nominee", open_date_str, payment_mode
         ))
 

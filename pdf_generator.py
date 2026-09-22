@@ -1,4 +1,5 @@
 import io
+import re
 from datetime import datetime
 import pandas as pd
 from reportlab.lib.pagesizes import A5, A4, landscape
@@ -7,6 +8,18 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import mm
 from database import IST, get_account_name
+
+def format_date_str(d):
+    """Universal DD-MM-YYYY date formatter for strings, dates, and timestamps"""
+    if d is None or str(d).strip() in ('', 'None', 'NaT', 'nan'):
+        return ""
+    s = str(d).strip()
+    if re.match(r'^\d{4}-\d{2}-\d{2}', s):
+        try:
+            return datetime.strptime(s[:10], '%Y-%m-%d').strftime('%d-%m-%Y')
+        except Exception:
+            return s
+    return s
 
 try:
     import streamlit as st
@@ -84,6 +97,7 @@ def create_pdf_report(title, df):
                         val_str = str(val)
                 else:
                     val_str = str(val) if val is not None else ""
+                    val_str = format_date_str(val_str)
                 
                 val_str = val_str.replace('₹', 'Rs.')
                 ascii_val = val_str.encode('ascii', 'ignore').decode('ascii')
@@ -198,7 +212,7 @@ def create_csv_report(title, df, from_date=None, to_date=None):
     writer.writerow(["CIN: U65990KL2021PLN069978 | Ph: 0471-2994535"])
     
     # 2. Report Title & Date Scope
-    date_str = f"From: {from_date} To: {to_date}" if from_date and to_date else ""
+    date_str = f"From: {format_date_str(from_date)} To: {format_date_str(to_date)}" if from_date and to_date else ""
     writer.writerow([f"{title.upper()} - {date_str}" if date_str else title.upper()])
     writer.writerow([f"Generated on: {datetime.now(IST).strftime('%d-%b-%Y %I:%M %p IST')}"])
     writer.writerow([])  # Blank line separator
@@ -226,7 +240,7 @@ def create_csv_report(title, df, from_date=None, to_date=None):
                     else:
                         cleaned_row.append(str(val))
                 else:
-                    cleaned_row.append("" if val is None else str(val))
+                    cleaned_row.append("" if val is None else format_date_str(str(val)))
             writer.writerow(cleaned_row)
             
         # 5. Summary Footer Row
@@ -317,7 +331,7 @@ def create_excel_report(title, df, from_date=None, to_date=None):
     # Row 4: Title & Date Range
     ws.merge_cells(f"A4:{last_col_letter}4")
     c4 = ws["A4"]
-    date_str = f" (From: {from_date} To: {to_date})" if from_date and to_date else ""
+    date_str = f" (From: {format_date_str(from_date)} To: {format_date_str(to_date)})" if from_date and to_date else ""
     c4.value = f"{title.upper()}{date_str}"
     c4.font = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
     c4.alignment = Alignment(horizontal="center", vertical="center")
@@ -372,7 +386,7 @@ def create_excel_report(title, df, from_date=None, to_date=None):
                         if 'debit' in c_name: total_dr += float(val)
                         elif 'credit' in c_name: total_cr += float(val)
                 else:
-                    cell.value = str(val) if val is not None else ""
+                    cell.value = format_date_str(str(val)) if val is not None else ""
                     if any(k in c_name for k in ['date', 'voucher', 'id', 'vr no']):
                         cell.alignment = Alignment(horizontal="center", vertical="center")
                     else:
@@ -499,7 +513,7 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         elements.append(Spacer(1, 4))
         
         voucher_content = [
-            ["Voucher No:", v_num, "Date:", date_val],
+            ["Voucher No:", v_num, "Date:", format_date_str(date_val)],
             ["Particulars:", part, "", ""],
             ["Account Head:", account_display, "", ""],
             ["Amount:", f"Debit (Receipt): Rs.{dr:,.2f}" if dr > 0 else f"Credit (Payment): Rs.{cr:,.2f}", "", ""],
@@ -541,7 +555,7 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         elements.append(Spacer(1, 4))
         
         voucher_content = [
-            ["Voucher No:", v_num, "Date:", date_val],
+            ["Voucher No:", v_num, "Date:", format_date_str(date_val)],
             ["Bank:", bank_n, "", ""],
             ["Particulars:", part, "", ""],
             ["Account Head:", account_display, "", ""],
@@ -585,7 +599,7 @@ def generate_voucher_pdf(voucher_type, voucher_data, jv_id=None):
         
         header_data = [
             [Paragraph(f"<b>JV ID:</b> JV-{jv_id if jv_id else 'N/A'}", bold_style),
-             Paragraph(f"<b>Date:</b> {jv_date}", normal_style)]
+             Paragraph(f"<b>Date:</b> {format_date_str(jv_date)}", normal_style)]
         ]
         header_t = Table(header_data, colWidths=[available_width*0.5, available_width*0.5])
         header_t.setStyle(TableStyle([
@@ -758,9 +772,9 @@ def generate_fd_pdf(fd_data):
     
     detail_data = [
         [Paragraph("<b>FDR No. / A/c No:</b>", detail_label), Paragraph(f"FD-{fd_id:05d}", detail_value),
-         Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(str(created_at), detail_value)],
+         Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(format_date_str(created_at), detail_value)],
         [Paragraph("<b>Name:</b>", detail_label), Paragraph(str(c_name), detail_value),
-         Paragraph("<b>Opening Balance Date:</b>", detail_label), Paragraph(str(op_bal_date), detail_value)],
+         Paragraph("<b>Opening Balance Date:</b>", detail_label), Paragraph(format_date_str(op_bal_date), detail_value)],
         [Paragraph("<b>Address:</b>", detail_label), Paragraph(str(full_address), detail_value),
          Paragraph("<b>Principal Amount:</b>", detail_label), Paragraph(f"₹{principal:,.2f}", detail_value)],
         [Paragraph("<b>Period / Tenure:</b>", detail_label), Paragraph(f"{tenure} MONTHS", detail_value),
@@ -768,7 +782,7 @@ def generate_fd_pdf(fd_data):
         [Paragraph("<b>Nominee:</b>", detail_label), Paragraph(nominee if nominee else 'N/A', detail_value),
          Paragraph("<b>Maturity Amount:</b>", detail_label), Paragraph(f"₹{maturity:,.2f}", detail_value)],
         [Paragraph("<b>Status:</b>", detail_label), Paragraph(status_text, detail_value),
-         Paragraph("<b>Closed Date:</b>" if status == 'CLOSED' else "", detail_label), Paragraph(str(closed_date) if status == 'CLOSED' else "", detail_value)],
+         Paragraph("<b>Closed Date:</b>" if status == 'CLOSED' else "", detail_label), Paragraph(format_date_str(closed_date) if status == 'CLOSED' else "", detail_value)],
     ]
     
     detail_table = Table(detail_data, colWidths=[35*mm, 50*mm, 35*mm, 50*mm])
@@ -1026,10 +1040,10 @@ def generate_rd_pdf(rd_data):
     detail_data = [
         [Paragraph("<b>RDR No. / A/c No:</b>", detail_label), Paragraph(str(rd_acc_no), detail_value),
          Paragraph("<b>Scheme:</b>", detail_label), Paragraph(str(scheme_name), detail_value)],
-        [Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(str(created_at), detail_value),
-         Paragraph("<b>Maturity Date:</b>", detail_label), Paragraph(str(maturity_date), detail_value)],
+        [Paragraph("<b>A/c Opening Date:</b>", detail_label), Paragraph(format_date_str(created_at), detail_value),
+         Paragraph("<b>Maturity Date:</b>", detail_label), Paragraph(format_date_str(maturity_date), detail_value)],
         [Paragraph("<b>Name:</b>", detail_label), Paragraph(str(c_name), detail_value),
-         Paragraph("<b>Opening Balance Date:</b>", detail_label), Paragraph(str(op_bal_date), detail_value)],
+         Paragraph("<b>Opening Balance Date:</b>", detail_label), Paragraph(format_date_str(op_bal_date), detail_value)],
         [Paragraph("<b>Address:</b>", detail_label), Paragraph(str(full_address), detail_value),
          Paragraph("<b>Interest Rate:</b>", detail_label), Paragraph(f"{rate}% p.a.", detail_value)],
         [Paragraph("<b>Monthly Installment:</b>", detail_label), Paragraph(f"₹{monthly_amt:,.2f}", detail_value),
@@ -1039,7 +1053,7 @@ def generate_rd_pdf(rd_data):
         [Paragraph("<b>Total Deposited:</b>", detail_label), Paragraph(f"₹{total_deposited:,.2f}", detail_value),
          Paragraph("<b>Maturity Amount:</b>", detail_label), Paragraph(f"₹{maturity:,.2f}", detail_value)],
         [Paragraph("<b>Status:</b>", detail_label), Paragraph(status_text, detail_value),
-         Paragraph("<b>Closed Date:</b>" if status == 'CLOSED' else "", detail_label), Paragraph(str(closed_date) if status == 'CLOSED' else "", detail_value)],
+         Paragraph("<b>Closed Date:</b>" if status == 'CLOSED' else "", detail_label), Paragraph(format_date_str(closed_date) if status == 'CLOSED' else "", detail_value)],
     ]
     
     detail_table = Table(detail_data, colWidths=[40*mm, 45*mm, 40*mm, 45*mm])

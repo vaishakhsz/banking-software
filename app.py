@@ -47,7 +47,8 @@ from database import (
     get_document_data, delete_document, record_sb_transaction,
     resequence_all_accounts, reconcile_books, get_all_balances,
     record_cash_book_transaction, update_cash_book_transaction, record_bank_book_transaction,
-    calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment
+    calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment,
+    ensure_rd_installments_populated, update_rd_installment, delete_rd_installment, add_custom_rd_installment, recalculate_rd_installments_balances
 )
 
 try:
@@ -3727,6 +3728,59 @@ def render_recurring_deposits():
                     st.rerun()
                 else:
                     st.info("All installments for this RD have already been paid.")
+                    
+            st.markdown("---")
+            with st.expander("✏️ Correct / Edit / Delete Previously Entered Installments"):
+                st.caption(f"Fix wrong payment dates, amounts, or remove installments for **{chosen_rd_str}**:")
+                t2_inst_list = ensure_rd_installments_populated(rd_id)
+                if t2_inst_list:
+                    t2_inst_dict = {f"Inst #{r[1]} | {pdf_generator.format_date_str(r[2])} | ₹{r[5]:,.2f} | {r[7]} (ID: {r[0]})": r for r in t2_inst_list}
+                    t2_chosen_lbl = st.selectbox("Choose Installment to Modify", list(t2_inst_dict.keys()), key=f"t2_sel_inst_{rd_id}")
+                    t2_row = t2_inst_dict[t2_chosen_lbl]
+                    t2_iid, t2_ino, t2_pdate, t2_part, t2_dr, t2_cr, t2_bal, t2_pm, t2_vno, t2_narr = t2_row
+                    
+                    try:
+                        t2_pdate_dt = pd.to_datetime(t2_pdate).date() if t2_pdate else date.today()
+                    except Exception:
+                        t2_pdate_dt = date.today()
+                        
+                    col_t2_1, col_t2_2 = st.columns(2)
+                    with col_t2_1:
+                        t2_edit_date = st.date_input("Correct Payment Date", value=t2_pdate_dt, format="DD-MM-YYYY", key=f"t2_pdate_{t2_iid}")
+                        t2_edit_cr = st.number_input("Correct Amount (₹)", min_value=0.0, value=float(t2_cr), step=500.0, key=f"t2_cr_{t2_iid}")
+                    with col_t2_2:
+                        t2_pm_opts = ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)", "State Bank of India"]
+                        t2_pm_idx = 0 if "union" in str(t2_pm).lower() else (1 if "cash" in str(t2_pm).lower() else 2)
+                        t2_edit_pm = st.selectbox("Payment Mode", t2_pm_opts, index=t2_pm_idx, key=f"t2_pm_{t2_iid}")
+                        t2_edit_part = st.text_input("Particulars", value=str(t2_part), key=f"t2_part_{t2_iid}")
+                    
+                    col_t2_b1, col_t2_b2 = st.columns([3, 1])
+                    with col_t2_b1:
+                        if st.button("💾 Save Installment Date & Details", key=f"t2_save_{t2_iid}", type="primary", use_container_width=True):
+                            pm_str = "Union Bank of India" if "Union" in t2_edit_pm else ("Cash" if "Cash" in t2_edit_pm else "State Bank of India")
+                            success, msg = update_rd_installment(t2_iid, rd_id, t2_edit_date, t2_edit_cr, pm_str, t2_edit_part, str(t2_narr))
+                            clear_db_cache()
+                            if success:
+                                st.success("✅ Installment corrected & synced with all books successfully!")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {msg}")
+                    with col_t2_b2:
+                        with st.popover("🗑️ Delete"):
+                            st.error(f"Delete Inst #{t2_ino} ({t2_pdate})?")
+                            st.caption("Will reverse voucher and adjust balances.")
+                            if st.button("Confirm Delete", key=f"t2_del_{t2_iid}", type="primary", use_container_width=True):
+                                success, msg = delete_rd_installment(t2_iid, rd_id)
+                                clear_db_cache()
+                                if success:
+                                    st.success(f"✅ {msg}")
+                                    time.sleep(0.5)
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {msg}")
+                else:
+                    st.info("No installments recorded for this RD account yet.")
         else:
             st.info("No active recurring deposits found.")
 
@@ -4049,153 +4103,252 @@ th {{ background-color: #ebf5fb; }}
                 rd_op_bal_dt = c_created_dt
 
             st.markdown("---")
-            col_e1, col_e2 = st.columns(2)
+            subtab_rd1, subtab_rd2 = st.tabs(["⚙️ RD Master Account Details", "📋 Edit / Delete Individual Installments"])
             
-            with col_e1:
-                edit_rd_no = st.text_input("RD Account Number", value=str(c_rd_no), key=f"edit_rd_no_{c_rd_id}")
-                edit_rd_cust_label = st.selectbox("Assigned Customer", list(cust_all_dict.keys()), index=cust_idx, key=f"edit_rd_cust_{c_rd_id}")
-                edit_rd_cust_id = cust_all_dict[edit_rd_cust_label]
-                edit_scheme = st.text_input("Scheme Name", value=str(c_scheme), key=f"edit_scheme_{c_rd_id}")
-                edit_col_balance = st.number_input(
-                    "💰 Total Amount Paid / Deposited (₹)", 
-                    min_value=0.0, 
-                    value=float(c_col_bal) if c_col_bal is not None else float(c_monthly * c_paid), 
-                    step=1000.0, 
-                    key=f"edit_col_bal_{c_rd_id}",
-                    help="Enter whatever total amount the customer has paid (e.g. ₹12,25,000.00)"
-                )
-                edit_monthly = st.number_input("Monthly Installment (₹)", min_value=0.0, value=float(c_monthly), step=500.0, key=f"edit_monthly_{c_rd_id}")
-            
-            with col_e2:
-                edit_tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=int(c_tenure_days or (c_tenure * 30)), step=10, key=f"edit_tenure_days_{c_rd_id}")
-                edit_tenure = max(1, int(round(edit_tenure_days / 30.0)))
-                st.caption(f"🗓️ Equivalent Tenure: ~**{edit_tenure} Months** ({edit_tenure_days} Days)")
-                edit_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(c_rate), step=0.25, key=f"edit_rate_{c_rd_id}")
-                edit_paid = st.number_input("Installments Paid Count", min_value=0, max_value=120, value=int(c_paid), step=1, key=f"edit_paid_{c_rd_id}")
-                edit_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_nominee_{c_rd_id}")
-            
-            col_e3, col_e4 = st.columns(2)
-            with col_e3:
-                edit_status = st.selectbox("Account Status", ["ACTIVE", "CLOSED"], index=0 if c_status == 'ACTIVE' else 1, key=f"edit_status_{c_rd_id}")
-                edit_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_created_{c_rd_id}")
-                edit_op_bal_date = st.date_input("Opening Balance Date", value=rd_op_bal_dt, format="DD-MM-YYYY", key=f"edit_op_bal_{c_rd_id}")
+            with subtab_rd1:
+                col_e1, col_e2 = st.columns(2)
                 
-                rd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
-                rd_pm_idx = 0
-                if "cash" in str(c_pm).lower(): rd_pm_idx = 1
-                elif "sbi" in str(c_pm).lower() or "state bank" in str(c_pm).lower(): rd_pm_idx = 2
-                edit_rd_asset_lbl = st.selectbox("Funding / Settlement Asset Mode", list(rd_asset_opts.keys()), index=rd_pm_idx, key=f"edit_rd_asset_{c_rd_id}")
-                edit_rd_asset_code = rd_asset_opts[edit_rd_asset_lbl]
-                edit_rd_pay_mode = edit_rd_asset_lbl.split(" - ")[1]
-            with col_e4:
-                edit_mat_date = st.date_input("Maturity Date", value=c_mat_dt, format="DD-MM-YYYY", key=f"edit_mat_date_{c_rd_id}")
-                if edit_status == 'CLOSED':
-                    edit_closed_date = st.date_input("Closed Date", value=c_closed_dt, format="DD-MM-YYYY", key=f"edit_closed_date_{c_rd_id}")
-                else:
-                    edit_closed_date = None
-
-            # --- Live Automatic Recalculation Engine ---
-            # 1. Full Tenure Maturity (Quarterly Compounded Banking / RBI Standard):
-            calc_full_dep, calc_full_maturity, calc_full_interest = calculate_rd_maturity(edit_monthly, edit_rate, int(edit_tenure))
-            
-            # 2. Accrued Value for Installments Paid to Date:
-            calc_acc_paid, calc_acc_maturity, calc_acc_interest = calculate_rd_accrued_value(edit_monthly, edit_rate, int(edit_paid))
-            
-            st.markdown("---")
-            st.markdown("#### ⚡ Live Maturity Amount Selection")
-            
-            # Formulate options
-            calc_options = []
-            calc_options.append(f"🏦 Full Tenure Banking Maturity: ₹{calc_full_maturity:,.2f} (Deposits: ₹{calc_full_dep:,.2f} + Interest: ₹{calc_full_interest:,.2f})")
-            if edit_paid < edit_tenure and edit_paid > 0:
-                calc_options.append(f"📊 Accrued Value for {int(edit_paid)} Paid Installments: ₹{calc_acc_maturity:,.2f} (Paid: ₹{calc_acc_paid:,.2f} + Interest: ₹{calc_acc_interest:,.2f})")
-            if c_maturity and float(c_maturity) > 0 and round(float(c_maturity), 2) != calc_full_maturity:
-                calc_options.append(f"📄 Keep Currently Stored Amount: ₹{float(c_maturity):,.2f}")
-            calc_options.append("✍️ Enter Custom Manual Maturity Amount")
-            
-            calc_method = st.radio(
-                "Select Maturity Amount Calculation",
-                calc_options,
-                index=1 if (edit_status == 'CLOSED' or edit_paid < edit_tenure) else 0,
-                key=f"calc_method_{c_rd_id}"
-            )
-            
-            if "Full Tenure Banking Maturity" in calc_method:
-                final_maturity_amt = calc_full_maturity
-                final_interest = calc_full_interest
-                disp_principal = calc_full_dep
-            elif "Accrued Value" in calc_method:
-                final_maturity_amt = calc_acc_maturity
-                final_interest = calc_acc_interest
-                disp_principal = calc_acc_paid
-            elif "Keep Currently Stored" in calc_method:
-                final_maturity_amt = float(c_maturity)
-                final_interest = max(0.0, final_maturity_amt - edit_col_balance)
-                disp_principal = edit_col_balance
-            else:
-                final_maturity_amt = st.number_input(
-                    "Enter Custom Maturity Amount (₹)",
-                    min_value=0.0,
-                    value=float(c_maturity) if c_maturity else calc_full_maturity,
-                    step=1000.0,
-                    key=f"custom_mat_amt_{c_rd_id}"
-                )
-                final_interest = max(0.0, final_maturity_amt - edit_col_balance)
-                disp_principal = edit_col_balance
-            
-            m_col1, m_col2, m_col3 = st.columns(3)
-            m_col1.metric("💰 Expected / Paid Principal", f"₹{disp_principal:,.2f}")
-            m_col2.metric("📈 Calculated Interest", f"₹{final_interest:,.2f}")
-            m_col3.metric("🎯 Total Maturity Amount", f"₹{final_maturity_amt:,.2f}")
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            btn_col1, btn_col2 = st.columns([3, 1])
-            
-            with btn_col1:
-                if st.button("💾 Save & Sync RD Account (Update Ledgers, JVs & Books)", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
-                    edit_created_str = edit_created.strftime("%Y-%m-%d")
-                    edit_op_bal_str = edit_op_bal_date.strftime("%Y-%m-%d")
-                    edit_mat_str = edit_mat_date.strftime("%Y-%m-%d")
-                    closed_date_val = edit_closed_date.strftime("%Y-%m-%d") if (edit_status == 'CLOSED' and edit_closed_date) else (datetime.now(IST).strftime("%Y-%m-%d") if edit_status == 'CLOSED' else None)
-                    
-                    success, msg = update_rd_account_details(
-                        c_rd_id, edit_rd_cust_id, edit_rd_no, edit_monthly, edit_tenure, edit_rate,
-                        edit_paid, edit_col_balance, edit_nominee, edit_status,
-                        edit_created_str, closed_date_val, edit_rd_pay_mode, edit_rd_asset_code,
-                        new_op_bal_date=edit_op_bal_str, new_tenure_days=edit_tenure_days
+                with col_e1:
+                    edit_rd_no = st.text_input("RD Account Number", value=str(c_rd_no), key=f"edit_rd_no_{c_rd_id}")
+                    edit_rd_cust_label = st.selectbox("Assigned Customer", list(cust_all_dict.keys()), index=cust_idx, key=f"edit_rd_cust_{c_rd_id}")
+                    edit_rd_cust_id = cust_all_dict[edit_rd_cust_label]
+                    edit_scheme = st.text_input("Scheme Name", value=str(c_scheme), key=f"edit_scheme_{c_rd_id}")
+                    edit_col_balance = st.number_input(
+                        "💰 Total Amount Paid / Deposited (₹)", 
+                        min_value=0.0, 
+                        value=float(c_col_bal) if c_col_bal is not None else float(c_monthly * c_paid), 
+                        step=1000.0, 
+                        key=f"edit_col_bal_{c_rd_id}",
+                        help="Enter whatever total amount the customer has paid (e.g. ₹12,25,000.00)"
                     )
+                    edit_monthly = st.number_input("Monthly Installment (₹)", min_value=0.0, value=float(c_monthly), step=500.0, key=f"edit_monthly_{c_rd_id}")
+                
+                with col_e2:
+                    edit_tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=int(c_tenure_days or (c_tenure * 30)), step=10, key=f"edit_tenure_days_{c_rd_id}")
+                    edit_tenure = max(1, int(round(edit_tenure_days / 30.0)))
+                    st.caption(f"🗓️ Equivalent Tenure: ~**{edit_tenure} Months** ({edit_tenure_days} Days)")
+                    edit_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(c_rate), step=0.25, key=f"edit_rate_{c_rd_id}")
+                    edit_paid = st.number_input("Installments Paid Count", min_value=0, max_value=120, value=int(c_paid), step=1, key=f"edit_paid_{c_rd_id}")
+                    edit_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_nominee_{c_rd_id}")
+                
+                col_e3, col_e4 = st.columns(2)
+                with col_e3:
+                    edit_status = st.selectbox("Account Status", ["ACTIVE", "CLOSED"], index=0 if c_status == 'ACTIVE' else 1, key=f"edit_status_{c_rd_id}")
+                    edit_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_created_{c_rd_id}")
+                    edit_op_bal_date = st.date_input("Opening Balance Date", value=rd_op_bal_dt, format="DD-MM-YYYY", key=f"edit_op_bal_{c_rd_id}")
                     
-                    run_query("""
-                        UPDATE recurring_deposits 
-                        SET scheme_name = ?,
-                            maturity_date = ?,
-                            maturity_amount = ?,
-                            tenure_days = ?,
-                            tenure_months = ?
-                        WHERE rd_id = ?
-                    """, (edit_scheme, edit_mat_str, final_maturity_amt, edit_tenure_days, edit_tenure, c_rd_id), fetch=False)
-                    
-                    clear_db_cache()
-                    if success:
-                        st.success(f"✅ {msg}")
-                        time.sleep(0.5)
-                        st.rerun()
+                    rd_asset_opts = {"AST-102 - Union Bank of India": "AST-102", "AST-101 - Cash in Hand": "AST-101", "AST-103 - State Bank of India": "AST-103"}
+                    rd_pm_idx = 0
+                    if "cash" in str(c_pm).lower(): rd_pm_idx = 1
+                    elif "sbi" in str(c_pm).lower() or "state bank" in str(c_pm).lower(): rd_pm_idx = 2
+                    edit_rd_asset_lbl = st.selectbox("Funding / Settlement Asset Mode", list(rd_asset_opts.keys()), index=rd_pm_idx, key=f"edit_rd_asset_{c_rd_id}")
+                    edit_rd_asset_code = rd_asset_opts[edit_rd_asset_lbl]
+                    edit_rd_pay_mode = edit_rd_asset_lbl.split(" - ")[1]
+                with col_e4:
+                    edit_mat_date = st.date_input("Maturity Date", value=c_mat_dt, format="DD-MM-YYYY", key=f"edit_mat_date_{c_rd_id}")
+                    if edit_status == 'CLOSED':
+                        edit_closed_date = st.date_input("Closed Date", value=c_closed_dt, format="DD-MM-YYYY", key=f"edit_closed_date_{c_rd_id}")
                     else:
-                        st.error(f"❌ Failed to update RD: {msg}")
-            
-            with btn_col2:
-                with st.popover("🗑️ Delete RD"):
-                    st.error(f"Are you sure you want to delete RD #{edit_rd_no}?")
-                    st.caption("This will delete the RD and resequence without gaps.")
-                    if st.button("Confirm Delete Permanently", key=f"btn_del_rd_{c_rd_id}", type="primary", use_container_width=True):
-                        success, msg = delete_rd_entry(c_rd_id)
+                        edit_closed_date = None
+
+                # --- Live Automatic Recalculation Engine ---
+                calc_full_dep, calc_full_maturity, calc_full_interest = calculate_rd_maturity(edit_monthly, edit_rate, int(edit_tenure))
+                calc_acc_paid, calc_acc_maturity, calc_acc_interest = calculate_rd_accrued_value(edit_monthly, edit_rate, int(edit_paid))
+                
+                st.markdown("---")
+                st.markdown("#### ⚡ Live Maturity Amount Selection")
+                
+                calc_options = []
+                calc_options.append(f"🏦 Full Tenure Banking Maturity: ₹{calc_full_maturity:,.2f} (Deposits: ₹{calc_full_dep:,.2f} + Interest: ₹{calc_full_interest:,.2f})")
+                if edit_paid < edit_tenure and edit_paid > 0:
+                    calc_options.append(f"📊 Accrued Value for {int(edit_paid)} Paid Installments: ₹{calc_acc_maturity:,.2f} (Paid: ₹{calc_acc_paid:,.2f} + Interest: ₹{calc_acc_interest:,.2f})")
+                if c_maturity and float(c_maturity) > 0 and round(float(c_maturity), 2) != calc_full_maturity:
+                    calc_options.append(f"📄 Keep Currently Stored Amount: ₹{float(c_maturity):,.2f}")
+                calc_options.append("✍️ Enter Custom Manual Maturity Amount")
+                
+                calc_method = st.radio(
+                    "Select Maturity Amount Calculation",
+                    calc_options,
+                    index=1 if (edit_status == 'CLOSED' or edit_paid < edit_tenure) else 0,
+                    key=f"calc_method_{c_rd_id}"
+                )
+                
+                if "Full Tenure Banking Maturity" in calc_method:
+                    final_maturity_amt = calc_full_maturity
+                    final_interest = calc_full_interest
+                    disp_principal = calc_full_dep
+                elif "Accrued Value" in calc_method:
+                    final_maturity_amt = calc_acc_maturity
+                    final_interest = calc_acc_interest
+                    disp_principal = calc_acc_paid
+                elif "Keep Currently Stored" in calc_method:
+                    final_maturity_amt = float(c_maturity)
+                    final_interest = max(0.0, final_maturity_amt - edit_col_balance)
+                    disp_principal = edit_col_balance
+                else:
+                    final_maturity_amt = st.number_input(
+                        "Enter Custom Maturity Amount (₹)",
+                        min_value=0.0,
+                        value=float(c_maturity) if c_maturity else calc_full_maturity,
+                        step=1000.0,
+                        key=f"custom_mat_amt_{c_rd_id}"
+                    )
+                    final_interest = max(0.0, final_maturity_amt - edit_col_balance)
+                    disp_principal = edit_col_balance
+                
+                m_col1, m_col2, m_col3 = st.columns(3)
+                m_col1.metric("💰 Expected / Paid Principal", f"₹{disp_principal:,.2f}")
+                m_col2.metric("📈 Calculated Interest", f"₹{final_interest:,.2f}")
+                m_col3.metric("🎯 Total Maturity Amount", f"₹{final_maturity_amt:,.2f}")
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                btn_col1, btn_col2 = st.columns([3, 1])
+                
+                with btn_col1:
+                    if st.button("💾 Save & Sync RD Account (Update Ledgers, JVs & Books)", key=f"btn_save_rd_{c_rd_id}", use_container_width=True, type="primary"):
+                        edit_created_str = edit_created.strftime("%Y-%m-%d")
+                        edit_op_bal_str = edit_op_bal_date.strftime("%Y-%m-%d")
+                        edit_mat_str = edit_mat_date.strftime("%Y-%m-%d")
+                        closed_date_val = edit_closed_date.strftime("%Y-%m-%d") if (edit_status == 'CLOSED' and edit_closed_date) else (datetime.now(IST).strftime("%Y-%m-%d") if edit_status == 'CLOSED' else None)
+                        
+                        success, msg = update_rd_account_details(
+                            c_rd_id, edit_rd_cust_id, edit_rd_no, edit_monthly, edit_tenure, edit_rate,
+                            edit_paid, edit_col_balance, edit_nominee, edit_status,
+                            edit_created_str, closed_date_val, edit_rd_pay_mode, edit_rd_asset_code,
+                            new_op_bal_date=edit_op_bal_str, new_tenure_days=edit_tenure_days
+                        )
+                        
+                        run_query("""
+                            UPDATE recurring_deposits 
+                            SET scheme_name = ?,
+                                maturity_date = ?,
+                                maturity_amount = ?,
+                                tenure_days = ?,
+                                tenure_months = ?
+                            WHERE rd_id = ?
+                        """, (edit_scheme, edit_mat_str, final_maturity_amt, edit_tenure_days, edit_tenure, c_rd_id), fetch=False)
+                        
                         clear_db_cache()
                         if success:
                             st.success(f"✅ {msg}")
                             time.sleep(0.5)
                             st.rerun()
                         else:
-                            st.error(f"❌ Failed to delete RD: {msg}")
+                            st.error(f"❌ Failed to update RD: {msg}")
+                
+                with btn_col2:
+                    with st.popover("🗑️ Delete RD"):
+                        st.error(f"Are you sure you want to delete RD #{edit_rd_no}?")
+                        st.caption("This will delete the RD and resequence without gaps.")
+                        if st.button("Confirm Delete Permanently", key=f"btn_del_rd_{c_rd_id}", type="primary", use_container_width=True):
+                            success, msg = delete_rd_entry(c_rd_id)
+                            clear_db_cache()
+                            if success:
+                                st.success(f"✅ {msg}")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to delete RD: {msg}")
+
+            with subtab_rd2:
+                st.markdown("### 📋 Manage & Correct Individual RD Installments")
+                st.caption(f"View, correct wrong dates/amounts, or delete installments specifically for Account **{c_rd_no}** ({c_name}):")
+                
+                inst_list = ensure_rd_installments_populated(c_rd_id)
+                if inst_list:
+                    df_inst = pd.DataFrame(inst_list, columns=["ID", "Inst No", "Payment Date", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Mode", "Voucher No", "Narration"])
+                    df_inst_formatted = format_df_dates(df_inst)
+                    st.dataframe(df_inst_formatted, use_container_width=True)
+                    
+                    st.markdown("---")
+                    st.markdown("#### ✏️ Select Installment to Edit or Delete")
+                    
+                    inst_dict = {}
+                    for row in inst_list:
+                        i_id, i_no, i_pdate, i_part, i_dr, i_cr, i_bal, i_pmode, i_vno, i_narr = row
+                        i_lbl = f"Inst #{i_no} | Date: {pdf_generator.format_date_str(i_pdate)} | ₹{i_cr:,.2f} | {i_pmode} (Voucher: {i_vno} | ID: {i_id})"
+                        inst_dict[i_lbl] = row
+                        
+                    chosen_inst_lbl = st.selectbox("Choose Installment", list(inst_dict.keys()), key=f"sel_inst_edit_{c_rd_id}")
+                    chosen_inst_row = inst_dict[chosen_inst_lbl]
+                    
+                    c_inst_id, c_inst_no, c_pdate, c_part, c_dr, c_cr, c_bal, c_pmode, c_vno, c_narr = chosen_inst_row
+                    
+                    try:
+                        c_pdate_dt = pd.to_datetime(c_pdate).date() if c_pdate else date.today()
+                    except Exception:
+                        c_pdate_dt = date.today()
+                        
+                    col_ie1, col_ie2 = st.columns(2)
+                    with col_ie1:
+                        new_inst_date = st.date_input("Correct Payment Date", value=c_pdate_dt, format="DD-MM-YYYY", key=f"edit_pdate_{c_inst_id}")
+                        new_inst_no = st.text_input("Installment No / Reference", value=str(c_inst_no), key=f"edit_instno_{c_inst_id}")
+                        new_inst_cr = st.number_input("Credit / Deposit Amount (₹)", min_value=0.0, value=float(c_cr), step=500.0, key=f"edit_cr_{c_inst_id}")
+                    with col_ie2:
+                        pmode_opts = ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)", "State Bank of India"]
+                        pmode_idx = 0
+                        if "cash" in str(c_pmode).lower(): pmode_idx = 1
+                        elif "sbi" in str(c_pmode).lower() or "state bank" in str(c_pmode).lower(): pmode_idx = 2
+                        new_inst_pmode = st.selectbox("Payment Mode", pmode_opts, index=pmode_idx, key=f"edit_pmode_{c_inst_id}")
+                        new_inst_part = st.text_input("Particulars", value=str(c_part), key=f"edit_part_{c_inst_id}")
+                        new_inst_narr = st.text_input("Narration / Remarks", value=str(c_narr), key=f"edit_narr_{c_inst_id}")
+                        
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    col_ib1, col_ib2 = st.columns([3, 1])
+                    with col_ib1:
+                        if st.button("💾 Save Installment Changes", key=f"btn_save_inst_{c_inst_id}", type="primary", use_container_width=True):
+                            pmode_name = "Union Bank of India" if "Union" in new_inst_pmode else ("Cash" if "Cash" in new_inst_pmode else "State Bank of India")
+                            success, msg = update_rd_installment(
+                                c_inst_id, c_rd_id, new_inst_date, new_inst_cr, pmode_name, new_inst_part, new_inst_narr
+                            )
+                            clear_db_cache()
+                            if success:
+                                st.success(f"✅ Installment #{new_inst_no} updated successfully on {new_inst_date.strftime('%d-%m-%Y')}!")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Error updating installment: {msg}")
+                    with col_ib2:
+                        with st.popover("🗑️ Delete Installment"):
+                            st.error(f"Delete Installment #{c_inst_no} ({pdf_generator.format_date_str(c_pdate)} - ₹{c_cr:,.2f})?")
+                            st.caption("This will remove the installment row, reverse cash/bank vouchers, and update running balances.")
+                            if st.button("Confirm Delete", key=f"btn_del_inst_{c_inst_id}", type="primary", use_container_width=True):
+                                success, msg = delete_rd_installment(c_inst_id, c_rd_id)
+                                clear_db_cache()
+                                if success:
+                                    st.success(f"✅ {msg}")
+                                    time.sleep(0.5)
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Error deleting installment: {msg}")
+                else:
+                    st.info("No installments recorded for this RD account yet.")
+                    
+                st.markdown("---")
+                with st.expander("➕ Add Past / Missed Installment Entry"):
+                    st.caption("Manually insert an installment for a past date with automatic voucher and ledger generation.")
+                    col_ai1, col_ai2 = st.columns(2)
+                    with col_ai1:
+                        add_inst_no = st.text_input("Installment No", value=str(int(c_paid) + 1), key=f"add_inst_no_{c_rd_id}")
+                        add_inst_date = st.date_input("Installment Date", value=date.today(), format="DD-MM-YYYY", key=f"add_inst_date_{c_rd_id}")
+                        add_inst_amt = st.number_input("Amount (₹)", min_value=0.0, value=float(c_monthly), step=500.0, key=f"add_inst_amt_{c_rd_id}")
+                    with col_ai2:
+                        add_inst_pmode = st.selectbox("Payment Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)", "State Bank of India"], key=f"add_inst_pmode_{c_rd_id}")
+                        add_inst_part = st.text_input("Particulars", value=f"Installment #{add_inst_no} Deposit", key=f"add_inst_part_{c_rd_id}")
+                        add_inst_narr = st.text_input("Narration", value=f"RD Installment #{add_inst_no}", key=f"add_inst_narr_{c_rd_id}")
+                        
+                    if st.button("➕ Record Missed Installment", key=f"btn_add_missed_inst_{c_rd_id}", type="primary", use_container_width=True):
+                        pm_str = "Union Bank of India" if "Union" in add_inst_pmode else ("Cash" if "Cash" in add_inst_pmode else "State Bank of India")
+                        success, msg = add_custom_rd_installment(
+                            c_rd_id, add_inst_no, add_inst_date, add_inst_amt, pm_str, add_inst_part, add_inst_narr
+                        )
+                        clear_db_cache()
+                        if success:
+                            st.success(f"✅ {msg}")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Error adding installment: {msg}")
         else:
             st.info("No Recurring Deposits available to edit.")
 

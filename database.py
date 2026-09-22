@@ -2207,6 +2207,237 @@ def record_rd_installment(rd_id, inst_no, pay_date, amount, payment_mode="Bank",
         return False, str(e)
 
 
+def recalculate_rd_installments_balances(rd_id):
+    """
+    Recalculates progressive running balances for all installments of an RD in chronological order
+    and updates collected_balance and installments_paid in recurring_deposits.
+    """
+    rows = run_query("""
+        SELECT id, debit_amount, credit_amount, installment_no 
+        FROM rd_installments 
+        WHERE rd_id = ? 
+        ORDER BY payment_date ASC, id ASC
+    """, (rd_id,))
+    
+    if not rows:
+        run_query("UPDATE recurring_deposits SET collected_balance = 0, installments_paid = 0 WHERE rd_id = ?", (rd_id,), fetch=False)
+        clear_db_cache()
+        return
+        
+    curr_bal = 0.0
+    total_credit = 0.0
+    total_paid_installments = 0
+    
+    for r in rows:
+        r_id, dr, cr, inst_no = r
+        dr = float(dr or 0.0)
+        cr = float(cr or 0.0)
+        curr_bal += (cr - dr)
+        total_credit += cr
+        run_query("UPDATE rd_installments SET balance = ? WHERE id = ?", (curr_bal, r_id), fetch=False)
+        
+    rd_res = run_query("SELECT monthly_amount FROM recurring_deposits WHERE rd_id = ?", (rd_id,))
+    monthly_amt = float(rd_res[0][0]) if rd_res and rd_res[0] and rd_res[0][0] else 0.0
+    
+    paid_count = max(0, int(round(total_credit / monthly_amt))) if monthly_amt > 0 else len(rows)
+    run_query("UPDATE recurring_deposits SET collected_balance = ?, installments_paid = ? WHERE rd_id = ?", (total_credit, paid_count, rd_id), fetch=False)
+    clear_db_cache()
+
+
+def ensure_rd_installments_populated(rd_id):
+    """
+    Ensures that rd_installments table has concrete persistent rows for this rd_id.
+    If empty, reconstructs them from Bank Book, Cash Book, and JVs and saves them.
+    """
+    existing = run_query("""
+        SELECT id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration 
+        FROM rd_installments 
+        WHERE rd_id = ? 
+        ORDER BY payment_date ASC, id ASC
+    """, (rd_id,))
+    
+    if existing and len(existing) > 0:
+        return existing
+        
+    reconstructed = get_rd_ledger_rows(rd_id)
+    if not reconstructed:
+        return []
+        
+    for r in reconstructed:
+        run_query("""
+            INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            rd_id,
+            str(r.get("installment_no", "")),
+            str(r.get("payment_date", ""))[:10],
+            str(r.get("particulars", "RD Installment")),
+            float(r.get("debit_amount", 0.0) or 0.0),
+            float(r.get("credit_amount", 0.0) or 0.0),
+            float(r.get("balance", 0.0) or 0.0),
+            str(r.get("payment_mode", "Bank")),
+            str(r.get("voucher_no", "")),
+            str(r.get("narration", "")),
+            str(r.get("payment_date", ""))[:10]
+        ), fetch=False)
+        
+    clear_db_cache()
+    return run_query("""
+        SELECT id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration 
+        FROM rd_installments 
+        WHERE rd_id = ? 
+        ORDER BY payment_date ASC, id ASC
+    """, (rd_id,))
+
+
+def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, particulars, narration):
+    """
+    Updates an installment's date, amount, payment mode, particulars, narration.
+    Syncs changes across rd_installments, bank_book, cash_book, and journal_vouchers.
+    """
+    try:
+        inst_res = run_query("SELECT id, voucher_no, payment_mode, credit_amount, installment_no FROM rd_installments WHERE id = ?", (inst_id,))
+        if not inst_res:
+            return False, "Installment not found"
+            
+        _, old_vno, old_pm, old_amt, inst_no = inst_res[0]
+        pay_date_str = str(payment_date)[:10]
+        amount = float(amount or 0.0)
+        
+        # 1. Update rd_installments
+        run_query("""
+            UPDATE rd_installments 
+            SET payment_date = ?, credit_amount = ?, payment_mode = ?, particulars = ?, narration = ?
+            WHERE id = ?
+        """, (pay_date_str, amount, payment_mode, particulars, narration, inst_id), fetch=False)
+        
+        # 2. Sync with bank_book / cash_book & JV
+        if old_vno:
+            # Check bank_book
+            run_query("""
+                UPDATE bank_book 
+                SET date = ?, credit_amount = ?, narration = ?, particulars = ?
+                WHERE voucher_no = ?
+            """, (pay_date_str, amount, narration or f"RD Installment #{inst_no}", particulars or f"RD #{rd_id} - Inst #{inst_no}", old_vno), fetch=False)
+            
+            # Check cash_book
+            run_query("""
+                UPDATE cash_book 
+                SET date = ?, credit_amount = ?, narration = ?, particulars = ?
+                WHERE voucher_no = ?
+            """, (pay_date_str, amount, narration or f"RD Installment #{inst_no}", particulars or f"RD #{rd_id} - Inst #{inst_no}", old_vno), fetch=False)
+            
+            # Update journal_vouchers
+            run_query("""
+                UPDATE journal_vouchers 
+                SET voucher_date = ?
+                WHERE narration LIKE ?
+            """, (pay_date_str, f"%{old_vno}%"), fetch=False)
+            
+            # Update jv_entries amounts
+            jv_rows = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{old_vno}%",))
+            if jv_rows:
+                for j in jv_rows:
+                    run_query("UPDATE jv_entries SET debit = CASE WHEN debit > 0 THEN ? ELSE debit END, credit = CASE WHEN credit > 0 THEN ? ELSE credit END WHERE jv_id = ?", (amount, amount, j[0]), fetch=False)
+        
+        # 3. Recalculate progressive balances
+        recalculate_rd_installments_balances(rd_id)
+        return True, "Installment updated successfully!"
+    except Exception as e:
+        return False, str(e)
+
+
+def delete_rd_installment(inst_id, rd_id):
+    """
+    Deletes an installment and cascades removal from bank/cash book and journal vouchers.
+    Recalculates progressive balances and updates RD totals.
+    """
+    try:
+        inst_res = run_query("SELECT id, voucher_no, payment_mode, credit_amount, installment_no FROM rd_installments WHERE id = ?", (inst_id,))
+        if not inst_res:
+            return False, "Installment not found"
+            
+        _, old_vno, old_pm, old_amt, inst_no = inst_res[0]
+        
+        # 1. Delete from rd_installments
+        run_query("DELETE FROM rd_installments WHERE id = ?", (inst_id,), fetch=False)
+        
+        # 2. Delete from bank_book / cash_book & JV
+        if old_vno:
+            if "BB" in str(old_vno).upper():
+                bb_row = run_query("SELECT id FROM bank_book WHERE voucher_no = ?", (old_vno,))
+                if bb_row:
+                    delete_bank_book_entry(bb_row[0][0])
+            elif "CB" in str(old_vno).upper():
+                cb_row = run_query("SELECT id FROM cash_book WHERE voucher_no = ?", (old_vno,))
+                if cb_row:
+                    delete_cash_book_entry(cb_row[0][0])
+            else:
+                jv_rows = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{old_vno}%",))
+                if jv_rows:
+                    for j in jv_rows:
+                        run_query("DELETE FROM jv_entries WHERE jv_id = ?", (j[0],), fetch=False)
+                        run_query("DELETE FROM journal_vouchers WHERE jv_id = ?", (j[0],), fetch=False)
+                        
+        # 3. Recalculate balances
+        recalculate_rd_installments_balances(rd_id)
+        return True, "Installment deleted successfully!"
+    except Exception as e:
+        return False, str(e)
+
+
+def add_custom_rd_installment(rd_id, inst_no, payment_date, amount, payment_mode, particulars, narration):
+    """
+    Adds a custom installment on a specific date with voucher generation and balance recalculation.
+    """
+    try:
+        rd_info = run_query("SELECT customer_id, COALESCE(rd_no, 'RD-' || CAST(rd_id AS TEXT)) FROM recurring_deposits WHERE rd_id = ?", (rd_id,))
+        if not rd_info:
+            return False, "RD not found"
+        cust_id, rd_no = rd_info[0]
+        
+        amount = float(amount or 0.0)
+        pay_date_str = str(payment_date)[:10]
+        today_time = f"{pay_date_str} 10:00"
+        
+        asset_code = "AST-101"
+        if "union" in str(payment_mode).lower():
+            asset_code = "AST-102"
+        elif "sbi" in str(payment_mode).lower() or "state bank" in str(payment_mode).lower():
+            asset_code = "AST-103"
+            
+        voucher_no = ""
+        part_txt = particulars if particulars else f"RD #{rd_id} - Inst #{inst_no}"
+        narr_txt = narration if narration else f"RD Installment #{inst_no} via {payment_mode}"
+        
+        jv_result = post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{inst_no}) via {payment_mode}", asset_code, "LIA-103", amount, voucher_date=pay_date_str)
+        if jv_result:
+            new_bal = get_account_balance_from_jv(asset_code)
+            if asset_code == 'AST-101':
+                voucher_no = generate_cash_voucher_no()
+                run_query("""
+                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (pay_date_str, voucher_no, part_txt, 0, amount, new_bal, asset_code, narr_txt, today_time), fetch=False)
+            else:
+                bank_name = "Union Bank of India" if asset_code == 'AST-102' else "State Bank of India"
+                voucher_no = generate_bank_voucher_no()
+                run_query("""
+                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (pay_date_str, voucher_no, part_txt, 0, amount, new_bal, bank_name, asset_code, narr_txt, today_time), fetch=False)
+                
+        run_query("""
+            INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
+            VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?)
+        """, (rd_id, str(inst_no), pay_date_str, part_txt, amount, payment_mode, voucher_no, narr_txt, today_time), fetch=False)
+        
+        recalculate_rd_installments_balances(rd_id)
+        return True, f"Installment #{inst_no} added successfully!"
+    except Exception as e:
+        return False, str(e)
+
+
 def get_rd_ledger_rows(rd_id):
     """
     Returns the chronologically ordered passbook/ledger statement rows for a recurring deposit.

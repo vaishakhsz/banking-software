@@ -16,10 +16,12 @@ st.set_page_config(
 
 import pandas as pd
 from datetime import datetime, date, timedelta
+import calendar
 import io
 import os
 import time
 import re
+import psycopg2
 import plotly.express as px
 import plotly.graph_objects as go
 import pytz
@@ -41,7 +43,11 @@ from database import (
     update_personal_loan_details, update_gold_loan_details,
     create_or_link_personal_loan_opening, create_or_link_gold_loan_opening,
     update_fd_account_details, create_or_link_fd_opening,
-    update_rd_account_details, create_or_link_rd_opening
+    update_rd_account_details, create_or_link_rd_opening,
+    get_document_data, delete_document, record_sb_transaction,
+    resequence_all_accounts, reconcile_books, get_all_balances,
+    record_cash_book_transaction, update_cash_book_transaction, record_bank_book_transaction,
+    calculate_rd_maturity, calculate_rd_accrued_value
 )
 
 try:
@@ -2396,7 +2402,7 @@ def render_gold_loans():
                 )
                 
                 col_adm1, col_adm2 = st.columns(2)
-                new_gl_dmode = col_adm1.selectbox("Disbursal Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(d_mode or "") else 1, disabled=is_closed_gl, key=f"gl_ed_dmode_{sel_egl_id}")
+                new_gl_dmode = col_adm1.selectbox("Disbursal Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(eg_dmode or "") else 1, disabled=is_closed_gl, key=f"gl_ed_dmode_{sel_egl_id}")
                 new_gl_remarks = col_adm2.text_input("Remarks / Condition Notes", value=str(eg_rem or ""), disabled=is_closed_gl, key=f"gl_ed_rem_{sel_egl_id}")
                 
                 col_gldue1, col_gldue2 = st.columns(2)

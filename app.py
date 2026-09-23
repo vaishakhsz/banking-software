@@ -968,7 +968,7 @@ def render_personal_loans():
         st.markdown("### 3️⃣ Disbursal Account, Opening Balance & Guarantor Details")
         col_d1, col_d2, col_d3 = st.columns(3)
         disb_mode = col_d1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], key="pl_disb_mode")
-        opening_balance = col_d2.number_input("Opening Balance / Initial Due (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="pl_op_bal_amt", help="Initial outstanding due balance at opening. Defaults to Total Repayable (Principal + Interest).")
+        opening_balance = col_d2.number_input("Initial Outstanding Due / Balance (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="pl_op_bal_amt", help="Initial outstanding due balance at opening. Defaults to Total Repayable (Principal + Interest). Do not set to 0 for an active loan.")
         custom_loan_no = col_d3.text_input("Custom Loan Number (Optional - leave blank to auto-generate)", key="pl_cust_lno")
         
         g_col1, g_col2 = st.columns(2)
@@ -990,6 +990,8 @@ def render_personal_loans():
             cur_count = len(all_pl_data) + 1
             loan_no = custom_loan_no.strip() if custom_loan_no and custom_loan_no.strip() else f"PL-2026-{cur_count:04d}"
             voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{cur_count:03d}"
+            
+            final_initial_due = float(opening_balance) if float(opening_balance or 0) > 0 else float(tot_repayable)
             
             if "Cash" in disb_mode:
                 cur_cash = get_cash_balance()
@@ -1016,7 +1018,7 @@ def render_personal_loans():
             """, (
                 loan_no, selected_cust_id, str(sanction_date), principal, int_rate,
                 loan_scheme_name, tenure_days, tenure_months, tot_interest, tot_repayable,
-                installment, opening_balance, disb_mode, voucher_no,
+                installment, final_initial_due, disb_mode, voucher_no,
                 guarantor_name, guarantor_relation, guarantor_phone, guarantor_address,
                 loan_from_date, loan_to_date, first_emi_due, last_emi_due,
                 p_emi, i_emi,
@@ -1068,29 +1070,33 @@ def render_personal_loans():
             acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
             if acc_row:
                 acc_id, old_bal = acc_row[0]
-                new_bal = float(old_bal) + float(opening_balance)
+                new_bal = float(old_bal) + float(final_initial_due)
                 run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_bal, acc_id), fetch=False)
-                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", opening_balance, new_bal, str(sanction_date)), fetch=False)
+                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", final_initial_due, new_bal, str(sanction_date)), fetch=False)
             else:
-                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (selected_cust_acc, selected_cust_id, opening_balance, str(sanction_date)), fetch=False)
+                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (selected_cust_acc, selected_cust_id, final_initial_due, str(sanction_date)), fetch=False)
                 acc_lookup = run_query("SELECT id FROM accounts WHERE customer_id = ?", (selected_cust_id,))
                 acc_id = acc_lookup[0][0] if acc_lookup and acc_lookup[0] else None
                 if acc_id:
-                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", opening_balance, opening_balance, str(sanction_date)), fetch=False)
+                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", final_initial_due, final_initial_due, str(sanction_date)), fetch=False)
                 
             clear_db_cache()
-            st.success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{opening_balance:,.2f}**.")
+            st.success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{final_initial_due:,.2f}**.")
             time.sleep(0.5)
             st.rerun()
 
     with tab2:
         st.subheader("💳 Record Loan Repayment / Collect Installment")
-        active_loans = [r for r in all_pl_data if float(r[21] or 0) > 0 and r[29] not in ('CLOSED', 'SETTLED')]
+        active_loans = [
+            r for r in all_pl_data 
+            if r[29] not in ('CLOSED', 'SETTLED') and (float(r[21] or 0) > 0 or float(r[13] or r[7] or 0) > 0)
+        ]
         if active_loans:
             loan_dict = {}
             for r in active_loans:
                 inst_str = f"₹{float(r[14]):,.2f}/inst" if float(r[14] or 0) > 0 else "Flexible"
-                label = f"#{r[1]} - {r[3]} (Acc: {r[4]} | Due: ₹{float(r[21]):,.2f} | Plan: {inst_str})"
+                eff_due = float(r[21]) if float(r[21] or 0) > 0 else float(r[13] or r[7] or 0.0)
+                label = f"#{r[1]} - {r[3]} (Acc: {r[4]} | Due: ₹{eff_due:,.2f} | Plan: {inst_str})"
                 loan_dict[label] = r
                 
             sel_l_key = st.selectbox("1️⃣ Select Active Loan to Record Payment", list(loan_dict.keys()), key="rep_loan_sel")
@@ -1100,6 +1106,7 @@ def render_personal_loans():
              l_fdue, l_ldue, l_due, l_dmode, l_vno, l_gname, l_gphone, l_grel, l_gaddr,
              l_purp, l_stat, l_rem, l_ren_cnt, l_last_ren, l_str, l_city, l_state, l_pin) = sel_loan
             
+            l_due = float(l_due) if float(l_due or 0) > 0 else float(l_tot_rep or l_princ or 0.0)
             already_paid = max(0.0, float(l_tot_rep or l_princ) - float(l_due))
             
             with st.container(border=True):
@@ -1230,13 +1237,17 @@ def render_personal_loans():
 
     with tab3:
         st.subheader("🔄 Loan Renewal & Interest Reset / Rollover")
-        all_ren_loans = [r for r in all_pl_data if float(r[21] or 0) > 0 and r[29] not in ('CLOSED', 'SETTLED')]
+        all_ren_loans = [
+            r for r in all_pl_data 
+            if r[29] not in ('CLOSED', 'SETTLED') and (float(r[21] or 0) > 0 or float(r[13] or r[7] or 0) > 0)
+        ]
         
         if all_ren_loans:
             r_loan_dict = {}
             for r in all_ren_loans:
                 ren_str = f" [Cycle #{r[31]}]" if int(r[31] or 0) > 0 else ""
-                label = f"#{r[1]} - {r[3]} (Acc: {r[4]} | Due: ₹{float(r[21]):,.2f}{ren_str})"
+                eff_due = float(r[21]) if float(r[21] or 0) > 0 else float(r[13] or r[7] or 0.0)
+                label = f"#{r[1]} - {r[3]} (Acc: {r[4]} | Due: ₹{eff_due:,.2f}{ren_str})"
                 r_loan_dict[label] = r
                 
             sel_ren_key = st.selectbox("1️⃣ Select Active Loan to Renew / Rollover", list(r_loan_dict.keys()), key="pl_ren_sel")
@@ -1246,6 +1257,7 @@ def render_personal_loans():
              cur_fdue, cur_ldue, cur_due, cur_dmode, cur_vno, cur_gname, cur_gphone, cur_grel, cur_gaddr,
              cur_purp, cur_stat, cur_rem, cur_ren_cnt, cur_last_ren, cur_str, cur_city, cur_state, cur_pin) = sel_r_data
              
+            cur_due = float(cur_due) if float(cur_due or 0) > 0 else float(cur_tot_rep or cur_princ or 0.0)
             tot_orig_int = float(cur_tot_int or 0.0)
             tot_orig_rep = float(cur_tot_rep or (float(cur_princ) + tot_orig_int))
             cur_due_val = float(cur_due)
@@ -1836,13 +1848,15 @@ def render_gold_loans():
         st.markdown("### 4️⃣ Disbursal Mode & Opening Balance")
         col_dm1, col_dm2, col_dm3 = st.columns(3)
         disb_mode = col_dm1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0, key="gl_disb_mode")
-        opening_balance = col_dm2.number_input("Opening Balance / Initial Due (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="gl_op_bal_amt", help="Initial outstanding due balance at opening. Defaults to Total Repayable (Principal + Interest).")
+        opening_balance = col_dm2.number_input("Initial Outstanding Due / Balance (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="gl_op_bal_amt", help="Initial outstanding due balance at opening. Defaults to Total Repayable (Principal + Interest). Do not set to 0 for an active loan.")
         custom_gl_no = col_dm3.text_input("Custom Gold Loan Number (Optional - leave blank to auto-generate)", key="gl_cust_lno")
         remarks = st.text_input("Remarks / Condition Notes", value="Gold Pledged in Safe Vault", key="gl_remarks_input")
         
         if st.button("🪙 Confirm Appraisal & Disburse Gold Loan", use_container_width=True, type="primary", key="btn_confirm_gl_disb"):
             loan_no = custom_gl_no.strip() if custom_gl_no and custom_gl_no.strip() else f"GL-2026-{cur_gl_cnt:04d}"
             voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{cur_gl_cnt:03d}"
+            
+            final_initial_due = float(opening_balance) if float(opening_balance or 0) > 0 else float(tot_repayable)
             
             if "Cash" in disb_mode:
                 cur_cash = get_cash_balance()
@@ -1889,7 +1903,7 @@ def render_gold_loans():
                 round(int_rate / 12.0, 2), tenure_days, tenure_months, tot_interest, tot_repayable,
                 installment, p_emi, i_emi, i_emi,
                 loan_from, loan_to, first_due, last_due,
-                opening_balance, packet_no, locker_no, appraiser_name,
+                final_initial_due, packet_no, locker_no, appraiser_name,
                 disb_mode, voucher_no, remarks,
                 img_name, img_param
             ))
@@ -1939,23 +1953,30 @@ def render_gold_loans():
             acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
             if acc_row:
                 acc_id, old_bal = acc_row[0]
-                new_bal = float(old_bal) + float(opening_balance)
+                new_bal = float(old_bal) + float(final_initial_due)
                 run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_bal, acc_id), fetch=False)
-                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"GOLD LOAN DISBURSAL [{loan_no}] (DEBIT)", opening_balance, new_bal, str(sanction_date)), fetch=False)
+                run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"GOLD LOAN DISBURSAL [{loan_no}] (DEBIT)", final_initial_due, new_bal, str(sanction_date)), fetch=False)
             else:
-                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, opening_balance, str(sanction_date)), fetch=False)
+                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, final_initial_due, str(sanction_date)), fetch=False)
                 
             clear_db_cache()
-            st.success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{opening_balance:,.2f}**.")
+            st.success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{final_initial_due:,.2f}**.")
             time.sleep(0.5)
             st.rerun()
 
     with tab2:
         st.subheader("💳 Collect Gold Loan Installment / Repayment")
-        active_gl_loans = [r for r in all_gl_data if float(r[31] or 0) > 0 and r[37] not in ('CLOSED', 'CLOSED_RELEASED')]
+        active_gl_loans = [
+            r for r in all_gl_data 
+            if r[37] not in ('CLOSED', 'CLOSED_RELEASED') and (float(r[31] or 0) > 0 or float(r[22] or r[16] or 0) > 0)
+        ]
         
         if active_gl_loans:
-            gl_loan_dict = {f"#{r[1]} - {r[3]} (Packet: {r[32]} | Due: ₹{float(r[31]):,.2f} | Gold: {float(r[12]):.3f}g)": r for r in active_gl_loans}
+            gl_loan_dict = {}
+            for r in active_gl_loans:
+                eff_due = float(r[31]) if float(r[31] or 0) > 0 else float(r[22] or r[16] or 0.0)
+                label = f"#{r[1]} - {r[3]} (Packet: {r[32]} | Due: ₹{eff_due:,.2f} | Gold: {float(r[12]):.3f}g)"
+                gl_loan_dict[label] = r
             sel_gl_label = st.selectbox("1️⃣ Select Active Gold Loan Account", list(gl_loan_dict.keys()), key="gl_rep_sel")
             sel_gl_row = gl_loan_dict[sel_gl_label]
             (gl_id, gl_no, gl_cid, gl_cname, gl_cacc, gl_cphone, gl_sdate, gl_grate, gl_orn, gl_cnt,
@@ -1965,6 +1986,7 @@ def render_gold_loans():
              gl_vno, gl_stat, gl_rem, gl_ren_cnt, gl_last_ren, gl_str, gl_city, gl_state,
              gl_pin, gl_img_file, gl_has_photo) = sel_gl_row
              
+            gl_due = float(gl_due) if float(gl_due or 0) > 0 else float(gl_tot_rep or gl_princ or 0.0)
             already_paid_gl = max(0.0, float(gl_tot_rep or gl_princ) - float(gl_due))
             
             with st.container(border=True):
@@ -2097,13 +2119,17 @@ def render_gold_loans():
 
     with tab3:
         st.subheader("🔄 Gold / Jewel Loan Renewal & Pledge Rollover")
-        all_renewable_gl = [r for r in all_gl_data if float(r[31] or 0) > 0 and r[37] not in ('CLOSED', 'CLOSED_RELEASED')]
+        all_renewable_gl = [
+            r for r in all_gl_data 
+            if r[37] not in ('CLOSED', 'CLOSED_RELEASED') and (float(r[31] or 0) > 0 or float(r[22] or r[16] or 0) > 0)
+        ]
         
         if all_renewable_gl:
             gl_ren_dict = {}
             for g in all_renewable_gl:
                 ren_tag = f" [Cycle #{g[39]}]" if int(g[39] or 0) > 0 else ""
-                label = f"#{g[1]} - {g[3]} (Packet: {g[32]} | Due: ₹{float(g[31]):,.2f} | Gold: {float(g[12]):.3f}g{ren_tag})"
+                eff_due = float(g[31]) if float(g[31] or 0) > 0 else float(g[22] or g[16] or 0.0)
+                label = f"#{g[1]} - {g[3]} (Packet: {g[32]} | Due: ₹{eff_due:,.2f} | Gold: {float(g[12]):.3f}g{ren_tag})"
                 gl_ren_dict[label] = g
                 
             sel_gl_ren_key = st.selectbox("1️⃣ Select Active Gold Loan to Renew / Rollover", list(gl_ren_dict.keys()), key="gl_ren_sel")
@@ -2114,7 +2140,8 @@ def render_gold_loans():
              c_gl_from, c_gl_to, c_gl_fdue, c_gl_ldue, c_gl_due, c_gl_pkt, c_gl_lock, c_gl_appr, c_gl_dmode,
              c_gl_vno, c_gl_stat, c_gl_rem, c_gl_ren_cnt, c_gl_last_ren, c_gl_str, c_gl_city, c_gl_state,
              c_gl_pin, c_gl_img_file, c_gl_has_photo) = sel_gl_data
-            
+             
+            c_gl_due = float(c_gl_due) if float(c_gl_due or 0) > 0 else float(c_gl_tot_rep or c_gl_princ or 0.0)
             tot_orig_int = float(c_gl_tot_int or 0.0)
             tot_orig_rep = float(c_gl_tot_rep or (float(c_gl_princ) + tot_orig_int))
             cur_due_val = float(c_gl_due)

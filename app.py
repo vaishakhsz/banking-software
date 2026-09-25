@@ -6750,9 +6750,17 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
     st.rerun()
 
 with st.sidebar.container(border=True):
-    st.markdown("""<div style="font-size: 8.5px; text-align: center; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>""", unsafe_allow_html=True)
+    st.markdown("""<style>
+    [data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"]:last-of-type {
+        background: linear-gradient(145deg, #091e36 0%, #0f3156 50%, #154578 100%) !important;
+        border: 1px solid rgba(56, 189, 248, 0.4) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.15) !important;
+    }
+    </style>
+    <div style="font-size: 8.5px; text-align: center; text-transform: uppercase; color: #93c5fd; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>""", unsafe_allow_html=True)
 
-    col_s1, col_s2, col_s3 = st.columns([1.2, 2.6, 1.2])
+    col_s1, col_s2, col_s3 = st.columns([1.3, 2.4, 1.3])
     with col_s2:
         if os.path.exists("assets/vsquare_logo_opt.png"):
             st.image("assets/vsquare_logo_opt.png", use_container_width=True)
@@ -6762,11 +6770,11 @@ with st.sidebar.container(border=True):
             st.markdown('<div style="text-align: center; font-weight: 800; color: #38bdf8; font-size: 12px;">🚀 VSQUARE INFOTECH</div>', unsafe_allow_html=True)
 
     st.markdown("""<div style="display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 5px 0 3px 0;">
-<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.35); color: #bae6fd; padding: 2px 7px; border-radius: 14px; font-size: 10px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
-<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.35); color: #86efac; padding: 2px 7px; border-radius: 14px; font-size: 10px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
+<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(56, 189, 248, 0.2); border: 1px solid rgba(56, 189, 248, 0.5); color: #e0f2fe; padding: 2px 7px; border-radius: 14px; font-size: 10px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(34, 197, 94, 0.2); border: 1px solid rgba(34, 197, 94, 0.5); color: #bbf7d0; padding: 2px 7px; border-radius: 14px; font-size: 10px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
 </div>
 <div style="text-align: center; font-size: 9.5px;">
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #67e8f9; text-decoration: underline; font-weight: 500;">vsquareinfotech.co.in ↗</a>
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: underline; font-weight: 600; letter-spacing: 0.2px;">vsquareinfotech.co.in ↗</a>
 </div>""", unsafe_allow_html=True)
 
 # Header banner & Anti-truncation styles

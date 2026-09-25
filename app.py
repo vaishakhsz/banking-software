@@ -6750,15 +6750,7 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
     st.rerun()
 
 with st.sidebar.container(border=True):
-    st.markdown("""<style>
-    [data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"]:last-of-type {
-        background: linear-gradient(145deg, #091e36 0%, #0f3156 50%, #154578 100%) !important;
-        border: 1px solid rgba(56, 189, 248, 0.4) !important;
-        border-radius: 12px !important;
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.15) !important;
-    }
-    </style>
-    <div style="font-size: 8.5px; text-align: center; text-transform: uppercase; color: #93c5fd; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>""", unsafe_allow_html=True)
+    st.markdown("""<div style="font-size: 9px; text-align: center; text-transform: uppercase; color: #bae6fd; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>""", unsafe_allow_html=True)
 
     col_s1, col_s2, col_s3 = st.columns([1.3, 2.4, 1.3])
     with col_s2:

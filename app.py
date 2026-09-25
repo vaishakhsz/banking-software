@@ -6240,74 +6240,26 @@ if not get_login_status():
                 else:
                     st.error("❌ Invalid credentials.")
                     
-        vs_logo_b64 = get_vsquare_logo_b64()
-        logo_img_html = f'<img src="data:image/png;base64,{vs_logo_b64}" alt="VSQUARE INFOTECH" style="height: 38px; width: auto; object-fit: contain; max-width: 230px; display: block;" />' if vs_logo_b64 else '<span style="font-size: 15px; font-weight: 800; color: #1e3a8a; letter-spacing: 0.5px;">🚀 VSQUARE INFOTECH ↗</span>'
-
-        st.markdown(f"""
-        <div style="
-            margin-top: 24px;
-            padding: 18px 20px;
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
-            border-radius: 14px;
-            text-align: center;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
-        ">
-            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 8px;">
-                Designed, Hosted & Maintained by
-            </div>
-            <div style="margin-bottom: 12px; display: flex; justify-content: center;">
-                <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="
-                    text-decoration: none;
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                    transition: transform 0.2s;
-                ">
-                    {logo_img_html}
-                </a>
-            </div>
-            <div style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
-                <a href="tel:+918547469165" style="
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 5px;
-                    background: #f0f9ff;
-                    border: 1px solid #bae6fd;
-                    color: #0369a1;
-                    padding: 5px 13px;
-                    border-radius: 20px;
-                    font-size: 11.5px;
-                    font-weight: 600;
-                    text-decoration: none;
-                ">
-                    📞 +91 85474 69165
-                </a>
-                <a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 5px;
-                    background: #f0fdf4;
-                    border: 1px solid #bbf7d0;
-                    color: #15803d;
-                    padding: 5px 13px;
-                    border-radius: 20px;
-                    font-size: 11.5px;
-                    font-weight: 600;
-                    text-decoration: none;
-                ">
-                    💬 WhatsApp Support
-                </a>
-            </div>
-            <div style="font-size: 11px; color: #64748b; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: underline; font-weight: 600;">
-                    vsquareinfotech.co.in
-                </a>
-                <span style="color: #cbd5e1;">•</span>
-                <span>Enterprise Banking Solutions</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div style="font-size: 10px; text-align: center; text-transform: uppercase; color: #64748b; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 6px;">Designed, Hosted & Maintained by</div>', unsafe_allow_html=True)
+            col_lg1, col_lg2, col_lg3 = st.columns([1, 3, 1])
+            with col_lg2:
+                if os.path.exists("assets/vsquare_logo_opt.png"):
+                    st.image("assets/vsquare_logo_opt.png", use_container_width=True)
+                elif os.path.exists("assets/vsquare_logo.png"):
+                    st.image("assets/vsquare_logo.png", use_container_width=True)
+                else:
+                    st.markdown('<div style="text-align: center; font-size: 15px; font-weight: 800; color: #1e3a8a;">🚀 VSQUARE INFOTECH</div>', unsafe_allow_html=True)
+            
+            st.markdown("""<div style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; margin-bottom: 8px;">
+<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 5px; background: #f0f9ff; border: 1px solid #bae6fd; color: #0369a1; padding: 5px 13px; border-radius: 20px; font-size: 11.5px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 5px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; padding: 5px 13px; border-radius: 20px; font-size: 11.5px; font-weight: 600; text-decoration: none;">💬 WhatsApp Support</a>
+</div>
+<div style="text-align: center; font-size: 11px; color: #64748b; display: flex; align-items: center; justify-content: center; gap: 8px;">
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: underline; font-weight: 600;">vsquareinfotech.co.in ↗</a>
+<span style="color: #cbd5e1;">•</span>
+<span>Enterprise Banking Solutions</span>
+</div>""", unsafe_allow_html=True)
         st.stop()
 
 # --- SIDEBAR STYLING ---
@@ -6800,93 +6752,24 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
-vs_sidebar_logo_b64 = get_vsquare_logo_b64()
-sidebar_logo_html = f'''
-<div style="margin-bottom: 10px; display: flex; justify-content: center;">
-    <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background: #ffffff;
-        padding: 6px 14px;
-        border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-    ">
-        <img src="data:image/png;base64,{vs_sidebar_logo_b64}" alt="VSQUARE INFOTECH" style="height: 24px; width: auto; object-fit: contain; max-width: 170px; display: block;" />
-    </a>
-</div>
-''' if vs_sidebar_logo_b64 else '''
-<div style="margin-bottom: 8px;">
-    <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="
-        font-size: 14px; 
-        font-weight: 800; 
-        color: #38bdf8; 
-        text-decoration: none;
-        letter-spacing: 0.5px;
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-    ">
-        🚀 VSQUARE INFOTECH ↗
-    </a>
-</div>
-'''
+with st.sidebar.container(border=True):
+    st.markdown('<div style="font-size: 9.5px; text-align: center; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 6px;">Designed, Hosted & Maintained by</div>', unsafe_allow_html=True)
+    col_sb1, col_sb2, col_sb3 = st.sidebar.columns([1, 4, 1])
+    with col_sb2:
+        if os.path.exists("assets/vsquare_logo_opt.png"):
+            st.image("assets/vsquare_logo_opt.png", use_container_width=True)
+        elif os.path.exists("assets/vsquare_logo.png"):
+            st.image("assets/vsquare_logo.png", use_container_width=True)
+        else:
+            st.markdown('<div style="text-align: center; font-weight: 800; color: #38bdf8;">🚀 VSQUARE INFOTECH</div>', unsafe_allow_html=True)
 
-st.sidebar.markdown(f"""
-<div style="
-    background: linear-gradient(145deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.95));
-    border: 1px solid rgba(56, 189, 248, 0.25);
-    border-radius: 12px;
-    padding: 14px 12px;
-    margin-top: 12px;
-    margin-bottom: 6px;
-    text-align: center;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-">
-    <div style="font-size: 9.5px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 8px;">
-        Designed, Hosted & Maintained by
-    </div>
-    {sidebar_logo_html}
-    <div style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;">
-        <a href="tel:+918547469165" style="
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            background: rgba(56, 189, 248, 0.14);
-            border: 1px solid rgba(56, 189, 248, 0.35);
-            color: #bae6fd;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            text-decoration: none;
-        ">
-            📞 +91 85474 69165
-        </a>
-        <a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            background: rgba(34, 197, 94, 0.14);
-            border: 1px solid rgba(34, 197, 94, 0.35);
-            color: #86efac;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            text-decoration: none;
-        ">
-            💬 WhatsApp
-        </a>
-    </div>
-    <div style="font-size: 10.5px; color: #64748b;">
-        <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: underline; font-weight: 500;">
-            vsquareinfotech.co.in
-        </a>
-    </div>
+    st.markdown("""<div style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; margin: 8px 0 6px 0;">
+<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.35); color: #bae6fd; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.35); color: #86efac; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
 </div>
-""", unsafe_allow_html=True)
+<div style="text-align: center; font-size: 10.5px;">
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: underline; font-weight: 500;">vsquareinfotech.co.in ↗</a>
+</div>""", unsafe_allow_html=True)
 
 # Header banner & Anti-truncation styles
 st.markdown("""

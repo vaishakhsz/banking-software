@@ -6712,6 +6712,74 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
+st.sidebar.markdown("""
+<div style="
+    background: linear-gradient(145deg, rgba(15, 23, 42, 0.75), rgba(30, 41, 59, 0.85));
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-top: 10px;
+    margin-bottom: 6px;
+    text-align: center;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+">
+    <div style="font-size: 10px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.8px; font-weight: 600; line-height: 1.3;">
+        Designed, Hosted & Maintained by
+    </div>
+    <div style="margin: 5px 0 8px 0;">
+        <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="
+            font-size: 13.5px; 
+            font-weight: 700; 
+            color: #38bdf8; 
+            text-decoration: none;
+            letter-spacing: 0.4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        ">
+            🚀 VSquare Infotech ↗
+        </a>
+    </div>
+    <div style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;">
+        <a href="tel:+918547469165" style="
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            color: #bae6fd;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-decoration: none;
+        ">
+            📞 +91 85474 69165
+        </a>
+        <a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(34, 197, 94, 0.12);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #86efac;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-decoration: none;
+        ">
+            💬 WhatsApp
+        </a>
+    </div>
+    <div style="font-size: 10px; color: #64748b; margin-top: 4px;">
+        <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none;">
+            🌐 vsquareinfotech.co.in
+        </a>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
 # Header banner & Anti-truncation styles
 st.markdown("""
 <style>

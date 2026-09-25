@@ -6379,6 +6379,14 @@ st.sidebar.markdown("""
         background: transparent !important;
         border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
     }
+
+    /* Style for tech provider container card in sidebar (Option 1: Deep Midnight & Cyan Glow) */
+    [data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"]:last-of-type {
+        background: linear-gradient(145deg, #07192f 0%, #0d2744 50%, #113359 100%) !important;
+        border: 1px solid rgba(56, 189, 248, 0.45) !important;
+        border-radius: 14px !important;
+        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 12px rgba(56, 189, 248, 0.15) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 

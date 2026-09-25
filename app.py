@@ -6757,24 +6757,22 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
     st.session_state.username = ""
     st.rerun()
 
-with st.sidebar.container(border=True):
-    st.markdown("""<div style="font-size: 9px; text-align: center; text-transform: uppercase; color: #bae6fd; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>""", unsafe_allow_html=True)
+vs_logo_b64 = get_vsquare_logo_b64()
+if vs_logo_b64:
+    logo_part = f'<div style="margin: 6px 0; display: flex; justify-content: center;"><img src="data:image/png;base64,{vs_logo_b64}" alt="VSQUARE INFOTECH" style="height: 22px; width: auto; object-fit: contain; max-width: 130px; display: block;" /></div>'
+else:
+    logo_part = '<div style="margin: 5px 0; text-align: center; font-weight: 800; color: #38bdf8; font-size: 12px;">🚀 VSQUARE INFOTECH</div>'
 
-    col_s1, col_s2, col_s3 = st.columns([1.3, 2.4, 1.3])
-    with col_s2:
-        if os.path.exists("assets/vsquare_logo_opt.png"):
-            st.image("assets/vsquare_logo_opt.png", use_container_width=True)
-        elif os.path.exists("assets/vsquare_logo.png"):
-            st.image("assets/vsquare_logo.png", use_container_width=True)
-        else:
-            st.markdown('<div style="text-align: center; font-weight: 800; color: #38bdf8; font-size: 12px;">🚀 VSQUARE INFOTECH</div>', unsafe_allow_html=True)
-
-    st.markdown("""<div style="display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 5px 0 3px 0;">
-<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(56, 189, 248, 0.2); border: 1px solid rgba(56, 189, 248, 0.5); color: #e0f2fe; padding: 2px 7px; border-radius: 14px; font-size: 10px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
-<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(34, 197, 94, 0.2); border: 1px solid rgba(34, 197, 94, 0.5); color: #bbf7d0; padding: 2px 7px; border-radius: 14px; font-size: 10px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
+st.sidebar.markdown(f"""<div style="background: linear-gradient(145deg, #07192f 0%, #0d2744 50%, #113359 100%); border: 1px solid rgba(56, 189, 248, 0.45); border-radius: 14px; padding: 12px 10px; margin-top: 12px; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 12px rgba(56, 189, 248, 0.15); text-align: center;">
+<div style="font-size: 8.5px; text-transform: uppercase; color: #7dd3fc; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>
+{logo_part}
+<div style="display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 6px 0 4px 0;">
+<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(56, 189, 248, 0.2); border: 1px solid rgba(56, 189, 248, 0.5); color: #e0f2fe; padding: 3px 8px; border-radius: 14px; font-size: 10px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(34, 197, 94, 0.2); border: 1px solid rgba(34, 197, 94, 0.5); color: #bbf7d0; padding: 3px 8px; border-radius: 14px; font-size: 10px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
 </div>
-<div style="text-align: center; font-size: 9.5px;">
+<div style="text-align: center; font-size: 9.5px; margin-top: 4px;">
 <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: underline; font-weight: 600; letter-spacing: 0.2px;">vsquareinfotech.co.in ↗</a>
+</div>
 </div>""", unsafe_allow_html=True)
 
 # Header banner & Anti-truncation styles

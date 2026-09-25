@@ -6767,15 +6767,15 @@ if vs_logo_b64:
 else:
     logo_part = '<div style="margin: 5px 0; text-align: center; font-weight: 800; color: #38bdf8; font-size: 13px;">🚀 VSQUARE INFOTECH</div>'
 
-st.sidebar.markdown(f"""<div style="background: linear-gradient(145deg, #07192f 0%, #0d2744 50%, #113359 100%); border: 1px solid rgba(56, 189, 248, 0.45); border-radius: 12px; padding: 9px 8px 8px 8px; margin-top: 10px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 10px rgba(56, 189, 248, 0.12); text-align: center;">
-<div style="font-size: 8px; text-transform: uppercase; color: #7dd3fc; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>
+st.sidebar.markdown(f"""<div style="background: linear-gradient(145deg, #1b4977 0%, #245e9a 50%, #2f74bd 100%); border: 1px solid rgba(186, 230, 253, 0.45); border-radius: 12px; padding: 9px 8px 8px 8px; margin-top: 10px; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.25); text-align: center;">
+<div style="font-size: 8px; text-transform: uppercase; color: #e0f2fe; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>
 {logo_part}
 <div style="display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 5px 0 3px 0;">
-<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(56, 189, 248, 0.2); border: 1px solid rgba(56, 189, 248, 0.5); color: #e0f2fe; padding: 2.5px 7px; border-radius: 12px; font-size: 9.5px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
-<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(34, 197, 94, 0.2); border: 1px solid rgba(34, 197, 94, 0.5); color: #bbf7d0; padding: 2.5px 7px; border-radius: 12px; font-size: 9.5px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
+<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(255, 255, 255, 0.18); border: 1px solid rgba(255, 255, 255, 0.4); color: #ffffff; padding: 2.5px 7px; border-radius: 12px; font-size: 9.5px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(34, 197, 94, 0.25); border: 1px solid rgba(34, 197, 94, 0.6); color: #ffffff; padding: 2.5px 7px; border-radius: 12px; font-size: 9.5px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
 </div>
 <div style="text-align: center; font-size: 9px; margin-top: 3px;">
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: underline; font-weight: 600; letter-spacing: 0.2px;">vsquareinfotech.co.in ↗</a>
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #dbeafe; text-decoration: underline; font-weight: 600; letter-spacing: 0.2px;">vsquareinfotech.co.in ↗</a>
 </div>
 </div>""", unsafe_allow_html=True)
 

@@ -21,11 +21,30 @@ import io
 import os
 import time
 import re
+import base64
 import psycopg2
 import plotly.express as px
 import plotly.graph_objects as go
 import pytz
 import streamlit.components.v1 as components
+
+@st.cache_data
+def get_vsquare_logo_b64():
+    for fname in ["vsquare_logo_opt.png", "vsquare_logo.png"]:
+        p = os.path.join(os.path.dirname(__file__), "assets", fname)
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+    return ""
+
+@st.cache_data
+def get_vsquare_favicon_b64():
+    for fname in ["favicon_opt.png", "favicon.png"]:
+        p = os.path.join(os.path.dirname(__file__), "assets", fname)
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+    return ""
 
 # Import database layer
 from database import (
@@ -6221,31 +6240,31 @@ if not get_login_status():
                 else:
                     st.error("❌ Invalid credentials.")
                     
-        st.markdown("""
+        vs_logo_b64 = get_vsquare_logo_b64()
+        logo_img_html = f'<img src="data:image/png;base64,{vs_logo_b64}" alt="VSQUARE INFOTECH" style="height: 38px; width: auto; object-fit: contain; max-width: 230px; display: block;" />' if vs_logo_b64 else '<span style="font-size: 15px; font-weight: 800; color: #1e3a8a; letter-spacing: 0.5px;">🚀 VSQUARE INFOTECH ↗</span>'
+
+        st.markdown(f"""
         <div style="
             margin-top: 24px;
-            padding: 16px 20px;
-            background: #f8fafc;
+            padding: 18px 20px;
+            background: #ffffff;
             border: 1px solid #e2e8f0;
-            border-radius: 12px;
+            border-radius: 14px;
             text-align: center;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
         ">
-            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 5px;">
+            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 8px;">
                 Designed, Hosted & Maintained by
             </div>
-            <div style="margin-bottom: 10px;">
+            <div style="margin-bottom: 12px; display: flex; justify-content: center;">
                 <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="
-                    font-size: 15px;
-                    font-weight: 800;
-                    color: #1e3a8a;
                     text-decoration: none;
-                    letter-spacing: 0.5px;
                     display: inline-flex;
                     align-items: center;
-                    gap: 6px;
+                    justify-content: center;
+                    transition: transform 0.2s;
                 ">
-                    🚀 VSQUARE INFOTECH ↗
+                    {logo_img_html}
                 </a>
             </div>
             <div style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
@@ -6256,7 +6275,7 @@ if not get_login_status():
                     background: #f0f9ff;
                     border: 1px solid #bae6fd;
                     color: #0369a1;
-                    padding: 5px 12px;
+                    padding: 5px 13px;
                     border-radius: 20px;
                     font-size: 11.5px;
                     font-weight: 600;
@@ -6271,7 +6290,7 @@ if not get_login_status():
                     background: #f0fdf4;
                     border: 1px solid #bbf7d0;
                     color: #15803d;
-                    padding: 5px 12px;
+                    padding: 5px 13px;
                     border-radius: 20px;
                     font-size: 11.5px;
                     font-weight: 600;
@@ -6285,7 +6304,7 @@ if not get_login_status():
                     vsquareinfotech.co.in
                 </a>
                 <span style="color: #cbd5e1;">•</span>
-                <span>Enterprise Solutions</span>
+                <span>Enterprise Banking Solutions</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -6781,7 +6800,40 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 st.sidebar.caption(f"🏢 AARSHA NIDHI LIMITED\nv1.0 | {datetime.now(IST).strftime('%Y')}")
 
-st.sidebar.markdown("""
+vs_sidebar_logo_b64 = get_vsquare_logo_b64()
+sidebar_logo_html = f'''
+<div style="margin-bottom: 10px; display: flex; justify-content: center;">
+    <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: #ffffff;
+        padding: 6px 14px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    ">
+        <img src="data:image/png;base64,{vs_sidebar_logo_b64}" alt="VSQUARE INFOTECH" style="height: 24px; width: auto; object-fit: contain; max-width: 170px; display: block;" />
+    </a>
+</div>
+''' if vs_sidebar_logo_b64 else '''
+<div style="margin-bottom: 8px;">
+    <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="
+        font-size: 14px; 
+        font-weight: 800; 
+        color: #38bdf8; 
+        text-decoration: none;
+        letter-spacing: 0.5px;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    ">
+        🚀 VSQUARE INFOTECH ↗
+    </a>
+</div>
+'''
+
+st.sidebar.markdown(f"""
 <div style="
     background: linear-gradient(145deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.95));
     border: 1px solid rgba(56, 189, 248, 0.25);
@@ -6792,23 +6844,10 @@ st.sidebar.markdown("""
     text-align: center;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 ">
-    <div style="font-size: 9.5px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 4px;">
+    <div style="font-size: 9.5px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 8px;">
         Designed, Hosted & Maintained by
     </div>
-    <div style="margin-bottom: 8px;">
-        <a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="
-            font-size: 14px; 
-            font-weight: 800; 
-            color: #38bdf8; 
-            text-decoration: none;
-            letter-spacing: 0.5px;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-        ">
-            🚀 VSQUARE INFOTECH ↗
-        </a>
-    </div>
+    {sidebar_logo_html}
     <div style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;">
         <a href="tel:+918547469165" style="
             display: inline-flex;

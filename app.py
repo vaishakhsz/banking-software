@@ -6750,27 +6750,21 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
     st.rerun()
 
 with st.sidebar.container(border=True):
-    cur_yr = datetime.now(IST).strftime('%Y')
-    st.markdown(f"""<div style="text-align: center; margin-bottom: 6px;">
-<div style="font-size: 11.5px; font-weight: 800; color: #ffffff; letter-spacing: 0.5px;">🏢 AARSHA NIDHI LIMITED</div>
-<div style="font-size: 9.5px; color: #93c5fd; font-weight: 500; margin-top: 2px;">Banking Software • v1.0 ({cur_yr})</div>
-</div>
-<hr style="border: none; border-top: 1px solid rgba(255, 255, 255, 0.12); margin: 8px 0 10px 0;">
-<div style="font-size: 9.5px; text-align: center; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.9px; font-weight: 700; margin-bottom: 8px;">Designed, Hosted & Maintained by</div>""", unsafe_allow_html=True)
+    st.markdown("""<div style="font-size: 9px; text-align: center; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 5px;">Designed, Hosted & Maintained by</div>""", unsafe_allow_html=True)
 
     if os.path.exists("assets/vsquare_logo_opt.png"):
         st.image("assets/vsquare_logo_opt.png", use_container_width=True)
     elif os.path.exists("assets/vsquare_logo.png"):
         st.image("assets/vsquare_logo.png", use_container_width=True)
     else:
-        st.markdown('<div style="text-align: center; font-weight: 800; color: #38bdf8; font-size: 14px;">🚀 VSQUARE INFOTECH</div>', unsafe_allow_html=True)
+        st.markdown('<div style="text-align: center; font-weight: 800; color: #38bdf8; font-size: 13px;">🚀 VSQUARE INFOTECH</div>', unsafe_allow_html=True)
 
-    st.markdown("""<div style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; margin: 10px 0 6px 0;">
-<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.35); color: #bae6fd; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
-<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.35); color: #86efac; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
+    st.markdown("""<div style="display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; margin: 6px 0 4px 0;">
+<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.35); color: #bae6fd; padding: 2px 8px; border-radius: 16px; font-size: 10.5px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.35); color: #86efac; padding: 2px 8px; border-radius: 16px; font-size: 10.5px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
 </div>
-<div style="text-align: center; font-size: 10.5px; margin-top: 4px;">
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #67e8f9; text-decoration: underline; font-weight: 600;">vsquareinfotech.co.in ↗</a>
+<div style="text-align: center; font-size: 10px;">
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #67e8f9; text-decoration: underline; font-weight: 500;">vsquareinfotech.co.in ↗</a>
 </div>""", unsafe_allow_html=True)
 
 # Header banner & Anti-truncation styles

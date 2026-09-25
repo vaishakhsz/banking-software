@@ -6240,25 +6240,26 @@ if not get_login_status():
                 else:
                     st.error("❌ Invalid credentials.")
                     
+        vs_logo_b64 = get_vsquare_logo_b64()
+        if vs_logo_b64:
+            logo_img_login = f'<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="height: 32px; width: auto; object-fit: contain; max-width: 145px; display: inline-block; vertical-align: middle; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.08));" />'
+        else:
+            logo_img_login = '<span style="font-size: 13px; font-weight: 800; color: #1e3a8a;">🚀 VSQUARE INFOTECH</span>'
+
         with st.container(border=True):
-            st.markdown('<div style="font-size: 8px; text-align: center; text-transform: uppercase; color: #64748b; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 3px;">Designed, Hosted & Maintained by</div>', unsafe_allow_html=True)
-            col_lg1, col_lg2, col_lg3 = st.columns([1.8, 1.4, 1.8])
-            with col_lg2:
-                if os.path.exists("assets/vsquare_logo_opt.png"):
-                    st.image("assets/vsquare_logo_opt.png", use_container_width=True)
-                elif os.path.exists("assets/vsquare_logo.png"):
-                    st.image("assets/vsquare_logo.png", use_container_width=True)
-                else:
-                    st.markdown('<div style="text-align: center; font-size: 13px; font-weight: 800; color: #1e3a8a;">🚀 VSQUARE INFOTECH</div>', unsafe_allow_html=True)
-            
-            st.markdown("""<div style="display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin-top: 4px; margin-bottom: 4px;">
-<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: #f0f9ff; border: 1px solid #bae6fd; color: #0369a1; padding: 3px 8px; border-radius: 14px; font-size: 9.5px; font-weight: 600; text-decoration: none;">📞 +91 85474 69165</a>
-<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; padding: 3px 8px; border-radius: 14px; font-size: 9.5px; font-weight: 600; text-decoration: none;">💬 WhatsApp</a>
+            st.markdown(f"""<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 3px; font-family: 'Plus Jakarta Sans', sans-serif; padding: 2px 0;">
+<div style="color: #64748b; font-weight: 600; font-size: 8px; letter-spacing: 0.3px; text-transform: uppercase;">Website Designed, Hosted & Managed by</div>
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: inline-block; text-decoration: none; margin: 3px 0;" title="Visit VSquareInfotech">
+{logo_img_login}
+</a>
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 700; font-size: 9.5px; color: #0062e3; background: #eff6ff; padding: 2px 8px; border-radius: 5px; border: 1px solid #bfdbfe; text-decoration: none; margin: 2px 0;" title="Visit vsquareinfotech.co.in">
+🌐 vsquareinfotech.co.in
+</a>
+<div style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-top: 2px;">
+<a href="tel:+918547469165" style="color: #475569; font-weight: 600; font-size: 9px; text-decoration: none; display: inline-flex; align-items: center; gap: 3px;">📞 +91 85474 69165</a>
+<span style="color: #cbd5e1; font-size: 8px;">|</span>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="color: #16a34a; font-weight: 600; font-size: 9px; text-decoration: none; display: inline-flex; align-items: center; gap: 3px;" title="Chat on WhatsApp">💬 WhatsApp</a>
 </div>
-<div style="text-align: center; font-size: 9px; color: #64748b; display: flex; align-items: center; justify-content: center; gap: 5px;">
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: underline; font-weight: 600;">vsquareinfotech.co.in ↗</a>
-<span style="color: #cbd5e1;">•</span>
-<span>Enterprise Banking Solutions</span>
 </div>""", unsafe_allow_html=True)
         st.stop()
 
@@ -6759,23 +6760,24 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 
 vs_logo_b64 = get_vsquare_logo_b64()
 if vs_logo_b64:
-    logo_part = f'''<div style="margin: 5px 0 6px 0; display: flex; justify-content: center;">
-<div style="background: #ffffff; padding: 4px 10px; border-radius: 8px; display: inline-flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
-<img src="data:image/png;base64,{vs_logo_b64}" alt="VSQUARE INFOTECH" style="height: 32px; width: auto; object-fit: contain; max-width: 145px; display: block;" />
-</div>
+    logo_part = f'''<div style="background: #ffffff; padding: 3px 10px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.25);">
+<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="height: 28px; width: auto; object-fit: contain; max-width: 135px; display: block;" />
 </div>'''
 else:
-    logo_part = '<div style="margin: 5px 0; text-align: center; font-weight: 800; color: #38bdf8 !important; font-size: 13px;">🚀 VSQUARE INFOTECH</div>'
+    logo_part = '<span style="font-size: 13px; font-weight: 800; color: #38bdf8 !important;">🚀 VSQUARE INFOTECH</span>'
 
-st.sidebar.markdown(f"""<div style="background: linear-gradient(145deg, #1b4977 0%, #245e9a 50%, #2f74bd 100%); border: 1px solid rgba(186, 230, 253, 0.4); border-radius: 12px; padding: 9px 8px 8px 8px; margin-top: 10px; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.25); text-align: center;">
-<div style="font-size: 8px; text-transform: uppercase; color: #e0f2fe !important; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Designed, Hosted & Maintained by</div>
+st.sidebar.markdown(f"""<div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.14); display: flex; flex-direction: column; align-items: center; text-align: center; gap: 3px; font-family: 'Plus Jakarta Sans', sans-serif;">
+<div style="color: #94a3b8 !important; font-weight: 600; font-size: 8px; letter-spacing: 0.3px; text-transform: uppercase;">Website Designed, Hosted & Managed by</div>
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: inline-block; text-decoration: none; margin: 3px 0;" title="Visit VSquareInfotech">
 {logo_part}
-<div style="display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 5px 0 3px 0;">
-<a href="tel:+918547469165" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(255, 255, 255, 0.18); border: 1px solid rgba(255, 255, 255, 0.4); color: #ffffff !important; padding: 2.5px 7px; border-radius: 12px; font-size: 9.5px; font-weight: 600; text-decoration: none !important;">📞 +91 85474 69165</a>
-<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 3px; background: rgba(34, 197, 94, 0.25); border: 1px solid rgba(34, 197, 94, 0.6); color: #ffffff !important; padding: 2.5px 7px; border-radius: 12px; font-size: 9.5px; font-weight: 600; text-decoration: none !important;">💬 WhatsApp</a>
-</div>
-<div style="text-align: center; font-size: 9px; margin-top: 3px;">
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #dbeafe !important; text-decoration: underline !important; font-weight: 600; letter-spacing: 0.2px;">vsquareinfotech.co.in ↗</a>
+</a>
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 700; font-size: 9.5px; color: #93c5fd !important; background: rgba(239, 246, 255, 0.12); padding: 2.5px 8px; border-radius: 5px; border: 1px solid rgba(191, 219, 254, 0.3); text-decoration: none !important; margin: 2px 0;" title="Visit vsquareinfotech.co.in">
+🌐 vsquareinfotech.co.in
+</a>
+<div style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-top: 2px;">
+<a href="tel:+918547469165" style="color: #cbd5e1 !important; font-weight: 600; font-size: 9px; text-decoration: none !important; display: inline-flex; align-items: center; gap: 3px;">📞 +91 85474 69165</a>
+<span style="color: rgba(255, 255, 255, 0.3); font-size: 8px;">|</span>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="color: #4ade80 !important; font-weight: 600; font-size: 9px; text-decoration: none !important; display: inline-flex; align-items: center; gap: 3px;" title="Chat on WhatsApp">💬 WhatsApp</a>
 </div>
 </div>""", unsafe_allow_html=True)
 

@@ -6242,9 +6242,9 @@ if not get_login_status():
                     
         vs_logo_b64 = get_vsquare_logo_b64()
         if vs_logo_b64:
-            logo_img_login = f'<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 175px; width: auto; height: 42px; display: block; margin: 0 auto; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.06));">'
+            logo_img_login = f'<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 215px; width: auto; height: 52px; display: block; margin: 0 auto; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.08));">'
         else:
-            logo_img_login = '<div style="font-size: 14px; font-weight: 800; color: #0284c7;">🚀 VSQUARE INFOTECH</div>'
+            logo_img_login = '<div style="font-size: 15px; font-weight: 800; color: #0284c7;">🚀 VSQUARE INFOTECH</div>'
 
         st.markdown(f"""<div style="margin-top: 14px; padding: 12px 10px; background: rgba(255, 255, 255, 0.95); border: 1px solid #cbd5e1; border-radius: 12px; text-align: center; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);">
 <div style="font-size: 9.5px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px;">Designed, Hosted & Managed by</div>

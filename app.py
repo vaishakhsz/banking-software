@@ -6242,23 +6242,27 @@ if not get_login_status():
                     
         vs_logo_b64 = get_vsquare_logo_b64()
         if vs_logo_b64:
-            logo_img_login = f'<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="height: 32px; width: auto; object-fit: contain; max-width: 145px; display: inline-block; vertical-align: middle; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.08));" />'
+            logo_img_login = f'<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 140px; width: 75%; height: auto; display: block; margin: 0 auto; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.06));">'
         else:
-            logo_img_login = '<span style="font-size: 13px; font-weight: 800; color: #1e3a8a;">🚀 VSQUARE INFOTECH</span>'
+            logo_img_login = '<div style="font-size: 13px; font-weight: 800; color: #0284c7;">🚀 VSQUARE INFOTECH</div>'
 
-        with st.container(border=True):
-            st.markdown(f"""<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 3px; font-family: 'Plus Jakarta Sans', sans-serif; padding: 2px 0;">
-<div style="color: #64748b; font-weight: 600; font-size: 8px; letter-spacing: 0.3px; text-transform: uppercase;">Website Designed, Hosted & Managed by</div>
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: inline-block; text-decoration: none; margin: 3px 0;" title="Visit VSquareInfotech">
+        st.markdown(f"""<div style="margin-top: 14px; padding: 12px 10px; background: rgba(255, 255, 255, 0.95); border: 1px solid #cbd5e1; border-radius: 12px; text-align: center; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);">
+<div style="font-size: 9.5px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px;">Designed, Hosted & Managed by</div>
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: block; text-decoration: none; padding: 2px 0;">
 {logo_img_login}
 </a>
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 700; font-size: 9.5px; color: #0062e3; background: #eff6ff; padding: 2px 8px; border-radius: 5px; border: 1px solid #bfdbfe; text-decoration: none; margin: 2px 0;" title="Visit vsquareinfotech.co.in">
+<div style="margin-top: 5px; font-size: 11.5px; font-weight: 800;">
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 4px;">
 🌐 vsquareinfotech.co.in
 </a>
-<div style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-top: 2px;">
-<a href="tel:+918547469165" style="color: #475569; font-weight: 600; font-size: 9px; text-decoration: none; display: inline-flex; align-items: center; gap: 3px;">📞 +91 85474 69165</a>
-<span style="color: #cbd5e1; font-size: 8px;">|</span>
-<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="color: #16a34a; font-weight: 600; font-size: 9px; text-decoration: none; display: inline-flex; align-items: center; gap: 3px;" title="Chat on WhatsApp">💬 WhatsApp</a>
+</div>
+<div style="margin-top: 6px; font-size: 11px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+<a href="tel:+918547469165" style="color: #475569; text-decoration: none; font-weight: 600;">📞 8547469165</a>
+<span style="color: #cbd5e1;">|</span>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="color: #16a34a; text-decoration: none; font-weight: 700; display: inline-flex; align-items: center; gap: 3px;">
+<svg viewBox="0 0 24 24" width="12" height="12" fill="#16a34a"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/></svg>
+WhatsApp
+</a>
 </div>
 </div>""", unsafe_allow_html=True)
         st.stop()
@@ -6760,24 +6764,27 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 
 vs_logo_b64 = get_vsquare_logo_b64()
 if vs_logo_b64:
-    logo_part = f'''<div style="background: #ffffff; padding: 3px 10px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.25);">
-<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="height: 28px; width: auto; object-fit: contain; max-width: 135px; display: block;" />
-</div>'''
+    logo_img_sidebar = f'<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 140px; width: 75%; height: auto; display: block; margin: 0 auto; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.06));">'
 else:
-    logo_part = '<span style="font-size: 13px; font-weight: 800; color: #38bdf8 !important;">🚀 VSQUARE INFOTECH</span>'
+    logo_img_sidebar = '<div style="font-size: 13px; font-weight: 800; color: #0284c7 !important;">🚀 VSQUARE INFOTECH</div>'
 
-st.sidebar.markdown(f"""<div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.14); display: flex; flex-direction: column; align-items: center; text-align: center; gap: 3px; font-family: 'Plus Jakarta Sans', sans-serif;">
-<div style="color: #94a3b8 !important; font-weight: 600; font-size: 8px; letter-spacing: 0.3px; text-transform: uppercase;">Website Designed, Hosted & Managed by</div>
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: inline-block; text-decoration: none; margin: 3px 0;" title="Visit VSquareInfotech">
-{logo_part}
+st.sidebar.markdown(f"""<div style="margin-top: 14px; padding: 12px 10px; background: rgba(255, 255, 255, 0.95); border: 1px solid #fde68a; border-radius: 12px; text-align: center; box-shadow: 0 1px 4px rgba(180, 83, 9, 0.05);">
+<div style="font-size: 9.5px; font-weight: 700; color: #64748b !important; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px;">Designed, Hosted &amp; Managed by</div>
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: block; text-decoration: none; padding: 2px 0;">
+{logo_img_sidebar}
 </a>
-<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 700; font-size: 9.5px; color: #93c5fd !important; background: rgba(239, 246, 255, 0.12); padding: 2.5px 8px; border-radius: 5px; border: 1px solid rgba(191, 219, 254, 0.3); text-decoration: none !important; margin: 2px 0;" title="Visit vsquareinfotech.co.in">
+<div style="margin-top: 5px; font-size: 11.5px; font-weight: 800;">
+<a href="https://vsquareinfotech.co.in" target="_blank" rel="noopener noreferrer" style="color: #0284c7 !important; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 4px;">
 🌐 vsquareinfotech.co.in
 </a>
-<div style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-top: 2px;">
-<a href="tel:+918547469165" style="color: #cbd5e1 !important; font-weight: 600; font-size: 9px; text-decoration: none !important; display: inline-flex; align-items: center; gap: 3px;">📞 +91 85474 69165</a>
-<span style="color: rgba(255, 255, 255, 0.3); font-size: 8px;">|</span>
-<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="color: #4ade80 !important; font-weight: 600; font-size: 9px; text-decoration: none !important; display: inline-flex; align-items: center; gap: 3px;" title="Chat on WhatsApp">💬 WhatsApp</a>
+</div>
+<div style="margin-top: 6px; font-size: 11px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+<a href="tel:+918547469165" style="color: #475569 !important; text-decoration: none; font-weight: 600;">📞 8547469165</a>
+<span style="color: #cbd5e1;">|</span>
+<a href="https://wa.me/918547469165" target="_blank" rel="noopener noreferrer" style="color: #16a34a !important; text-decoration: none; font-weight: 700; display: inline-flex; align-items: center; gap: 3px;">
+<svg viewBox="0 0 24 24" width="12" height="12" fill="#16a34a"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/></svg>
+WhatsApp
+</a>
 </div>
 </div>""", unsafe_allow_html=True)
 

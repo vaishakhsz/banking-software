@@ -6242,11 +6242,11 @@ if not get_login_status():
                     
         vs_logo_b64 = get_vsquare_logo_b64()
         if vs_logo_b64:
-            logo_img_login = f'''<div style="background: #ffffff; padding: 4px 12px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.25);">
-<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 140px; width: auto; height: 32px; display: block; margin: 0 auto;">
+            logo_img_login = f'''<div style="background: #ffffff; padding: 6px 14px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
+<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 175px; width: auto; height: 42px; display: block; margin: 0 auto;">
 </div>'''
         else:
-            logo_img_login = '<div style="font-size: 13px; font-weight: 800; color: #38bdf8;">🚀 VSQUARE INFOTECH</div>'
+            logo_img_login = '<div style="font-size: 14px; font-weight: 800; color: #38bdf8;">🚀 VSQUARE INFOTECH</div>'
 
         st.markdown(f"""<div style="margin-top: 14px; padding: 12px 10px; background: linear-gradient(145deg, #1b4977 0%, #245e9a 50%, #2f74bd 100%); border: 1px solid rgba(186, 230, 253, 0.45); border-radius: 12px; text-align: center; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.25);">
 <div style="font-size: 9.5px; font-weight: 700; color: #e0f2fe; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px;">Designed, Hosted & Managed by</div>
@@ -6766,11 +6766,11 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 
 vs_logo_b64 = get_vsquare_logo_b64()
 if vs_logo_b64:
-    logo_img_sidebar = f'''<div style="background: #ffffff; padding: 4px 12px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.25);">
-<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 140px; width: auto; height: 32px; display: block; margin: 0 auto;">
+    logo_img_sidebar = f'''<div style="background: #ffffff; padding: 6px 14px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
+<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 175px; width: auto; height: 42px; display: block; margin: 0 auto;">
 </div>'''
 else:
-    logo_img_sidebar = '<div style="font-size: 13px; font-weight: 800; color: #38bdf8 !important;">🚀 VSQUARE INFOTECH</div>'
+    logo_img_sidebar = '<div style="font-size: 14px; font-weight: 800; color: #38bdf8 !important;">🚀 VSQUARE INFOTECH</div>'
 
 st.sidebar.markdown(f"""<div style="margin-top: 14px; padding: 12px 10px; background: linear-gradient(145deg, #1b4977 0%, #245e9a 50%, #2f74bd 100%); border: 1px solid rgba(186, 230, 253, 0.45); border-radius: 12px; text-align: center; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.25);">
 <div style="font-size: 9.5px; font-weight: 700; color: #e0f2fe !important; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px;">Designed, Hosted &amp; Managed by</div>

@@ -41,7 +41,7 @@ def get_vsquare_logo_b64():
 
 @st.cache_data
 def get_vsquare_sidebar_logo_b64():
-    for fname in ["vsquare_logo_exact_font.png", "vsquare_logo_flat_trans.png", "vsquare_logo_opt.png", "vsquare_logo.png"]:
+    for fname in ["vsquare_logo_user_clean.png", "vsquare_logo_exact_font.png", "vsquare_logo_flat_trans.png", "vsquare_logo_opt.png", "vsquare_logo.png"]:
         p = os.path.join(os.path.dirname(__file__), "assets", fname)
         if os.path.exists(p):
             with open(p, "rb") as f:
@@ -6836,9 +6836,7 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 
 vs_logo_b64 = get_vsquare_sidebar_logo_b64()
 if vs_logo_b64:
-    logo_img_sidebar = f'''<div style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(186, 230, 253, 0.25); padding: 6px 14px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; box-shadow: inset 0 1px 2px rgba(0,0,0,0.15);">
-<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 175px; width: auto; height: 42px; display: block; margin: 0 auto;">
-</div>'''
+    logo_img_sidebar = f'''<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 195px; width: 90%; height: auto; max-height: 52px; display: block; margin: 2px auto;">'''
 else:
     logo_img_sidebar = '<div style="font-size: 14px; font-weight: 800; color: #38bdf8 !important;">🚀 VSQUARE INFOTECH</div>'
 

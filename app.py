@@ -6836,7 +6836,7 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
 
 vs_logo_b64 = get_vsquare_sidebar_logo_b64()
 if vs_logo_b64:
-    logo_img_sidebar = f'''<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 175px; width: auto; height: 42px; display: block; margin: 0 auto;">'''
+    logo_img_sidebar = f'''<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 180px; width: auto; height: 44px; display: block; margin: 2px auto;">'''
 else:
     logo_img_sidebar = '<div style="font-size: 14px; font-weight: 800; color: #38bdf8 !important;">🚀 VSQUARE INFOTECH</div>'
 

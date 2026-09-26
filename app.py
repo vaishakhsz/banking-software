@@ -3510,7 +3510,7 @@ def render_fixed_deposits():
                 edit_fd_cust_label = st.selectbox("Assigned Customer", list(cust_all_dict.keys()), index=cust_idx, key=f"edit_fd_cust_{c_fd_id}")
                 edit_fd_cust_id = cust_all_dict[edit_fd_cust_label]
                 edit_fd_principal = st.number_input("Principal Amount (₹)", min_value=100.0, value=float(c_principal or 10000.0), step=500.0, key=f"edit_fd_prin_{c_fd_id}")
-                edit_fd_tenure = st.number_input("Tenure (Months)", min_value=1, max_value=120, value=int(c_tenure or 12), step=1, key=f"edit_fd_tenure_{c_fd_id}")
+                edit_fd_tenure = st.number_input("Tenure (Months)", min_value=1, max_value=max(360, int(c_tenure or 12)), value=int(c_tenure or 12), step=1, key=f"edit_fd_tenure_{c_fd_id}")
                 edit_fd_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(c_rate or 6.5), step=0.25, key=f"edit_fd_rate_{c_fd_id}")
             with col_fe2:
                 edit_fd_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_fd_nom_{c_fd_id}")
@@ -3614,7 +3614,7 @@ def render_recurring_deposits():
                 monthly_amt = st.number_input("Monthly Installment Amount (Contracted) (₹)", min_value=100.0, value=1000.0, step=100.0, key="rd_monthly_inp")
                 opening_balance = st.number_input("Opening Balance / Total Amount Deposited (₹)", min_value=0.0, value=float(monthly_amt), step=500.0, key="rd_open_bal_inp", help="Total cumulative amount deposited into this RD account at opening. (e.g. ₹1,000 for 1st installment, or ₹10,000 for 10 installments).")
                 calc_default_inst = max(1, int(round(opening_balance / monthly_amt))) if monthly_amt > 0 else 1
-                opening_paid_inst = st.number_input("Installments Paid at Opening", min_value=1, max_value=120, value=calc_default_inst, step=1, key="rd_open_paid_inst_inp")
+                opening_paid_inst = st.number_input("Installments Paid at Opening", min_value=1, max_value=10000, value=min(10000, max(1, int(calc_default_inst))), step=1, key="rd_open_paid_inst_inp")
                 tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=365, step=10, key="rd_tenure_days", help="e.g. 100 days, 365 days, 400 days, 730 days")
                 tenure = max(1, int(round(tenure_days / 30.0)))
                 st.caption(f"🗓️ Equivalent Tenure: ~**{tenure} Months** ({tenure_days} Days)")
@@ -4200,7 +4200,7 @@ th {{ background-color: #ebf5fb; }}
                     edit_tenure = max(1, int(round(edit_tenure_days / 30.0)))
                     st.caption(f"🗓️ Equivalent Tenure: ~**{edit_tenure} Months** ({edit_tenure_days} Days)")
                     edit_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(c_rate), step=0.25, key=f"edit_rate_{c_rd_id}")
-                    edit_paid = st.number_input("Installments Paid Count", min_value=0, max_value=120, value=int(c_paid), step=1, key=f"edit_paid_{c_rd_id}")
+                    edit_paid = st.number_input("Installments Paid Count", min_value=0, max_value=max(10000, int(c_paid) + 500), value=int(c_paid), step=1, key=f"edit_paid_{c_rd_id}")
                     edit_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_nominee_{c_rd_id}")
                 
                 col_e3, col_e4 = st.columns(2)
@@ -4457,7 +4457,7 @@ th {{ background-color: #ebf5fb; }}
                             except Exception:
                                 default_op_date = date.today()
                             add_inst_date = st.date_input("Opening Balance Date", value=default_op_date, format="DD-MM-YYYY", key=f"add_op_date_{c_rd_id}")
-                            op_inst_covered = st.number_input("Number of Prior Installments Covered", min_value=1, max_value=120, value=1, step=1, key=f"add_op_covered_{c_rd_id}")
+                            op_inst_covered = st.number_input("Number of Prior Installments Covered", min_value=1, max_value=10000, value=1, step=1, key=f"add_op_covered_{c_rd_id}")
                             def_op_amt = float(op_inst_covered * c_monthly)
                             add_inst_amt = st.number_input("Opening Balance Amount (₹)", min_value=0.0, value=def_op_amt, step=500.0, key=f"add_op_amt_{c_rd_id}")
                             def_op_ino = f"1 to {op_inst_covered}" if op_inst_covered > 1 else "1"

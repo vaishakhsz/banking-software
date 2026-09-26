@@ -22,6 +22,8 @@ import os
 import time
 import re
 import base64
+import hmac
+import hashlib
 import psycopg2
 import plotly.express as px
 import plotly.graph_objects as go
@@ -6189,12 +6191,65 @@ def render_sb_interest_calculation():
 
 # --- MAIN RUNNING ENTRY POINT ---
 
+AUTH_SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", "aarsha_nidhi_auth_secret_key_2026")
+
+def generate_auth_token(username: str, validity_days: int = 14) -> str:
+    """Generates a secure HMAC-signed auth token valid for validity_days."""
+    try:
+        expiry_ts = int(time.time()) + (validity_days * 86400)
+        payload = f"{username}:{expiry_ts}"
+        sig = hmac.new(AUTH_SECRET_KEY.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
+        token_str = f"{payload}:{sig}"
+        return base64.urlsafe_b64encode(token_str.encode('utf-8')).decode('utf-8')
+    except Exception:
+        return ""
+
+def verify_auth_token(token: str):
+    """Verifies HMAC signature and expiration timestamp of the token."""
+    try:
+        if not token:
+            return None
+        token_bytes = base64.urlsafe_b64decode(token.encode('utf-8'))
+        token_str = token_bytes.decode('utf-8')
+        parts = token_str.split(":")
+        if len(parts) != 3:
+            return None
+        username, expiry_str, sig = parts
+        expiry_ts = int(expiry_str)
+        if time.time() > expiry_ts:
+            return None
+        expected_sig = hmac.new(AUTH_SECRET_KEY.encode('utf-8'), f"{username}:{expiry_str}".encode('utf-8'), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(sig, expected_sig):
+            return username
+    except Exception:
+        return None
+    return None
+
 def get_login_status():
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-    if 'username' not in st.session_state:
-        st.session_state.username = ""
-    return st.session_state.logged_in
+    if st.session_state.get('logged_in'):
+        if "auth" not in st.query_params:
+            auth_token = generate_auth_token(st.session_state.get('username', 'admin'))
+            if auth_token:
+                st.query_params["auth"] = auth_token
+        return True
+    
+    # Check URL query params for persistent session across browser refresh
+    token = st.query_params.get("auth")
+    if token:
+        valid_user = verify_auth_token(token)
+        if valid_user:
+            st.session_state.logged_in = True
+            st.session_state.username = valid_user
+            return True
+        else:
+            try:
+                del st.query_params["auth"]
+            except Exception:
+                pass
+
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    return False
 
 if not get_login_status():
     # Hide sidebar completely on login page
@@ -6234,6 +6289,9 @@ if not get_login_status():
                 if username == "admin" and password == "admin123":
                     st.session_state.logged_in = True
                     st.session_state.username = username
+                    auth_token = generate_auth_token(username)
+                    if auth_token:
+                        st.query_params["auth"] = auth_token
                     st.success("✅ Login successful!")
                     time.sleep(0.1)
                     st.rerun()
@@ -6760,6 +6818,11 @@ st.sidebar.markdown("""
 if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True):
     st.session_state.logged_in = False
     st.session_state.username = ""
+    if "auth" in st.query_params:
+        try:
+            del st.query_params["auth"]
+        except Exception:
+            pass
     st.rerun()
 
 vs_logo_b64 = get_vsquare_logo_b64()

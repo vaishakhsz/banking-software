@@ -2569,12 +2569,13 @@ def delete_rd_installment(inst_id, rd_id):
                 cb_row = run_query("SELECT id FROM cash_book WHERE voucher_no = ?", (old_vno,))
                 if cb_row:
                     delete_cash_book_entry(cb_row[0][0])
-            else:
-                jv_rows = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{old_vno}%",))
-                if jv_rows:
-                    for j in jv_rows:
-                        run_query("DELETE FROM jv_entries WHERE jv_id = ?", (j[0],), fetch=False)
-                        run_query("DELETE FROM journal_vouchers WHERE jv_id = ?", (j[0],), fetch=False)
+            
+            # Always ensure any linked journal vouchers with this voucher number are also deleted
+            jv_rows = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{old_vno}%",))
+            if jv_rows:
+                for j in jv_rows:
+                    run_query("DELETE FROM jv_entries WHERE jv_id = ?", (j[0],), fetch=False)
+                    run_query("DELETE FROM journal_vouchers WHERE jv_id = ?", (j[0],), fetch=False)
                         
         # 3. Recalculate balances and resequence cleanly
         resequence_rd_installments(rd_id)
@@ -3064,7 +3065,7 @@ def resequence_bank_book():
                     new_id INT := 1;
                 BEGIN
                     UPDATE bank_book SET id = -id;
-                    FOR r IN SELECT id FROM bank_book ORDER BY date ASC, -id ASC LOOP
+                    FOR r IN SELECT id FROM bank_book ORDER BY date ASC, CASE WHEN particulars ILIKE '%opening%' THEN 0 ELSE 1 END, -id ASC LOOP
                         UPDATE bank_book SET id = new_id WHERE id = r.id;
                         new_id := new_id + 1;
                     END LOOP;
@@ -3077,7 +3078,7 @@ def resequence_bank_book():
                 END $$;
             """)
         else:
-            cursor.execute("SELECT id FROM bank_book ORDER BY date ASC, id ASC")
+            cursor.execute("SELECT id FROM bank_book ORDER BY date ASC, CASE WHEN particulars LIKE '%opening%' OR particulars LIKE '%Opening%' THEN 0 ELSE 1 END, id ASC")
             rows = cursor.fetchall()
             cursor.execute("UPDATE bank_book SET id = -id")
             for new_id, (old_neg_id,) in enumerate(rows, 1):
@@ -3285,13 +3286,21 @@ def delete_fd_entry(del_id):
 
 def delete_rd_entry(del_id):
     """
-    Deletes a recurring deposit and resequences recurring_deposits (rd_id = rd_id - 1) without gaps.
+    Deletes a recurring deposit, cascades its child installments, vouchers, and resequences without gaps.
     """
     conn = None
     try:
+        # 1. Cascade delete all installments belonging to this RD account
+        insts = run_query("SELECT id FROM rd_installments WHERE rd_id = ?", (del_id,))
+        if insts:
+            for (i_id,) in insts:
+                delete_rd_installment(i_id, del_id)
+
         conn = get_connection()
         cursor = conn.cursor()
         if USING_SUPABASE:
+            cursor.execute("DELETE FROM rd_installments WHERE rd_id = %s", (del_id,))
+            cursor.execute("UPDATE rd_installments SET rd_id = rd_id - 1 WHERE rd_id > %s", (del_id,))
             cursor.execute("DELETE FROM recurring_deposits WHERE rd_id = %s", (del_id,))
             cursor.execute("UPDATE recurring_deposits SET rd_id = -rd_id WHERE rd_id > %s", (del_id,))
             cursor.execute("UPDATE recurring_deposits SET rd_id = (-rd_id) - 1 WHERE rd_id < 0")
@@ -3309,6 +3318,8 @@ def delete_rd_entry(del_id):
                 END $$;
             """)
         else:
+            cursor.execute("DELETE FROM rd_installments WHERE rd_id = ?", (del_id,))
+            cursor.execute("UPDATE rd_installments SET rd_id = rd_id - 1 WHERE rd_id > ?", (del_id,))
             cursor.execute("DELETE FROM recurring_deposits WHERE rd_id = ?", (del_id,))
             cursor.execute("UPDATE recurring_deposits SET rd_id = -rd_id WHERE rd_id > ?", (del_id,))
             cursor.execute("UPDATE recurring_deposits SET rd_id = (-rd_id) - 1 WHERE rd_id < 0")
@@ -4538,7 +4549,7 @@ def resequence_customers():
                     CREATE TEMP TABLE IF NOT EXISTS temp_cust_map (old_id INT, new_id INT) ON COMMIT DROP;
                     TRUNCATE temp_cust_map;
                     
-                    FOR rec IN SELECT id FROM customers ORDER BY id ASC LOOP
+                    FOR rec IN SELECT id FROM customers ORDER BY created_at ASC, id ASC LOOP
                         INSERT INTO temp_cust_map VALUES (rec.id, new_id);
                         new_id := new_id + 1;
                     END LOOP;
@@ -4561,7 +4572,7 @@ def resequence_customers():
                 END $$;
             """)
         else:
-            cursor.execute("SELECT id FROM customers ORDER BY id ASC")
+            cursor.execute("SELECT id FROM customers ORDER BY created_at ASC, id ASC")
             rows = cursor.fetchall()
             id_map = {old_id: new_id for new_id, (old_id,) in enumerate(rows, 1)}
             for old_id, new_id in id_map.items():
@@ -4620,7 +4631,7 @@ def resequence_entire_database():
                     -- Resequence personal_loans
                     CREATE TEMP TABLE IF NOT EXISTS temp_pl_map (old_id INT, new_id INT) ON COMMIT DROP;
                     TRUNCATE temp_pl_map;
-                    FOR rec IN SELECT id FROM personal_loans ORDER BY id ASC LOOP
+                    FOR rec IN SELECT id FROM personal_loans ORDER BY sanction_date ASC, created_at ASC, id ASC LOOP
                         INSERT INTO temp_pl_map VALUES (rec.id, new_id);
                         new_id := new_id + 1;
                     END LOOP;
@@ -4638,7 +4649,7 @@ def resequence_entire_database():
                     new_id := 1;
                     CREATE TEMP TABLE IF NOT EXISTS temp_gl_map (old_id INT, new_id INT) ON COMMIT DROP;
                     TRUNCATE temp_gl_map;
-                    FOR rec IN SELECT id FROM gold_loans ORDER BY id ASC LOOP
+                    FOR rec IN SELECT id FROM gold_loans ORDER BY sanction_date ASC, created_at ASC, id ASC LOOP
                         INSERT INTO temp_gl_map VALUES (rec.id, new_id);
                         new_id := new_id + 1;
                     END LOOP;
@@ -4655,7 +4666,7 @@ def resequence_entire_database():
                     -- Resequence fixed_deposits
                     new_id := 1;
                     UPDATE fixed_deposits SET fd_id = -fd_id;
-                    FOR rec IN SELECT fd_id FROM fixed_deposits ORDER BY -fd_id ASC LOOP
+                    FOR rec IN SELECT fd_id FROM fixed_deposits ORDER BY created_at ASC, -fd_id ASC LOOP
                         UPDATE fixed_deposits SET fd_id = new_id WHERE fd_id = rec.fd_id;
                         new_id := new_id + 1;
                     END LOOP;
@@ -4668,7 +4679,7 @@ def resequence_entire_database():
                     -- Resequence recurring_deposits
                     new_id := 1;
                     UPDATE recurring_deposits SET rd_id = -rd_id;
-                    FOR rec IN SELECT rd_id FROM recurring_deposits ORDER BY -rd_id ASC LOOP
+                    FOR rec IN SELECT rd_id FROM recurring_deposits ORDER BY created_at ASC, -rd_id ASC LOOP
                         UPDATE recurring_deposits SET rd_id = new_id WHERE rd_id = rec.rd_id;
                         new_id := new_id + 1;
                     END LOOP;
@@ -4718,7 +4729,7 @@ def resequence_entire_database():
                     -- Resequence transactions
                     new_id := 1;
                     UPDATE transactions SET id = -id;
-                    FOR rec IN SELECT id FROM transactions ORDER BY -id ASC LOOP
+                    FOR rec IN SELECT id FROM transactions ORDER BY date ASC, -id ASC LOOP
                         UPDATE transactions SET id = new_id WHERE id = rec.id;
                         new_id := new_id + 1;
                     END LOOP;
@@ -4731,7 +4742,7 @@ def resequence_entire_database():
                     -- Resequence loan_repayments & loan_emi_schedules
                     new_id := 1;
                     UPDATE loan_repayments SET id = -id;
-                    FOR rec IN SELECT id FROM loan_repayments ORDER BY -id ASC LOOP
+                    FOR rec IN SELECT id FROM loan_repayments ORDER BY repayment_date ASC, -id ASC LOOP
                         UPDATE loan_repayments SET id = new_id WHERE id = rec.id;
                         new_id := new_id + 1;
                     END LOOP;
@@ -4743,7 +4754,7 @@ def resequence_entire_database():
 
                     new_id := 1;
                     UPDATE loan_emi_schedules SET id = -id;
-                    FOR rec IN SELECT id FROM loan_emi_schedules ORDER BY -id ASC LOOP
+                    FOR rec IN SELECT id FROM loan_emi_schedules ORDER BY due_date ASC, -id ASC LOOP
                         UPDATE loan_emi_schedules SET id = new_id WHERE id = rec.id;
                         new_id := new_id + 1;
                     END LOOP;

@@ -41,7 +41,7 @@ def get_vsquare_logo_b64():
 
 @st.cache_data
 def get_vsquare_sidebar_logo_b64():
-    for fname in ["vsquare_logo_sidebar_trans.png", "vsquare_logo_trans.png", "vsquare_logo_sidebar.png"]:
+    for fname in ["vsquare_logo_flat_trans.png", "vsquare_logo_opt.png", "vsquare_logo.png"]:
         p = os.path.join(os.path.dirname(__file__), "assets", fname)
         if os.path.exists(p):
             with open(p, "rb") as f:

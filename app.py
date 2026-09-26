@@ -6834,11 +6834,17 @@ if st.sidebar.button("🚪 Log Out", key="logout_btn", use_container_width=True)
             pass
     st.rerun()
 
-vs_logo_b64 = get_vsquare_sidebar_logo_b64()
-if vs_logo_b64:
-    logo_img_sidebar = f'''<img src="data:image/png;base64,{vs_logo_b64}" alt="VSquareInfotech" style="max-width: 195px; width: 90%; height: auto; max-height: 52px; display: block; margin: 3px auto;">'''
+fav_b64 = get_vsquare_favicon_b64()
+if fav_b64:
+    logo_img_sidebar = f'''<div style="display: flex; align-items: center; justify-content: center; gap: 9px; padding: 2px 0;">
+<img src="data:image/png;base64,{fav_b64}" alt="VSquare" style="height: 38px; width: auto; display: block; flex-shrink: 0;">
+<div style="text-align: left; line-height: 1.15;">
+<div style="font-size: 19px; font-weight: 900; color: #ffffff; letter-spacing: 0.8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">VSQUARE</div>
+<div style="font-size: 10px; font-weight: 800; color: #38bdf8; letter-spacing: 2.8px; text-transform: uppercase;">INFOTECH</div>
+</div>
+</div>'''
 else:
-    logo_img_sidebar = '<div style="font-size: 14px; font-weight: 800; color: #38bdf8 !important;">🚀 VSQUARE INFOTECH</div>'
+    logo_img_sidebar = '<div style="font-size: 15px; font-weight: 800; color: #ffffff !important;">🚀 VSQUARE INFOTECH</div>'
 
 st.sidebar.markdown(f"""<div style="margin-top: 14px; padding: 12px 10px; background: linear-gradient(145deg, #1b4977 0%, #245e9a 50%, #2f74bd 100%); border: 1px solid rgba(186, 230, 253, 0.45); border-radius: 12px; text-align: center; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.25);">
 <div style="font-size: 9.5px; font-weight: 700; color: #e0f2fe !important; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px;">Designed, Hosted &amp; Managed by</div>

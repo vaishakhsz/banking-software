@@ -4983,7 +4983,12 @@ def render_bank_book():
                 current_val = float(row[2]) if row[2] > 0 else float(row[3])
                 new_amt = col_a.number_input("Amount (₹)", min_value=1.0, value=current_val, step=100.0)
                 
-                new_head = st.selectbox("Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_head_key) if current_head_key in coa_dict else 0)
+                col_b1, col_b2 = st.columns(2)
+                bank_opts = ["Union Bank of India", "State Bank of India"]
+                bank_idx = 0 if "union" in str(row[4]).lower() else 1
+                new_bank_name = col_b1.selectbox("Operating Bank Account", bank_opts, index=bank_idx)
+                new_head = col_b2.selectbox("Corresponding Account Head", list(coa_dict.keys()), index=list(coa_dict.keys()).index(current_head_key) if current_head_key in coa_dict else 0)
+                
                 new_part = st.text_input("Particulars", value=row[1])
                 new_narration = st.text_area("Narration", value=row[5] or "")
                 
@@ -4992,8 +4997,8 @@ def render_bank_book():
                     d_amt = new_amt if "DEBIT" in new_type else 0.0
                     c_amt = new_amt if "CREDIT" in new_type else 0.0
                     voucher_no = row[7]
-                    bank_name = row[4]
-                    bank_code = "AST-102"
+                    bank_name = new_bank_name
+                    bank_code = "AST-102" if "Union" in bank_name else "AST-103"
                     
                     # 1. Check Cash Balance if adjusting deposit from Cash
                     if new_acc_code == 'AST-101' and "DEBIT" in new_type:
@@ -5001,12 +5006,12 @@ def render_bank_book():
                         if cur_cash < new_amt:
                             st.warning(f"⚠️ Cash Balance Alert: Recorded Cash in Hand is ₹{cur_cash:,.2f}, which is less than the deposit amount ₹{new_amt:,.2f}. Balance will adjust accordingly.")
                     
-                    # 2. Update the bank_book entry (including date!)
+                    # 2. Update the bank_book entry (including date and bank_name!)
                     run_query("""
                         UPDATE bank_book 
-                        SET date = ?, particulars = ?, debit_amount = ?, credit_amount = ?, account_code = ?, narration = ? 
+                        SET date = ?, particulars = ?, debit_amount = ?, credit_amount = ?, bank_name = ?, account_code = ?, narration = ? 
                         WHERE id = ?
-                    """, (str(edit_date), new_part, d_amt, c_amt, new_acc_code, new_narration, edit_bank_id), fetch=False)
+                    """, (str(edit_date), new_part, d_amt, c_amt, bank_name, new_acc_code, new_narration, edit_bank_id), fetch=False)
                     
                     # 3. Locate and update the related Journal Voucher
                     jv_row = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
@@ -5028,8 +5033,11 @@ def render_bank_book():
                         else:
                             run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, new_acc_code, new_amt), fetch=False)
                             run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, bank_code, new_amt), fetch=False)
-                            
-                    flash_success("Bank Entry and Ledger updated successfully!")
+                    
+                    from database import resequence_bank_book
+                    resequence_bank_book()
+                    clear_db_cache()
+                    flash_success("✅ Bank Entry and Ledger updated successfully!")
                     st.rerun()
 
     with tab4:

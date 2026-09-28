@@ -2657,6 +2657,17 @@ def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, pa
         amount = float(amount or 0.0)
         final_inst_no = str(installment_no).strip() if installment_no is not None and str(installment_no).strip() else str(old_inst_no)
         
+        # Determine target asset code and bank name
+        if "cash" in str(payment_mode).lower():
+            asset_code = 'AST-101'
+            b_name = "Cash in Hand"
+        elif "state" in str(payment_mode).lower() or "sbi" in str(payment_mode).lower():
+            asset_code = 'AST-103'
+            b_name = "State Bank of India"
+        else:
+            asset_code = 'AST-102'
+            b_name = "Union Bank of India"
+        
         # 1. Update rd_installments
         run_query("""
             UPDATE rd_installments 
@@ -2669,9 +2680,9 @@ def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, pa
             # Check bank_book
             run_query("""
                 UPDATE bank_book 
-                SET date = ?, credit_amount = ?, narration = ?, particulars = ?
+                SET date = ?, credit_amount = ?, bank_name = ?, account_code = ?, narration = ?, particulars = ?
                 WHERE voucher_no = ?
-            """, (pay_date_str, amount, narration or f"RD Installment #{final_inst_no}", particulars or f"RD #{rd_id} - Inst #{final_inst_no}", old_vno), fetch=False)
+            """, (pay_date_str, amount, b_name, asset_code, narration or f"RD Installment #{final_inst_no}", particulars or f"RD #{rd_id} - Inst #{final_inst_no}", old_vno), fetch=False)
             
             # Check cash_book
             run_query("""
@@ -2683,18 +2694,22 @@ def update_rd_installment(inst_id, rd_id, payment_date, amount, payment_mode, pa
             # Update journal_vouchers
             run_query("""
                 UPDATE journal_vouchers 
-                SET voucher_date = ?
+                SET voucher_date = ?, narration = ?
                 WHERE narration LIKE ?
-            """, (pay_date_str, f"%{old_vno}%"), fetch=False)
+            """, (pay_date_str, f"RD Installment Paid - RD #{rd_id} (Inst #{final_inst_no}) via {payment_mode}", f"%{old_vno}%"), fetch=False)
             
-            # Update jv_entries amounts
+            # Update jv_entries amounts & asset account code
             jv_rows = run_query("SELECT jv_id FROM journal_vouchers WHERE narration LIKE ?", (f"%{old_vno}%",))
             if jv_rows:
                 for j in jv_rows:
+                    run_query("UPDATE jv_entries SET account_code = ? WHERE jv_id = ? AND account_code LIKE 'AST%'", (asset_code, j[0]), fetch=False)
                     run_query("UPDATE jv_entries SET debit = CASE WHEN debit > 0 THEN ? ELSE debit END, credit = CASE WHEN credit > 0 THEN ? ELSE credit END WHERE jv_id = ?", (amount, amount, j[0]), fetch=False)
         
         # 3. Recalculate progressive balances and resequence cleanly
         resequence_rd_installments(rd_id)
+        resequence_bank_book()
+        resequence_cash_book()
+        clear_db_cache()
         return True, "Installment updated successfully!"
     except Exception as e:
         return False, str(e)

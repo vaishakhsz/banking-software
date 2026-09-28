@@ -221,7 +221,7 @@ def resequence_all_accounts():
         rows = cursor.fetchall()
         if not rows:
             release_connection(conn)
-            return
+            return True, "No accounts found."
             
         by_type = {}
         for row in rows:
@@ -258,7 +258,7 @@ def resequence_all_accounts():
                     
         if not updates_to_make:
             release_connection(conn)
-            return
+            return True, "Chart of Accounts is already sequentially aligned."
             
         try:
             if not USING_SUPABASE:
@@ -280,12 +280,14 @@ def resequence_all_accounts():
                     cursor.execute(f"DELETE FROM chart_of_accounts WHERE account_code = {placeholder}", (old_code,))
                     
             conn.commit()
+            clear_db_cache()
             print("✅ Resequenced all accounts successfully!")
         finally:
             try:
                 if not USING_SUPABASE:
                     cursor.execute("PRAGMA foreign_keys = ON;")
                 conn.commit()
+                clear_db_cache()
             except Exception as ex:
                 print(f"Error restoring foreign keys: {str(ex)}")
                 
@@ -293,8 +295,10 @@ def resequence_all_accounts():
         import traceback
         print(f"Error during re-sequencing: {str(e)}")
         traceback.print_exc()
+        return False, str(e)
     finally:
         release_connection(conn)
+    return True, "Chart of Accounts resequenced successfully."
 
 
 def reconcile_books():
@@ -359,6 +363,7 @@ def reconcile_books():
                     cursor.execute(f"INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES ({placeholder}, {placeholder}, 0, {placeholder})", (jv_id, bank_code, amt))
                     
         conn.commit()
+        clear_db_cache()
     except Exception as e:
         print(f"Error during reconciliation: {str(e)}")
     finally:
@@ -910,6 +915,7 @@ def init_db(force=False):
                 pass
 
         conn.commit()
+        clear_db_cache()
         DB_INITIALIZED = True
         DB_INIT_ERROR = None
         return True
@@ -970,6 +976,7 @@ def sync_postgres_sequences(conn=None):
             END $$;
         """)
         conn.commit()
+        clear_db_cache()
     except Exception as e:
         print(f"⚠️ Sequence sync notice: {e}")
         try:
@@ -1422,6 +1429,7 @@ def delete_customer_cascade(customer_id):
             cursor.execute("UPDATE customers SET id = (-id) - 1 WHERE id < 0")
             
         conn.commit()
+        clear_db_cache()
         
         # 8. Clean up local files if any
         for fpath in [adh_f, pan_f, sig_f]:
@@ -1556,6 +1564,7 @@ def post_automated_jv(narration, debit_acc, credit_acc, amount, voucher_date=Non
             cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, credit_acc, amount))
         
         conn.commit()
+        clear_db_cache()
         return jv_id
     except Exception as e:
         import streamlit as st
@@ -1607,6 +1616,7 @@ def post_compound_jv(narration, debit_entries, credit_entries, voucher_date=None
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, acc, amt))
         
         conn.commit()
+        clear_db_cache()
         return jv_id
     except Exception as e:
         import streamlit as st
@@ -1788,6 +1798,7 @@ def record_cash_book_transaction(entry_type, amount, account_code, particulars, 
             """, (today, voucher_no, particulars, dr_amt, cr_amt, new_cash_bal, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")))
             
         conn.commit()
+        clear_db_cache()
         return True, voucher_no
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -1884,6 +1895,7 @@ def update_cash_book_transaction(edit_id, entry_type, amount, account_code, part
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-101', 0, ?)", (jv_id, amount))
                     
         conn.commit()
+        clear_db_cache()
         return True, "Updated successfully"
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -1980,6 +1992,7 @@ def record_bank_book_transaction(entry_type, amount, bank_name, bank_code, accou
             """, (today, voucher_no, particulars, dr_amt, cr_amt, new_bank_bal, bank_name, account_code, narration, datetime.now(IST).strftime("%Y-%m-%d %H:%M")))
             
         conn.commit()
+        clear_db_cache()
         return True, voucher_no
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -2127,6 +2140,7 @@ def record_sb_transaction(account_no, tx_type, amount, pay_mode, chosen_asset_co
                 """, (today, voucher_no, particulars, bb_dr, bb_cr, new_asset_bal, bank_name, chosen_asset_code, narration, today_time))
                 
         conn.commit()
+        clear_db_cache()
         return True, new_bal
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3032,6 +3046,7 @@ def delete_cash_book_entry(del_id):
             cursor.execute("UPDATE cash_book SET id = (-id) - 1, balance = balance - ? WHERE id < 0", (del_delta,))
             
         conn.commit()
+        clear_db_cache()
         return True, f"Cash Entry ID {del_id} and related ledger entries deleted successfully. Sequence and balances re-aligned without gaps."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3123,6 +3138,7 @@ def delete_bank_book_entry(del_id):
             """, (bank_name, del_delta))
             
         conn.commit()
+        clear_db_cache()
         return True, f"Bank Entry ID {del_id} and related ledger entries deleted successfully. Sequence and balances re-aligned without gaps."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3181,6 +3197,7 @@ def resequence_cash_book():
                     curr_bal += (dr - cr)
                 cursor.execute("UPDATE cash_book SET id = ?, balance = ? WHERE id = ?", (new_id, curr_bal, -old_neg_id))
         conn.commit()
+        clear_db_cache()
         return True, "Cash Book resequenced successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3194,7 +3211,7 @@ def resequence_cash_book():
 
 
 def resequence_bank_book():
-    """Resequences all bank_book rows from 1 to N without gaps and recalculates running balances per bank."""
+    """Resequences all bank_book rows from 1 to N without gaps and recalculates progressive running balances per bank."""
     conn = None
     try:
         conn = get_connection()
@@ -3205,10 +3222,29 @@ def resequence_bank_book():
                 DECLARE
                     r RECORD;
                     new_id INT := 1;
+                    bal_union NUMERIC := 0;
+                    bal_sbi NUMERIC := 0;
+                    curr_b NUMERIC := 0;
                 BEGIN
                     UPDATE bank_book SET id = -id;
-                    FOR r IN SELECT id FROM bank_book ORDER BY date ASC, CASE WHEN particulars ILIKE '%opening%' THEN 0 ELSE 1 END, -id ASC LOOP
-                        UPDATE bank_book SET id = new_id WHERE id = r.id;
+                    FOR r IN SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars ILIKE '%opening%' THEN 0 ELSE 1 END, -id ASC LOOP
+                        IF r.bank_name ILIKE '%State Bank%' OR r.bank_name ILIKE '%SBI%' THEN
+                            IF bal_sbi = 0 AND r.particulars ILIKE '%opening%' THEN
+                                bal_sbi := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                            ELSE
+                                bal_sbi := bal_sbi + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                            END IF;
+                            curr_b := bal_sbi;
+                        ELSE
+                            IF bal_union = 0 AND r.particulars ILIKE '%opening%' THEN
+                                bal_union := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                            ELSE
+                                bal_union := bal_union + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                            END IF;
+                            curr_b := bal_union;
+                        END IF;
+
+                        UPDATE bank_book SET id = new_id, balance = curr_b WHERE id = r.id;
                         new_id := new_id + 1;
                     END LOOP;
                     
@@ -3220,13 +3256,30 @@ def resequence_bank_book():
                 END $$;
             """)
         else:
-            cursor.execute("SELECT id FROM bank_book ORDER BY date ASC, CASE WHEN particulars LIKE '%opening%' OR particulars LIKE '%Opening%' THEN 0 ELSE 1 END, id ASC")
+            cursor.execute("SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars LIKE '%opening%' OR particulars LIKE '%Opening%' THEN 0 ELSE 1 END, id ASC")
             rows = cursor.fetchall()
             cursor.execute("UPDATE bank_book SET id = -id")
-            for new_id, (old_neg_id,) in enumerate(rows, 1):
-                cursor.execute("UPDATE bank_book SET id = ? WHERE id = ?", (new_id, -old_neg_id))
+            bal_union = 0.0
+            bal_sbi = 0.0
+            for new_id, (old_neg_id, dr, cr, b_name, part) in enumerate(rows, 1):
+                dr = float(dr or 0.0)
+                cr = float(cr or 0.0)
+                if "state" in str(b_name).lower() or "sbi" in str(b_name).lower():
+                    if bal_sbi == 0.0 and "opening" in str(part).lower():
+                        bal_sbi = dr - cr
+                    else:
+                        bal_sbi += (dr - cr)
+                    curr_b = bal_sbi
+                else:
+                    if bal_union == 0.0 and "opening" in str(part).lower():
+                        bal_union = dr - cr
+                    else:
+                        bal_union += (dr - cr)
+                    curr_b = bal_union
+                cursor.execute("UPDATE bank_book SET id = ?, balance = ? WHERE id = ?", (new_id, curr_b, -old_neg_id))
         conn.commit()
-        return True, "Bank Book resequenced successfully."
+        clear_db_cache()
+        return True, "Bank Book resequenced and running balances verified successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
             try:
@@ -3523,6 +3576,7 @@ def delete_personal_loan_entry(del_id):
             cursor.execute("UPDATE personal_loans SET id = (-id) - 1 WHERE id < 0")
             
         conn.commit()
+        clear_db_cache()
         return True, f"Personal Loan #{loan_no} deleted and loans re-sequenced successfully without gaps."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3596,6 +3650,7 @@ def delete_gold_loan_entry(del_id):
             cursor.execute("UPDATE gold_loans SET id = (-id) - 1 WHERE id < 0")
             
         conn.commit()
+        clear_db_cache()
         return True, f"Gold Loan #{loan_no} deleted and gold loans re-sequenced successfully without gaps."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3638,6 +3693,7 @@ def delete_fd_entry(del_id):
             cursor.execute("UPDATE fixed_deposits SET fd_id = -fd_id WHERE fd_id > ?", (del_id,))
             cursor.execute("UPDATE fixed_deposits SET fd_id = (-fd_id) - 1 WHERE fd_id < 0")
         conn.commit()
+        clear_db_cache()
         return True, f"Fixed Deposit #{del_id} deleted and resequenced successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3690,6 +3746,7 @@ def delete_rd_entry(del_id):
             cursor.execute("UPDATE recurring_deposits SET rd_id = -rd_id WHERE rd_id > ?", (del_id,))
             cursor.execute("UPDATE recurring_deposits SET rd_id = (-rd_id) - 1 WHERE rd_id < 0")
         conn.commit()
+        clear_db_cache()
         return True, f"Recurring Deposit #{del_id} deleted and resequenced successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3756,6 +3813,7 @@ def delete_jv_entry(del_jv_id):
             cursor.execute("UPDATE journal_vouchers SET jv_id = -jv_id WHERE jv_id > ?", (del_jv_id,))
             cursor.execute("UPDATE journal_vouchers SET jv_id = (-jv_id) - 1 WHERE jv_id < 0")
         conn.commit()
+        clear_db_cache()
         return True, f"Journal Voucher #{del_jv_id} deleted and resequenced successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3798,6 +3856,7 @@ def delete_transaction_entry(del_id):
             cursor.execute("UPDATE transactions SET id = -id WHERE id > ?", (del_id,))
             cursor.execute("UPDATE transactions SET id = (-id) - 1 WHERE id < 0")
         conn.commit()
+        clear_db_cache()
         return True, f"Transaction #{del_id} deleted and resequenced successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -3862,6 +3921,7 @@ def delete_sb_account_entry(account_no):
                 cursor.execute("UPDATE transactions SET id = ? WHERE id = ?", (new_id, -old_neg_id))
                 
         conn.commit()
+        clear_db_cache()
         return True, f"SB Account {account_no} deleted successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -4335,6 +4395,7 @@ def update_personal_loan_details(
                     """, (op_bal_date_str, c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
                     
         conn.commit()
+        clear_db_cache()
         resequence_cash_book()
         resequence_bank_book()
         
@@ -4554,6 +4615,7 @@ def update_gold_loan_details(
                     """, (op_bal_date_str, c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
                     
         conn.commit()
+        clear_db_cache()
         resequence_cash_book()
         resequence_bank_book()
         
@@ -4710,6 +4772,7 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
             """, (op_bal_date_str, c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{pl_code}]", princ_amount, f"Opening Personal Loan Disbursal - {pl_code}", today_time))
             
         conn.commit()
+        clear_db_cache()
         resequence_cash_book()
         resequence_bank_book()
         
@@ -4884,6 +4947,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
             """, (op_bal_date_str, c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{gl_code}]", princ_amount, f"Opening Gold Loan Disbursal - {gl_code}", today_time))
             
         conn.commit()
+        clear_db_cache()
         resequence_cash_book()
         resequence_bank_book()
         
@@ -4953,6 +5017,7 @@ def resequence_customers():
             for old_id, new_id in id_map.items():
                 cursor.execute("UPDATE customers SET id = ? WHERE id = ?", (new_id, -old_id))
         conn.commit()
+        clear_db_cache()
         return True, "Customers resequenced successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -5042,18 +5107,25 @@ def resequence_entire_database():
                         PERFORM setval('fixed_deposits_fd_id_seq', (SELECT MAX(fd_id) FROM fixed_deposits), true);
                     END IF;
 
-                    -- Resequence recurring_deposits
+                    -- Resequence recurring_deposits with FK safety
+                    ALTER TABLE rd_installments DROP CONSTRAINT IF EXISTS rd_installments_rd_id_fkey;
                     new_id := 1;
-                    UPDATE recurring_deposits SET rd_id = -rd_id;
-                    FOR rec IN SELECT rd_id FROM recurring_deposits ORDER BY created_at ASC, -rd_id ASC LOOP
-                        UPDATE recurring_deposits SET rd_id = new_id WHERE rd_id = rec.rd_id;
+                    CREATE TEMP TABLE IF NOT EXISTS temp_rd_map (old_id INT, new_id INT) ON COMMIT DROP;
+                    TRUNCATE temp_rd_map;
+                    FOR rec IN SELECT rd_id FROM recurring_deposits ORDER BY created_at ASC, rd_id ASC LOOP
+                        INSERT INTO temp_rd_map VALUES (rec.rd_id, new_id);
                         new_id := new_id + 1;
                     END LOOP;
+                    UPDATE rd_installments SET rd_id = -temp_rd_map.new_id FROM temp_rd_map WHERE rd_installments.rd_id = temp_rd_map.old_id;
+                    UPDATE recurring_deposits SET rd_id = -temp_rd_map.new_id FROM temp_rd_map WHERE recurring_deposits.rd_id = temp_rd_map.old_id;
+                    UPDATE recurring_deposits SET rd_id = -rd_id WHERE rd_id < 0;
+                    UPDATE rd_installments SET rd_id = -rd_id WHERE rd_id < 0;
                     IF (SELECT COUNT(*) FROM recurring_deposits) = 0 THEN
                         EXECUTE 'ALTER SEQUENCE recurring_deposits_rd_id_seq RESTART WITH 1';
                     ELSE
                         PERFORM setval('recurring_deposits_rd_id_seq', (SELECT MAX(rd_id) FROM recurring_deposits), true);
                     END IF;
+                    ALTER TABLE rd_installments ADD CONSTRAINT rd_installments_rd_id_fkey FOREIGN KEY (rd_id) REFERENCES recurring_deposits(rd_id) ON DELETE CASCADE;
 
                     -- Resequence journal_vouchers & jv_entries
                     new_id := 1;
@@ -5108,7 +5180,7 @@ def resequence_entire_database():
                     -- Resequence loan_repayments & loan_emi_schedules
                     new_id := 1;
                     UPDATE loan_repayments SET id = -id;
-                    FOR rec IN SELECT id FROM loan_repayments ORDER BY repayment_date ASC, -id ASC LOOP
+                    FOR rec IN SELECT id FROM loan_repayments ORDER BY payment_date ASC, -id ASC LOOP
                         UPDATE loan_repayments SET id = new_id WHERE id = rec.id;
                         new_id := new_id + 1;
                     END LOOP;
@@ -5133,6 +5205,7 @@ def resequence_entire_database():
             """)
         
         conn.commit()
+        clear_db_cache()
         resequence_rd_installments()
         sync_db_sequences()
         return True, "Entire database resequenced and all sequences synced successfully."

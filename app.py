@@ -135,6 +135,46 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
 
+
+# ----------------------------------------------------
+# GLOBAL PERSISTENT FLASH & TOAST NOTIFICATION SYSTEM
+# ----------------------------------------------------
+def flash_success(msg):
+    """Saves success notification into session state and displays high-visibility toast."""
+    st.session_state["flash_success_msg"] = str(msg)
+    try:
+        st.toast(str(msg), icon="✅")
+    except Exception:
+        pass
+
+def flash_error(msg):
+    """Saves error notification into session state and displays toast."""
+    st.session_state["flash_error_msg"] = str(msg)
+    try:
+        st.toast(str(msg), icon="❌")
+    except Exception:
+        pass
+
+def flash_warning(msg):
+    """Saves warning notification into session state and displays toast."""
+    st.session_state["flash_warning_msg"] = str(msg)
+    try:
+        st.toast(str(msg), icon="⚠️")
+    except Exception:
+        pass
+
+def display_flash_messages():
+    """Renders prominent top-level alert banners with green checkmarks/icons across Streamlit reruns."""
+    if "flash_success_msg" in st.session_state and st.session_state["flash_success_msg"]:
+        msg = st.session_state.pop("flash_success_msg")
+        st.success(msg)
+    if "flash_warning_msg" in st.session_state and st.session_state["flash_warning_msg"]:
+        msg = st.session_state.pop("flash_warning_msg")
+        st.warning(msg)
+    if "flash_error_msg" in st.session_state and st.session_state["flash_error_msg"]:
+        msg = st.session_state.pop("flash_error_msg")
+        st.error(msg)
+
 def format_df_dates(df):
     """Automatically formats date-like columns to DD-MM-YYYY format for display"""
     if df is None or df.empty:
@@ -451,7 +491,7 @@ def render_customer_management():
                                               (final_acc_no, new_c_id, today_str), fetch=False)
                                 
                                 clear_db_cache()
-                                st.success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: #{new_c_id}) registered successfully for **{acc_type}**! Opening balance and account operations can now be managed directly in the **{acc_type}** module.")
+                                flash_success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: #{new_c_id}) registered successfully for **{acc_type}**! Opening balance and account operations can now be managed directly in the **{acc_type}** module.")
                                 st.rerun()
                             else:
                                 st.error("❌ Failed to create customer record. Please check inputs or database connectivity.")
@@ -608,7 +648,7 @@ def render_customer_management():
                                 
                             run_query("UPDATE accounts SET account_number=?, account_type=? WHERE customer_id=?", (new_acc_no, db_acc_type, cust_id_edit), fetch=False)
                             clear_db_cache()
-                            st.success("Profile details updated successfully!")
+                            flash_success("Profile details updated successfully!")
                             st.rerun()
 
                 st.info("💡 **Product Account & Opening Balance Management:** To view, sanction, or edit opening balances, deposit amounts, sanction dates, and opening balance dates for Savings Bank, Fixed Deposits, Recurring Deposits, Personal Loans, or Gold Loans, please use the **✏️ Edit / Update** tab inside their respective product modules in the sidebar navigation.")
@@ -635,7 +675,7 @@ def render_customer_management():
                         delete_document(c[8], doc_type='adhar', customer_id=cust_id_edit)
                         run_query("UPDATE customers SET adhar_file = NULL, adhar_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                         clear_db_cache()
-                        st.success("Aadhaar document deleted successfully!")
+                        flash_success("Aadhaar document deleted successfully!")
                         st.rerun()
                 else:
                     st.warning("No Aadhaar document uploaded.")
@@ -646,7 +686,7 @@ def render_customer_management():
                             param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
                             run_query("UPDATE customers SET adhar_file = ?, adhar_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
                             clear_db_cache()
-                            st.success("Aadhaar document saved directly into database!")
+                            flash_success("Aadhaar document saved directly into database!")
                             st.rerun()
 
                 # --- 2. PAN CARD ---
@@ -665,7 +705,7 @@ def render_customer_management():
                         delete_document(c[9], doc_type='pan', customer_id=cust_id_edit)
                         run_query("UPDATE customers SET pan_file = NULL, pan_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                         clear_db_cache()
-                        st.success("PAN document deleted successfully!")
+                        flash_success("PAN document deleted successfully!")
                         st.rerun()
                 else:
                     st.warning("No PAN document uploaded.")
@@ -676,7 +716,7 @@ def render_customer_management():
                             param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
                             run_query("UPDATE customers SET pan_file = ?, pan_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
                             clear_db_cache()
-                            st.success("PAN document saved directly into database!")
+                            flash_success("PAN document saved directly into database!")
                             st.rerun()
 
                 # --- 3. SIGNATURE ---
@@ -695,7 +735,7 @@ def render_customer_management():
                         delete_document(c[10], doc_type='signature', customer_id=cust_id_edit)
                         run_query("UPDATE customers SET signature_file = NULL, signature_data = NULL WHERE id = ?", (cust_id_edit,), fetch=False)
                         clear_db_cache()
-                        st.success("Signature document deleted successfully!")
+                        flash_success("Signature document deleted successfully!")
                         st.rerun()
                 else:
                     st.warning("No Signature document uploaded.")
@@ -706,7 +746,7 @@ def render_customer_management():
                             param = psycopg2.Binary(saved_bytes) if (USING_SUPABASE and saved_bytes) else saved_bytes
                             run_query("UPDATE customers SET signature_file = ?, signature_data = ? WHERE id = ?", (saved_name, param, cust_id_edit), fetch=False)
                             clear_db_cache()
-                            st.success("Signature document saved directly into database!")
+                            flash_success("Signature document saved directly into database!")
                             st.rerun()
 
                 # --- 4. DANGER ZONE: DELETE CUSTOMER ---
@@ -720,7 +760,7 @@ def render_customer_management():
                             success, msg = delete_customer_cascade(cust_id_edit)
                             if success:
                                 clear_db_cache()
-                                st.success(f"✅ {msg}")
+                                flash_success(f"✅ {msg}")
                                 st.rerun()
                             else:
                                 st.error(f"❌ Failed to delete customer: {msg}")
@@ -737,12 +777,12 @@ def render_kyc():
                 if col1.button(f"✅ Approve KYC #{p[0]}", key=f"app_{p[0]}", use_container_width=True):
                     run_query("UPDATE customers SET kyc_status='APPROVED' WHERE id=?", (p[0],), fetch=False)
                     clear_db_cache()
-                    st.success(f"KYC Approved for ID {p[0]}")
+                    flash_success(f"KYC Approved for ID {p[0]}")
                     st.rerun()
                 if col2.button(f"❌ Reject KYC #{p[0]}", key=f"rej_{p[0]}", use_container_width=True):
                     run_query("UPDATE customers SET kyc_status='REJECTED' WHERE id=?", (p[0],), fetch=False)
                     clear_db_cache()
-                    st.error(f"KYC Rejected for ID {p[0]}")
+                    flash_error(f"KYC Rejected for ID {p[0]}")
                     st.rerun()
     else:
         st.info("No pending KYC verification requests.")
@@ -873,7 +913,7 @@ def render_daily_collection_sheet():
                         run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"DAILY COLLECTION [{l_no}] (CREDIT)", coll_amt, pass_bal, str(report_date)), fetch=False)
                         
                     clear_db_cache()
-                    st.success(f"🎉 Received ₹{coll_amt:,.2f} from {l_name}! Posted to Bank Book ({rep_voucher}) and Customer Passbook.")
+                    flash_success(f"🎉 Received ₹{coll_amt:,.2f} from {l_name}! Posted to Bank Book ({rep_voucher}) and Customer Passbook.")
                     st.rerun()
         else:
             st.info("No active loans found.")
@@ -1099,7 +1139,7 @@ def render_personal_loans():
                     run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"LOAN DISBURSAL [{loan_no}] (DEBIT)", final_initial_due, final_initial_due, str(sanction_date)), fetch=False)
                 
             clear_db_cache()
-            st.success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{final_initial_due:,.2f}**.")
+            flash_success(f"🎉 Loan **{loan_no}** Disbursed Successfully! Total Repayable Due: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{final_initial_due:,.2f}**.")
             st.rerun()
 
     with tab2:
@@ -1184,7 +1224,7 @@ def render_personal_loans():
                         l_id, l_cid, l_cname, l_cacc, l_no, str(pay_date), amt_paid, pay_mode, rep_voucher, rep_narration, new_due, new_status, princ_portion, int_portion
                     )
                     if success:
-                        st.success(f"✅ {msg}")
+                        flash_success(f"✅ {msg}")
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
@@ -1346,7 +1386,7 @@ def render_personal_loans():
                     run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"LOAN RENEWAL [{cur_l_no}]", new_tot_repayable, new_tot_repayable, str(ren_date)), fetch=False)
                     
                 clear_db_cache()
-                st.success(f"🎉 Loan **#{cur_l_no}** for **{cur_cname}** successfully renewed! (Cycle #{new_ren_cnt}) | New Repayable Due: **₹{new_tot_repayable:,.2f}** | Monthly EMI: **₹{new_installment:,.2f}/mo**")
+                flash_success(f"🎉 Loan **#{cur_l_no}** for **{cur_cname}** successfully renewed! (Cycle #{new_ren_cnt}) | New Repayable Due: **₹{new_tot_repayable:,.2f}** | Monthly EMI: **₹{new_installment:,.2f}/mo**")
                 st.rerun()
         else:
             st.info("ℹ️ No active loans with an outstanding balance pending renewal. (Fully repaid or closed loans do not require rollover renewal).")
@@ -1385,7 +1425,7 @@ def render_personal_loans():
                     if col_reopen.button(f"🔓 Reopen / Reactivate Personal Loan #{l_no}", key=f"reopen_pl_{sel_pl_id}", type="secondary"):
                         run_query("UPDATE personal_loans SET status = 'ACTIVE' WHERE id = ?", (sel_pl_id,), fetch=False)
                         clear_db_cache()
-                        st.success(f"✅ Personal Loan #{l_no} has been reopened to ACTIVE status. Editing fields are now unlocked.")
+                        flash_success(f"✅ Personal Loan #{l_no} has been reopened to ACTIVE status. Editing fields are now unlocked.")
                         st.rerun()
                 
                 st.markdown("### 1️⃣ Financial Terms & Repayment Calculation")
@@ -1466,7 +1506,7 @@ def render_personal_loans():
                         )
                         clear_db_cache()
                         if success:
-                            st.success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
+                            flash_success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to update loan: {msg}")
@@ -1484,7 +1524,7 @@ def render_personal_loans():
                         
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to delete loan: {msg}")
@@ -1912,7 +1952,7 @@ def render_gold_loans():
                 run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, final_initial_due, str(sanction_date)), fetch=False)
                 
             clear_db_cache()
-            st.success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{final_initial_due:,.2f}**.")
+            flash_success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{final_initial_due:,.2f}**.")
             st.rerun()
 
     with tab2:
@@ -2000,7 +2040,7 @@ def render_gold_loans():
                         gl_id, gl_cid, gl_cname, gl_cacc, gl_no, gl_pkt, str(pay_date), amt_paid, pay_mode, rep_voucher, rep_narration, new_due, new_status, princ_portion, int_portion
                     )
                     if success:
-                        st.success(f"✅ {msg}")
+                        flash_success(f"✅ {msg}")
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
@@ -2186,7 +2226,7 @@ def render_gold_loans():
                     run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (a_id, f"GOLD LOAN RENEWAL [{c_gl_no}]", new_gl_tot_repayable, new_gl_tot_repayable, str(gl_ren_date)), fetch=False)
 
                 clear_db_cache()
-                st.success(f"🎉 Gold Loan **#{c_gl_no}** for **{c_gl_cname}** successfully renewed! (Cycle #{new_gl_ren_cnt}) | New Valuation: **₹{updated_market_val:,.2f}** | New Repayable Due: **₹{new_gl_tot_repayable:,.2f}** | Monthly EMI: **₹{new_gl_installment:,.2f}/mo**")
+                flash_success(f"🎉 Gold Loan **#{c_gl_no}** for **{c_gl_cname}** successfully renewed! (Cycle #{new_gl_ren_cnt}) | New Valuation: **₹{updated_market_val:,.2f}** | New Repayable Due: **₹{new_gl_tot_repayable:,.2f}** | Monthly EMI: **₹{new_gl_installment:,.2f}/mo**")
                 st.rerun()
         else:
             st.info("ℹ️ No active gold loans pending renewal. (Fully repaid or released loans do not require rollover renewal).")
@@ -2227,7 +2267,7 @@ def render_gold_loans():
                     if col_reopen_gl.button(f"🔓 Reopen / Reactivate Gold Loan #{eg_lno}", key=f"reopen_gl_{sel_egl_id}", type="secondary"):
                         run_query("UPDATE gold_loans SET status = 'ACTIVE', closure_date = NULL WHERE id = ?", (sel_egl_id,), fetch=False)
                         clear_db_cache()
-                        st.success(f"✅ Gold Loan #{eg_lno} has been reopened to ACTIVE status. Editing fields are now unlocked.")
+                        flash_success(f"✅ Gold Loan #{eg_lno} has been reopened to ACTIVE status. Editing fields are now unlocked.")
                         st.rerun()
                 
                 if eg_has_photo:
@@ -2354,7 +2394,7 @@ def render_gold_loans():
                         )
                         clear_db_cache()
                         if success:
-                            st.success(f"🎉 Gold Loan **#{new_gl_lno}** updated successfully! New Total Repayable: **₹{calc_gl_repayable:,.2f}** | Monthly EMI: **₹{calc_gl_installment:,.2f}/mo**")
+                            flash_success(f"🎉 Gold Loan **#{new_gl_lno}** updated successfully! New Total Repayable: **₹{calc_gl_repayable:,.2f}** | Monthly EMI: **₹{calc_gl_installment:,.2f}/mo**")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to update Gold Loan: {msg}")
@@ -2372,7 +2412,7 @@ def render_gold_loans():
                         
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to delete gold loan: {msg}")
@@ -2661,7 +2701,7 @@ def render_sb_accounts():
                             """, (op_bal_date_str, voucher_no, f"SB Opening Deposit: {acc_no}", init_bal, new_asset_balance, bank_name, chosen_asset_code, f"SB Opening Balance - {acc_no}", today_time), fetch=False)
 
                 clear_db_cache()
-                st.success(f"🎉 SB Account created successfully on {op_date_str}! Account No: **{acc_no}** (Opening balance recorded on {op_bal_date_str})")
+                flash_success(f"🎉 SB Account created successfully on {op_date_str}! Account No: **{acc_no}** (Opening balance recorded on {op_bal_date_str})")
                 st.rerun()
         else:
             st.warning("Please register a customer first.")
@@ -2719,7 +2759,7 @@ def render_sb_accounts():
                 success, res_val = record_sb_transaction(acc_choice, tx_type, amount, pay_mode, chosen_asset_code, narration, tx_date=tx_date_str)
                 if success:
                     clear_db_cache()
-                    st.success(f"✅ {tx_type.capitalize()} of ₹{amount:,.2f} for **{cust_name}** (A/c: `{acc_choice}`) on {tx_date_str} successful! New Balance: ₹{res_val:,.2f}")
+                    flash_success(f"✅ {tx_type.capitalize()} of ₹{amount:,.2f} for **{cust_name}** (A/c: `{acc_choice}`) on {tx_date_str} successful! New Balance: ₹{res_val:,.2f}")
                     st.rerun()
                 else:
                     st.error(f"❌ Transaction failed: {res_val}")
@@ -2991,7 +3031,7 @@ def render_sb_accounts():
                     )
                     clear_db_cache()
                     if success:
-                        st.success(f"✅ {msg}")
+                        flash_success(f"✅ {msg}")
                         st.rerun()
                     else:
                         st.error(f"❌ Failed to update SB Account: {msg}")
@@ -3004,7 +3044,7 @@ def render_sb_accounts():
                         success, msg = delete_sb_account_entry(c_acc_no)
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to delete SB Account: {msg}")
@@ -3086,7 +3126,7 @@ def render_fixed_deposits():
                 )
                 clear_db_cache()
                 if success:
-                    st.success(f"🎉 {msg}")
+                    flash_success(f"🎉 {msg}")
                     st.rerun()
                 else:
                     st.error(f"❌ Failed to open FD: {msg}")
@@ -3432,7 +3472,7 @@ def render_fixed_deposits():
                     )
                     clear_db_cache()
                     if success:
-                        st.success(f"✅ {msg}")
+                        flash_success(f"✅ {msg}")
                         st.rerun()
                     else:
                         st.error(f"❌ Failed to update FD: {msg}")
@@ -3444,7 +3484,7 @@ def render_fixed_deposits():
                         success, msg = delete_fd_entry(c_fd_id)
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to delete FD: {msg}")
@@ -3561,7 +3601,7 @@ def render_recurring_deposits():
                     pass
                 
                 clear_db_cache()
-                st.success(f"🎉 Recurring Deposit **{final_rd_no}** opened & recorded successfully (Opened: {open_date_str} | Op Bal Date: {op_bal_date_str} | Tenure: {tenure_days} Days [{tenure}M] | Monthly: ₹{monthly_amt:,.2f} | Opening Bal: ₹{opening_balance:,.2f} [{opening_paid_inst} Inst.]) via {payment_mode}!")
+                flash_success(f"🎉 Recurring Deposit **{final_rd_no}** opened & recorded successfully (Opened: {open_date_str} | Op Bal Date: {op_bal_date_str} | Tenure: {tenure_days} Days [{tenure}M] | Monthly: ₹{monthly_amt:,.2f} | Opening Bal: ₹{opening_balance:,.2f} [{opening_paid_inst} Inst.]) via {payment_mode}!")
                 st.rerun()
         else:
             st.warning("Register customers first.")
@@ -3606,7 +3646,7 @@ def render_recurring_deposits():
                 if paid_inst < tenure_m:
                     success, msg = pay_rd_installment(rd_id, rd_pay_date, chosen_asset_code, monthly_amt)
                     if success:
-                        st.success(f"✅ {msg}")
+                        flash_success(f"✅ {msg}")
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
@@ -3624,7 +3664,7 @@ def render_recurring_deposits():
                             success, msg = resequence_rd_installments(rd_id)
                             clear_db_cache()
                             if success:
-                                st.success(f"✅ {msg}")
+                                flash_success(f"✅ {msg}")
                                 st.rerun()
                             else:
                                 st.error(f"❌ {msg}")
@@ -3658,7 +3698,7 @@ def render_recurring_deposits():
                             success, msg = update_rd_installment(t2_iid, rd_id, t2_edit_date, t2_edit_cr, pm_str, t2_edit_part, str(t2_edit_narr), installment_no=t2_edit_ino)
                             clear_db_cache()
                             if success:
-                                st.success("✅ Installment corrected & synced with all books successfully!")
+                                flash_success("✅ Installment corrected & synced with all books successfully!")
                                 st.rerun()
                             else:
                                 st.error(f"❌ {msg}")
@@ -3670,7 +3710,7 @@ def render_recurring_deposits():
                                 success, msg = delete_rd_installment(t2_iid, rd_id)
                                 clear_db_cache()
                                 if success:
-                                    st.success(f"✅ {msg}")
+                                    flash_success(f"✅ {msg}")
                                     st.rerun()
                                 else:
                                     st.error(f"❌ {msg}")
@@ -3929,7 +3969,7 @@ th {{ background-color: #ebf5fb; }}
                     post_automated_jv(f"RD #{rd_id} Interest Expense", "EXP-103", "LIA-103", interest_earned, voucher_date=close_date_str)
                 
                 clear_db_cache()
-                st.success(f"RD #{rd_id} closed successfully on {close_date_str}! Amount transferred to SB Deposits Control")
+                flash_success(f"RD #{rd_id} closed successfully on {close_date_str}! Amount transferred to SB Deposits Control")
                 st.rerun()
         else:
             st.info("No active RDs available to close.")
@@ -4124,7 +4164,7 @@ th {{ background-color: #ebf5fb; }}
                         
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to update RD: {msg}")
@@ -4134,7 +4174,7 @@ th {{ background-color: #ebf5fb; }}
                         success, msg = resequence_rd_installments(c_rd_id)
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to resequence: {msg}")
@@ -4147,7 +4187,7 @@ th {{ background-color: #ebf5fb; }}
                             success, msg = delete_rd_entry(c_rd_id)
                             clear_db_cache()
                             if success:
-                                st.success(f"✅ {msg}")
+                                flash_success(f"✅ {msg}")
                                 st.rerun()
                             else:
                                 st.error(f"❌ Failed to delete RD: {msg}")
@@ -4162,7 +4202,7 @@ th {{ background-color: #ebf5fb; }}
                         success, msg = resequence_rd_installments(c_rd_id)
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to resequence: {msg}")
@@ -4171,7 +4211,7 @@ th {{ background-color: #ebf5fb; }}
                         success, msg = resequence_rd_installments(None)
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Failed to resequence: {msg}")
@@ -4226,7 +4266,7 @@ th {{ background-color: #ebf5fb; }}
                             )
                             clear_db_cache()
                             if success:
-                                st.success(f"✅ Installment {new_inst_no} updated successfully on {new_inst_date.strftime('%d-%m-%Y')}!")
+                                flash_success(f"✅ Installment {new_inst_no} updated successfully on {new_inst_date.strftime('%d-%m-%Y')}!")
                                 st.rerun()
                             else:
                                 st.error(f"❌ Error updating installment: {msg}")
@@ -4238,7 +4278,7 @@ th {{ background-color: #ebf5fb; }}
                                 success, msg = delete_rd_installment(c_inst_id, c_rd_id)
                                 clear_db_cache()
                                 if success:
-                                    st.success(f"✅ {msg}")
+                                    flash_success(f"✅ {msg}")
                                     st.rerun()
                                 else:
                                     st.error(f"❌ Error deleting installment: {msg}")
@@ -4290,7 +4330,7 @@ th {{ background-color: #ebf5fb; }}
                         )
                         clear_db_cache()
                         if success:
-                            st.success(f"✅ {msg}")
+                            flash_success(f"✅ {msg}")
                             st.rerun()
                         else:
                             st.error(f"❌ Error adding entry: {msg}")
@@ -4349,7 +4389,7 @@ def render_chart_of_accounts():
                     if success:
                         st.success("✅ Resequenced Chart of Accounts, Customers, Loans, Deposits, Cash & Bank Books successfully! All IDs and account codes are in strict sequential order.")
                     else:
-                        st.error(f"❌ Resequencing error: {msg}")
+                        flash_error(f"❌ Resequencing error: {msg}")
                     st.rerun()
                 except Exception as ex:
                     st.error(f"❌ Resequencing error: {str(ex)}")
@@ -4365,7 +4405,7 @@ def render_chart_of_accounts():
                     resequence_all_accounts()
                     reconcile_books()
                     clear_db_cache()
-                    st.success(f"✅ Successfully deleted account code: {del_code} and resequenced accounts!")
+                    flash_success(f"✅ Successfully deleted account code: {del_code} and resequenced accounts!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Could not delete account. Error: {e}")
@@ -4409,7 +4449,7 @@ def render_chart_of_accounts():
                                 fetch=False
                             )
                         clear_db_cache()
-                        st.success(f"Account head '{input_code} - {input_name}' saved successfully!")
+                        flash_success(f"Account head '{input_code} - {input_name}' saved successfully!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error saving account entry: {e}")
@@ -4473,18 +4513,22 @@ def render_cash_book():
                     from database import record_cash_book_transaction
                     success, res_val = record_cash_book_transaction(entry_type, amount, account_code, particulars, narration, tx_date)
                     if success:
-                        st.success(f"✅ Cash entry recorded! Voucher: {res_val}")
+                        flash_success(f"✅ Cash entry recorded! Voucher: {res_val}")
                         st.rerun()
                     else:
                         st.error(f"❌ Failed to record cash entry: {res_val}")
 
     with tab2:
         min_cb_d = cached_query("SELECT MIN(date) FROM cash_book")
-        cb_default_from = datetime.strptime(min_cb_d[0][0], "%Y-%m-%d").date() if (min_cb_d and min_cb_d[0][0]) else (date.today() - timedelta(days=365))
+        max_cb_d = cached_query("SELECT MAX(date) FROM cash_book")
+        cb_default_from = datetime.strptime(min_cb_d[0][0], "%Y-%m-%d").date() if (min_cb_d and min_cb_d[0] and min_cb_d[0][0]) else (date.today() - timedelta(days=365))
+        cb_default_to = datetime.strptime(max_cb_d[0][0], "%Y-%m-%d").date() if (max_cb_d and max_cb_d[0] and max_cb_d[0][0]) else date.today()
+        if cb_default_to < date.today():
+            cb_default_to = date.today()
         
         col_date1, col_date2 = st.columns(2)
         from_date = col_date1.date_input("From Date", value=cb_default_from, key="cb_view_from", format="DD-MM-YYYY")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_view_to", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=cb_default_to, key="cb_view_to", format="DD-MM-YYYY")
         
         entries = cached_query("""
             SELECT cb.id, cb.date, cb.voucher_no, 
@@ -4493,7 +4537,7 @@ def render_cash_book():
             FROM cash_book cb
             LEFT JOIN chart_of_accounts co ON cb.account_code = co.account_code
             WHERE cb.date BETWEEN ? AND ? 
-            ORDER BY cb.id ASC
+            ORDER BY cb.date ASC, cb.id ASC
         """, (str(from_date), str(to_date)))
         if entries:
             df_cash = pd.DataFrame(entries, columns=["ID", "Date", "Voucher No", "Account Head", "Particulars", "Debit (₹)", "Credit (₹)", "Balance (₹)", "Narration"])
@@ -4517,7 +4561,7 @@ def render_cash_book():
                 if st.button("Delete Cash Entry", use_container_width=True):
                     success, msg = delete_cash_book_entry(del_id)
                     if success:
-                        st.warning(msg)
+                        flash_warning(msg)
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
@@ -4526,7 +4570,7 @@ def render_cash_book():
                 if st.button("🔄 Resequence All IDs", key="reseq_cb_btn", help="Recalculates all Cash Book IDs sequentially from 1 to N without gaps and updates running balances", use_container_width=True):
                     success, msg = resequence_cash_book()
                     if success:
-                        st.success("✅ Cash Book resequenced and running balances verified!")
+                        flash_success("✅ Cash Book resequenced and running balances verified!")
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
@@ -4571,7 +4615,7 @@ def render_cash_book():
                     from database import update_cash_book_transaction
                     success, res_val = update_cash_book_transaction(edit_id, new_type, new_amt, new_acc_code, new_part, new_narration, voucher_no, tx_date=edit_date)
                     if success:
-                        st.success("✅ Cash Entry and Ledger updated successfully!")
+                        flash_success("✅ Cash Entry and Ledger updated successfully!")
                         st.rerun()
                     else:
                         st.error(f"❌ Failed to update entry: {res_val}")
@@ -4839,18 +4883,22 @@ def render_bank_book():
                     from database import record_bank_book_transaction
                     success, res_val = record_bank_book_transaction(entry_type, amount, bank_name, bank_code, account_code, particulars, narration, tx_date)
                     if success:
-                        st.success(f"✅ Bank entry successfully recorded! Voucher: {res_val}")
+                        flash_success(f"✅ Bank entry successfully recorded! Voucher: {res_val}")
                         st.rerun()
                     else:
                         st.error(f"❌ Failed to record bank entry: {res_val}")
 
     with tab2:
         min_bb_d = cached_query("SELECT MIN(date) FROM bank_book")
-        bb_default_from = datetime.strptime(min_bb_d[0][0], "%Y-%m-%d").date() if (min_bb_d and min_bb_d[0][0]) else (date.today() - timedelta(days=365))
+        max_bb_d = cached_query("SELECT MAX(date) FROM bank_book")
+        bb_default_from = datetime.strptime(min_bb_d[0][0], "%Y-%m-%d").date() if (min_bb_d and min_bb_d[0] and min_bb_d[0][0]) else (date.today() - timedelta(days=365))
+        bb_default_to = datetime.strptime(max_bb_d[0][0], "%Y-%m-%d").date() if (max_bb_d and max_bb_d[0] and max_bb_d[0][0]) else date.today()
+        if bb_default_to < date.today():
+            bb_default_to = date.today()
 
         col_date1, col_date2 = st.columns(2)
         from_date = col_date1.date_input("From Date", value=bb_default_from, key="bb_view_from", format="DD-MM-YYYY")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_view_to", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=bb_default_to, key="bb_view_to", format="DD-MM-YYYY")
         
         bb_query = """
             SELECT bb.id, bb.date, bb.voucher_no, 
@@ -4867,7 +4915,7 @@ def render_bank_book():
             FROM bank_book bb
             LEFT JOIN chart_of_accounts co ON bb.account_code = co.account_code
             WHERE bb.date BETWEEN ? AND ?
-            ORDER BY bb.id ASC
+            ORDER BY bb.date ASC, bb.id ASC
         """
         entries = cached_query(bb_query, (str(from_date), str(to_date)))
         if entries:
@@ -4897,7 +4945,7 @@ def render_bank_book():
                 if st.button("Delete Bank Entry", use_container_width=True):
                     success, msg = delete_bank_book_entry(del_id)
                     if success:
-                        st.warning(msg)
+                        flash_warning(msg)
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
@@ -4906,7 +4954,7 @@ def render_bank_book():
                 if st.button("🔄 Resequence All IDs", key="reseq_bb_btn", help="Recalculates all Bank Book IDs sequentially from 1 to N without gaps", use_container_width=True):
                     success, msg = resequence_bank_book()
                     if success:
-                        st.success("✅ Bank Book resequenced successfully!")
+                        flash_success("✅ Bank Book resequenced successfully!")
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
@@ -4981,7 +5029,7 @@ def render_bank_book():
                             run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, new_acc_code, new_amt), fetch=False)
                             run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, bank_code, new_amt), fetch=False)
                             
-                    st.success("Bank Entry and Ledger updated successfully!")
+                    flash_success("Bank Entry and Ledger updated successfully!")
                     st.rerun()
 
     with tab4:
@@ -5171,7 +5219,7 @@ def render_journal_vouchers():
                 else:
                     jv_id = post_automated_jv(narration, acc1_code, acc2_code, dr1)
                     if jv_id:
-                        st.success(f"✅ Journal Voucher JV-{jv_id} posted successfully!")
+                        flash_success(f"✅ Journal Voucher JV-{jv_id} posted successfully!")
                         st.rerun()
 
     with tab2:
@@ -5195,7 +5243,7 @@ def render_journal_vouchers():
                     success, msg = delete_jv_entry(del_jv_id)
                     clear_db_cache()
                     if success:
-                        st.success(f"✅ {msg}")
+                        flash_success(f"✅ {msg}")
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
@@ -5347,7 +5395,7 @@ def render_admin_editor():
                     if success:
                         st.success(f"✅ {msg}")
                     else:
-                        st.error(f"❌ {msg}")
+                        flash_error(f"❌ {msg}")
                     st.rerun()
             elif action == "Edit Record":
                 record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
@@ -5389,7 +5437,7 @@ def render_admin_editor():
                                 valid_vals.append(edit_val)
                                 run_query(f"UPDATE {selected_table} SET {', '.join(valid_cols)} WHERE {pk_col} = ?", tuple(valid_vals), fetch=False)
                                 sync_db_sequences()
-                                st.success("Record updated successfully!")
+                                flash_success("Record updated successfully!")
                                 st.rerun()
                     else:
                         st.info(f"No record found with {pk_col} = {edit_val}")
@@ -5978,7 +6026,7 @@ def render_sb_interest_calculation():
                                     VALUES ({ph}, {ph}, 'CREDIT', {ph}, 'INTEREST', {ph}, {ph})
                                 """, (tx_id, acc_no, interest, f"SB Interest Credit for {days} days", str(calc_date)))
                         db_conn.commit()
-                        st.success(f"Interest credited successfully! Journal Reference: JV-{jv_id}")
+                        flash_success(f"Interest credited successfully! Journal Reference: JV-{jv_id}")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error updating interest: {str(e)}")
@@ -6088,7 +6136,7 @@ if not get_login_status():
                     auth_token = generate_auth_token(username)
                     if auth_token:
                         st.query_params["auth"] = auth_token
-                    st.success("✅ Login successful!")
+                    flash_success("✅ Login successful!")
                     st.rerun()
                 else:
                     st.error("❌ Invalid credentials.")

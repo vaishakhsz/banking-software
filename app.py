@@ -4622,11 +4622,15 @@ def render_cash_book():
 
     with tab4:
         min_cb_d = cached_query("SELECT MIN(date) FROM cash_book")
-        cb_default_from = datetime.strptime(min_cb_d[0][0], "%Y-%m-%d").date() if (min_cb_d and min_cb_d[0][0]) else (date.today() - timedelta(days=365))
+        max_cb_d = cached_query("SELECT MAX(date) FROM cash_book")
+        cb_default_from = datetime.strptime(min_cb_d[0][0], "%Y-%m-%d").date() if (min_cb_d and min_cb_d[0] and min_cb_d[0][0]) else (date.today() - timedelta(days=365))
+        cb_default_to = datetime.strptime(max_cb_d[0][0], "%Y-%m-%d").date() if (max_cb_d and max_cb_d[0] and max_cb_d[0][0]) else date.today()
+        if cb_default_to < date.today():
+            cb_default_to = date.today()
 
         col_date1, col_date2 = st.columns(2)
         from_date = col_date1.date_input("From Date", value=cb_default_from, key="cb_print_from", format="DD-MM-YYYY")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="cb_print_to", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=cb_default_to, key="cb_print_to", format="DD-MM-YYYY")
         
         entries = cached_query("""
             SELECT cb.date, cb.voucher_no, 
@@ -5042,11 +5046,15 @@ def render_bank_book():
 
     with tab4:
         min_bb_d = cached_query("SELECT MIN(date) FROM bank_book")
-        bb_default_from = datetime.strptime(min_bb_d[0][0], "%Y-%m-%d").date() if (min_bb_d and min_bb_d[0][0]) else (date.today() - timedelta(days=365))
+        max_bb_d = cached_query("SELECT MAX(date) FROM bank_book")
+        bb_default_from = datetime.strptime(min_bb_d[0][0], "%Y-%m-%d").date() if (min_bb_d and min_bb_d[0] and min_bb_d[0][0]) else (date.today() - timedelta(days=365))
+        bb_default_to = datetime.strptime(max_bb_d[0][0], "%Y-%m-%d").date() if (max_bb_d and max_bb_d[0] and max_bb_d[0][0]) else date.today()
+        if bb_default_to < date.today():
+            bb_default_to = date.today()
 
         col_date1, col_date2 = st.columns(2)
         from_date = col_date1.date_input("From Date", value=bb_default_from, key="bb_print_from", format="DD-MM-YYYY")
-        to_date = col_date2.date_input("To Date", value=date.today(), key="bb_print_to", format="DD-MM-YYYY")
+        to_date = col_date2.date_input("To Date", value=bb_default_to, key="bb_print_to", format="DD-MM-YYYY")
         
         bb_print_query = """
             SELECT bb.date, bb.voucher_no, 

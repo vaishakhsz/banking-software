@@ -3758,13 +3758,19 @@ def render_recurring_deposits():
             
             if st.button("Confirm & Pay Installment", use_container_width=True, type="primary"):
                 if paid_inst < tenure_m:
-                    new_paid = paid_inst + 1
-                    new_collected = float(new_paid * monthly_amt)
                     pay_date_str = rd_pay_date.strftime("%Y-%m-%d")
+                    curr_rd = run_query("SELECT collected_balance, installments_paid FROM recurring_deposits WHERE rd_id=?", (rd_id,))
+                    curr_collected = float(curr_rd[0][0] or 0.0) if curr_rd and curr_rd[0] else float(paid_inst * monthly_amt)
+                    curr_paid = int(curr_rd[0][1] or paid_inst) if curr_rd and curr_rd[0] else paid_inst
+                    
+                    new_paid = curr_paid + 1
+                    new_collected = curr_collected + monthly_amt
+                    
                     run_query("UPDATE recurring_deposits SET installments_paid=?, collected_balance=? WHERE rd_id=?", (new_paid, new_collected, rd_id), fetch=False)
                     
                     jv_result = post_automated_jv(f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}", chosen_asset_code, "LIA-103", monthly_amt, voucher_date=pay_date_str)
                     
+                    voucher_no = ""
                     if jv_result:
                         today_time = f"{pay_date_str} 10:00"
                         new_balance = get_account_balance_from_jv(chosen_asset_code)
@@ -3784,12 +3790,16 @@ def render_recurring_deposits():
                             """, (pay_date_str, voucher_no, f"RD #{rd_id} - Inst #{new_paid}", 0, monthly_amt, new_balance, bank_name, chosen_asset_code, f"RD Installment #{new_paid}", today_time), fetch=False)
                     
                     try:
+                        today_time = f"{pay_date_str} 10:00"
                         run_query("""
                             INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
                             VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                         """, (rd_id, str(new_paid), pay_date_str, f"Installment #{new_paid} Deposit", monthly_amt, new_collected, payment_mode_pay, voucher_no, f"RD Installment #{new_paid}", today_time), fetch=False)
                     except Exception:
                         pass
+                    
+                    # Chronologically resequence and recalculate running balances
+                    resequence_rd_installments(rd_id)
                     
                     clear_db_cache()
                     st.success(f"✅ Installment #{new_paid} successfully paid on {pay_date_str} via {payment_mode_pay}!")

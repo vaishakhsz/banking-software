@@ -2209,6 +2209,8 @@ def record_rd_installment(rd_id, inst_no, pay_date, amount, payment_mode="Bank",
             INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
             VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
         """, (rd_id, str(inst_no), str(pay_date)[:10], f"Installment #{inst_no} Deposit" if str(inst_no).isdigit() else str(narration or "RD Deposit"), float(amount or 0.0), new_balance, str(payment_mode), str(voucher_no), str(narration or f"RD Installment #{inst_no}"), str(pay_date)[:10]), fetch=False)
+        resequence_rd_installments(rd_id)
+        clear_db_cache()
         return True, "Recorded"
     except Exception as e:
         return False, str(e)

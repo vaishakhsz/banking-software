@@ -2295,6 +2295,22 @@ def resequence_rd_installments(target_rd_id=None):
             if not rows:
                 continue
                 
+            # Automatic deduplication of identical installment records
+            unique_rows = []
+            seen_keys = set()
+            for r in rows:
+                r_id, r_ino, r_pdate, r_part, r_dr, r_cr, r_vno, r_narr, r_pm = r
+                key = (str(r_pdate)[:10], float(r_cr or 0), float(r_dr or 0), str(r_vno or '').strip(), str(r_narr or '').strip())
+                if key in seen_keys:
+                    cursor.execute(f"DELETE FROM rd_installments WHERE id = {placeholder}", (r_id,))
+                    continue
+                seen_keys.add(key)
+                unique_rows.append(r)
+            
+            rows = unique_rows
+            if not rows:
+                continue
+                
             first_row = rows[0]
             first_inst_no = str(first_row[1] or '').strip()
             first_part = str(first_row[3] or '').strip()

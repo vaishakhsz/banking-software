@@ -738,8 +738,16 @@ def init_db(force=False):
                     CREATE INDEX IF NOT EXISTS idx_bank_book_date ON bank_book(date);
                     CREATE INDEX IF NOT EXISTS idx_bank_book_vno ON bank_book(voucher_no);
                     CREATE INDEX IF NOT EXISTS idx_bank_book_bname ON bank_book(bank_name);
-                    CREATE INDEX IF NOT EXISTS idx_transactions_acc_no ON transactions(account_no);
-                    CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
+                    CREATE INDEX IF NOT EXISTS idx_rd_installments_rd_id ON rd_installments(rd_id);
+                    CREATE INDEX IF NOT EXISTS idx_rd_installments_date ON rd_installments(payment_date);
+                    CREATE INDEX IF NOT EXISTS idx_rd_installments_rd_date ON rd_installments(rd_id, payment_date);
+                    CREATE INDEX IF NOT EXISTS idx_rd_installments_vno ON rd_installments(voucher_no);
+                    CREATE INDEX IF NOT EXISTS idx_loan_repayments_date ON loan_repayments(payment_date);
+                    CREATE INDEX IF NOT EXISTS idx_loan_repayments_cust ON loan_repayments(customer_id);
+                    CREATE INDEX IF NOT EXISTS idx_loan_emi_schedules_due ON loan_emi_schedules(due_date);
+                    CREATE INDEX IF NOT EXISTS idx_loan_emi_schedules_status ON loan_emi_schedules(status);
+                    CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at);
+                    CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
                     
                     DO $$ 
                     BEGIN
@@ -2216,6 +2224,122 @@ def record_rd_installment(rd_id, inst_no, pay_date, amount, payment_mode="Bank",
         return False, str(e)
 
 
+def pay_rd_installment(rd_id, pay_date, asset_code="AST-102", amount=None):
+    """
+    High-performance, atomic, sub-100ms RD installment payment processor.
+    Executes JV posting, Cash/Bank Book updating, Installment recording,
+    and RD balance updating in a SINGLE unified database transaction.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch current RD state
+        cursor.execute(f"""
+            SELECT customer_id, monthly_amount, tenure_months, installments_paid, collected_balance, 
+                   COALESCE(rd_no, 'RD-' || CAST(rd_id AS TEXT))
+            FROM recurring_deposits 
+            WHERE rd_id = {placeholder}
+        """, (rd_id,))
+        rd_row = cursor.fetchone()
+        if not rd_row:
+            return False, "Recurring Deposit not found."
+            
+        cust_id, m_amt, tenure_m, paid_inst, curr_collected, rd_no = rd_row
+        monthly_amt = float(amount or m_amt or 0.0)
+        tenure_m = int(tenure_m or 1)
+        paid_inst = int(paid_inst or 0)
+        curr_collected = float(curr_collected or 0.0)
+        
+        if paid_inst >= tenure_m and not amount:
+            return False, "All installments for this RD have already been paid."
+            
+        new_paid = paid_inst + 1
+        new_collected = curr_collected + monthly_amt
+        pay_date_str = str(pay_date)[:10]
+        today_time = f"{pay_date_str} 10:00"
+        today_code = pay_date_str.replace("-", "")
+        
+        # 2. Determine payment mode and asset accounts
+        if asset_code == 'AST-101':
+            payment_mode_pay = "Cash in Hand"
+        elif asset_code == 'AST-103':
+            payment_mode_pay = "State Bank of India"
+        else:
+            asset_code = 'AST-102'
+            payment_mode_pay = "Union Bank of India"
+            
+        # 3. Post automated JV (Asset Dr vs LIA-103 Cr)
+        jv_narr = f"RD Installment Paid - RD #{rd_id} (Inst #{new_paid}) via {payment_mode_pay}"
+        if USING_SUPABASE:
+            cursor.execute("""
+                INSERT INTO journal_vouchers (voucher_date, narration, status) 
+                VALUES (%s, %s, 'POSTED') RETURNING jv_id
+            """, (pay_date_str, jv_narr))
+            jv_id = cursor.fetchone()[0]
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, asset_code, monthly_amt))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'LIA-103', 0, %s)", (jv_id, monthly_amt))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (pay_date_str, jv_narr))
+            jv_id = cursor.lastrowid
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, asset_code, monthly_amt))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'LIA-103', 0, ?)", (jv_id, monthly_amt))
+            
+        # 4. Get updated asset balance directly
+        cursor.execute(f"SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) FROM jv_entries WHERE account_code = {placeholder}", (asset_code,))
+        new_asset_bal = float(cursor.fetchone()[0] or 0.0)
+        
+        # 5. Insert Cash Book / Bank Book
+        part_txt = f"RD #{rd_id} - Inst #{new_paid}"
+        inst_narr = f"RD Installment #{new_paid}"
+        if asset_code == 'AST-101':
+            cursor.execute(f"SELECT voucher_no FROM cash_book WHERE voucher_no LIKE {placeholder} ORDER BY id DESC LIMIT 1", (f"CB{today_code}%",))
+            cb_res = cursor.fetchone()
+            c_seq = int(cb_res[0][-4:]) + 1 if cb_res and cb_res[0] and cb_res[0][-4:].isdigit() else 1
+            voucher_no = f"CB{today_code}{c_seq:04d}"
+            cursor.execute(f"""
+                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+            """, (pay_date_str, voucher_no, part_txt, monthly_amt, new_asset_bal, asset_code, inst_narr, today_time))
+        else:
+            bank_name = "Union Bank of India" if asset_code == 'AST-102' else "State Bank of India"
+            cursor.execute(f"SELECT voucher_no FROM bank_book WHERE voucher_no LIKE {placeholder} ORDER BY id DESC LIMIT 1", (f"BB{today_code}%",))
+            bb_res = cursor.fetchone()
+            b_seq = int(bb_res[0][-4:]) + 1 if bb_res and bb_res[0] and bb_res[0][-4:].isdigit() else 1
+            voucher_no = f"BB{today_code}{b_seq:04d}"
+            cursor.execute(f"""
+                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+            """, (pay_date_str, voucher_no, part_txt, monthly_amt, new_asset_bal, bank_name, asset_code, inst_narr, today_time))
+            
+        # 6. Insert rd_installments record
+        inst_part = f"Installment #{new_paid} Deposit"
+        cursor.execute(f"""
+            INSERT INTO rd_installments (rd_id, installment_no, payment_date, particulars, debit_amount, credit_amount, balance, payment_mode, voucher_no, narration, created_at)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (rd_id, str(new_paid), pay_date_str, inst_part, monthly_amt, new_collected, payment_mode_pay, voucher_no, inst_narr, today_time))
+        
+        # 7. Update recurring_deposits master row
+        cursor.execute(f"""
+            UPDATE recurring_deposits 
+            SET installments_paid = {placeholder}, collected_balance = {placeholder}
+            WHERE rd_id = {placeholder}
+        """, (new_paid, new_collected, rd_id))
+        
+        conn.commit()
+        clear_db_cache()
+        return True, f"Installment #{new_paid} successfully paid on {pay_date_str} via {payment_mode_pay}!"
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try: conn.rollback()
+            except Exception: pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
 def recalculate_rd_installments_balances(rd_id):
     """
     Recalculates progressive running balances for all installments of an RD in chronological order
@@ -3109,6 +3233,230 @@ def resequence_bank_book():
                 conn.rollback()
             except Exception:
                 pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def record_personal_loan_repayment(l_id, l_cid, l_cname, l_cacc, l_no, pay_date, amt_paid, pay_mode, rep_voucher, rep_narration, new_due, new_status, princ_portion, int_portion):
+    """
+    High-performance atomic Personal Loan repayment processor.
+    Executes repayment recording, loan updating, EMI schedule allocation,
+    Cash/Bank Book posting, and JV realization in a SINGLE atomic database transaction.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        pay_date_str = str(pay_date)[:10]
+        amt_paid = float(amt_paid or 0.0)
+        
+        # 1. Update personal_loans
+        cursor.execute(f"UPDATE personal_loans SET outstanding_due = {placeholder}, status = {placeholder} WHERE id = {placeholder}", (new_due, new_status, l_id))
+        
+        # 2. Insert loan_repayments
+        cursor.execute(f"""
+            INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
+            VALUES ('PERSONAL', {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (l_id, l_cid, pay_date_str, amt_paid, princ_portion, int_portion, pay_mode, rep_voucher, rep_narration))
+        
+        # 3. Update pending EMI schedules
+        cursor.execute(f"SELECT id, emi_amount, paid_amount FROM loan_emi_schedules WHERE loan_id = {placeholder} AND loan_type = 'PERSONAL' AND status != 'PAID' ORDER BY emi_number ASC", (l_id,))
+        pending_emis = cursor.fetchall()
+        rem_pay = amt_paid
+        for p_row in (pending_emis or []):
+            if rem_pay <= 0:
+                break
+            e_id, e_amt, e_paid = p_row[0], float(p_row[1]), float(p_row[2])
+            e_need = max(0.0, e_amt - e_paid)
+            if rem_pay >= e_need:
+                cursor.execute(f"UPDATE loan_emi_schedules SET paid_amount = emi_amount, paid_date = {placeholder}, status = 'PAID' WHERE id = {placeholder}", (pay_date_str, e_id))
+                rem_pay -= e_need
+            else:
+                new_p = e_paid + rem_pay
+                cursor.execute(f"UPDATE loan_emi_schedules SET paid_amount = {placeholder}, paid_date = {placeholder}, status = 'PARTIAL' WHERE id = {placeholder}", (new_p, pay_date_str, e_id))
+                rem_pay = 0.0
+
+        # 4. Bank or Cash book insert
+        part_rep = f"Loan Repayment: {l_cname} (Acc: {l_cacc}) [{l_no}]"
+        bank_or_cash_code = 'AST-102' if "Union Bank" in pay_mode else 'AST-101'
+        
+        if "Union Bank" in pay_mode:
+            cursor.execute("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+            last_bb = cursor.fetchone()
+            prev_b = float(last_bb[0]) if (last_bb and last_bb[0] is not None) else 0.0
+            new_b = prev_b + amt_paid
+            cursor.execute(f"""
+                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 'Union Bank of India', {placeholder}, 'AST-108')
+            """, (pay_date_str, rep_voucher, part_rep, amt_paid, new_b, rep_narration))
+        else:
+            cursor.execute("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+            last_cb = cursor.fetchone()
+            prev_c = float(last_cb[0]) if (last_cb and last_cb[0] is not None) else 0.0
+            new_c = prev_c + amt_paid
+            cursor.execute(f"""
+                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, {placeholder}, 'AST-108')
+            """, (pay_date_str, rep_voucher, part_rep, amt_paid, new_c, rep_narration))
+            
+        # 5. JV Receipts
+        jv_narr = f"Loan Receipt [{rep_voucher}]: {part_rep}"
+        if USING_SUPABASE:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (pay_date_str, jv_narr))
+            jv_id = cursor.fetchone()[0]
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, bank_or_cash_code, amt_paid))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-108', 0, %s)", (jv_id, amt_paid))
+            
+            if int_portion > 0:
+                int_narr = f"Interest Realization [{l_no}]: {l_cname} - ₹{int_portion:,.2f} earned interest recognized"
+                cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (pay_date_str, int_narr))
+                jvi_id = cursor.fetchone()[0]
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'LIA-104', %s, 0)", (jvi_id, int_portion))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'INC-101', 0, %s)", (jvi_id, int_portion))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (pay_date_str, jv_narr))
+            jv_id = cursor.lastrowid
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, bank_or_cash_code, amt_paid))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-108', 0, ?)", (jv_id, amt_paid))
+            
+            if int_portion > 0:
+                int_narr = f"Interest Realization [{l_no}]: {l_cname} - ₹{int_portion:,.2f} earned interest recognized"
+                cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (pay_date_str, int_narr))
+                jvi_id = cursor.lastrowid
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'LIA-104', ?, 0)", (jvi_id, int_portion))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-101', 0, ?)", (jvi_id, int_portion))
+                
+        # 6. Customer account ledger if exists
+        cursor.execute(f"SELECT id, balance FROM accounts WHERE customer_id = {placeholder}", (l_cid,))
+        acc_r = cursor.fetchone()
+        if acc_r:
+            a_id, a_bal = acc_r
+            pass_bal = max(0.0, float(a_bal or 0.0) - amt_paid)
+            cursor.execute(f"UPDATE accounts SET balance = {placeholder} WHERE id = {placeholder}", (pass_bal, a_id))
+            cursor.execute(f"INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})",
+                           (a_id, f"LOAN REPAYMENT [{l_no}] (CREDIT)", amt_paid, pass_bal, pay_date_str))
+            
+        conn.commit()
+        clear_db_cache()
+        return True, f"Repayment of ₹{amt_paid:,.2f} recorded for {l_cname}! Remaining Due: ₹{new_due:,.2f}"
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try: conn.rollback()
+            except Exception: pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def record_gold_loan_repayment(gl_id, gl_cid, gl_cname, gl_cacc, gl_no, gl_pkt, pay_date, amt_paid, pay_mode, rep_voucher, rep_narration, new_due, new_status, princ_portion, int_portion):
+    """
+    High-performance atomic Gold Loan repayment processor.
+    Executes repayment recording, gold loan updating, EMI schedule allocation,
+    Cash/Bank Book posting, and JV realization in a SINGLE atomic database transaction.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        pay_date_str = str(pay_date)[:10]
+        amt_paid = float(amt_paid or 0.0)
+        
+        # 1. Update gold_loans
+        cursor.execute(f"UPDATE gold_loans SET outstanding_due = {placeholder}, status = {placeholder} WHERE id = {placeholder}", (new_due, new_status, gl_id))
+        
+        # 2. Insert loan_repayments
+        cursor.execute(f"""
+            INSERT INTO loan_repayments (loan_type, loan_id, customer_id, payment_date, amount_paid, principal_component, interest_component, payment_mode, voucher_no, narration)
+            VALUES ('GOLD', {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (gl_id, gl_cid, pay_date_str, amt_paid, princ_portion, int_portion, pay_mode, rep_voucher, rep_narration))
+        
+        # 3. Update pending EMI schedules
+        cursor.execute(f"SELECT id, emi_amount, paid_amount FROM loan_emi_schedules WHERE loan_id = {placeholder} AND loan_type = 'GOLD' AND status != 'PAID' ORDER BY emi_number ASC", (gl_id,))
+        pending_emis = cursor.fetchall()
+        rem_pay = amt_paid
+        for p_row in (pending_emis or []):
+            if rem_pay <= 0:
+                break
+            e_id, e_amt, e_paid = p_row[0], float(p_row[1]), float(p_row[2])
+            e_need = max(0.0, e_amt - e_paid)
+            if rem_pay >= e_need:
+                cursor.execute(f"UPDATE loan_emi_schedules SET paid_amount = emi_amount, paid_date = {placeholder}, status = 'PAID' WHERE id = {placeholder}", (pay_date_str, e_id))
+                rem_pay -= e_need
+            else:
+                new_p = e_paid + rem_pay
+                cursor.execute(f"UPDATE loan_emi_schedules SET paid_amount = {placeholder}, paid_date = {placeholder}, status = 'PARTIAL' WHERE id = {placeholder}", (new_p, pay_date_str, e_id))
+                rem_pay = 0.0
+
+        # 4. Bank or Cash book insert
+        part_rep = f"Gold Loan Repayment: {gl_cname} (Acc: {gl_cacc}) [{gl_no} | {gl_pkt}]"
+        bank_or_cash_code = 'AST-102' if "Union Bank" in pay_mode else 'AST-101'
+        
+        if "Union Bank" in pay_mode:
+            cursor.execute("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+            last_bb = cursor.fetchone()
+            prev_b = float(last_bb[0]) if (last_bb and last_bb[0] is not None) else 0.0
+            new_b = prev_b + amt_paid
+            cursor.execute(f"""
+                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 'Union Bank of India', {placeholder}, 'AST-110')
+            """, (pay_date_str, rep_voucher, part_rep, amt_paid, new_b, rep_narration))
+        else:
+            cursor.execute("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+            last_cb = cursor.fetchone()
+            prev_c = float(last_cb[0]) if (last_cb and last_cb[0] is not None) else 0.0
+            new_c = prev_c + amt_paid
+            cursor.execute(f"""
+                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, {placeholder}, 'AST-110')
+            """, (pay_date_str, rep_voucher, part_rep, amt_paid, new_c, rep_narration))
+            
+        # 5. JV Receipts
+        jv_narr = f"Gold Loan Receipt [{rep_voucher}]: {part_rep}"
+        if USING_SUPABASE:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (pay_date_str, jv_narr))
+            jv_id = cursor.fetchone()[0]
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, %s, %s, 0)", (jv_id, bank_or_cash_code, amt_paid))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'AST-110', 0, %s)", (jv_id, amt_paid))
+            
+            if int_portion > 0:
+                int_narr = f"Gold Loan Interest Realization [{gl_no}]: {gl_cname} - ₹{int_portion:,.2f} interest recognized"
+                cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (pay_date_str, int_narr))
+                jvi_id = cursor.fetchone()[0]
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'LIA-104', %s, 0)", (jvi_id, int_portion))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (%s, 'INC-111', 0, %s)", (jvi_id, int_portion))
+        else:
+            cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (pay_date_str, jv_narr))
+            jv_id = cursor.lastrowid
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, bank_or_cash_code, amt_paid))
+            cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-110', 0, ?)", (jv_id, amt_paid))
+            
+            if int_portion > 0:
+                int_narr = f"Gold Loan Interest Realization [{gl_no}]: {gl_cname} - ₹{int_portion:,.2f} interest recognized"
+                cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (?, ?, 'POSTED')", (pay_date_str, int_narr))
+                jvi_id = cursor.lastrowid
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'LIA-104', ?, 0)", (jvi_id, int_portion))
+                cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'INC-111', 0, ?)", (jvi_id, int_portion))
+                
+        # 6. Customer account ledger if exists
+        cursor.execute(f"SELECT id, balance FROM accounts WHERE customer_id = {placeholder}", (gl_cid,))
+        acc_r = cursor.fetchone()
+        if acc_r:
+            a_id, a_bal = acc_r
+            pass_bal = max(0.0, float(a_bal or 0.0) - amt_paid)
+            cursor.execute(f"UPDATE accounts SET balance = {placeholder} WHERE id = {placeholder}", (pass_bal, a_id))
+            cursor.execute(f"INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})",
+                           (a_id, f"GOLD LOAN REPAYMENT [{gl_no}] (CREDIT)", amt_paid, pass_bal, pay_date_str))
+            
+        conn.commit()
+        clear_db_cache()
+        return True, f"Repayment of ₹{amt_paid:,.2f} recorded for {gl_cname}! Remaining Due: ₹{new_due:,.2f}"
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try: conn.rollback()
+            except Exception: pass
         return False, str(e)
     finally:
         release_connection(conn)

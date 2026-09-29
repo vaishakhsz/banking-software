@@ -765,6 +765,16 @@ def generate_fd_pdf(fd_data):
     fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date = fd_data[:14]
     op_bal_date = fd_data[14] if len(fd_data) > 14 else created_at
     fd_no = fd_data[15] if len(fd_data) > 15 and fd_data[15] else (f"FD-{fd_id:05d}" if isinstance(fd_id, int) else str(fd_id))
+    tenure_days = fd_data[16] if len(fd_data) > 16 else None
+    maturity_date = fd_data[17] if len(fd_data) > 17 else None
+
+    if tenure_days and int(tenure_days) > 0:
+        tenure_display = f"{tenure_days} DAYS ({tenure} Months)"
+        repay_period_str = f"{tenure_days} days ({tenure} months)"
+    else:
+        tenure_display = f"{tenure} MONTHS"
+        repay_period_str = f"{tenure} months"
+
     full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
     status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
     
@@ -784,12 +794,13 @@ def generate_fd_pdf(fd_data):
          Paragraph("<b>Opening Balance Date:</b>", detail_label), Paragraph(format_date_str(op_bal_date), detail_value)],
         [Paragraph("<b>Address:</b>", detail_label), Paragraph(str(full_address), detail_value),
          Paragraph("<b>Principal Amount:</b>", detail_label), Paragraph(f"₹{principal:,.2f}", detail_value)],
-        [Paragraph("<b>Period / Tenure:</b>", detail_label), Paragraph(f"{tenure} MONTHS", detail_value),
+        [Paragraph("<b>Period / Tenure:</b>", detail_label), Paragraph(tenure_display, detail_value),
          Paragraph("<b>Interest Rate:</b>", detail_label), Paragraph(f"{rate}% p.a.", detail_value)],
         [Paragraph("<b>Nominee:</b>", detail_label), Paragraph(nominee if nominee else 'N/A', detail_value),
          Paragraph("<b>Maturity Amount:</b>", detail_label), Paragraph(f"₹{maturity:,.2f}", detail_value)],
         [Paragraph("<b>Status:</b>", detail_label), Paragraph(status_text, detail_value),
-         Paragraph("<b>Closed Date:</b>" if status == 'CLOSED' else "", detail_label), Paragraph(format_date_str(closed_date) if status == 'CLOSED' else "", detail_value)],
+         Paragraph("<b>Closed Date:</b>" if status == 'CLOSED' else (("<b>Maturity Date:</b>") if maturity_date else ""), detail_label), 
+         Paragraph(format_date_str(closed_date) if status == 'CLOSED' else (format_date_str(maturity_date) if maturity_date else ""), detail_value)],
     ]
     
     detail_table = Table(detail_data, colWidths=[35*mm, 50*mm, 35*mm, 50*mm])
@@ -809,7 +820,8 @@ def generate_fd_pdf(fd_data):
         alignment=0,
         borderPadding=6,
     )
-    elements.append(Paragraph(f"<b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.", box_style))
+    mat_suffix = f" (Maturity Date: {format_date_str(maturity_date)})" if maturity_date else ""
+    elements.append(Paragraph(f"<b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {repay_period_str} with interest at {rate}% p.a.{mat_suffix}", box_style))
     elements.append(Spacer(1, 8))
     
     ledger_data = [

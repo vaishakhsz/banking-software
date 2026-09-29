@@ -672,6 +672,8 @@ def init_db(force=False):
                     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id INTEGER;
                     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_at TEXT;
                     ALTER TABLE fixed_deposits ADD COLUMN IF NOT EXISTS fd_no TEXT;
+                    ALTER TABLE fixed_deposits ADD COLUMN IF NOT EXISTS tenure_days INTEGER;
+                    ALTER TABLE fixed_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS scheme_name TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS rd_no TEXT;
                     ALTER TABLE recurring_deposits ADD COLUMN IF NOT EXISTS maturity_date TEXT;
@@ -784,7 +786,7 @@ def init_db(force=False):
                     cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
                     pass
-            for col in [("fd_no", "TEXT")]:
+            for col in [("fd_no", "TEXT"), ("tenure_days", "INTEGER"), ("maturity_date", "TEXT")]:
                 try:
                     cursor.execute(f"ALTER TABLE fixed_deposits ADD COLUMN {col[0]} {col[1]};")
                 except Exception:
@@ -5239,7 +5241,8 @@ def update_fd_account_details(
     fd_id, new_cust_id, new_principal, new_tenure, new_rate,
     new_nominee, new_status, new_created_date, new_closed_date,
     new_pay_mode, chosen_asset_code='AST-102', new_op_bal_date=None,
-    new_maturity_amount=None, new_fd_no=None, new_fd_id=None
+    new_maturity_amount=None, new_fd_no=None, new_fd_id=None,
+    new_tenure_days=None, new_maturity_date=None
 ):
     """
     Updates Fixed Deposit parameters (principal, tenure, interest rate, status, nominee, dates, payment mode, fd_no, fd_id)
@@ -5258,13 +5261,29 @@ def update_fd_account_details(
 
         old_c_id, old_c_name, old_c_acc, old_principal, old_created, old_pm, old_fd_no = fd_row
         new_principal = float(new_principal or 0.0)
-        new_tenure = int(new_tenure or 12)
         new_rate = float(new_rate or 6.5)
-        calc_maturity = round(new_principal + (new_principal * new_rate * (new_tenure / 12.0) / 100.0), 2)
+
+        if new_tenure_days is not None and int(new_tenure_days) > 0:
+            new_tenure_days = int(new_tenure_days)
+            new_tenure = max(1, int(round(new_tenure_days / 30.0)))
+            calc_maturity = round(new_principal + (new_principal * new_rate * (new_tenure_days / 365.0) / 100.0), 2)
+        else:
+            new_tenure = int(new_tenure or 12)
+            new_tenure_days = int(new_tenure * 30)
+            calc_maturity = round(new_principal + (new_principal * new_rate * (new_tenure / 12.0) / 100.0), 2)
+
         final_maturity = float(new_maturity_amount) if new_maturity_amount is not None else calc_maturity
         created_dt_str = str(new_created_date)[:10]
         op_bal_dt_str = str(new_op_bal_date)[:10] if new_op_bal_date else created_dt_str
         closed_dt_str = str(new_closed_date)[:10] if new_closed_date else None
+
+        if not new_maturity_date:
+            try:
+                new_maturity_date = (datetime.strptime(created_dt_str, "%Y-%m-%d") + timedelta(days=new_tenure_days)).strftime("%Y-%m-%d")
+            except Exception:
+                new_maturity_date = None
+        else:
+            new_maturity_date = str(new_maturity_date)[:10]
         
         target_fd_id = int(new_fd_id) if (new_fd_id is not None and str(new_fd_id).isdigit()) else int(fd_id)
         final_fd_no = str(new_fd_no).strip() if (new_fd_no and str(new_fd_no).strip()) else f"FD-{target_fd_id:05d}"
@@ -5280,14 +5299,16 @@ def update_fd_account_details(
         cursor.execute(f"""
             UPDATE fixed_deposits
             SET customer_id = {placeholder}, principal = {placeholder}, tenure_months = {placeholder},
-                interest_rate = {placeholder}, maturity_amount = {placeholder}, nominee = {placeholder},
-                status = {placeholder}, created_at = {placeholder}, closed_date = {placeholder},
-                payment_mode = {placeholder}, fd_no = {placeholder}
+                tenure_days = {placeholder}, interest_rate = {placeholder}, maturity_amount = {placeholder},
+                nominee = {placeholder}, status = {placeholder}, created_at = {placeholder},
+                closed_date = {placeholder}, payment_mode = {placeholder}, fd_no = {placeholder},
+                maturity_date = {placeholder}
             WHERE fd_id = {placeholder}
         """, (
-            new_cust_id, new_principal, new_tenure, new_rate, final_maturity,
+            new_cust_id, new_principal, new_tenure, new_tenure_days, new_rate, final_maturity,
             new_nominee or "Family Nominee", new_status or "ACTIVE",
-            created_dt_str, closed_dt_str, new_pay_mode or "Union Bank of India", final_fd_no, target_fd_id
+            created_dt_str, closed_dt_str, new_pay_mode or "Union Bank of India", final_fd_no,
+            new_maturity_date, target_fd_id
         ))
 
         # 2. Update accounts table if exists
@@ -5357,11 +5378,13 @@ def update_fd_account_details(
 def create_or_link_fd_opening(
     cust_id, principal, open_date, tenure_months=12, interest_rate=6.5,
     nominee="Family Nominee", payment_mode="Union Bank of India", chosen_asset_code="AST-102",
-    op_bal_date=None, custom_fd_no=None, custom_fd_id=None
+    op_bal_date=None, custom_fd_no=None, custom_fd_id=None,
+    tenure_days=None, maturity_date=None
 ):
     """
     Creates a new Fixed Deposit opening balance for an existing customer,
     generates opening JV (Dr Asset, Cr LIA-102), and posts into Cash/Bank book.
+    Supports tenure in days or months.
     """
     conn = None
     try:
@@ -5376,11 +5399,26 @@ def create_or_link_fd_opening(
         cust_name, cust_acc = c_row
 
         principal = float(principal or 0.0)
-        tenure_months = int(tenure_months or 12)
         interest_rate = float(interest_rate or 6.5)
-        calc_maturity = round(principal + (principal * interest_rate * (tenure_months / 12.0) / 100.0), 2)
         open_date_str = str(open_date)[:10]
         op_bal_date_str = str(op_bal_date)[:10] if op_bal_date else open_date_str
+
+        if tenure_days is not None and int(tenure_days) > 0:
+            tenure_days = int(tenure_days)
+            tenure_months = max(1, int(round(tenure_days / 30.0)))
+            calc_maturity = round(principal + (principal * interest_rate * (tenure_days / 365.0) / 100.0), 2)
+        else:
+            tenure_months = int(tenure_months or 12)
+            tenure_days = int(tenure_months * 30)
+            calc_maturity = round(principal + (principal * interest_rate * (tenure_months / 12.0) / 100.0), 2)
+
+        if not maturity_date:
+            try:
+                maturity_date = (datetime.strptime(open_date_str, "%Y-%m-%d") + timedelta(days=tenure_days)).strftime("%Y-%m-%d")
+            except Exception:
+                maturity_date = None
+        else:
+            maturity_date = str(maturity_date)[:10]
 
         if custom_fd_id is not None and str(custom_fd_id).isdigit():
             target_fd_id = int(custom_fd_id)
@@ -5390,12 +5428,12 @@ def create_or_link_fd_opening(
             final_fd_no = str(custom_fd_no).strip() if (custom_fd_no and str(custom_fd_no).strip()) else f"FD-{target_fd_id:05d}"
             cursor.execute(f"""
                 INSERT INTO fixed_deposits (
-                    fd_id, customer_id, principal, tenure_months, interest_rate, maturity_amount,
-                    nominee, status, created_at, payment_mode, fd_no
-                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder})
+                    fd_id, customer_id, principal, tenure_months, tenure_days, interest_rate, maturity_amount,
+                    nominee, status, created_at, payment_mode, fd_no, maturity_date
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
             """, (
-                target_fd_id, cust_id, principal, tenure_months, interest_rate, calc_maturity,
-                nominee or "Family Nominee", open_date_str, payment_mode, final_fd_no
+                target_fd_id, cust_id, principal, tenure_months, tenure_days, interest_rate, calc_maturity,
+                nominee or "Family Nominee", open_date_str, payment_mode, final_fd_no, maturity_date
             ))
             new_fd_id = target_fd_id
             if USING_SUPABASE:
@@ -5406,18 +5444,18 @@ def create_or_link_fd_opening(
         else:
             cursor.execute(f"""
                 INSERT INTO fixed_deposits (
-                    customer_id, principal, tenure_months, interest_rate, maturity_amount,
-                    nominee, status, created_at, payment_mode, fd_no
-                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder})
+                    customer_id, principal, tenure_months, tenure_days, interest_rate, maturity_amount,
+                    nominee, status, created_at, payment_mode, fd_no, maturity_date
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
                 RETURNING fd_id
             """ if USING_SUPABASE else f"""
                 INSERT INTO fixed_deposits (
-                    customer_id, principal, tenure_months, interest_rate, maturity_amount,
-                    nominee, status, created_at, payment_mode, fd_no
-                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder})
+                    customer_id, principal, tenure_months, tenure_days, interest_rate, maturity_amount,
+                    nominee, status, created_at, payment_mode, fd_no, maturity_date
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
             """, (
-                cust_id, principal, tenure_months, interest_rate, calc_maturity,
-                nominee or "Family Nominee", open_date_str, payment_mode, custom_fd_no
+                cust_id, principal, tenure_months, tenure_days, interest_rate, calc_maturity,
+                nominee or "Family Nominee", open_date_str, payment_mode, custom_fd_no, maturity_date
             ))
 
             if USING_SUPABASE:

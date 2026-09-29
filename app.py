@@ -3080,7 +3080,16 @@ def render_fixed_deposits():
                 selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
                 principal = st.number_input("Principal Amount (Contracted) (₹)", min_value=100.0, value=10000.0, step=500.0, key="fd_prin")
                 opening_balance = st.number_input("Opening Balance / Deposited Amount (₹)", min_value=0.0, value=float(principal), step=500.0, key="fd_open_bal", help="Initial deposit funded into the account at opening. Defaults to Principal.")
-                tenure = st.slider("Tenure (Months)", 1, 60, 12, key="fd_tenure")
+                
+                tenure_mode = st.radio("Tenure Unit", ["📅 Days", "🗓️ Months"], horizontal=True, key="fd_tenure_mode")
+                if "Days" in tenure_mode:
+                    tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=365, step=10, key="fd_tenure_days", help="Total deposit duration in days, e.g. 100 days, 365 days, 400 days, 730 days")
+                    tenure = max(1, int(round(tenure_days / 30.0)))
+                    st.caption(f"🗓️ Equivalent Tenure: ~**{tenure} Months** ({tenure_days} Days)")
+                else:
+                    tenure = st.number_input("Tenure (Months)", min_value=1, max_value=360, value=12, step=1, key="fd_tenure_months", help="Deposit duration in months")
+                    tenure_days = int(tenure * 30)
+                    st.caption(f"📅 Equivalent Tenure: ~**{tenure_days} Days** ({tenure} Months)")
             with col_fd2:
                 fd_open_date = st.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key="fd_open_date_input")
                 fd_op_bal_date = st.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key="fd_op_bal_date_input")
@@ -3105,8 +3114,16 @@ def render_fixed_deposits():
                 chosen_asset_code = "AST-101"
                 payment_mode = "Cash"
             
-            maturity_amount = principal + (principal * interest_rate * (tenure / 12) / 100)
-            st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}**")
+            if "Days" in tenure_mode:
+                interest_calc = principal * interest_rate * (tenure_days / 365.0) / 100.0
+            else:
+                interest_calc = principal * interest_rate * (tenure / 12.0) / 100.0
+            maturity_amount = round(principal + interest_calc, 2)
+            mat_date_val = fd_open_date + timedelta(days=int(tenure_days))
+            mat_date_str = mat_date_val.strftime("%d-%m-%Y")
+            mat_db_str = mat_date_val.strftime("%Y-%m-%d")
+            
+            st.info(f"Estimated Maturity Amount: **₹{maturity_amount:,.2f}** (Interest: ₹{interest_calc:,.2f}) | Maturity Date: **{mat_date_str}** ({tenure_days} Days / ~{tenure}M)")
             
             if st.button("Open FD Account", use_container_width=True, type="primary"):
                 open_date_str = fd_open_date.strftime("%Y-%m-%d")
@@ -3122,7 +3139,9 @@ def render_fixed_deposits():
                     chosen_asset_code=chosen_asset_code,
                     op_bal_date=op_bal_date_str,
                     custom_fd_no=custom_fd_no,
-                    custom_fd_id=custom_fd_id
+                    custom_fd_id=custom_fd_id,
+                    tenure_days=tenure_days,
+                    maturity_date=mat_db_str
                 )
                 clear_db_cache()
                 if success:
@@ -3136,13 +3155,18 @@ def render_fixed_deposits():
     with tab2:
         fds = cached_query("""
             SELECT f.fd_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no,
-                   c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at, f.payment_mode
+                   c.name, f.principal, COALESCE(f.tenure_days, f.tenure_months * 30) as tenure_days,
+                   f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at, f.payment_mode
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
             ORDER BY f.fd_id DESC
         """)
         if fds:
-            df_fds = pd.DataFrame(fds, columns=["FD ID", "FDR No / A/c No", "Customer", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Opened Date", "Payment Mode"])
+            formatted_fds = []
+            for r in fds:
+                t_display = f"{r[4]} Days ({r[5]}M)" if r[4] else f"{r[5]} Months"
+                formatted_fds.append((r[0], r[1], r[2], r[3], t_display, r[6], r[7], r[8], r[9], r[10]))
+            df_fds = pd.DataFrame(formatted_fds, columns=["FD ID", "FDR No / A/c No", "Customer", "Principal (₹)", "Tenure", "Rate (%)", "Maturity (₹)", "Status", "Opened Date", "Payment Mode"])
             df_fds_formatted = format_df_dates(df_fds)
             st.dataframe(df_fds_formatted, use_container_width=True)
         else:
@@ -3154,7 +3178,9 @@ def render_fixed_deposits():
             SELECT f.fd_id, c.name, c.street, c.city, c.state, c.pincode, 
                    f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, 
                    f.nominee, f.created_at, f.status, f.closed_date,
-                   f.customer_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no
+                   f.customer_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no,
+                   COALESCE(f.tenure_days, f.tenure_months * 30) as tenure_days,
+                   f.maturity_date
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             ORDER BY f.fd_id DESC
         """)
@@ -3168,7 +3194,7 @@ def render_fixed_deposits():
             selected_print_str = st.selectbox("Select FD Account for Printing/View", list(fd_print_dict.keys()), key="fd_print_select")
             fd_data = fd_print_dict[selected_print_str]
             
-            fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date, cust_id, fd_no = fd_data
+            fd_id, c_name, street, city, state, pincode, principal, tenure, rate, maturity, nominee, created_at, status, closed_date, cust_id, fd_no, tenure_days, maturity_date = fd_data
             
             fd_op_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%FD #{fd_id}%", f"%{fd_no}%", f"%FD Opening%Customer {cust_id}%"))
             fd_op_bal = fd_op_res[0][0] if (fd_op_res and fd_op_res[0] and fd_op_res[0][0]) else created_at
@@ -3187,10 +3213,17 @@ def render_fixed_deposits():
                 closed_date_dt = pd.to_datetime(closed_date).strftime('%d-%m-%Y') if closed_date else ""
             except Exception:
                 closed_date_dt = closed_date
+
+            try:
+                mat_date_dt = pd.to_datetime(maturity_date).strftime('%d-%m-%Y') if maturity_date else ""
+            except Exception:
+                mat_date_dt = maturity_date or ""
             
             full_address = f"{street}, {city}, {state} - {pincode}" if street else f"{city}, {state} - {pincode}"
             status_text = "CLOSED" if status == 'CLOSED' else "ACTIVE"
             status_color = "#e74c3c" if status == 'CLOSED' else "#27ae60"
+            tenure_display_str = f"{tenure_days} Days ({tenure} Months)" if tenure_days else f"{tenure} Months"
+            repay_period_str = f"{tenure_days} days ({tenure} months)" if tenure_days else f"{tenure} months"
             
             receipt_html = f"""
             <style>
@@ -3240,7 +3273,7 @@ def render_fixed_deposits():
                 <div><b>Principal Amount:</b> ₹{principal:,.2f}</div>
               </div>
               <div class="grid-row">
-                <div><b>Tenure:</b> {tenure} Months</div>
+                <div><b>Tenure:</b> {tenure_display_str}</div>
                 <div><b>Interest Rate:</b> {rate}% p.a.</div>
               </div>
               <div class="grid-row">
@@ -3249,11 +3282,11 @@ def render_fixed_deposits():
               </div>
               <div class="grid-row">
                 <div><b>Status:</b> {status_text}</div>
-                <div>{f'<b>Closed Date:</b> {closed_date_dt}' if status == 'CLOSED' else ''}</div>
+                <div>{f'<b>Closed Date:</b> {closed_date_dt}' if status == 'CLOSED' else (f'<b>Maturity Date:</b> {mat_date_dt}' if mat_date_dt else '')}</div>
               </div>
               
               <div class="box">
-                <b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {tenure} months with interest at {rate}% p.a.
+                <b>Deposit Repayable:</b> Principal sum of <b>₹{principal:,.2f}</b> repayable after {repay_period_str} with interest at {rate}% p.a.{f' (Maturity Date: {mat_date_dt})' if mat_date_dt else ''}
               </div>
 
               <table>
@@ -3293,6 +3326,8 @@ def render_fixed_deposits():
             fd_data_pdf = list(fd_data[:14])
             fd_data_pdf.append(fd_op_bal)
             fd_data_pdf.append(fd_no)
+            fd_data_pdf.append(tenure_days)
+            fd_data_pdf.append(maturity_date)
             fd_pdf_data = pdf_generator.generate_fd_pdf(fd_data_pdf)
             st.download_button(
                 label=f"📥 Download FD Certificate {fd_no} (PDF)",
@@ -3309,14 +3344,15 @@ def render_fixed_deposits():
         st.subheader("Close Fixed Deposit")
         active_fds = cached_query("""
             SELECT f.fd_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no,
-                   c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months
+                   c.name, f.principal, f.maturity_amount, f.interest_rate, f.tenure_months,
+                   COALESCE(f.tenure_days, f.tenure_months * 30) as tenure_days
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             WHERE f.status = 'ACTIVE'
             ORDER BY f.fd_id ASC
         """)
         
         if active_fds:
-            fd_dict = {f"FD ID: {r[0]} | FDR No: {r[1]} - {r[2]} (Principal: ₹{r[3]:,.2f}, Maturity: ₹{r[4]:,.2f})": r for r in active_fds}
+            fd_dict = {f"FD ID: {r[0]} | FDR No: {r[1]} - {r[2]} (Principal: ₹{r[3]:,.2f}, Tenure: {r[7]} Days [{r[6]}M], Maturity: ₹{r[4]:,.2f})": r for r in active_fds}
             col_fc1, col_fc2 = st.columns(2)
             with col_fc1:
                 selected_fd_str = st.selectbox("Select FD to Close", list(fd_dict.keys()), key="fd_close_select")
@@ -3324,7 +3360,7 @@ def render_fixed_deposits():
                 fd_close_date = st.date_input("Closing Date", value=date.today(), format="DD-MM-YYYY", key="fd_close_date_input")
                 
             selected_fd = fd_dict[selected_fd_str]
-            fd_id, fd_no, cust_name, principal, maturity_amount, interest_rate, tenure = selected_fd
+            fd_id, fd_no, cust_name, principal, maturity_amount, interest_rate, tenure, tenure_days = selected_fd
             
             interest_earned = maturity_amount - principal
             st.info(f"Interest Earned: ₹{interest_earned:,.2f}")
@@ -3356,7 +3392,9 @@ def render_fixed_deposits():
             SELECT f.fd_id, c.name, f.principal, f.tenure_months, f.interest_rate, 
                    f.maturity_amount, f.nominee, f.status, f.created_at, f.closed_date, 
                    f.payment_mode, f.customer_id,
-                   COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no
+                   COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no,
+                   COALESCE(f.tenure_days, f.tenure_months * 30) as tenure_days,
+                   f.maturity_date
             FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id
             ORDER BY f.fd_id DESC
         """)
@@ -3364,12 +3402,13 @@ def render_fixed_deposits():
             fd_edit_dict = {}
             for r in all_fds_edit:
                 status_icon = "🔴 CLOSED" if r[7] == 'CLOSED' else "🟢 ACTIVE"
-                label = f"FD ID: {r[0]} | FDR No: {r[12]} - {r[1]} (Principal: ₹{r[2]:,.2f} | Opened: {r[8]}) - {status_icon}"
+                t_str = f"{r[13]} Days ({r[3]}M)" if r[13] else f"{r[3]}M"
+                label = f"FD ID: {r[0]} | FDR No: {r[12]} - {r[1]} (Principal: ₹{r[2]:,.2f} | Tenure: {t_str} | Opened: {r[8]}) - {status_icon}"
                 fd_edit_dict[label] = r
                 
             selected_edit_label = st.selectbox("Select FD Account to Edit", list(fd_edit_dict.keys()), key="fd_edit_select")
             curr_fd = fd_edit_dict[selected_edit_label]
-            c_fd_id, c_name, c_principal, c_tenure, c_rate, c_maturity, c_nominee, c_status, c_created, c_closed, c_pay_mode, c_cust_id, c_fd_no = curr_fd
+            c_fd_id, c_name, c_principal, c_tenure, c_rate, c_maturity, c_nominee, c_status, c_created, c_closed, c_pay_mode, c_cust_id, c_fd_no, c_tenure_days, c_maturity_date = curr_fd
             
             customers_all = cached_query("""
                 SELECT c.id, c.name, COALESCE(c.account_no, '') 
@@ -3410,7 +3449,11 @@ def render_fixed_deposits():
                 edit_fd_cust_label = st.selectbox("Assigned Customer", list(cust_all_dict.keys()), index=cust_idx, key=f"edit_fd_cust_{c_fd_id}")
                 edit_fd_cust_id = cust_all_dict[edit_fd_cust_label]
                 edit_fd_principal = st.number_input("Principal Amount (₹)", min_value=100.0, value=float(c_principal or 10000.0), step=500.0, key=f"edit_fd_prin_{c_fd_id}")
-                edit_fd_tenure = st.number_input("Tenure (Months)", min_value=1, max_value=max(360, int(c_tenure or 12)), value=int(c_tenure or 12), step=1, key=f"edit_fd_tenure_{c_fd_id}")
+                
+                edit_fd_tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=int(c_tenure_days or (c_tenure * 30 if c_tenure else 365)), step=10, key=f"edit_fd_tenure_days_{c_fd_id}", help="Enter tenure in days")
+                edit_fd_tenure = max(1, int(round(edit_fd_tenure_days / 30.0)))
+                st.caption(f"🗓️ Equivalent Tenure: ~**{edit_fd_tenure} Months** ({edit_fd_tenure_days} Days)")
+                
                 edit_fd_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=30.0, value=float(c_rate or 6.5), step=0.25, key=f"edit_fd_rate_{c_fd_id}")
             with col_fe2:
                 edit_fd_nominee = st.text_input("Nominee Name", value=str(c_nominee) if c_nominee else "", key=f"edit_fd_nom_{c_fd_id}")
@@ -3424,7 +3467,7 @@ def render_fixed_deposits():
                 edit_fd_pay_mode = st.selectbox("Payment Mode", ["Union Bank of India", "Cash", "State Bank of India"], index=1 if (c_pay_mode or "").lower() == "cash" else (2 if "state" in (c_pay_mode or "").lower() else 0), key=f"edit_fd_pm_{c_fd_id}")
 
             # Live recalculation
-            calc_fd_maturity = edit_fd_principal + (edit_fd_principal * edit_fd_rate * (edit_fd_tenure / 12.0) / 100.0)
+            calc_fd_maturity = edit_fd_principal + (edit_fd_principal * edit_fd_rate * (edit_fd_tenure_days / 365.0) / 100.0)
             calc_fd_interest = calc_fd_maturity - edit_fd_principal
             
             st.markdown("---")
@@ -3468,7 +3511,8 @@ def render_fixed_deposits():
                         edit_fd_nominee, edit_fd_status, created_str, closed_str,
                         edit_fd_pay_mode, chosen_asset_code=chosen_asset, new_op_bal_date=op_bal_str,
                         new_maturity_amount=final_fd_mat,
-                        new_fd_no=edit_fd_no, new_fd_id=edit_fd_id_num
+                        new_fd_no=edit_fd_no, new_fd_id=edit_fd_id_num,
+                        new_tenure_days=edit_fd_tenure_days
                     )
                     clear_db_cache()
                     if success:
@@ -5903,8 +5947,12 @@ def render_reports():
                 data = cached_query("SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at FROM sb_accounts s JOIN customers c ON s.customer_id = c.id")
                 columns = ["Account No", "Customer Name", "Balance (₹)", "Interest Rate (%)", "Created Date"]
             elif report_type == "FD Accounts Report":
-                data = cached_query("SELECT f.fd_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no, c.name, f.principal, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id")
-                columns = ["FD ID", "FDR No / A/c No", "Customer Name", "Principal (₹)", "Tenure (M)", "Rate (%)", "Maturity (₹)", "Status", "Created Date"]
+                data_raw = cached_query("SELECT f.fd_id, COALESCE(f.fd_no, 'FD-' || LPAD(CAST(f.fd_id AS TEXT), 5, '0')) as fd_no, c.name, f.principal, COALESCE(f.tenure_days, f.tenure_months * 30) as tenure_days, f.tenure_months, f.interest_rate, f.maturity_amount, f.status, f.created_at FROM fixed_deposits f JOIN customers c ON f.customer_id = c.id ORDER BY f.fd_id DESC")
+                data = []
+                for r in (data_raw or []):
+                    t_str = f"{r[4]} Days ({r[5]}M)" if r[4] else f"{r[5]} Months"
+                    data.append((r[0], r[1], r[2], r[3], t_str, r[6], r[7], r[8], r[9]))
+                columns = ["FD ID", "FDR No / A/c No", "Customer Name", "Principal (₹)", "Tenure", "Rate (%)", "Maturity (₹)", "Status", "Created Date"]
             elif report_type == "RD Accounts Report":
                 data = cached_query("SELECT r.rd_id, c.name, r.monthly_amount, r.tenure_months, r.interest_rate, r.installments_paid, r.status, r.created_at FROM recurring_deposits r JOIN customers c ON r.customer_id = c.id")
                 columns = ["RD ID", "Customer Name", "Monthly (₹)", "Tenure (M)", "Rate (%)", "Inst. Paid", "Status", "Created Date"]

@@ -137,43 +137,43 @@ pd.set_option('display.width', 1000)
 
 
 # ----------------------------------------------------
-# GLOBAL PERSISTENT FLASH & TOAST NOTIFICATION SYSTEM
+# GLOBAL PERSISTENT FLASH & NOTIFICATION SYSTEM
 # ----------------------------------------------------
+def _clean_notification_msg(msg):
+    """Strips leading emojis (ticks, checkmarks, warning, error icons) to ensure clean single-icon display."""
+    if not msg:
+        return ""
+    return re.sub(r'^[\s\u2705\u2714\u2713\u2611\U0001F197\u274C\u274E\u2716\u2715\u26A0\uFE0F?]+', '', str(msg)).strip()
+
 def flash_success(msg):
-    """Saves success notification into session state and displays high-visibility toast."""
-    st.session_state["flash_success_msg"] = str(msg)
-    try:
-        st.toast(str(msg), icon="✅")
-    except Exception:
-        pass
+    """Saves success notification into session state with a single clean green checkmark banner."""
+    clean_msg = _clean_notification_msg(msg)
+    st.session_state["flash_success_msg"] = clean_msg
 
 def flash_error(msg):
-    """Saves error notification into session state and displays toast."""
-    st.session_state["flash_error_msg"] = str(msg)
-    try:
-        st.toast(str(msg), icon="❌")
-    except Exception:
-        pass
+    """Saves error notification into session state with a single clean alert."""
+    clean_msg = _clean_notification_msg(msg)
+    st.session_state["flash_error_msg"] = clean_msg
 
 def flash_warning(msg):
-    """Saves warning notification into session state and displays toast."""
-    st.session_state["flash_warning_msg"] = str(msg)
-    try:
-        st.toast(str(msg), icon="⚠️")
-    except Exception:
-        pass
+    """Saves warning notification into session state with a single clean alert."""
+    clean_msg = _clean_notification_msg(msg)
+    st.session_state["flash_warning_msg"] = clean_msg
 
 def display_flash_messages():
-    """Renders prominent top-level alert banners with green checkmarks/icons across Streamlit reruns."""
+    """Renders prominent top-level alert banners with a single clean checkmark/icon across Streamlit reruns."""
     if "flash_success_msg" in st.session_state and st.session_state["flash_success_msg"]:
         msg = st.session_state.pop("flash_success_msg")
-        st.success(msg)
+        clean_msg = _clean_notification_msg(msg)
+        st.success(clean_msg)
     if "flash_warning_msg" in st.session_state and st.session_state["flash_warning_msg"]:
         msg = st.session_state.pop("flash_warning_msg")
-        st.warning(msg)
+        clean_msg = _clean_notification_msg(msg)
+        st.warning(clean_msg)
     if "flash_error_msg" in st.session_state and st.session_state["flash_error_msg"]:
         msg = st.session_state.pop("flash_error_msg")
-        st.error(msg)
+        clean_msg = _clean_notification_msg(msg)
+        st.error(clean_msg)
 
 def format_df_dates(df):
     """Automatically formats date-like columns to DD-MM-YYYY format for display"""
@@ -3993,7 +3993,7 @@ th {{ background-color: #ebf5fb; }}
                 maturity_amount_to_pay = prorated_maturity
             else:
                 maturity_amount_to_pay = maturity_amt
-                st.success(f"✅ All installments paid. Full maturity amount: ₹{maturity_amt:,.2f}")
+                st.success(f"All installments paid. Full maturity amount: ₹{maturity_amt:,.2f}")
             
             total_paid = monthly_amt * paid_inst
             interest_earned = maturity_amount_to_pay - total_paid
@@ -4431,9 +4431,9 @@ def render_chart_of_accounts():
                 try:
                     success, msg = resequence_entire_database()
                     if success:
-                        st.success("✅ Resequenced Chart of Accounts, Customers, Loans, Deposits, Cash & Bank Books successfully! All IDs and account codes are in strict sequential order.")
+                        flash_success("Resequenced Chart of Accounts, Customers, Loans, Deposits, Cash & Bank Books successfully! All IDs and account codes are in strict sequential order.")
                     else:
-                        flash_error(f"❌ Resequencing error: {msg}")
+                        flash_error(f"Resequencing error: {msg}")
                     st.rerun()
                 except Exception as ex:
                     st.error(f"❌ Resequencing error: {str(ex)}")
@@ -5453,9 +5453,9 @@ def render_admin_editor():
                     
                     clear_db_cache()
                     if success:
-                        st.success(f"✅ {msg}")
+                        flash_success(msg)
                     else:
-                        flash_error(f"❌ {msg}")
+                        flash_error(msg)
                     st.rerun()
             elif action == "Edit Record":
                 record_id_to_edit = st.text_input(f"Enter value for primary identifier (`{pk_col}`) to edit")
@@ -6600,7 +6600,7 @@ with st.sidebar.expander("💾 System Backup & Restore"):
                     try:
                         sql_backup_bytes = generate_sql_backup()
                         st.session_state.sql_backup_bytes = sql_backup_bytes
-                        st.success("✅ Backup prepared!")
+                        st.success("Backup prepared!")
                     except Exception as e:
                         st.error(f"⚠️ Failed to generate backup: {str(e)}")
                         

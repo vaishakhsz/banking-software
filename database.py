@@ -3950,6 +3950,46 @@ def delete_sb_account_entry(account_no):
     finally:
         release_connection(conn)
 
+def _sync_book_balances(cursor, placeholder):
+    """
+    Fast inline progressive running balance calculation for Bank Book (per bank) and Cash Book
+    within the active transaction without resequencing IDs or triggering lock contention.
+    """
+    # 1. Bank Book per bank (Union Bank / SBI)
+    cursor.execute("SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars LIKE '%opening%' OR particulars LIKE '%Opening%' THEN 0 ELSE 1 END, id ASC")
+    rows = cursor.fetchall()
+    bal_union = 0.0
+    bal_sbi = 0.0
+    for r_id, dr, cr, b_name, part in rows:
+        dr = float(dr or 0.0)
+        cr = float(cr or 0.0)
+        if "state" in str(b_name).lower() or "sbi" in str(b_name).lower():
+            if bal_sbi == 0.0 and "opening" in str(part).lower():
+                bal_sbi = dr - cr
+            else:
+                bal_sbi += (dr - cr)
+            curr_b = bal_sbi
+        else:
+            if bal_union == 0.0 and "opening" in str(part).lower():
+                bal_union = dr - cr
+            else:
+                bal_union += (dr - cr)
+            curr_b = bal_union
+        cursor.execute(f"UPDATE bank_book SET balance = {placeholder} WHERE id = {placeholder}", (round(curr_b, 2), r_id))
+
+    # 2. Cash Book running balances
+    cursor.execute("SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, id ASC")
+    cb_rows = cursor.fetchall()
+    cb_bal = 0.0
+    for r_id, part, dr, cr in cb_rows:
+        dr = float(dr or 0.0)
+        cr = float(cr or 0.0)
+        if cb_bal == 0.0 and "opening" in str(part).lower():
+            cb_bal = dr - cr
+        else:
+            cb_bal += (dr - cr)
+        cursor.execute(f"UPDATE cash_book SET balance = {placeholder} WHERE id = {placeholder}", (round(cb_bal, 2), r_id))
+
 
 def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, new_rate, new_created_date, chosen_asset_code="AST-102", new_op_bal_date=None):
     """
@@ -4136,41 +4176,7 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
             cursor.execute(f"UPDATE cash_book SET particulars = REPLACE(particulars, {placeholder}, {placeholder}), narration = REPLACE(narration, {placeholder}, {placeholder}) WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (old_acc_no, new_acc_no, old_acc_no, new_acc_no, f"%{old_acc_no}%", f"%{old_acc_no}%"))
             cursor.execute(f"UPDATE journal_vouchers SET narration = REPLACE(narration, {placeholder}, {placeholder}) WHERE narration LIKE {placeholder}", (old_acc_no, new_acc_no, f"%{old_acc_no}%"))
 
-        # Recalculate Bank Book cumulative running balances per bank
-        cursor.execute("SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars LIKE '%opening%' OR particulars LIKE '%Opening%' THEN 0 ELSE 1 END, id ASC")
-        rows = cursor.fetchall()
-        bal_union = 0.0
-        bal_sbi = 0.0
-        for r_id, dr, cr, b_name, part in rows:
-            dr = float(dr or 0.0)
-            cr = float(cr or 0.0)
-            if "state" in str(b_name).lower() or "sbi" in str(b_name).lower():
-                if bal_sbi == 0.0 and "opening" in str(part).lower():
-                    bal_sbi = dr - cr
-                else:
-                    bal_sbi += (dr - cr)
-                curr_b = bal_sbi
-            else:
-                if bal_union == 0.0 and "opening" in str(part).lower():
-                    bal_union = dr - cr
-                else:
-                    bal_union += (dr - cr)
-                curr_b = bal_union
-            cursor.execute(f"UPDATE bank_book SET balance = {placeholder} WHERE id = {placeholder}", (round(curr_b, 2), r_id))
-
-        # Recalculate Cash Book running balances
-        cursor.execute("SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, id ASC")
-        cb_rows = cursor.fetchall()
-        cb_bal = 0.0
-        for r_id, part, dr, cr in cb_rows:
-            dr = float(dr or 0.0)
-            cr = float(cr or 0.0)
-            if cb_bal == 0.0 and "opening" in str(part).lower():
-                cb_bal = dr - cr
-            else:
-                cb_bal += (dr - cr)
-            cursor.execute(f"UPDATE cash_book SET balance = {placeholder} WHERE id = {placeholder}", (round(cb_bal, 2), r_id))
-
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
         return True, f"SB Account {new_acc_no} updated and synchronized with Bank/Cash Book and Journal Vouchers successfully."
@@ -4243,9 +4249,10 @@ def create_or_link_sb_opening(cust_id, initial_balance, open_date, interest_rate
                     VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
                 """, (op_bal_date_str, v_no, f"SB Opening Deposit: {sb_acc_no} ({cust_name})", initial_balance, b_name, chosen_asset_code, f"SB Opening Balance - {sb_acc_no}", today_time))
 
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
-        resequence_cash_book()
-        resequence_bank_book()
+        clear_db_cache()
+        return True, f"Savings Bank account {sb_acc_no} created successfully for {cust_name} with opening balance ₹{initial_balance:,.2f} on {open_date_str}."
         clear_db_cache()
         return True, f"Savings Bank account {sb_acc_no} created successfully for {cust_name} with opening balance ₹{initial_balance:,.2f} on {open_date_str}."
     except Exception as e:
@@ -4448,11 +4455,9 @@ def update_personal_loan_details(
                         VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-108', {placeholder}, {placeholder})
                     """, (op_bal_date_str, c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
                     
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
-        resequence_cash_book()
-        resequence_bank_book()
-        
         return True, f"Personal Loan #{new_l_no} updated and synchronized with schedules, ledgers, and books successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -4668,11 +4673,9 @@ def update_gold_loan_details(
                         VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-110', {placeholder}, {placeholder})
                     """, (op_bal_date_str, c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
                     
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
-        resequence_cash_book()
-        resequence_bank_book()
-        
         return True, f"Gold Loan #{new_l_no} updated and synchronized with schedules, ledgers, and books successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -4825,11 +4828,9 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
                 VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-108', {placeholder}, {placeholder})
             """, (op_bal_date_str, c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{pl_code}]", princ_amount, f"Opening Personal Loan Disbursal - {pl_code}", today_time))
             
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
-        resequence_cash_book()
-        resequence_bank_book()
-        
         return True, f"Personal Loan #{pl_code} of ₹{princ_amount:,.2f} created and linked successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -5000,11 +5001,9 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
                 VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-110', {placeholder}, {placeholder})
             """, (op_bal_date_str, c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{gl_code}]", princ_amount, f"Opening Gold Loan Disbursal - {gl_code}", today_time))
             
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
-        resequence_cash_book()
-        resequence_bank_book()
-        
         return True, f"Gold Loan #{gl_code} of ₹{princ_amount:,.2f} created and linked successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
@@ -5398,9 +5397,8 @@ def update_fd_account_details(
                     VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
                 """, (op_bal_dt_str, v_no, f"FD Opening: {final_fd_no} ({old_c_name})", new_principal, b_name, chosen_asset_code, f"Fixed Deposit [{final_fd_no}] Opening Deposit", today_time))
 
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
-        resequence_cash_book()
-        resequence_bank_book()
         clear_db_cache()
         return True, f"Fixed Deposit {final_fd_no} updated and synchronized successfully."
     except Exception as e:
@@ -5529,9 +5527,8 @@ def create_or_link_fd_opening(
                 VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
             """, (op_bal_date_str, v_no, f"FD Opening: {final_fd_no} ({cust_name})", principal, b_name, chosen_asset_code, f"Fixed Deposit [{final_fd_no}] Opening Deposit", today_time))
 
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
-        resequence_cash_book()
-        resequence_bank_book()
         clear_db_cache()
         return True, f"Fixed Deposit {final_fd_no} for {cust_name} created successfully with principal ₹{principal:,.2f}."
     except Exception as e:
@@ -5641,9 +5638,8 @@ def update_rd_account_details(
                     VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
                 """, (op_bal_dt_str, v_no, f"RD Opening: RD #{rd_id} ({old_c_name})", new_collected_bal, b_name, chosen_asset_code, f"RD #{rd_id} Opening Deposit", today_time))
 
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
-        resequence_cash_book()
-        resequence_bank_book()
         clear_db_cache()
         return True, f"Recurring Deposit RD #{rd_id} ({new_rd_no}) updated and synchronized successfully."
     except Exception as e:
@@ -5735,9 +5731,8 @@ def create_or_link_rd_opening(
                 VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, {placeholder}, {placeholder}, {placeholder})
             """, (op_bal_date_str, v_no, f"RD Opening: {final_rd_no} ({cust_name})", monthly_amt, b_name, chosen_asset_code, f"RD #{new_rd_id} Opening Deposit", today_time))
 
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
-        resequence_cash_book()
-        resequence_bank_book()
         clear_db_cache()
         return True, f"Recurring Deposit {final_rd_no} for {cust_name} created successfully with monthly installment ₹{monthly_amt:,.2f}."
     except Exception as e:

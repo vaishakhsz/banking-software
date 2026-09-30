@@ -3535,6 +3535,7 @@ def record_gold_loan_repayment(gl_id, gl_cid, gl_cname, gl_cacc, gl_no, gl_pkt, 
 def delete_personal_loan_entry(del_id):
     """
     Deletes a personal loan, cascades linked schedules and repayments,
+    cleans up linked JVs and Cash/Bank book entries, updates customer account balance,
     resequences personal_loans IDs (1..N) and dependent loan_id references,
     and resets the sequence counter.
     """
@@ -3542,12 +3543,10 @@ def delete_personal_loan_entry(del_id):
     try:
         conn = get_connection()
         cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
         
         # 1. Fetch loan details
-        if USING_SUPABASE:
-            cursor.execute("SELECT loan_no, voucher_no, customer_id FROM personal_loans WHERE id = %s", (del_id,))
-        else:
-            cursor.execute("SELECT loan_no, voucher_no, customer_id FROM personal_loans WHERE id = ?", (del_id,))
+        cursor.execute(f"SELECT loan_no, voucher_no, customer_id FROM personal_loans WHERE id = {placeholder}", (del_id,))
         row = cursor.fetchone()
         if not row:
             return False, f"Personal Loan ID {del_id} not found."
@@ -3555,14 +3554,22 @@ def delete_personal_loan_entry(del_id):
         loan_no, voucher_no, cust_id = row
         
         # 2. Delete linked EMI schedules & repayments
-        if USING_SUPABASE:
-            cursor.execute("DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = %s", (del_id,))
-            cursor.execute("DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = %s", (del_id,))
-            if voucher_no:
-                cursor.execute("DELETE FROM journal_vouchers WHERE narration LIKE %s", (f"%{voucher_no}%",))
-            cursor.execute("DELETE FROM personal_loans WHERE id = %s", (del_id,))
+        cursor.execute(f"DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder}", (del_id,))
+        cursor.execute(f"DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder}", (del_id,))
+        
+        # 3. Delete linked JVs & Book entries
+        if voucher_no:
+            cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{voucher_no}%",))
+        if loan_no:
+            cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{loan_no}%",))
+            cursor.execute(f"DELETE FROM bank_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{loan_no}%", f"%{loan_no}%"))
+            cursor.execute(f"DELETE FROM cash_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{loan_no}%", f"%{loan_no}%"))
             
-            # 3. Shift child loan_ids and personal_loans.id
+        # 4. Delete personal loan record
+        cursor.execute(f"DELETE FROM personal_loans WHERE id = {placeholder}", (del_id,))
+        
+        # 5. Shift child loan_ids and personal_loans.id
+        if USING_SUPABASE:
             cursor.execute("UPDATE loan_emi_schedules SET loan_id = loan_id - 1 WHERE loan_type = 'PERSONAL' AND loan_id > %s", (del_id,))
             cursor.execute("UPDATE loan_repayments SET loan_id = loan_id - 1 WHERE loan_type = 'PERSONAL' AND loan_id > %s", (del_id,))
             cursor.execute("UPDATE personal_loans SET id = -id WHERE id > %s", (del_id,))
@@ -3581,20 +3588,22 @@ def delete_personal_loan_entry(del_id):
                 END $$;
             """)
         else:
-            cursor.execute("DELETE FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = ?", (del_id,))
-            cursor.execute("DELETE FROM loan_repayments WHERE loan_type = 'PERSONAL' AND loan_id = ?", (del_id,))
-            if voucher_no:
-                cursor.execute("DELETE FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
-            cursor.execute("DELETE FROM personal_loans WHERE id = ?", (del_id,))
-            
             cursor.execute("UPDATE loan_emi_schedules SET loan_id = loan_id - 1 WHERE loan_type = 'PERSONAL' AND loan_id > ?", (del_id,))
             cursor.execute("UPDATE loan_repayments SET loan_id = loan_id - 1 WHERE loan_type = 'PERSONAL' AND loan_id > ?", (del_id,))
             cursor.execute("UPDATE personal_loans SET id = -id WHERE id > ?", (del_id,))
             cursor.execute("UPDATE personal_loans SET id = (-id) - 1 WHERE id < 0")
             
+        # 6. Update customer accounts balance
+        cursor.execute(f"""
+            UPDATE accounts 
+            SET balance = (SELECT COALESCE(SUM(outstanding_due), 0) FROM personal_loans WHERE customer_id = {placeholder})
+            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_type LIKE '%Personal%')
+        """, (cust_id, cust_id))
+        
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
-        return True, f"Personal Loan #{loan_no} deleted and loans re-sequenced successfully without gaps."
+        return True, f"Personal Loan #{loan_no} deleted and synchronized successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
             try:
@@ -3609,6 +3618,7 @@ def delete_personal_loan_entry(del_id):
 def delete_gold_loan_entry(del_id):
     """
     Deletes a gold loan, cascades linked schedules and repayments,
+    cleans up linked JVs and Cash/Bank book entries, updates customer account balance,
     resequences gold_loans IDs (1..N) and dependent loan_id references,
     and resets the sequence counter.
     """
@@ -3616,12 +3626,10 @@ def delete_gold_loan_entry(del_id):
     try:
         conn = get_connection()
         cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
         
         # 1. Fetch loan details
-        if USING_SUPABASE:
-            cursor.execute("SELECT loan_no, voucher_no, customer_id FROM gold_loans WHERE id = %s", (del_id,))
-        else:
-            cursor.execute("SELECT loan_no, voucher_no, customer_id FROM gold_loans WHERE id = ?", (del_id,))
+        cursor.execute(f"SELECT loan_no, voucher_no, customer_id FROM gold_loans WHERE id = {placeholder}", (del_id,))
         row = cursor.fetchone()
         if not row:
             return False, f"Gold Loan ID {del_id} not found."
@@ -3629,14 +3637,22 @@ def delete_gold_loan_entry(del_id):
         loan_no, voucher_no, cust_id = row
         
         # 2. Delete linked EMI schedules & repayments
-        if USING_SUPABASE:
-            cursor.execute("DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = %s", (del_id,))
-            cursor.execute("DELETE FROM loan_repayments WHERE loan_type = 'GOLD' AND loan_id = %s", (del_id,))
-            if voucher_no:
-                cursor.execute("DELETE FROM journal_vouchers WHERE narration LIKE %s", (f"%{voucher_no}%",))
-            cursor.execute("DELETE FROM gold_loans WHERE id = %s", (del_id,))
+        cursor.execute(f"DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = {placeholder}", (del_id,))
+        cursor.execute(f"DELETE FROM loan_repayments WHERE loan_type = 'GOLD' AND loan_id = {placeholder}", (del_id,))
+        
+        # 3. Delete linked JVs & Book entries
+        if voucher_no:
+            cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{voucher_no}%",))
+        if loan_no:
+            cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{loan_no}%",))
+            cursor.execute(f"DELETE FROM bank_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{loan_no}%", f"%{loan_no}%"))
+            cursor.execute(f"DELETE FROM cash_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{loan_no}%", f"%{loan_no}%"))
             
-            # 3. Shift child loan_ids and gold_loans.id
+        # 4. Delete gold loan record
+        cursor.execute(f"DELETE FROM gold_loans WHERE id = {placeholder}", (del_id,))
+        
+        # 5. Shift child loan_ids and gold_loans.id
+        if USING_SUPABASE:
             cursor.execute("UPDATE loan_emi_schedules SET loan_id = loan_id - 1 WHERE loan_type = 'GOLD' AND loan_id > %s", (del_id,))
             cursor.execute("UPDATE loan_repayments SET loan_id = loan_id - 1 WHERE loan_type = 'GOLD' AND loan_id > %s", (del_id,))
             cursor.execute("UPDATE gold_loans SET id = -id WHERE id > %s", (del_id,))
@@ -3655,20 +3671,22 @@ def delete_gold_loan_entry(del_id):
                 END $$;
             """)
         else:
-            cursor.execute("DELETE FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = ?", (del_id,))
-            cursor.execute("DELETE FROM loan_repayments WHERE loan_type = 'GOLD' AND loan_id = ?", (del_id,))
-            if voucher_no:
-                cursor.execute("DELETE FROM journal_vouchers WHERE narration LIKE ?", (f"%{voucher_no}%",))
-            cursor.execute("DELETE FROM gold_loans WHERE id = ?", (del_id,))
-            
             cursor.execute("UPDATE loan_emi_schedules SET loan_id = loan_id - 1 WHERE loan_type = 'GOLD' AND loan_id > ?", (del_id,))
             cursor.execute("UPDATE loan_repayments SET loan_id = loan_id - 1 WHERE loan_type = 'GOLD' AND loan_id > ?", (del_id,))
             cursor.execute("UPDATE gold_loans SET id = -id WHERE id > ?", (del_id,))
             cursor.execute("UPDATE gold_loans SET id = (-id) - 1 WHERE id < 0")
             
+        # 6. Update customer accounts balance
+        cursor.execute(f"""
+            UPDATE accounts 
+            SET balance = (SELECT COALESCE(SUM(outstanding_due), 0) FROM gold_loans WHERE customer_id = {placeholder})
+            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_type LIKE '%Gold%')
+        """, (cust_id, cust_id))
+        
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
-        return True, f"Gold Loan #{loan_no} deleted and gold loans re-sequenced successfully without gaps."
+        return True, f"Gold Loan #{loan_no} deleted and synchronized successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
             try:
@@ -3682,12 +3700,22 @@ def delete_gold_loan_entry(del_id):
 
 def delete_fd_entry(del_id):
     """
-    Deletes a fixed deposit and resequences fixed_deposits (fd_id = fd_id - 1) without gaps.
+    Deletes a fixed deposit, cleans up JVs/Books, updates account balance, and resequences fixed_deposits (fd_id = fd_id - 1) without gaps.
     """
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        cursor.execute(f"SELECT customer_id, COALESCE(fd_no, 'FD-' || LPAD(CAST(fd_id AS TEXT), 5, '0')) FROM fixed_deposits WHERE fd_id = {placeholder}", (del_id,))
+        fd_row = cursor.fetchone()
+        cust_id, fd_no_val = fd_row if fd_row else (None, f"FD-{del_id:05d}")
+        
+        cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder} OR narration LIKE {placeholder}", (f"%FD #{del_id}%", f"%{fd_no_val}%"))
+        cursor.execute(f"DELETE FROM bank_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{fd_no_val}%", f"%FD #{del_id}%"))
+        cursor.execute(f"DELETE FROM cash_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{fd_no_val}%", f"%FD #{del_id}%"))
+        
         if USING_SUPABASE:
             cursor.execute("DELETE FROM fixed_deposits WHERE fd_id = %s", (del_id,))
             cursor.execute("UPDATE fixed_deposits SET fd_id = -fd_id WHERE fd_id > %s", (del_id,))
@@ -3709,6 +3737,15 @@ def delete_fd_entry(del_id):
             cursor.execute("DELETE FROM fixed_deposits WHERE fd_id = ?", (del_id,))
             cursor.execute("UPDATE fixed_deposits SET fd_id = -fd_id WHERE fd_id > ?", (del_id,))
             cursor.execute("UPDATE fixed_deposits SET fd_id = (-fd_id) - 1 WHERE fd_id < 0")
+            
+        if cust_id:
+            cursor.execute(f"""
+                UPDATE accounts 
+                SET balance = (SELECT COALESCE(SUM(principal), 0) FROM fixed_deposits WHERE customer_id = {placeholder} AND status = 'ACTIVE')
+                WHERE customer_id = {placeholder} AND account_type IN ('Fixed Deposit', 'FD Account')
+            """, (cust_id, cust_id))
+            
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
         return True, f"Fixed Deposit #{del_id} deleted and resequenced successfully."
@@ -3737,6 +3774,16 @@ def delete_rd_entry(del_id):
 
         conn = get_connection()
         cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        cursor.execute(f"SELECT customer_id, COALESCE(rd_no, 'RD-' || CAST(rd_id AS TEXT)) FROM recurring_deposits WHERE rd_id = {placeholder}", (del_id,))
+        rd_row = cursor.fetchone()
+        cust_id, rd_no_val = rd_row if rd_row else (None, f"RD-{del_id}")
+        
+        cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder} OR narration LIKE {placeholder}", (f"%RD #{del_id}%", f"%{rd_no_val}%"))
+        cursor.execute(f"DELETE FROM bank_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{rd_no_val}%", f"%RD #{del_id}%"))
+        cursor.execute(f"DELETE FROM cash_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{rd_no_val}%", f"%RD #{del_id}%"))
+        
         if USING_SUPABASE:
             cursor.execute("DELETE FROM rd_installments WHERE rd_id = %s", (del_id,))
             cursor.execute("UPDATE rd_installments SET rd_id = rd_id - 1 WHERE rd_id > %s", (del_id,))
@@ -3762,6 +3809,8 @@ def delete_rd_entry(del_id):
             cursor.execute("DELETE FROM recurring_deposits WHERE rd_id = ?", (del_id,))
             cursor.execute("UPDATE recurring_deposits SET rd_id = -rd_id WHERE rd_id > ?", (del_id,))
             cursor.execute("UPDATE recurring_deposits SET rd_id = (-rd_id) - 1 WHERE rd_id < 0")
+            
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
         return True, f"Recurring Deposit #{del_id} deleted and resequenced successfully."
@@ -3888,7 +3937,7 @@ def delete_transaction_entry(del_id):
 
 def delete_sb_account_entry(account_no):
     """
-    Deletes an SB account, cascades linked transactions, and resequences remaining transactions.
+    Deletes an SB account, cascades linked transactions, JVs, book entries, and accounts table record.
     """
     conn = None
     try:
@@ -3901,14 +3950,21 @@ def delete_sb_account_entry(account_no):
         row = cursor.fetchone()
         if not row:
             return False, f"SB Account {account_no} not found."
+        acc_no, cust_id, bal = row
             
         # 2. Delete transactions linked to account_no
         cursor.execute(f"DELETE FROM transactions WHERE account_no = {placeholder}", (account_no,))
         
-        # 3. Delete SB account
-        cursor.execute(f"DELETE FROM sb_accounts WHERE account_no = {placeholder}", (account_no,))
+        # 3. Delete linked JVs & Book entries
+        cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{account_no}%",))
+        cursor.execute(f"DELETE FROM bank_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{account_no}%", f"%{account_no}%"))
+        cursor.execute(f"DELETE FROM cash_book WHERE particulars LIKE {placeholder} OR narration LIKE {placeholder}", (f"%{account_no}%", f"%{account_no}%"))
         
-        # 4. Resequence transactions
+        # 4. Delete SB account and customer account
+        cursor.execute(f"DELETE FROM sb_accounts WHERE account_no = {placeholder}", (account_no,))
+        cursor.execute(f"DELETE FROM accounts WHERE account_number = {placeholder} OR (customer_id = {placeholder} AND account_type IN ('Savings Account', 'Savings Bank', 'SB'))", (account_no, cust_id))
+        
+        # 5. Resequence transactions
         if USING_SUPABASE:
             cursor.execute("""
                 DO $$
@@ -3937,6 +3993,7 @@ def delete_sb_account_entry(account_no):
             for new_id, (old_neg_id,) in enumerate(rows, 1):
                 cursor.execute("UPDATE transactions SET id = ? WHERE id = ?", (new_id, -old_neg_id))
                 
+        _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
         return True, f"SB Account {account_no} deleted successfully."

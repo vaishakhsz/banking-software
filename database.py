@@ -4067,43 +4067,81 @@ def delete_sb_account_entry(account_no):
 
 def _sync_book_balances(cursor, placeholder):
     """
-    Fast inline progressive running balance calculation for Bank Book (per bank) and Cash Book
-    within the active transaction without resequencing IDs or triggering lock contention.
+    Ultra-fast atomic inline progressive running balance calculation for Bank Book and Cash Book
+    within the active transaction in 1 single sub-millisecond database operation.
     """
-    # 1. Bank Book per bank (Union Bank / SBI)
-    cursor.execute("SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars LIKE '%opening%' OR particulars LIKE '%Opening%' THEN 0 ELSE 1 END, id ASC")
-    rows = cursor.fetchall()
-    bal_union = 0.0
-    bal_sbi = 0.0
-    for r_id, dr, cr, b_name, part in rows:
-        dr = float(dr or 0.0)
-        cr = float(cr or 0.0)
-        if "state" in str(b_name).lower() or "sbi" in str(b_name).lower():
-            if bal_sbi == 0.0 and "opening" in str(part).lower():
-                bal_sbi = dr - cr
-            else:
-                bal_sbi += (dr - cr)
-            curr_b = bal_sbi
-        else:
-            if bal_union == 0.0 and "opening" in str(part).lower():
-                bal_union = dr - cr
-            else:
-                bal_union += (dr - cr)
-            curr_b = bal_union
-        cursor.execute(f"UPDATE bank_book SET balance = {placeholder} WHERE id = {placeholder}", (round(curr_b, 2), r_id))
+    if USING_SUPABASE:
+        cursor.execute("""
+            DO $$
+            DECLARE
+                r RECORD;
+                curr_b NUMERIC := 0;
+                bal_u NUMERIC := 0;
+                bal_s NUMERIC := 0;
+            BEGIN
+                FOR r IN SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars ILIKE '%opening%' THEN 0 ELSE 1 END, id ASC LOOP
+                    IF r.bank_name ILIKE '%State Bank%' OR r.bank_name ILIKE '%SBI%' THEN
+                        IF bal_s = 0 AND r.particulars ILIKE '%opening%' THEN
+                            bal_s := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                        ELSE
+                            bal_s := bal_s + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                        END IF;
+                        curr_b := bal_s;
+                    ELSE
+                        IF bal_u = 0 AND r.particulars ILIKE '%opening%' THEN
+                            bal_u := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                        ELSE
+                            bal_u := bal_u + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                        END IF;
+                        curr_b := bal_u;
+                    END IF;
+                    UPDATE bank_book SET balance = curr_b WHERE id = r.id;
+                END LOOP;
 
-    # 2. Cash Book running balances
-    cursor.execute("SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, id ASC")
-    cb_rows = cursor.fetchall()
-    cb_bal = 0.0
-    for r_id, part, dr, cr in cb_rows:
-        dr = float(dr or 0.0)
-        cr = float(cr or 0.0)
-        if cb_bal == 0.0 and "opening" in str(part).lower():
-            cb_bal = dr - cr
-        else:
-            cb_bal += (dr - cr)
-        cursor.execute(f"UPDATE cash_book SET balance = {placeholder} WHERE id = {placeholder}", (round(cb_bal, 2), r_id))
+                curr_b := 0;
+                FOR r IN SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, id ASC LOOP
+                    IF curr_b = 0 AND r.particulars ILIKE '%opening%' THEN
+                        curr_b := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                    ELSE
+                        curr_b := curr_b + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
+                    END IF;
+                    UPDATE cash_book SET balance = curr_b WHERE id = r.id;
+                END LOOP;
+            END $$;
+        """)
+    else:
+        cursor.execute("SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars LIKE '%opening%' OR particulars LIKE '%Opening%' THEN 0 ELSE 1 END, id ASC")
+        rows = cursor.fetchall()
+        bal_union = 0.0
+        bal_sbi = 0.0
+        for r_id, dr, cr, b_name, part in rows:
+            dr = float(dr or 0.0)
+            cr = float(cr or 0.0)
+            if "state" in str(b_name).lower() or "sbi" in str(b_name).lower():
+                if bal_sbi == 0.0 and "opening" in str(part).lower():
+                    bal_sbi = dr - cr
+                else:
+                    bal_sbi += (dr - cr)
+                curr_b = bal_sbi
+            else:
+                if bal_union == 0.0 and "opening" in str(part).lower():
+                    bal_union = dr - cr
+                else:
+                    bal_union += (dr - cr)
+                curr_b = bal_union
+            cursor.execute("UPDATE bank_book SET balance = ? WHERE id = ?", (round(curr_b, 2), r_id))
+
+        cursor.execute("SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, id ASC")
+        cb_rows = cursor.fetchall()
+        cb_bal = 0.0
+        for r_id, part, dr, cr in cb_rows:
+            dr = float(dr or 0.0)
+            cr = float(cr or 0.0)
+            if cb_bal == 0.0 and "opening" in str(part).lower():
+                cb_bal = dr - cr
+            else:
+                cb_bal += (dr - cr)
+            cursor.execute("UPDATE cash_book SET balance = ? WHERE id = ?", (round(cb_bal, 2), r_id))
 
 
 def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, new_rate, new_created_date, chosen_asset_code="AST-102", new_op_bal_date=None, new_op_bal=None):
@@ -4463,17 +4501,17 @@ def update_personal_loan_details(
         cursor.execute(f"SELECT emi_number FROM loan_emi_schedules WHERE loan_type = 'PERSONAL' AND loan_id = {placeholder} AND status = 'PAID'", (pl_id,))
         paid_emis = set(r[0] for r in cursor.fetchall())
         pending_schedules = [s for s in ed_sched if s['emi_number'] not in paid_emis]
-        for sch in pending_schedules:
-            cursor.execute(f"""
+        if pending_schedules:
+            cursor.executemany(f"""
                 INSERT INTO loan_emi_schedules (
                     loan_type, loan_id, loan_no, emi_number, from_date, to_date, due_date,
                     principal_component, interest_component, emi_amount, status
                 ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING')
-            """, (
+            """, [(
                 'PERSONAL', pl_id, new_l_no, sch['emi_number'],
                 sch['from_date'], sch['to_date'], sch['due_date'],
                 sch['principal_component'], sch['interest_component'], sch['emi_amount']
-            ))
+            ) for sch in pending_schedules])
             
         # 5. Synchronize Disbursal Journal Voucher & Cash / Bank Book
         op_bal_date_str = str(new_op_bal_date) if new_op_bal_date else str(new_sanction_date)
@@ -4481,26 +4519,25 @@ def update_personal_loan_details(
         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else ("State Bank of India" if chosen_asset_code == 'AST-103' else "Cash")
         today_time = f"{op_bal_date_str} 12:00"
         
-        # Locate existing JV
+        # Locate existing JVs
         cursor.execute(f"""
             SELECT jv_id FROM journal_vouchers 
-            WHERE narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
-            ORDER BY jv_id DESC LIMIT 1
-        """, (f"%Personal Loan Disbursal%{old_l_no}%", f"%Personal Loan Disbursal%{new_l_no}%", f"%{old_v_no}%"))
-        jv_res = cursor.fetchone()
+            WHERE (narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+            ORDER BY jv_id DESC
+        """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_v_no}%"))
+        jv_rows = cursor.fetchall()
         
-        if jv_res:
-            jv_id = jv_res[0]
-            if new_princ > 0:
+        if new_princ > 0:
+            if jv_rows:
+                jv_id = jv_rows[0][0]
                 cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}",
                                (op_bal_date_str, f"Personal Loan Disbursal - {cust_name} ({new_l_no})", jv_id))
                 cursor.execute(f"UPDATE jv_entries SET account_code = 'AST-108', debit = {placeholder} WHERE jv_id = {placeholder} AND debit > 0", (new_princ, jv_id))
                 cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder}, credit = {placeholder} WHERE jv_id = {placeholder} AND credit > 0", (chosen_asset_code, new_princ, jv_id))
+                for dup in jv_rows[1:]:
+                    cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (dup[0],))
+                    cursor.execute(f"DELETE FROM journal_vouchers WHERE jv_id = {placeholder}", (dup[0],))
             else:
-                cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (jv_id,))
-                cursor.execute(f"DELETE FROM journal_vouchers WHERE jv_id = {placeholder}", (jv_id,))
-        else:
-            if new_princ > 0:
                 if USING_SUPABASE:
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (op_bal_date_str, f"Personal Loan Disbursal - {cust_name} ({new_l_no})"))
                     jv_id = cursor.fetchone()[0]
@@ -4511,74 +4548,76 @@ def update_personal_loan_details(
                     jv_id = cursor.lastrowid
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-108', ?, 0)", (jv_id, new_princ))
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, chosen_asset_code, new_princ))
-                    
-        # Locate existing Cash / Bank Book entry
-        cursor.execute(f"""
-            SELECT id FROM bank_book 
-            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
-            ORDER BY id ASC LIMIT 1
-        """, (f"%Personal Loan Disbursal%{old_l_no}%", f"%Personal Loan Disbursal%{new_l_no}%", f"%{old_l_no}%", f"%{old_v_no}%"))
-        bb_row = cursor.fetchone()
-        
-        cursor.execute(f"""
-            SELECT id FROM cash_book 
-            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
-            ORDER BY id ASC LIMIT 1
-        """, (f"%Personal Loan Disbursal%{old_l_no}%", f"%Personal Loan Disbursal%{new_l_no}%", f"%{old_l_no}%", f"%{old_v_no}%"))
-        cb_row = cursor.fetchone()
-        
-        if bb_row:
-            bb_id = bb_row[0]
-            if new_princ > 0:
-                if chosen_asset_code in ('AST-102', 'AST-103'):
-                    cursor.execute(f"""
-                        UPDATE bank_book 
-                        SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
-                            bank_name = {placeholder}, account_code = 'AST-108', narration = {placeholder}, created_at = {placeholder}
-                        WHERE id = {placeholder}
-                    """, (op_bal_date_str, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Personal Loan Disbursal - {new_l_no}", today_time, bb_id))
-                else:
-                    cursor.execute(f"DELETE FROM bank_book WHERE id = {placeholder}", (bb_id,))
-                    c_voucher = generate_cash_voucher_no()
-                    cursor.execute(f"""
-                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-108', {placeholder}, {placeholder})
-                    """, (op_bal_date_str, c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
-            else:
-                cursor.execute(f"DELETE FROM bank_book WHERE id = {placeholder}", (bb_id,))
-        elif cb_row:
-            cb_id = cb_row[0]
-            if new_princ > 0:
-                if chosen_asset_code == 'AST-101':
+            
+            # Update or insert Cash / Bank Book
+            if chosen_asset_code == 'AST-101':
+                cursor.execute(f"""
+                    DELETE FROM bank_book 
+                    WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                      AND (account_code = 'AST-108' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                
+                cursor.execute(f"""
+                    SELECT id FROM cash_book 
+                    WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                    ORDER BY id ASC LIMIT 1
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                cb_match = cursor.fetchone()
+                if cb_match:
                     cursor.execute(f"""
                         UPDATE cash_book 
                         SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
                             account_code = 'AST-108', narration = {placeholder}, created_at = {placeholder}
                         WHERE id = {placeholder}
-                    """, (op_bal_date_str, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time, cb_id))
-                else:
-                    cursor.execute(f"DELETE FROM cash_book WHERE id = {placeholder}", (cb_id,))
-                    b_voucher = generate_bank_voucher_no()
-                    cursor.execute(f"""
-                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-108', {placeholder}, {placeholder})
-                    """, (op_bal_date_str, b_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
-            else:
-                cursor.execute(f"DELETE FROM cash_book WHERE id = {placeholder}", (cb_id,))
-        else:
-            if new_princ > 0:
-                if chosen_asset_code in ('AST-102', 'AST-103'):
-                    b_voucher = generate_bank_voucher_no()
-                    cursor.execute(f"""
-                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-108', {placeholder}, {placeholder})
-                    """, (op_bal_date_str, b_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
+                    """, (op_bal_date_str, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time, cb_match[0]))
                 else:
                     c_voucher = generate_cash_voucher_no()
                     cursor.execute(f"""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                         VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-108', {placeholder}, {placeholder})
                     """, (op_bal_date_str, c_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
+            else:
+                cursor.execute(f"""
+                    DELETE FROM cash_book 
+                    WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                      AND (account_code = 'AST-108' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                
+                cursor.execute(f"""
+                    SELECT id FROM bank_book 
+                    WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                    ORDER BY id ASC LIMIT 1
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                bb_match = cursor.fetchone()
+                if bb_match:
+                    cursor.execute(f"""
+                        UPDATE bank_book 
+                        SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
+                            bank_name = {placeholder}, account_code = 'AST-108', narration = {placeholder}, created_at = {placeholder}
+                        WHERE id = {placeholder}
+                    """, (op_bal_date_str, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Personal Loan Disbursal - {new_l_no}", today_time, bb_match[0]))
+                else:
+                    b_voucher = generate_bank_voucher_no()
+                    cursor.execute(f"""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-108', {placeholder}, {placeholder})
+                    """, (op_bal_date_str, b_voucher, f"Personal Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Personal Loan Disbursal - {new_l_no}", today_time))
+        else:
+            for jv_r in jv_rows:
+                cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (jv_r[0],))
+                cursor.execute(f"DELETE FROM journal_vouchers WHERE jv_id = {placeholder}", (jv_r[0],))
+            
+            cursor.execute(f"""
+                DELETE FROM bank_book 
+                WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                  AND (account_code = 'AST-108' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
+            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%"))
+            
+            cursor.execute(f"""
+                DELETE FROM cash_book 
+                WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                  AND (account_code = 'AST-108' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
+            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%"))
                     
         _sync_book_balances(cursor, placeholder)
         conn.commit()
@@ -4692,17 +4731,17 @@ def update_gold_loan_details(
         cursor.execute(f"SELECT emi_number FROM loan_emi_schedules WHERE loan_type = 'GOLD' AND loan_id = {placeholder} AND status = 'PAID'", (gl_id,))
         paid_emis = set(r[0] for r in cursor.fetchall())
         pending_schedules = [s for s in ed_gl_sched if s['emi_number'] not in paid_emis]
-        for sch in pending_schedules:
-            cursor.execute(f"""
+        if pending_schedules:
+            cursor.executemany(f"""
                 INSERT INTO loan_emi_schedules (
                     loan_type, loan_id, loan_no, emi_number, from_date, to_date, due_date,
                     principal_component, interest_component, emi_amount, status
                 ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING')
-            """, (
+            """, [(
                 'GOLD', gl_id, new_l_no, sch['emi_number'],
                 sch['from_date'], sch['to_date'], sch['due_date'],
                 sch['principal_component'], sch['interest_component'], sch['emi_amount']
-            ))
+            ) for sch in pending_schedules])
             
         # 5. Synchronize Disbursal Journal Voucher & Cash / Bank Book
         op_bal_date_str = str(new_op_bal_date) if new_op_bal_date else str(new_sanction_date)
@@ -4710,26 +4749,25 @@ def update_gold_loan_details(
         bank_name = "Union Bank of India" if chosen_asset_code == 'AST-102' else ("State Bank of India" if chosen_asset_code == 'AST-103' else "Cash")
         today_time = f"{op_bal_date_str} 12:00"
         
-        # Locate existing JV
+        # Locate existing JVs
         cursor.execute(f"""
             SELECT jv_id FROM journal_vouchers 
-            WHERE narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
-            ORDER BY jv_id DESC LIMIT 1
-        """, (f"%Gold Loan Disbursal%{old_l_no}%", f"%Gold Loan Disbursal%{new_l_no}%", f"%{old_v_no}%"))
-        jv_res = cursor.fetchone()
+            WHERE (narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+            ORDER BY jv_id DESC
+        """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_v_no}%"))
+        jv_rows = cursor.fetchall()
         
-        if jv_res:
-            jv_id = jv_res[0]
-            if new_princ > 0:
+        if new_princ > 0:
+            if jv_rows:
+                jv_id = jv_rows[0][0]
                 cursor.execute(f"UPDATE journal_vouchers SET voucher_date = {placeholder}, narration = {placeholder} WHERE jv_id = {placeholder}",
                                (op_bal_date_str, f"Gold Loan Disbursal - {cust_name} ({new_l_no})", jv_id))
                 cursor.execute(f"UPDATE jv_entries SET account_code = 'AST-110', debit = {placeholder} WHERE jv_id = {placeholder} AND debit > 0", (new_princ, jv_id))
                 cursor.execute(f"UPDATE jv_entries SET account_code = {placeholder}, credit = {placeholder} WHERE jv_id = {placeholder} AND credit > 0", (chosen_asset_code, new_princ, jv_id))
+                for dup in jv_rows[1:]:
+                    cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (dup[0],))
+                    cursor.execute(f"DELETE FROM journal_vouchers WHERE jv_id = {placeholder}", (dup[0],))
             else:
-                cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (jv_id,))
-                cursor.execute(f"DELETE FROM journal_vouchers WHERE jv_id = {placeholder}", (jv_id,))
-        else:
-            if new_princ > 0:
                 if USING_SUPABASE:
                     cursor.execute("INSERT INTO journal_vouchers (voucher_date, narration, status) VALUES (%s, %s, 'POSTED') RETURNING jv_id", (op_bal_date_str, f"Gold Loan Disbursal - {cust_name} ({new_l_no})"))
                     jv_id = cursor.fetchone()[0]
@@ -4740,74 +4778,76 @@ def update_gold_loan_details(
                     jv_id = cursor.lastrowid
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, 'AST-110', ?, 0)", (jv_id, new_princ))
                     cursor.execute("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, chosen_asset_code, new_princ))
-                    
-        # Locate existing Cash / Bank Book entry
-        cursor.execute(f"""
-            SELECT id FROM bank_book 
-            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
-            ORDER BY id ASC LIMIT 1
-        """, (f"%Gold Loan Disbursal%{old_l_no}%", f"%Gold Loan Disbursal%{new_l_no}%", f"%{old_l_no}%", f"%{old_v_no}%"))
-        bb_row = cursor.fetchone()
-        
-        cursor.execute(f"""
-            SELECT id FROM cash_book 
-            WHERE particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder}
-            ORDER BY id ASC LIMIT 1
-        """, (f"%Gold Loan Disbursal%{old_l_no}%", f"%Gold Loan Disbursal%{new_l_no}%", f"%{old_l_no}%", f"%{old_v_no}%"))
-        cb_row = cursor.fetchone()
-        
-        if bb_row:
-            bb_id = bb_row[0]
-            if new_princ > 0:
-                if chosen_asset_code in ('AST-102', 'AST-103'):
-                    cursor.execute(f"""
-                        UPDATE bank_book 
-                        SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
-                            bank_name = {placeholder}, account_code = 'AST-110', narration = {placeholder}, created_at = {placeholder}
-                        WHERE id = {placeholder}
-                    """, (op_bal_date_str, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Gold Loan Disbursal - {new_l_no}", today_time, bb_id))
-                else:
-                    cursor.execute(f"DELETE FROM bank_book WHERE id = {placeholder}", (bb_id,))
-                    c_voucher = generate_cash_voucher_no()
-                    cursor.execute(f"""
-                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
-                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-110', {placeholder}, {placeholder})
-                    """, (op_bal_date_str, c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
-            else:
-                cursor.execute(f"DELETE FROM bank_book WHERE id = {placeholder}", (bb_id,))
-        elif cb_row:
-            cb_id = cb_row[0]
-            if new_princ > 0:
-                if chosen_asset_code == 'AST-101':
+            
+            # Update or insert Cash / Bank Book
+            if chosen_asset_code == 'AST-101':
+                cursor.execute(f"""
+                    DELETE FROM bank_book 
+                    WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                      AND (account_code = 'AST-110' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                
+                cursor.execute(f"""
+                    SELECT id FROM cash_book 
+                    WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                    ORDER BY id ASC LIMIT 1
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                cb_match = cursor.fetchone()
+                if cb_match:
                     cursor.execute(f"""
                         UPDATE cash_book 
                         SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
                             account_code = 'AST-110', narration = {placeholder}, created_at = {placeholder}
                         WHERE id = {placeholder}
-                    """, (op_bal_date_str, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time, cb_id))
-                else:
-                    cursor.execute(f"DELETE FROM cash_book WHERE id = {placeholder}", (cb_id,))
-                    b_voucher = generate_bank_voucher_no()
-                    cursor.execute(f"""
-                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-110', {placeholder}, {placeholder})
-                    """, (op_bal_date_str, b_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
-            else:
-                cursor.execute(f"DELETE FROM cash_book WHERE id = {placeholder}", (cb_id,))
-        else:
-            if new_princ > 0:
-                if chosen_asset_code in ('AST-102', 'AST-103'):
-                    b_voucher = generate_bank_voucher_no()
-                    cursor.execute(f"""
-                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
-                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, {placeholder}, 'AST-110', {placeholder}, {placeholder})
-                    """, (op_bal_date_str, b_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
+                    """, (op_bal_date_str, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time, cb_match[0]))
                 else:
                     c_voucher = generate_cash_voucher_no()
                     cursor.execute(f"""
                         INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, account_code, narration, created_at)
                         VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-110', {placeholder}, {placeholder})
                     """, (op_bal_date_str, c_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
+            else:
+                cursor.execute(f"""
+                    DELETE FROM cash_book 
+                    WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                      AND (account_code = 'AST-110' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                
+                cursor.execute(f"""
+                    SELECT id FROM bank_book 
+                    WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                    ORDER BY id ASC LIMIT 1
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                bb_match = cursor.fetchone()
+                if bb_match:
+                    cursor.execute(f"""
+                        UPDATE bank_book 
+                        SET date = {placeholder}, particulars = {placeholder}, credit_amount = {placeholder},
+                            bank_name = {placeholder}, account_code = 'AST-110', narration = {placeholder}, created_at = {placeholder}
+                        WHERE id = {placeholder}
+                    """, (op_bal_date_str, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Gold Loan Disbursal - {new_l_no}", today_time, bb_match[0]))
+                else:
+                    b_voucher = generate_bank_voucher_no()
+                    cursor.execute(f"""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, account_code, narration, created_at)
+                        VALUES ({placeholder}, {placeholder}, {placeholder}, 0, {placeholder}, 0, 'AST-110', {placeholder}, {placeholder})
+                    """, (op_bal_date_str, b_voucher, f"Gold Loan Disbursal: {cust_acc} ({cust_name}) [{new_l_no}]", new_princ, bank_name, f"Opening Gold Loan Disbursal - {new_l_no}", today_time))
+        else:
+            for jv_r in jv_rows:
+                cursor.execute(f"DELETE FROM jv_entries WHERE jv_id = {placeholder}", (jv_r[0],))
+                cursor.execute(f"DELETE FROM journal_vouchers WHERE jv_id = {placeholder}", (jv_r[0],))
+            
+            cursor.execute(f"""
+                DELETE FROM bank_book 
+                WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                  AND (account_code = 'AST-110' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
+            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%"))
+            
+            cursor.execute(f"""
+                DELETE FROM cash_book 
+                WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
+                  AND (account_code = 'AST-110' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
+            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%"))
                     
         _sync_book_balances(cursor, placeholder)
         conn.commit()

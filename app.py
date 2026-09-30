@@ -58,73 +58,37 @@ def get_vsquare_favicon_b64():
     return ""
 
 # Import database layer
-from database import (
-    IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
-    get_account_balance_from_jv, get_cash_balance, get_bank_balance,
-    generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
-    post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
-    get_connection, release_connection, sync_db_sequences,
-    get_all_gold_loans_bundle, get_all_personal_loans_bundle,
-    delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
-    delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
-    delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
-    resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
-    update_sb_account_details, create_or_link_sb_opening,
-    update_personal_loan_details, update_gold_loan_details,
-    create_or_link_personal_loan_opening, create_or_link_gold_loan_opening,
-    update_fd_account_details, create_or_link_fd_opening,
-    update_rd_account_details, create_or_link_rd_opening,
-    get_document_data, delete_document, record_sb_transaction,
-    resequence_all_accounts, reconcile_books, get_all_balances,
-    record_cash_book_transaction, update_cash_book_transaction, record_bank_book_transaction,
-    calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment,
-    ensure_rd_installments_populated, update_rd_installment, delete_rd_installment, add_custom_rd_installment, recalculate_rd_installments_balances,
-    resequence_rd_installments, pay_rd_installment, record_personal_loan_repayment, record_gold_loan_repayment,
-    init_db, generate_loan_schedule
-)
-
 try:
-    from database import calculate_rd_maturity, calculate_rd_accrued_value
-except ImportError:
-    import importlib
     import database
-    try:
-        importlib.reload(database)
-        from database import calculate_rd_maturity, calculate_rd_accrued_value
-    except ImportError:
-        def calculate_rd_maturity(monthly_amount: float, interest_rate: float, tenure_months: int):
-            try:
-                monthly_amount = float(monthly_amount)
-                interest_rate = float(interest_rate)
-                tenure_months = int(tenure_months)
-            except (ValueError, TypeError):
-                return 0.0, 0.0, 0.0
-            if monthly_amount <= 0 or tenure_months <= 0:
-                return 0.0, 0.0, 0.0
-            total_deposit = round(monthly_amount * tenure_months, 2)
-            if interest_rate <= 0:
-                return total_deposit, total_deposit, 0.0
-            i = interest_rate / 400.0
-            maturity_amount = sum(monthly_amount * ((1.0 + i) ** ((tenure_months - k + 1) / 3.0)) for k in range(1, tenure_months + 1))
-            maturity_amount = round(maturity_amount, 2)
-            return total_deposit, maturity_amount, round(maturity_amount - total_deposit, 2)
-
-        def calculate_rd_accrued_value(monthly_amount: float, interest_rate: float, installments_paid: int):
-            try:
-                monthly_amount = float(monthly_amount)
-                interest_rate = float(interest_rate)
-                installments_paid = int(installments_paid)
-            except (ValueError, TypeError):
-                return 0.0, 0.0, 0.0
-            if monthly_amount <= 0 or installments_paid <= 0:
-                return 0.0, 0.0, 0.0
-            total_paid = round(monthly_amount * installments_paid, 2)
-            if interest_rate <= 0:
-                return total_paid, total_paid, 0.0
-            i = interest_rate / 400.0
-            accrued_amount = sum(monthly_amount * ((1.0 + i) ** ((installments_paid - k + 1) / 3.0)) for k in range(1, installments_paid + 1))
-            accrued_amount = round(accrued_amount, 2)
-            return total_paid, accrued_amount, round(accrued_amount - total_paid, 2)
+    from database import (
+        IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
+        get_account_balance_from_jv, get_cash_balance, get_bank_balance,
+        generate_cash_voucher_no, generate_bank_voucher_no, post_automated_jv,
+        post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
+        get_connection, release_connection, sync_db_sequences,
+        get_all_gold_loans_bundle, get_all_personal_loans_bundle,
+        delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
+        delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
+        delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
+        resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
+        update_sb_account_details, create_or_link_sb_opening,
+        update_personal_loan_details, update_gold_loan_details,
+        create_or_link_personal_loan_opening, create_or_link_gold_loan_opening,
+        update_fd_account_details, create_or_link_fd_opening,
+        update_rd_account_details, create_or_link_rd_opening,
+        get_document_data, delete_document, record_sb_transaction,
+        resequence_all_accounts, reconcile_books, get_all_balances,
+        record_cash_book_transaction, update_cash_book_transaction, record_bank_book_transaction,
+        calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment,
+        ensure_rd_installments_populated, update_rd_installment, delete_rd_installment, add_custom_rd_installment, recalculate_rd_installments_balances,
+        resequence_rd_installments, pay_rd_installment, record_personal_loan_repayment, record_gold_loan_repayment,
+        init_db, generate_loan_schedule
+    )
+except Exception as e:
+    import traceback
+    st.error(f"⚠️ Critical Database Import Error: {e}")
+    st.code(traceback.format_exc())
+    st.stop()
 
 import pdf_generator
 

@@ -1355,23 +1355,31 @@ def render_personal_loans():
         all_edit_loans = all_pl_data
         if all_edit_loans:
             e_opts = {f"#{r[1]} - {r[3]} (Acc: {r[4]} | Due: ₹{float(r[21]):,.2f} | Stat: {r[29]})": r for r in all_edit_loans}
-            sel_pl_label = st.selectbox("Select Personal Loan to Edit or Manage", list(e_opts.keys()), key="pl_edit_sel")
+            e_keys = list(e_opts.keys())
+            
+            # Persist selected loan across updates and reruns
+            cur_sel_id = st.session_state.get("selected_edit_pl_id")
+            default_idx = 0
+            if cur_sel_id is not None:
+                for idx, r in enumerate(all_edit_loans):
+                    if r[0] == cur_sel_id:
+                        default_idx = idx
+                        break
+
+            sel_pl_label = st.selectbox("Select Personal Loan to Edit or Manage", e_keys, index=default_idx, key="pl_edit_sel")
             row = e_opts[sel_pl_label]
             (sel_pl_id, l_no, c_id, c_name, c_acc, c_phone, s_date, princ, rate, i_type,
              t_days, t_months, t_int, t_rep, inst_amt, p_emi_val, i_emi_val, from_d, to_d,
              fdue_d, ldue_d, out_due, d_mode, v_no, g_name, g_phone, g_rel, g_addr,
              purp, stat, rem, ren_cnt, last_ren, c_str, c_city, c_state, c_pin, op_bal_val) = row
+            st.session_state["selected_edit_pl_id"] = sel_pl_id
             
             try:
                 s_date_obj = datetime.strptime(str(s_date)[:10], "%Y-%m-%d").date()
             except Exception:
                 s_date_obj = date.today()
 
-            pl_op_bal_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%[{l_no}]%", f"%Personal Loan%{l_no}%"))
-            try:
-                pl_op_bal_dt = pd.to_datetime(pl_op_bal_res[0][0]).date() if pl_op_bal_res and pl_op_bal_res[0] and pl_op_bal_res[0][0] else s_date_obj
-            except Exception:
-                pl_op_bal_dt = s_date_obj
+            pl_op_bal_dt = s_date_obj
             
             is_closed = (stat in ["CLOSED"])
             
@@ -1389,10 +1397,10 @@ def render_personal_loans():
                 
                 st.markdown("### 1️⃣ Financial Terms & Repayment Calculation")
                 col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                new_princ = col_f1.number_input("Sanctioned Principal Amount (₹) *", min_value=0.0, value=float(princ or 0.0), step=1000.0, disabled=is_closed, help="Original principal amount sanctioned to the borrower", key=f"pl_ed_p_{sel_pl_id}")
-                new_op_bal = col_f2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(op_bal_val or princ or 0.0), step=500.0, disabled=is_closed, help="Initial opening ledger balance at loan creation", key=f"pl_ed_opbal_{sel_pl_id}")
-                new_rate = col_f3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate or 12.0), step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
-                new_t_days = col_f4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days or (t_months * 30 if t_months else 100)), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
+                new_princ = col_f1.number_input("Sanctioned Principal Amount (₹) *", min_value=0.0, value=float(princ) if princ is not None else 0.0, step=1000.0, disabled=is_closed, help="Original principal amount sanctioned to the borrower", key=f"pl_ed_p_{sel_pl_id}")
+                new_op_bal = col_f2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(op_bal_val) if op_bal_val is not None else (float(princ) if princ is not None else 0.0), step=500.0, disabled=is_closed, help="Initial opening ledger balance at loan creation", key=f"pl_ed_opbal_{sel_pl_id}")
+                new_rate = col_f3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate) if rate is not None else 12.0, step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
+                new_t_days = col_f4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days) if t_days else (int(t_months * 30) if t_months else 100), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
                 
                 new_t_months = max(1, int(round(new_t_days / 30.0)))
                 calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_t_days / 365.0), 2)
@@ -1443,7 +1451,7 @@ def render_personal_loans():
                     new_out_due = calc_tot_repayable
                     col_pldue2.info(f"Outstanding Due set to **₹{new_out_due:,.2f}**")
                 else:
-                    new_out_due = col_pldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due or op_bal_val or calc_tot_repayable), step=100.0, disabled=is_closed, help="Current unpaid balance owed by the borrower on this loan.", key=f"pl_ed_due_{sel_pl_id}")
+                    new_out_due = col_pldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due) if out_due is not None else (float(op_bal_val) if op_bal_val is not None else float(calc_tot_repayable)), step=100.0, disabled=is_closed, help="Current unpaid balance owed by the borrower on this loan.", key=f"pl_ed_due_{sel_pl_id}")
                 
                 ed_sched = generate_loan_schedule(new_s_date, new_princ, calc_tot_interest, tenure_months=new_t_months)
                 with st.expander(f"📅 View Updated {len(ed_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
@@ -1459,6 +1467,7 @@ def render_personal_loans():
                 else:
                     if st.button("💾 Save & Apply Updated Loan Terms", type="primary", use_container_width=True, key=f"btn_save_pl_{sel_pl_id}"):
                         new_op_str = new_op_bal_date.strftime("%Y-%m-%d")
+                        st.session_state["selected_edit_pl_id"] = sel_pl_id
                         success, msg = update_personal_loan_details(
                             sel_pl_id, new_l_no, new_s_date, new_princ, new_rate, new_t_days,
                             new_out_due, new_d_mode, new_g_name, new_g_phone, new_g_rel,
@@ -2198,7 +2207,17 @@ def render_gold_loans():
         all_edit_gl = all_gl_data
         if all_edit_gl:
             egl_opts = {f"#{r[1]} - {r[3]} (Pkt: {r[32]} | Due: ₹{float(r[31]):,.2f} | Gold: {float(r[12]):.3f}g | Stat: {r[37]})": r for r in all_edit_gl}
-            sel_egl_label = st.selectbox("Select Gold Loan to Edit or Manage", list(egl_opts.keys()), key="gl_edit_sel")
+            egl_keys = list(egl_opts.keys())
+            
+            cur_sel_gl_id = st.session_state.get("selected_edit_gl_id")
+            default_gl_idx = 0
+            if cur_sel_gl_id is not None:
+                for idx, r in enumerate(all_edit_gl):
+                    if r[0] == cur_sel_gl_id:
+                        default_gl_idx = idx
+                        break
+
+            sel_egl_label = st.selectbox("Select Gold Loan to Edit or Manage", egl_keys, index=default_gl_idx, key="gl_edit_sel")
             grow = egl_opts[sel_egl_label]
             (sel_egl_id, eg_lno, eg_cid, eg_cname, eg_cacc, eg_cphone, eg_sdate, eg_grate, eg_orn,
              eg_cnt, eg_gross, eg_stone, eg_net, eg_pur, eg_mval, eg_ltv, eg_princ, eg_rate,
@@ -2206,17 +2225,14 @@ def render_gold_loans():
              eg_from, eg_to, eg_fdue, eg_ldue, eg_out_due, eg_pkt, eg_lock, eg_appr, eg_dmode,
              eg_vno, eg_stat, eg_rem, eg_ren_cnt, eg_last_ren, eg_str, eg_city, eg_state,
              eg_pin, eg_img_file, eg_has_photo, eg_op_bal) = grow
+            st.session_state["selected_edit_gl_id"] = sel_egl_id
              
             try:
                 eg_sdate_obj = datetime.strptime(str(eg_sdate)[:10], "%Y-%m-%d").date()
             except Exception:
                 eg_sdate_obj = date.today()
 
-            gl_op_bal_res = cached_query("SELECT voucher_date FROM journal_vouchers WHERE (narration LIKE ? OR narration LIKE ?) ORDER BY jv_id ASC LIMIT 1", (f"%[{eg_lno}%", f"%Gold Loan%{eg_lno}%"))
-            try:
-                gl_op_bal_dt = pd.to_datetime(gl_op_bal_res[0][0]).date() if gl_op_bal_res and gl_op_bal_res[0] and gl_op_bal_res[0][0] else eg_sdate_obj
-            except Exception:
-                gl_op_bal_dt = eg_sdate_obj
+            gl_op_bal_dt = eg_sdate_obj
                 
             is_closed_gl = (eg_stat in ["CLOSED", "CLOSED_RELEASED"])
                 
@@ -2258,13 +2274,13 @@ def render_gold_loans():
                 
                 st.markdown("### 1️⃣ Collateral Appraisal & Live Market Valuation")
                 col_ea1, col_ea2 = st.columns(2)
-                ed_gold_rate = col_ea1.number_input("22K Gold Market Rate (₹ / gram)", min_value=1000.0, value=float(eg_grate or 6500.0), step=50.0, disabled=is_closed_gl, key=f"gl_ed_grate_{sel_egl_id}")
+                ed_gold_rate = col_ea1.number_input("22K Gold Market Rate (₹ / gram)", min_value=1000.0, value=float(eg_grate) if eg_grate is not None else 6500.0, step=50.0, disabled=is_closed_gl, key=f"gl_ed_grate_{sel_egl_id}")
                 ed_orn_desc = col_ea2.text_input("Ornaments Description", value=str(eg_orn or ""), disabled=is_closed_gl, key=f"gl_ed_orn_{sel_egl_id}")
                 
                 col_ew1, col_ew2, col_ew3, col_ew4 = st.columns(4)
-                ed_item_cnt = col_ew1.number_input("Item Count", min_value=1, value=int(eg_cnt or 1), step=1, disabled=is_closed_gl, key=f"gl_ed_cnt_{sel_egl_id}")
-                ed_gross_wt = col_ew2.number_input("Gross Weight (g)", min_value=0.1, value=float(eg_gross or 10.0), step=0.1, format="%.3f", disabled=is_closed_gl, key=f"gl_ed_gross_{sel_egl_id}")
-                ed_stone_ded = col_ew3.number_input("Stone Deduction (g)", min_value=0.0, value=float(eg_stone or 0.0), step=0.05, format="%.3f", disabled=is_closed_gl, key=f"gl_ed_stone_{sel_egl_id}")
+                ed_item_cnt = col_ew1.number_input("Item Count", min_value=1, value=int(eg_cnt) if eg_cnt else 1, step=1, disabled=is_closed_gl, key=f"gl_ed_cnt_{sel_egl_id}")
+                ed_gross_wt = col_ew2.number_input("Gross Weight (g)", min_value=0.1, value=float(eg_gross) if eg_gross is not None else 10.0, step=0.1, format="%.3f", disabled=is_closed_gl, key=f"gl_ed_gross_{sel_egl_id}")
+                ed_stone_ded = col_ew3.number_input("Stone Deduction (g)", min_value=0.0, value=float(eg_stone) if eg_stone is not None else 0.0, step=0.05, format="%.3f", disabled=is_closed_gl, key=f"gl_ed_stone_{sel_egl_id}")
                 ed_net_wt = max(0.01, round(float(ed_gross_wt) - float(ed_stone_ded), 3))
                 col_ew4.metric("Net Gold Weight", f"{ed_net_wt:.3f} g")
                 
@@ -2276,10 +2292,10 @@ def render_gold_loans():
                 
                 st.markdown("### 2️⃣ Dynamic Loan Terms & Repayment")
                 col_ef1, col_ef2, col_ef3, col_ef4 = st.columns(4)
-                ed_princ = col_ef1.number_input("Sanctioned Principal Amount (₹) *", min_value=0.0, value=float(eg_princ or 0.0), step=1000.0, disabled=is_closed_gl, help="Original loan principal amount sanctioned against pledged ornaments", key=f"gl_ed_princ_{sel_egl_id}")
-                ed_op_bal = col_ef2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(eg_op_bal or eg_princ or 0.0), step=500.0, disabled=is_closed_gl, help="Initial opening ledger balance at loan creation", key=f"gl_ed_opbal_{sel_egl_id}")
-                ed_int_rate = col_ef3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
-                ed_tenure_days = col_ef4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(eg_tdays or (eg_tmonths * 30 if eg_tmonths else 365)), step=10, disabled=is_closed_gl, key=f"gl_ed_tday_{sel_egl_id}")
+                ed_princ = col_ef1.number_input("Sanctioned Principal Amount (₹) *", min_value=0.0, value=float(eg_princ) if eg_princ is not None else 0.0, step=1000.0, disabled=is_closed_gl, help="Original loan principal amount sanctioned against pledged ornaments", key=f"gl_ed_princ_{sel_egl_id}")
+                ed_op_bal = col_ef2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(eg_op_bal) if eg_op_bal is not None else (float(eg_princ) if eg_princ is not None else 0.0), step=500.0, disabled=is_closed_gl, help="Initial opening ledger balance at loan creation", key=f"gl_ed_opbal_{sel_egl_id}")
+                ed_int_rate = col_ef3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate) if eg_rate is not None else 12.0, step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
+                ed_tenure_days = col_ef4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(eg_tdays) if eg_tdays else (int(eg_tmonths * 30) if eg_tmonths else 365), step=10, disabled=is_closed_gl, key=f"gl_ed_tday_{sel_egl_id}")
                 
                 ed_tenure_mo = max(1, int(round(ed_tenure_days / 30.0)))
                 calc_gl_interest = round(ed_princ * (ed_int_rate / 100.0) * (ed_tenure_days / 365.0), 2)
@@ -2329,7 +2345,7 @@ def render_gold_loans():
                     new_gl_out_due = calc_gl_repayable
                     col_gldue2.info(f"Outstanding Due set to **₹{new_gl_out_due:,.2f}**")
                 else:
-                    new_gl_out_due = col_gldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(eg_out_due or eg_op_bal or calc_gl_repayable), step=100.0, disabled=is_closed_gl, help="Current unpaid balance owed by the borrower on this gold loan.", key=f"gl_ed_due_{sel_egl_id}")
+                    new_gl_out_due = col_gldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(eg_out_due) if eg_out_due is not None else (float(eg_op_bal) if eg_op_bal is not None else float(calc_gl_repayable)), step=100.0, disabled=is_closed_gl, help="Current unpaid balance owed by the borrower on this gold loan.", key=f"gl_ed_due_{sel_egl_id}")
                     
                 ed_gl_sched = generate_loan_schedule(new_gl_sdate, ed_princ, calc_gl_interest, tenure_months=ed_tenure_mo, loan_type='GOLD')
                 with st.expander(f"📅 View Updated {len(ed_gl_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
@@ -2349,6 +2365,7 @@ def render_gold_loans():
                             u_photo_name, u_photo_bytes = save_uploaded_file(new_gl_photo)
                             
                         new_gl_op_str = new_gl_op_date.strftime("%Y-%m-%d")
+                        st.session_state["selected_edit_gl_id"] = sel_egl_id
                         success, msg = update_gold_loan_details(
                             sel_egl_id, new_gl_lno, new_gl_sdate, ed_princ, ed_int_rate, ed_tenure_days,
                             new_gl_out_due, new_gl_dmode, ed_gold_rate, ed_orn_desc, ed_item_cnt,

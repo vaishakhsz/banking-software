@@ -4072,76 +4072,59 @@ def _sync_book_balances(cursor, placeholder):
     """
     if USING_SUPABASE:
         cursor.execute("""
-            DO $$
-            DECLARE
-                r RECORD;
-                curr_b NUMERIC := 0;
-                bal_u NUMERIC := 0;
-                bal_s NUMERIC := 0;
-            BEGIN
-                FOR r IN SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars ILIKE '%opening%' THEN 0 ELSE 1 END, id ASC LOOP
-                    IF r.bank_name ILIKE '%State Bank%' OR r.bank_name ILIKE '%SBI%' THEN
-                        IF bal_s = 0 AND r.particulars ILIKE '%opening%' THEN
-                            bal_s := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
-                        ELSE
-                            bal_s := bal_s + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
-                        END IF;
-                        curr_b := bal_s;
-                    ELSE
-                        IF bal_u = 0 AND r.particulars ILIKE '%opening%' THEN
-                            bal_u := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
-                        ELSE
-                            bal_u := bal_u + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
-                        END IF;
-                        curr_b := bal_u;
-                    END IF;
-                    UPDATE bank_book SET balance = curr_b WHERE id = r.id;
-                END LOOP;
+            WITH cb_calc AS (
+                SELECT id, SUM(COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0)) OVER (
+                    ORDER BY date ASC, CASE WHEN particulars ILIKE '%opening%' THEN 0 ELSE 1 END, id ASC
+                ) AS new_bal
+                FROM cash_book
+            )
+            UPDATE cash_book
+            SET balance = cb_calc.new_bal
+            FROM cb_calc
+            WHERE cash_book.id = cb_calc.id AND (cash_book.balance IS DISTINCT FROM cb_calc.new_bal);
 
-                curr_b := 0;
-                FOR r IN SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, id ASC LOOP
-                    IF curr_b = 0 AND r.particulars ILIKE '%opening%' THEN
-                        curr_b := COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
-                    ELSE
-                        curr_b := curr_b + COALESCE(r.debit_amount, 0) - COALESCE(r.credit_amount, 0);
-                    END IF;
-                    UPDATE cash_book SET balance = curr_b WHERE id = r.id;
-                END LOOP;
-            END $$;
+            WITH bb_calc AS (
+                SELECT id, SUM(COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0)) OVER (
+                    PARTITION BY (CASE WHEN bank_name ILIKE '%State Bank%' OR bank_name ILIKE '%SBI%' THEN 'SBI' ELSE 'UNION' END)
+                    ORDER BY date ASC, CASE WHEN particulars ILIKE '%opening%' THEN 0 ELSE 1 END, id ASC
+                ) AS new_bal
+                FROM bank_book
+            )
+            UPDATE bank_book
+            SET balance = bb_calc.new_bal
+            FROM bb_calc
+            WHERE bank_book.id = bb_calc.id AND (bank_book.balance IS DISTINCT FROM bb_calc.new_bal);
         """)
     else:
         cursor.execute("SELECT id, debit_amount, credit_amount, bank_name, particulars FROM bank_book ORDER BY date ASC, CASE WHEN particulars LIKE '%opening%' OR particulars LIKE '%Opening%' THEN 0 ELSE 1 END, id ASC")
         rows = cursor.fetchall()
         bal_union = 0.0
         bal_sbi = 0.0
+        bb_updates = []
         for r_id, dr, cr, b_name, part in rows:
             dr = float(dr or 0.0)
             cr = float(cr or 0.0)
             if "state" in str(b_name).lower() or "sbi" in str(b_name).lower():
-                if bal_sbi == 0.0 and "opening" in str(part).lower():
-                    bal_sbi = dr - cr
-                else:
-                    bal_sbi += (dr - cr)
+                bal_sbi += (dr - cr)
                 curr_b = bal_sbi
             else:
-                if bal_union == 0.0 and "opening" in str(part).lower():
-                    bal_union = dr - cr
-                else:
-                    bal_union += (dr - cr)
+                bal_union += (dr - cr)
                 curr_b = bal_union
-            cursor.execute("UPDATE bank_book SET balance = ? WHERE id = ?", (round(curr_b, 2), r_id))
+            bb_updates.append((round(curr_b, 2), r_id))
+        if bb_updates:
+            cursor.executemany("UPDATE bank_book SET balance = ? WHERE id = ?", bb_updates)
 
         cursor.execute("SELECT id, particulars, debit_amount, credit_amount FROM cash_book ORDER BY date ASC, id ASC")
         cb_rows = cursor.fetchall()
         cb_bal = 0.0
+        cb_updates = []
         for r_id, part, dr, cr in cb_rows:
             dr = float(dr or 0.0)
             cr = float(cr or 0.0)
-            if cb_bal == 0.0 and "opening" in str(part).lower():
-                cb_bal = dr - cr
-            else:
-                cb_bal += (dr - cr)
-            cursor.execute("UPDATE cash_book SET balance = ? WHERE id = ?", (round(cb_bal, 2), r_id))
+            cb_bal += (dr - cr)
+            cb_updates.append((round(cb_bal, 2), r_id))
+        if cb_updates:
+            cursor.executemany("UPDATE cash_book SET balance = ? WHERE id = ?", cb_updates)
 
 
 def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, new_rate, new_created_date, chosen_asset_code="AST-102", new_op_bal_date=None, new_op_bal=None):

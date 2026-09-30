@@ -405,7 +405,7 @@ def render_customer_management():
             email = col1.text_input("Email Address")
             phone = col2.text_input("Phone Number")
             
-            col_b1, col_b2 = st.columns(2)
+            col_b1, col_b2, col_b3 = st.columns(3)
             acc_type = col_b1.selectbox(
                 "Primary Account Type *", 
                 [
@@ -416,12 +416,19 @@ def render_customer_management():
                     "Recurring Deposit (RD) Account"
                 ]
             )
-            initial_balance = col_b2.number_input(
-                "Opening Balance / Loan Due Balance (₹)", 
+            reg_principal = col_b2.number_input(
+                "Sanctioned Principal Amount (₹)", 
+                min_value=0.0, 
+                value=0.0, 
+                step=1000.0,
+                help="Original / Sanctioned Principal Amount (for Personal / Gold Loans). Leave 0 if not applicable."
+            )
+            initial_balance = col_b3.number_input(
+                "Opening Balance / Outstanding Due (₹)", 
                 min_value=0.0, 
                 value=0.0, 
                 step=500.0,
-                help="Initial opening deposit amount (for SB/FD/RD) or opening loan balance / sanctioned due (for Personal/Gold Loans)."
+                help="Opening deposit balance (for SB/FD/RD) or opening outstanding due balance (for Personal/Gold Loans). Note: Principal Amount and Opening Balance can be different."
             )
             
             col_d1, col_d2, col_d3 = st.columns(3)
@@ -515,16 +522,22 @@ def render_customer_management():
                                 
                                 # 4. Handle Opening Balance creation for specific product
                                 if 'Gold' in acc_type:
-                                    if initial_balance > 0:
+                                    if reg_principal > 0 or initial_balance > 0:
+                                        p_amt = reg_principal if reg_principal > 0 else initial_balance
+                                        ob_amt = initial_balance if initial_balance > 0 else p_amt
                                         create_or_link_gold_loan_opening(
-                                            new_c_id, initial_balance, op_date_str,
-                                            disbursal_mode=pay_mode, op_bal_date=op_bal_date_str
+                                            new_c_id, p_amt, op_date_str,
+                                            disbursal_mode=pay_mode, op_bal_date=op_bal_date_str,
+                                            opening_balance=ob_amt
                                         )
                                 elif 'Personal' in acc_type or 'Loan' in acc_type:
-                                    if initial_balance > 0:
+                                    if reg_principal > 0 or initial_balance > 0:
+                                        p_amt = reg_principal if reg_principal > 0 else initial_balance
+                                        ob_amt = initial_balance if initial_balance > 0 else p_amt
                                         create_or_link_personal_loan_opening(
-                                            new_c_id, initial_balance, op_date_str,
-                                            disbursal_mode=pay_mode, op_bal_date=op_bal_date_str
+                                            new_c_id, p_amt, op_date_str,
+                                            disbursal_mode=pay_mode, op_bal_date=op_bal_date_str,
+                                            opening_balance=ob_amt
                                         )
                                 elif 'Fixed' in acc_type or 'FD' in acc_type:
                                     if initial_balance > 0:
@@ -822,10 +835,11 @@ def render_customer_management():
                         
                     # Add New Gold Loan Opening Expander
                     with st.expander("➕ Add New Gold Loan Opening Balance for this Customer", expanded=False):
-                        col_ngl1, col_ngl2, col_ngl3 = st.columns(3)
+                        col_ngl1, col_ngl2, col_ngl3, col_ngl4 = st.columns(4)
                         ngl_princ = col_ngl1.number_input("Sanctioned Principal Amount (₹) *", min_value=500.0, value=10000.0, step=1000.0, key=f"ngl_p_{cust_id_edit}")
-                        ngl_sdate = col_ngl2.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY", key=f"ngl_sd_{cust_id_edit}")
-                        ngl_op_date = col_ngl3.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key=f"ngl_opdt_{cust_id_edit}")
+                        ngl_op_bal = col_ngl2.number_input("Opening Balance / Outstanding Due (₹) *", min_value=0.0, value=float(ngl_princ), step=500.0, key=f"ngl_opb_{cust_id_edit}", help="Opening balance brought forward. Can differ from Principal Amount if partial repayments occurred earlier.")
+                        ngl_sdate = col_ngl3.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY", key=f"ngl_sd_{cust_id_edit}")
+                        ngl_op_date = col_ngl4.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key=f"ngl_opdt_{cust_id_edit}")
                         
                         col_nglt1, col_nglt2, col_nglt3 = st.columns(3)
                         ngl_dmode = col_nglt1.selectbox("Funding / Disbursal Mode", ["Union Bank of India", "Cash in Hand (Office Drawer)", "State Bank of India"], key=f"ngl_dm_{cust_id_edit}")
@@ -845,7 +859,7 @@ def render_customer_management():
                             success, msg = create_or_link_gold_loan_opening(
                                 cust_id_edit, ngl_princ, ngl_sdate, ngl_tdays, ngl_rate, ngl_dmode,
                                 gold_rate=ngl_grate, net_weight=ngl_net, gross_weight=ngl_gross, remarks=ngl_rem,
-                                op_bal_date=str(ngl_op_date)
+                                op_bal_date=str(ngl_op_date), opening_balance=ngl_op_bal
                             )
                             clear_db_cache()
                             if success:
@@ -948,10 +962,11 @@ def render_customer_management():
                         
                     # Add New Personal Loan Opening Expander
                     with st.expander("➕ Add New Personal Loan Opening Balance for this Customer", expanded=False):
-                        col_npl1, col_npl2, col_npl3 = st.columns(3)
+                        col_npl1, col_npl2, col_npl3, col_npl4 = st.columns(4)
                         npl_princ = col_npl1.number_input("Sanctioned Principal Amount (₹) *", min_value=500.0, value=10000.0, step=1000.0, key=f"npl_p_{cust_id_edit}")
-                        npl_sdate = col_npl2.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY", key=f"npl_sd_{cust_id_edit}")
-                        npl_op_date = col_npl3.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key=f"npl_opdt_{cust_id_edit}")
+                        npl_op_bal = col_npl2.number_input("Opening Balance / Outstanding Due (₹) *", min_value=0.0, value=float(npl_princ), step=500.0, key=f"npl_opb_{cust_id_edit}", help="Opening balance brought forward. Can differ from Principal Amount if partial repayments occurred earlier.")
+                        npl_sdate = col_npl3.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY", key=f"npl_sd_{cust_id_edit}")
+                        npl_op_date = col_npl4.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key=f"npl_opdt_{cust_id_edit}")
                         
                         col_nplt1, col_nplt2, col_nplt3 = st.columns(3)
                         npl_dmode = col_nplt1.selectbox("Funding / Disbursal Mode", ["Union Bank of India", "Cash in Hand (Office Drawer)", "State Bank of India"], key=f"npl_dm_{cust_id_edit}")
@@ -965,7 +980,7 @@ def render_customer_management():
                         if st.button("🚀 Create & Link Personal Loan Opening Balance", type="primary", use_container_width=True, key=f"btn_add_pl_{cust_id_edit}"):
                             success, msg = create_or_link_personal_loan_opening(
                                 cust_id_edit, npl_princ, npl_sdate, npl_tdays, npl_rate, npl_dmode, remarks=npl_rem,
-                                op_bal_date=str(npl_op_date)
+                                op_bal_date=str(npl_op_date), opening_balance=npl_op_bal
                             )
                             clear_db_cache()
                             if success:
@@ -1639,7 +1654,7 @@ def render_personal_loans():
         col1, col2, col3, col4, col5 = st.columns(5)
         sanction_date = col1.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY", key="pl_sanc_date")
         op_bal_date = col2.date_input("Opening / Disbursal Date", value=sanction_date, format="DD-MM-YYYY", key="pl_op_bal_date")
-        principal = col3.number_input("Principal Amount (₹)", min_value=1000.0, value=50000.0, step=1000.0, help="The principal amount disbursed to the borrower", key="pl_princ_inp")
+        principal = col3.number_input("Sanctioned Principal Amount (₹)", min_value=1000.0, value=50000.0, step=1000.0, help="The original principal amount sanctioned to the borrower", key="pl_princ_inp")
         int_rate = col4.number_input("Interest Rate (% p.a.)", min_value=0.0, value=12.0, step=0.5, help="Annual flat interest rate percentage (default 12%)", key="pl_rate_inp")
         tenure_days = col5.number_input("Tenure (Days)", min_value=1, value=100, step=5, help="Total loan tenure in days (e.g., 100 days micro loan, 180 days, 365 days)", key="pl_ten_days")
         
@@ -1673,7 +1688,7 @@ def render_personal_loans():
         st.markdown("### 3️⃣ Disbursal Account, Opening Balance & Guarantor Details")
         col_d1, col_d2, col_d3 = st.columns(3)
         disb_mode = col_d1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], key="pl_disb_mode")
-        opening_balance = col_d2.number_input("Initial Outstanding Due / Balance (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="pl_op_bal_amt", help="Initial outstanding due balance at opening. Defaults to Total Repayable (Principal + Interest). Do not set to 0 for an active loan.")
+        opening_balance = col_d2.number_input("Opening Balance / Outstanding Due Balance (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="pl_op_bal_amt", help="Initial outstanding due balance at opening. Can differ from Principal Amount if prior repayments occurred or if this is an opening balance.")
         custom_loan_no = col_d3.text_input("Custom Loan Number (Optional - leave blank to auto-generate)", key="pl_cust_lno")
         
         g_col1, g_col2 = st.columns(2)
@@ -2453,7 +2468,7 @@ def render_gold_loans():
         st.markdown("### 3️⃣ Loan Financial Terms & Amortization")
         col_p1, col_p2, col_p3 = st.columns(3)
         default_gl_p = float(min(max_eligible, 50000.0)) if max_eligible >= 100.0 else float(max_eligible)
-        principal = col_p1.number_input("Sanctioned Loan Amount (₹)", min_value=100.0, value=default_gl_p, step=1000.0, key="gl_princ_inp")
+        principal = col_p1.number_input("Sanctioned Principal Amount (₹)", min_value=100.0, value=default_gl_p, step=1000.0, help="Original principal amount sanctioned / disbursed", key="gl_princ_inp")
         int_rate = col_p2.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key="gl_int_rate")
         tenure_days = col_p3.number_input("Loan Period / Tenure (Days)", min_value=1, value=365, step=10, help="Loan tenure in days (e.g., 90, 180, 365 days)", key="gl_tenure_days")
         
@@ -2487,7 +2502,7 @@ def render_gold_loans():
         st.markdown("### 4️⃣ Disbursal Mode & Opening Balance")
         col_dm1, col_dm2, col_dm3 = st.columns(3)
         disb_mode = col_dm1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0, key="gl_disb_mode")
-        opening_balance = col_dm2.number_input("Initial Outstanding Due / Balance (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="gl_op_bal_amt", help="Initial outstanding due balance at opening. Defaults to Total Repayable (Principal + Interest). Do not set to 0 for an active loan.")
+        opening_balance = col_dm2.number_input("Opening Balance / Outstanding Due Balance (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="gl_op_bal_amt", help="Initial outstanding due balance at opening. Can differ from Principal Amount if prior repayments occurred or if this is an opening balance.")
         custom_gl_no = col_dm3.text_input("Custom Gold Loan Number (Optional - leave blank to auto-generate)", key="gl_cust_lno")
         remarks = st.text_input("Remarks / Condition Notes", value="Gold Pledged in Safe Vault", key="gl_remarks_input")
         

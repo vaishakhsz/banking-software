@@ -4745,10 +4745,11 @@ def update_gold_loan_details(
         release_connection(conn)
 
 
-def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, tenure_days=100, int_rate=12.0, disbursal_mode="Union Bank of India", loan_no=None, remarks="Opening Loan Balance", op_bal_date=None):
+def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, tenure_days=100, int_rate=12.0, disbursal_mode="Union Bank of India", loan_no=None, remarks="Opening Loan Balance", op_bal_date=None, opening_balance=None):
     """
     Creates a new Personal Loan opening balance for an existing customer, generates 12-month schedule,
     posts Disbursal JV (AST-108), and logs Cash/Bank book entry.
+    Supports separate Sanctioned Principal Amount and Opening Balance (Outstanding Due).
     """
     conn = None
     try:
@@ -4775,6 +4776,7 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
         
         calc_tot_interest = round(princ_amount * (int_rate / 100.0) * (tenure_days / 365.0), 2)
         calc_tot_repayable = round(princ_amount + calc_tot_interest, 2)
+        actual_out_due = float(opening_balance) if (opening_balance is not None and float(opening_balance) > 0) else calc_tot_repayable
         calc_p_emi = round(princ_amount / float(tenure_months), 2)
         calc_i_emi = round(calc_tot_interest / float(tenure_months), 2)
         calc_installment = round(calc_tot_repayable / float(tenure_months), 2)
@@ -4805,7 +4807,7 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
             """, (
                 pl_code, cust_id, s_date_str, princ_amount, int_rate,
                 f"{tenure_days}-Day Loan", tenure_days, tenure_months, calc_tot_interest, calc_tot_repayable,
-                calc_installment, calc_tot_repayable, disbursal_mode, pl_vno,
+                calc_installment, actual_out_due, disbursal_mode, pl_vno,
                 cust_phone or 'N/A', remarks,
                 loan_from, loan_to, first_due, last_due,
                 calc_p_emi, calc_i_emi
@@ -4831,7 +4833,7 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
             """, (
                 pl_code, cust_id, s_date_str, princ_amount, int_rate,
                 f"{tenure_days}-Day Loan", tenure_days, tenure_months, calc_tot_interest, calc_tot_repayable,
-                calc_installment, calc_tot_repayable, disbursal_mode, pl_vno,
+                calc_installment, actual_out_due, disbursal_mode, pl_vno,
                 cust_phone or 'N/A', remarks,
                 loan_from, loan_to, first_due, last_due,
                 calc_p_emi, calc_i_emi
@@ -4853,8 +4855,8 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
             
         # Update accounts table
         cursor.execute(f"""
-            UPDATE accounts SET balance = {placeholder} WHERE customer_id = {placeholder} AND account_type = 'Loan Account'
-        """, (calc_tot_repayable, cust_id))
+            UPDATE accounts SET balance = {placeholder} WHERE customer_id = {placeholder} AND account_type IN ('Personal Loan', 'Loan Account')
+        """, (actual_out_due, cust_id))
         
         # Disbursal JV and Cash/Bank book
         chosen_asset_code = 'AST-101' if 'cash' in disbursal_mode.lower() else ('AST-103' if 'state bank' in disbursal_mode.lower() or 'sbi' in disbursal_mode.lower() else 'AST-102')
@@ -4888,7 +4890,7 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
         _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
-        return True, f"Personal Loan #{pl_code} of ₹{princ_amount:,.2f} created and linked successfully."
+        return True, f"Personal Loan #{pl_code} (Principal: ₹{princ_amount:,.2f} | Due: ₹{actual_out_due:,.2f}) created and linked successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
             try:
@@ -4900,10 +4902,11 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
         release_connection(conn)
 
 
-def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenure_days=365, int_rate=12.0, disbursal_mode="Union Bank of India", loan_no=None, gold_rate=6500.0, net_weight=None, gross_weight=None, packet_no=None, locker_no="LOCKER-01", remarks="Opening Gold Loan Balance", op_bal_date=None):
+def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenure_days=365, int_rate=12.0, disbursal_mode="Union Bank of India", loan_no=None, gold_rate=6500.0, net_weight=None, gross_weight=None, packet_no=None, locker_no="LOCKER-01", remarks="Opening Gold Loan Balance", op_bal_date=None, opening_balance=None):
     """
     Creates a new Gold Loan opening balance for an existing customer, creates collateral appraisal record,
     generates 12-month schedule, posts Disbursal JV (AST-110), and logs Cash/Bank book entry.
+    Supports separate Sanctioned Principal Amount and Opening Balance (Outstanding Due).
     """
     conn = None
     try:
@@ -4935,6 +4938,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
         
         calc_gl_interest = round(princ_amount * (int_rate / 100.0) * (tenure_days / 365.0), 2)
         calc_gl_repayable = round(princ_amount + calc_gl_interest, 2)
+        actual_out_due = float(opening_balance) if (opening_balance is not None and float(opening_balance) > 0) else calc_gl_repayable
         calc_gl_p_emi = round(princ_amount / float(tenure_months), 2)
         calc_gl_i_emi = round(calc_gl_interest / float(tenure_months), 2)
         calc_gl_installment = round(calc_gl_repayable / float(tenure_months), 2)
@@ -4974,7 +4978,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
                 round(int_rate / 12.0, 2), tenure_days, tenure_months, calc_gl_interest, calc_gl_repayable,
                 calc_gl_installment, calc_gl_p_emi, calc_gl_i_emi, calc_gl_i_emi,
                 loan_from, loan_to, first_due, last_due,
-                calc_gl_repayable, pkt_val, locker_no,
+                actual_out_due, pkt_val, locker_no,
                 disbursal_mode, gl_vno, remarks
             ))
             new_gl_id = cursor.fetchone()[0]
@@ -5006,7 +5010,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
                 round(int_rate / 12.0, 2), tenure_days, tenure_months, calc_gl_interest, calc_gl_repayable,
                 calc_gl_installment, calc_gl_p_emi, calc_gl_i_emi, calc_gl_i_emi,
                 loan_from, loan_to, first_due, last_due,
-                calc_gl_repayable, pkt_val, locker_no,
+                actual_out_due, pkt_val, locker_no,
                 disbursal_mode, gl_vno, remarks
             ))
             new_gl_id = cursor.lastrowid
@@ -5026,8 +5030,8 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
             
         # Update accounts table
         cursor.execute(f"""
-            UPDATE accounts SET balance = {placeholder} WHERE customer_id = {placeholder} AND account_type = 'Loan Account'
-        """, (calc_gl_repayable, cust_id))
+            UPDATE accounts SET balance = {placeholder} WHERE customer_id = {placeholder} AND account_type IN ('Gold Loan', 'Loan Account')
+        """, (actual_out_due, cust_id))
         
         # Disbursal JV and Cash/Bank book
         chosen_asset_code = 'AST-101' if 'cash' in disbursal_mode.lower() else ('AST-103' if 'state bank' in disbursal_mode.lower() or 'sbi' in disbursal_mode.lower() else 'AST-102')
@@ -5061,7 +5065,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
         _sync_book_balances(cursor, placeholder)
         conn.commit()
         clear_db_cache()
-        return True, f"Gold Loan #{gl_code} of ₹{princ_amount:,.2f} created and linked successfully."
+        return True, f"Gold Loan #{gl_code} (Principal: ₹{princ_amount:,.2f} | Due: ₹{actual_out_due:,.2f}) created and linked successfully."
     except Exception as e:
         if conn and USING_SUPABASE:
             try:

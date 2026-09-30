@@ -79,7 +79,8 @@ from database import (
     record_cash_book_transaction, update_cash_book_transaction, record_bank_book_transaction,
     calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment,
     ensure_rd_installments_populated, update_rd_installment, delete_rd_installment, add_custom_rd_installment, recalculate_rd_installments_balances,
-    resequence_rd_installments, pay_rd_installment, record_personal_loan_repayment, record_gold_loan_repayment
+    resequence_rd_installments, pay_rd_installment, record_personal_loan_repayment, record_gold_loan_repayment,
+    init_db
 )
 
 try:
@@ -532,7 +533,6 @@ def render_customer_management():
                         if a_file:
                             st.write(f"File: `{os.path.basename(a_file)}`")
                             try:
-                                from database import get_document_data
                                 file_bytes, filename = get_document_data(a_file, doc_type='adhar', customer_id=selected_cust_id)
                                 if file_bytes:
                                     if filename.lower().endswith((".jpg", ".jpeg", ".png")):
@@ -550,7 +550,6 @@ def render_customer_management():
                         if p_file:
                             st.write(f"File: `{os.path.basename(p_file)}`")
                             try:
-                                from database import get_document_data
                                 file_bytes, filename = get_document_data(p_file, doc_type='pan', customer_id=selected_cust_id)
                                 if file_bytes:
                                     if filename.lower().endswith((".jpg", ".jpeg", ".png")):
@@ -568,7 +567,6 @@ def render_customer_management():
                         if s_file:
                             st.write(f"File: `{os.path.basename(s_file)}`")
                             try:
-                                from database import get_document_data
                                 file_bytes, filename = get_document_data(s_file, doc_type='signature', customer_id=selected_cust_id)
                                 if file_bytes:
                                     if filename.lower().endswith((".jpg", ".jpeg", ".png")):
@@ -655,9 +653,6 @@ def render_customer_management():
 
                 st.markdown("---")
                 st.markdown("### 📄 Manage Customer Documents (Aadhaar, PAN & Signature)")
-                
-                from database import save_uploaded_file, delete_document, get_document_data
-                import psycopg2
                 
                 # --- 1. AADHAAR CARD ---
                 st.write("---")
@@ -756,7 +751,6 @@ def render_customer_management():
                     confirm_del = st.checkbox(f"Yes, I confirm I want to permanently delete customer #{cust_id_edit} - {c[0]}", key=f"confirm_del_cust_{cust_id_edit}")
                     if confirm_del:
                         if st.button(f"🗑️ Permanently Delete Customer #{cust_id_edit}", type="primary", use_container_width=True, key=f"btn_delete_cust_{cust_id_edit}"):
-                            from database import delete_customer_cascade
                             success, msg = delete_customer_cascade(cust_id_edit)
                             if success:
                                 clear_db_cache()
@@ -2754,7 +2748,6 @@ def render_sb_accounts():
                     st.error(f"❌ Insufficient SB balance for {cust_name}! Available: ₹{curr_balance:,.2f}, Requested Withdrawal: ₹{amount:,.2f}")
                     st.stop()
                     
-                from database import record_sb_transaction
                 tx_date_str = sb_tx_date.strftime("%Y-%m-%d")
                 success, res_val = record_sb_transaction(acc_choice, tx_type, amount, pay_mode, chosen_asset_code, narration, tx_date=tx_date_str)
                 if success:
@@ -4431,7 +4424,6 @@ def render_chart_of_accounts():
             del_code = st.selectbox("Select Account Code to Delete", df_coa["Account Code"].tolist())
             if st.button("Delete Account Head", type="primary", use_container_width=True):
                 try:
-                    from database import resequence_all_accounts, reconcile_books
                     run_query("DELETE FROM chart_of_accounts WHERE account_code = ?", (del_code,), fetch=False)
                     resequence_all_accounts()
                     reconcile_books()
@@ -4490,7 +4482,6 @@ def render_cash_book():
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Record Entry", "View / Delete", "Edit Entry", "Print Book", "🖨️ Print CB Vouchers"])
     
     with tab1:
-        from database import get_all_balances
         current_cash_balance, current_union_balance, current_sbi_balance = get_all_balances()
         
         st.info(f"💰 **Current Cash Balance:** ₹{current_cash_balance:,.2f}")
@@ -4541,7 +4532,6 @@ def render_cash_book():
                             st.error("❌ Cannot receipt cash from itself!")
                             st.stop()
                     
-                    from database import record_cash_book_transaction
                     success, res_val = record_cash_book_transaction(entry_type, amount, account_code, particulars, narration, tx_date)
                     if success:
                         flash_success(f"✅ Cash entry recorded! Voucher: {res_val}")
@@ -4643,7 +4633,6 @@ def render_cash_book():
                     new_acc_code = coa_dict[new_acc_head]
                     voucher_no = row[6]
                     
-                    from database import update_cash_book_transaction
                     success, res_val = update_cash_book_transaction(edit_id, new_type, new_amt, new_acc_code, new_part, new_narration, voucher_no, tx_date=edit_date)
                     if success:
                         flash_success("✅ Cash Entry and Ledger updated successfully!")
@@ -4915,7 +4904,6 @@ def render_bank_book():
                             if current_union < amount:
                                 st.warning(f"⚠️ Union Bank Balance Alert: Available balance is ₹{current_union:,.2f}.")
                                 
-                    from database import record_bank_book_transaction
                     success, res_val = record_bank_book_transaction(entry_type, amount, bank_name, bank_code, account_code, particulars, narration, tx_date)
                     if success:
                         flash_success(f"✅ Bank entry successfully recorded! Voucher: {res_val}")
@@ -5069,7 +5057,6 @@ def render_bank_book():
                             run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, ?, 0)", (jv_id, new_acc_code, new_amt), fetch=False)
                             run_query("INSERT INTO jv_entries (jv_id, account_code, debit, credit) VALUES (?, ?, 0, ?)", (jv_id, bank_code, new_amt), fetch=False)
                     
-                    from database import resequence_bank_book
                     resequence_bank_book()
                     clear_db_cache()
                     flash_success("✅ Bank Entry and Ledger updated successfully!")
@@ -6623,8 +6610,7 @@ if uploaded_dbs:
                 with open(DB_NAME, "wb") as f:
                     f.write(db_file.getbuffer())
                 
-                # Import and trigger resequencing & reconciliation dynamically
-                from database import init_db, resequence_all_accounts, reconcile_books
+                # Trigger resequencing & reconciliation dynamically
                 init_db()
                 resequence_all_accounts()
                 reconcile_books()

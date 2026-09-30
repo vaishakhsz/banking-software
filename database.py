@@ -1106,7 +1106,8 @@ try:
                    gl.outstanding_due, gl.vault_packet_no, gl.locker_no, gl.appraiser_name,
                    gl.disbursal_mode, gl.voucher_no, gl.status, gl.remarks, COALESCE(gl.renewal_count, 0),
                    gl.last_renewal_date, c.street, c.city, c.state, c.pincode, gl.gold_image_file,
-                   CASE WHEN gl.gold_image_data IS NOT NULL THEN 1 ELSE 0 END as has_photo
+                   CASE WHEN gl.gold_image_data IS NOT NULL THEN 1 ELSE 0 END as has_photo,
+                   COALESCE(gl.opening_balance, gl.principal_amount) as opening_balance
             FROM gold_loans gl
             JOIN customers c ON gl.customer_id = c.id
             ORDER BY gl.id DESC
@@ -1152,7 +1153,8 @@ try:
                    pl.guarantor_phone, COALESCE(pl.guarantor_relation, 'Surety'),
                    COALESCE(pl.guarantor_address, 'Balaramapuram, Trivandrum'),
                    pl.purpose, pl.status, pl.remarks, COALESCE(pl.renewal_count, 0),
-                   pl.last_renewal_date, c.street, c.city, c.state, c.pincode
+                   pl.last_renewal_date, c.street, c.city, c.state, c.pincode,
+                   COALESCE(pl.opening_balance, pl.principal_amount) as opening_balance
             FROM personal_loans pl
             JOIN customers c ON pl.customer_id = c.id
             ORDER BY pl.id DESC
@@ -4048,7 +4050,7 @@ def _sync_book_balances(cursor, placeholder):
         cursor.execute(f"UPDATE cash_book SET balance = {placeholder} WHERE id = {placeholder}", (round(cb_bal, 2), r_id))
 
 
-def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, new_rate, new_created_date, chosen_asset_code="AST-102", new_op_bal_date=None):
+def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, new_rate, new_created_date, chosen_asset_code="AST-102", new_op_bal_date=None, new_op_bal=None):
     """
     Updates SB account details, customer assignment, balance, rate, account opening date, and opening balance date,
     and automatically synchronizes linked transactions, Journal Vouchers, Cash Book, and Bank Book entries,
@@ -4068,13 +4070,14 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
         created_dt_str = str(new_created_date)[:10]
         op_bal_dt_str = str(new_op_bal_date)[:10] if new_op_bal_date else created_dt_str
         today_time = f"{op_bal_dt_str} 12:00"
+        actual_op_bal = float(new_op_bal) if new_op_bal is not None else float(new_balance or 0.0)
         
-        # 2. Update sb_accounts (stores A/c Opening Date)
+        # 2. Update sb_accounts (stores A/c Opening Date & Opening Balance)
         cursor.execute(f"""
             UPDATE sb_accounts 
-            SET account_no = {placeholder}, customer_id = {placeholder}, balance = {placeholder}, interest_rate = {placeholder}, created_at = {placeholder}
+            SET account_no = {placeholder}, customer_id = {placeholder}, balance = {placeholder}, opening_balance = {placeholder}, interest_rate = {placeholder}, created_at = {placeholder}
             WHERE account_no = {placeholder}
-        """, (new_acc_no, new_cust_id, new_balance, new_rate, created_dt_str, old_acc_no))
+        """, (new_acc_no, new_cust_id, new_balance, actual_op_bal, new_rate, created_dt_str, old_acc_no))
         
         # 3. Update accounts table
         cursor.execute(f"""
@@ -4271,9 +4274,9 @@ def create_or_link_sb_opening(cust_id, initial_balance, open_date, interest_rate
         sb_acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
 
         cursor.execute(f"""
-            INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at)
-            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
-        """, (sb_acc_no, cust_id, initial_balance, float(interest_rate or 3.5), open_date_str))
+            INSERT INTO sb_accounts (account_no, customer_id, balance, opening_balance, interest_rate, created_at)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (sb_acc_no, cust_id, initial_balance, initial_balance, float(interest_rate or 3.5), open_date_str))
 
         cursor.execute(f"""
             INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
@@ -4324,7 +4327,7 @@ def create_or_link_sb_opening(cust_id, initial_balance, open_date, interest_rate
 def update_personal_loan_details(
     pl_id, new_l_no, new_sanction_date, new_princ, new_rate, new_tenure_days,
     new_out_due, new_disbursal_mode, new_guar_name, new_guar_phone, new_guar_rel,
-    new_guar_addr, new_purpose, new_status, new_remarks, new_op_bal_date=None
+    new_guar_addr, new_purpose, new_status, new_remarks, new_op_bal_date=None, new_op_bal=None
 ):
     """
     Updates Personal Loan financial terms, borrower & guarantor metadata,
@@ -4355,6 +4358,7 @@ def update_personal_loan_details(
         new_rate = float(new_rate)
         new_tenure_days = int(new_tenure_days)
         new_tenure_months = max(1, int(round(new_tenure_days / 30.0)))
+        actual_op_bal = float(new_op_bal) if new_op_bal is not None else new_princ
         
         calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_tenure_days / 365.0), 2)
         calc_tot_repayable = round(new_princ + calc_tot_interest, 2)
@@ -4374,7 +4378,7 @@ def update_personal_loan_details(
         # 2. Update personal_loans table
         cursor.execute(f"""
             UPDATE personal_loans
-            SET loan_no = {placeholder}, sanction_date = {placeholder}, principal_amount = {placeholder}, interest_rate = {placeholder},
+            SET loan_no = {placeholder}, sanction_date = {placeholder}, principal_amount = {placeholder}, opening_balance = {placeholder}, interest_rate = {placeholder},
                 interest_type = {placeholder}, tenure_days = {placeholder}, tenure_months = {placeholder}, total_interest = {placeholder},
                 total_repayable = {placeholder}, installment_amount = {placeholder}, monthly_principal_emi = {placeholder},
                 monthly_interest_emi = {placeholder}, loan_from_date = {placeholder}, loan_to_date = {placeholder},
@@ -4383,7 +4387,7 @@ def update_personal_loan_details(
                 guarantor_address = {placeholder}, purpose = {placeholder}, status = {placeholder}, remarks = {placeholder}
             WHERE id = {placeholder}
         """, (
-            new_l_no, str(new_sanction_date), new_princ, new_rate,
+            new_l_no, str(new_sanction_date), new_princ, actual_op_bal, new_rate,
             new_scheme_name, new_tenure_days, new_tenure_months, calc_tot_interest,
             calc_tot_repayable, calc_installment, calc_p_emi,
             calc_i_emi, ed_loan_from, ed_loan_to,
@@ -4531,7 +4535,7 @@ def update_gold_loan_details(
     gl_id, new_l_no, new_sanction_date, new_princ, new_rate, new_tenure_days,
     new_out_due, new_disbursal_mode, new_gold_rate, new_orn_desc, new_item_cnt,
     new_gross_wt, new_stone_ded, new_pkt_no, new_locker_no, new_appr_name,
-    new_status, new_remarks, new_photo_bytes=None, new_photo_name=None, new_op_bal_date=None
+    new_status, new_remarks, new_photo_bytes=None, new_photo_name=None, new_op_bal_date=None, new_op_bal=None
 ):
     """
     Updates Gold Loan terms, collateral appraisal, weight & valuation,
@@ -4562,6 +4566,7 @@ def update_gold_loan_details(
         new_rate = float(new_rate)
         new_tenure_days = int(new_tenure_days)
         new_tenure_months = max(1, int(round(new_tenure_days / 30.0)))
+        actual_op_bal = float(new_op_bal) if new_op_bal is not None else new_princ
         
         ed_net_wt = max(0.01, round(float(new_gross_wt) - float(new_stone_ded), 3))
         ed_market_val = round(ed_net_wt * float(new_gold_rate), 2)
@@ -4590,7 +4595,7 @@ def update_gold_loan_details(
             UPDATE gold_loans
             SET loan_no = {placeholder}, sanction_date = {placeholder}, gold_rate_per_gram = {placeholder}, ornament_details = {placeholder},
                 item_count = {placeholder}, gross_weight = {placeholder}, stone_deduction = {placeholder}, net_weight = {placeholder},
-                market_value = {placeholder}, principal_amount = {placeholder}, interest_rate = {placeholder},
+                market_value = {placeholder}, principal_amount = {placeholder}, opening_balance = {placeholder}, interest_rate = {placeholder},
                 interest_rate_monthly = {placeholder}, tenure_days = {placeholder}, tenure_months = {placeholder}, total_interest = {placeholder},
                 total_repayable = {placeholder}, installment_amount = {placeholder}, monthly_principal_emi = {placeholder},
                 monthly_interest_emi = {placeholder}, monthly_interest_due = {placeholder},
@@ -4601,7 +4606,7 @@ def update_gold_loan_details(
         """, (
             new_l_no, str(new_sanction_date), new_gold_rate, new_orn_desc,
             new_item_cnt, new_gross_wt, new_stone_ded, ed_net_wt,
-            ed_market_val, new_princ, new_rate,
+            ed_market_val, new_princ, actual_op_bal, new_rate,
             round(new_rate / 12.0, 2), new_tenure_days, new_tenure_months, calc_gl_interest,
             calc_gl_repayable, calc_gl_installment, calc_gl_p_emi,
             calc_gl_i_emi, calc_gl_i_emi,
@@ -4777,6 +4782,7 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
         calc_tot_interest = round(princ_amount * (int_rate / 100.0) * (tenure_days / 365.0), 2)
         calc_tot_repayable = round(princ_amount + calc_tot_interest, 2)
         actual_out_due = float(opening_balance) if (opening_balance is not None and float(opening_balance) > 0) else calc_tot_repayable
+        actual_op_bal = float(opening_balance) if (opening_balance is not None and float(opening_balance) > 0) else princ_amount
         calc_p_emi = round(princ_amount / float(tenure_months), 2)
         calc_i_emi = round(calc_tot_interest / float(tenure_months), 2)
         calc_installment = round(calc_tot_repayable / float(tenure_months), 2)
@@ -4790,14 +4796,14 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
         if USING_SUPABASE:
             cursor.execute("""
                 INSERT INTO personal_loans (
-                    loan_no, customer_id, sanction_date, principal_amount, interest_rate,
+                    loan_no, customer_id, sanction_date, principal_amount, opening_balance, interest_rate,
                     interest_type, tenure_days, tenure_months, total_interest, total_repayable,
                     installment_amount, outstanding_due, disbursal_mode, voucher_no,
                     guarantor_name, guarantor_phone, purpose, status, remarks,
                     loan_from_date, loan_to_date, first_emi_due, last_emi_due,
                     monthly_principal_emi, monthly_interest_emi, renewal_count
                 ) VALUES (
-                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     'Member Surety', %s, 'Personal Loan', 'ACTIVE', %s,
@@ -4805,7 +4811,7 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
                     %s, %s, 0
                 ) RETURNING id
             """, (
-                pl_code, cust_id, s_date_str, princ_amount, int_rate,
+                pl_code, cust_id, s_date_str, princ_amount, actual_op_bal, int_rate,
                 f"{tenure_days}-Day Loan", tenure_days, tenure_months, calc_tot_interest, calc_tot_repayable,
                 calc_installment, actual_out_due, disbursal_mode, pl_vno,
                 cust_phone or 'N/A', remarks,
@@ -4816,14 +4822,14 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
         else:
             cursor.execute("""
                 INSERT INTO personal_loans (
-                    loan_no, customer_id, sanction_date, principal_amount, interest_rate,
+                    loan_no, customer_id, sanction_date, principal_amount, opening_balance, interest_rate,
                     interest_type, tenure_days, tenure_months, total_interest, total_repayable,
                     installment_amount, outstanding_due, disbursal_mode, voucher_no,
                     guarantor_name, guarantor_phone, purpose, status, remarks,
                     loan_from_date, loan_to_date, first_emi_due, last_emi_due,
                     monthly_principal_emi, monthly_interest_emi, renewal_count
                 ) VALUES (
-                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     'Member Surety', ?, 'Personal Loan', 'ACTIVE', ?,
@@ -4831,7 +4837,7 @@ def create_or_link_personal_loan_opening(cust_id, princ_amount, sanction_date, t
                     ?, ?, 0
                 )
             """, (
-                pl_code, cust_id, s_date_str, princ_amount, int_rate,
+                pl_code, cust_id, s_date_str, princ_amount, actual_op_bal, int_rate,
                 f"{tenure_days}-Day Loan", tenure_days, tenure_months, calc_tot_interest, calc_tot_repayable,
                 calc_installment, actual_out_due, disbursal_mode, pl_vno,
                 cust_phone or 'N/A', remarks,
@@ -4939,6 +4945,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
         calc_gl_interest = round(princ_amount * (int_rate / 100.0) * (tenure_days / 365.0), 2)
         calc_gl_repayable = round(princ_amount + calc_gl_interest, 2)
         actual_out_due = float(opening_balance) if (opening_balance is not None and float(opening_balance) > 0) else calc_gl_repayable
+        actual_op_bal = float(opening_balance) if (opening_balance is not None and float(opening_balance) > 0) else princ_amount
         calc_gl_p_emi = round(princ_amount / float(tenure_months), 2)
         calc_gl_i_emi = round(calc_gl_interest / float(tenure_months), 2)
         calc_gl_installment = round(calc_gl_repayable / float(tenure_months), 2)
@@ -4955,7 +4962,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
                 INSERT INTO gold_loans (
                     loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
                     item_count, gross_weight, stone_deduction, net_weight, purity,
-                    market_value, ltv_percent, principal_amount, interest_rate,
+                    market_value, ltv_percent, principal_amount, opening_balance, interest_rate,
                     interest_rate_monthly, tenure_days, tenure_months, total_interest, total_repayable,
                     installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
                     loan_from_date, loan_to_date, first_emi_due, last_emi_due,
@@ -4964,7 +4971,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
                 ) VALUES (
                     %s, %s, %s, %s, 'Gold Ornaments (Opening Loan)',
                     1, %s, 0.0, %s, '22K',
-                    %s, 75.0, %s, %s,
+                    %s, 75.0, %s, %s, %s,
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
@@ -4974,7 +4981,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
             """, (
                 gl_code, cust_id, s_date_str, gold_rate,
                 calc_gross, calc_weight,
-                calc_market_val, princ_amount, int_rate,
+                calc_market_val, princ_amount, actual_op_bal, int_rate,
                 round(int_rate / 12.0, 2), tenure_days, tenure_months, calc_gl_interest, calc_gl_repayable,
                 calc_gl_installment, calc_gl_p_emi, calc_gl_i_emi, calc_gl_i_emi,
                 loan_from, loan_to, first_due, last_due,
@@ -4987,7 +4994,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
                 INSERT INTO gold_loans (
                     loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
                     item_count, gross_weight, stone_deduction, net_weight, purity,
-                    market_value, ltv_percent, principal_amount, interest_rate,
+                    market_value, ltv_percent, principal_amount, opening_balance, interest_rate,
                     interest_rate_monthly, tenure_days, tenure_months, total_interest, total_repayable,
                     installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
                     loan_from_date, loan_to_date, first_emi_due, last_emi_due,
@@ -4996,7 +5003,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
                 ) VALUES (
                     ?, ?, ?, ?, 'Gold Ornaments (Opening Loan)',
                     1, ?, 0.0, ?, '22K',
-                    ?, 75.0, ?, ?,
+                    ?, 75.0, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?, ?, ?,
@@ -5006,7 +5013,7 @@ def create_or_link_gold_loan_opening(cust_id, princ_amount, sanction_date, tenur
             """, (
                 gl_code, cust_id, s_date_str, gold_rate,
                 calc_gross, calc_weight,
-                calc_market_val, princ_amount, int_rate,
+                calc_market_val, princ_amount, actual_op_bal, int_rate,
                 round(int_rate / 12.0, 2), tenure_days, tenure_months, calc_gl_interest, calc_gl_repayable,
                 calc_gl_installment, calc_gl_p_emi, calc_gl_i_emi, calc_gl_i_emi,
                 loan_from, loan_to, first_due, last_due,
@@ -5524,11 +5531,11 @@ def create_or_link_fd_opening(
             final_fd_no = str(custom_fd_no).strip() if (custom_fd_no and str(custom_fd_no).strip()) else f"FD-{target_fd_id:05d}"
             cursor.execute(f"""
                 INSERT INTO fixed_deposits (
-                    fd_id, customer_id, principal, tenure_months, tenure_days, interest_rate, maturity_amount,
+                    fd_id, customer_id, principal, opening_balance, tenure_months, tenure_days, interest_rate, maturity_amount,
                     nominee, status, created_at, payment_mode, fd_no, maturity_date
-                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
             """, (
-                target_fd_id, cust_id, principal, tenure_months, tenure_days, interest_rate, calc_maturity,
+                target_fd_id, cust_id, principal, principal, tenure_months, tenure_days, interest_rate, calc_maturity,
                 nominee or "Family Nominee", open_date_str, payment_mode, final_fd_no, maturity_date
             ))
             new_fd_id = target_fd_id
@@ -5540,17 +5547,17 @@ def create_or_link_fd_opening(
         else:
             cursor.execute(f"""
                 INSERT INTO fixed_deposits (
-                    customer_id, principal, tenure_months, tenure_days, interest_rate, maturity_amount,
+                    customer_id, principal, opening_balance, tenure_months, tenure_days, interest_rate, maturity_amount,
                     nominee, status, created_at, payment_mode, fd_no, maturity_date
-                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
                 RETURNING fd_id
             """ if USING_SUPABASE else f"""
                 INSERT INTO fixed_deposits (
-                    customer_id, principal, tenure_months, tenure_days, interest_rate, maturity_amount,
+                    customer_id, principal, opening_balance, tenure_months, tenure_days, interest_rate, maturity_amount,
                     nominee, status, created_at, payment_mode, fd_no, maturity_date
-                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder}, {placeholder}, {placeholder})
             """, (
-                cust_id, principal, tenure_months, tenure_days, interest_rate, calc_maturity,
+                cust_id, principal, principal, tenure_months, tenure_days, interest_rate, calc_maturity,
                 nominee or "Family Nominee", open_date_str, payment_mode, custom_fd_no, maturity_date
             ))
 
@@ -5747,17 +5754,17 @@ def create_or_link_rd_opening(
 
         cursor.execute(f"""
             INSERT INTO recurring_deposits (
-                customer_id, monthly_amount, tenure_months, tenure_days, interest_rate, installments_paid,
+                customer_id, monthly_amount, opening_balance, tenure_months, tenure_days, interest_rate, installments_paid,
                 collected_balance, maturity_amount, nominee, status, created_at, payment_mode
-            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
+            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
             RETURNING rd_id
         """ if USING_SUPABASE else f"""
             INSERT INTO recurring_deposits (
-                customer_id, monthly_amount, tenure_months, tenure_days, interest_rate, installments_paid,
+                customer_id, monthly_amount, opening_balance, tenure_months, tenure_days, interest_rate, installments_paid,
                 collected_balance, maturity_amount, nominee, status, created_at, payment_mode
-            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
+            ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, 'ACTIVE', {placeholder}, {placeholder})
         """, (
-            cust_id, monthly_amt, tenure_months, tenure_days, interest_rate, monthly_amt,
+            cust_id, monthly_amt, monthly_amt, tenure_months, tenure_days, interest_rate, monthly_amt,
             approx_maturity, nominee or "Family Nominee", open_date_str, payment_mode
         ))
 

@@ -1022,10 +1022,11 @@ def render_personal_loans():
             st.dataframe(format_df_dates(df_prev_display), use_container_width=True)
 
         st.markdown("### 3️⃣ Disbursal Account, Opening Balance & Guarantor Details")
-        col_d1, col_d2, col_d3 = st.columns(3)
+        col_d1, col_d2, col_d3, col_d4 = st.columns(4)
         disb_mode = col_d1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], key="pl_disb_mode")
-        opening_balance = col_d2.number_input("Opening Balance / Outstanding Due Balance (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="pl_op_bal_amt", help="Initial outstanding due balance at opening. Can differ from Principal Amount if prior repayments occurred or if this is an opening balance.")
-        custom_loan_no = col_d3.text_input("Custom Loan Number (Optional - leave blank to auto-generate)", key="pl_cust_lno")
+        opening_balance = col_d2.number_input("Opening Balance (₹)", min_value=0.0, value=float(principal), step=500.0, key="pl_op_bal_amt", help="Starting opening ledger balance at account creation (defaults to Principal Amount).")
+        outstanding_due = col_d3.number_input("Initial Outstanding Due (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="pl_init_due_amt", help="Initial unpaid amount due to be repaid by borrower (defaults to Total Repayable).")
+        custom_loan_no = col_d4.text_input("Custom Loan Number (Optional)", key="pl_cust_lno")
         
         g_col1, g_col2 = st.columns(2)
         guarantor_name = g_col1.text_input("Guarantor / Surety Member Name", value="SARITHA", key="pl_g_name")
@@ -1047,7 +1048,7 @@ def render_personal_loans():
             loan_no = custom_loan_no.strip() if custom_loan_no and custom_loan_no.strip() else f"PL-2026-{cur_count:04d}"
             voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{cur_count:03d}"
             
-            final_initial_due = float(opening_balance) if float(opening_balance or 0) > 0 else float(tot_repayable)
+            final_initial_due = float(outstanding_due) if float(outstanding_due or 0) > 0 else float(tot_repayable)
             
             if "Cash" in disb_mode:
                 cur_cash = get_cash_balance()
@@ -1062,17 +1063,17 @@ def render_personal_loans():
             
             new_pl_row = run_query("""
                 INSERT INTO personal_loans (
-                    loan_no, customer_id, sanction_date, principal_amount, interest_rate,
+                    loan_no, customer_id, sanction_date, principal_amount, opening_balance, interest_rate,
                     interest_type, tenure_days, tenure_months, total_interest, total_repayable,
                     installment_amount, outstanding_due, disbursal_mode, voucher_no,
                     guarantor_name, guarantor_relation, guarantor_phone, guarantor_address,
                     loan_from_date, loan_to_date, first_emi_due, last_emi_due,
                     monthly_principal_emi, monthly_interest_emi,
                     purpose, status, remarks, renewal_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0)
                 RETURNING id
             """, (
-                loan_no, selected_cust_id, str(sanction_date), principal, int_rate,
+                loan_no, selected_cust_id, str(sanction_date), principal, float(opening_balance), int_rate,
                 loan_scheme_name, tenure_days, tenure_months, tot_interest, tot_repayable,
                 installment, final_initial_due, disb_mode, voucher_no,
                 guarantor_name, guarantor_relation, guarantor_phone, guarantor_address,
@@ -1399,7 +1400,7 @@ def render_personal_loans():
             (sel_pl_id, l_no, c_id, c_name, c_acc, c_phone, s_date, princ, rate, i_type,
              t_days, t_months, t_int, t_rep, inst_amt, p_emi_val, i_emi_val, from_d, to_d,
              fdue_d, ldue_d, out_due, d_mode, v_no, g_name, g_phone, g_rel, g_addr,
-             purp, stat, rem, ren_cnt, last_ren, c_str, c_city, c_state, c_pin) = row
+             purp, stat, rem, ren_cnt, last_ren, c_str, c_city, c_state, c_pin, op_bal_val) = row
             
             try:
                 s_date_obj = datetime.strptime(str(s_date)[:10], "%Y-%m-%d").date()
@@ -1427,10 +1428,11 @@ def render_personal_loans():
                         st.rerun()
                 
                 st.markdown("### 1️⃣ Financial Terms & Repayment Calculation")
-                col_f1, col_f2, col_f3 = st.columns(3)
+                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
                 new_princ = col_f1.number_input("Sanctioned Principal Amount (₹) *", min_value=100.0, value=float(princ), step=1000.0, disabled=is_closed, help="Original principal amount sanctioned to the borrower", key=f"pl_ed_p_{sel_pl_id}")
-                new_rate = col_f2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate or 12.0), step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
-                new_t_days = col_f3.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days or (t_months * 30 if t_months else 100)), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
+                new_op_bal = col_f2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(op_bal_val or princ), step=500.0, disabled=is_closed, help="Initial opening ledger balance at loan creation", key=f"pl_ed_opbal_{sel_pl_id}")
+                new_rate = col_f3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate or 12.0), step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
+                new_t_days = col_f4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days or (t_months * 30 if t_months else 100)), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
                 
                 new_t_months = max(1, int(round(new_t_days / 30.0)))
                 calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_t_days / 365.0), 2)
@@ -1474,14 +1476,14 @@ def render_personal_loans():
                 new_purp = col_n1.text_input("Loan Purpose", value=str(purp or "Personal / Household Finance"), disabled=is_closed, key=f"pl_ed_purp_{sel_pl_id}")
                 new_rem = col_n2.text_input("Remarks / Notes", value=str(rem or ""), disabled=is_closed, key=f"pl_ed_rem_{sel_pl_id}")
                 
-                st.markdown("### 3️⃣ Opening Balance / Outstanding Due Balance")
+                st.markdown("### 3️⃣ Current Outstanding Due Balance")
                 col_pldue1, col_pldue2 = st.columns(2)
-                recalc_pl_due = col_pldue1.checkbox(f"🔄 Reset to Full Repayable Amount (₹{calc_tot_repayable:,.2f})", value=(float(out_due or 0) == float(t_rep or 0)), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
+                recalc_pl_due = col_pldue1.checkbox(f"🔄 Reset Outstanding Due to Total Repayable (₹{calc_tot_repayable:,.2f})", value=(float(out_due or 0) == float(t_rep or 0)), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
                 if recalc_pl_due:
                     new_out_due = calc_tot_repayable
-                    col_pldue2.info(f"Opening Balance / Outstanding Due set to **₹{new_out_due:,.2f}**")
+                    col_pldue2.info(f"Outstanding Due set to **₹{new_out_due:,.2f}**")
                 else:
-                    new_out_due = col_pldue2.number_input("Opening Balance / Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due or calc_tot_repayable), step=100.0, disabled=is_closed, help="The current outstanding balance brought forward for this loan. Differs from Principal Amount if repayments have already been made.", key=f"pl_ed_due_{sel_pl_id}")
+                    new_out_due = col_pldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due or calc_tot_repayable), step=100.0, disabled=is_closed, help="Current unpaid balance owed by the borrower on this loan.", key=f"pl_ed_due_{sel_pl_id}")
                 
                 ed_sched = generate_loan_schedule(new_s_date, new_princ, calc_tot_interest, tenure_months=new_t_months)
                 with st.expander(f"📅 View Updated {len(ed_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
@@ -1501,7 +1503,8 @@ def render_personal_loans():
                             sel_pl_id, new_l_no, new_s_date, new_princ, new_rate, new_t_days,
                             new_out_due, new_d_mode, new_g_name, new_g_phone, new_g_rel,
                             new_g_addr, new_purp, new_status, new_rem,
-                            new_op_bal_date=new_op_str
+                            new_op_bal_date=new_op_str,
+                            new_op_bal=new_op_bal
                         )
                         clear_db_cache()
                         if success:
@@ -1833,18 +1836,19 @@ def render_gold_loans():
             })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
             st.dataframe(format_df_dates(df_prev_display), use_container_width=True)
 
-        st.markdown("### 4️⃣ Disbursal Mode & Opening Balance")
-        col_dm1, col_dm2, col_dm3 = st.columns(3)
+        st.markdown("### 4️⃣ Disbursal Mode, Opening Balance & Outstanding Due")
+        col_dm1, col_dm2, col_dm3, col_dm4 = st.columns(4)
         disb_mode = col_dm1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0, key="gl_disb_mode")
-        opening_balance = col_dm2.number_input("Opening Balance / Outstanding Due Balance (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="gl_op_bal_amt", help="Initial outstanding due balance at opening. Can differ from Principal Amount if prior repayments occurred or if this is an opening balance.")
-        custom_gl_no = col_dm3.text_input("Custom Gold Loan Number (Optional - leave blank to auto-generate)", key="gl_cust_lno")
+        opening_balance = col_dm2.number_input("Opening Balance (₹)", min_value=0.0, value=float(principal), step=500.0, key="gl_op_bal_amt", help="Starting opening ledger balance at account creation (defaults to Principal Amount).")
+        outstanding_due = col_dm3.number_input("Initial Outstanding Due (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="gl_init_due_amt", help="Initial unpaid amount due to be repaid by borrower (defaults to Total Repayable).")
+        custom_gl_no = col_dm4.text_input("Custom Gold Loan Number (Optional - leave blank to auto-generate)", key="gl_cust_lno")
         remarks = st.text_input("Remarks / Condition Notes", value="Gold Pledged in Safe Vault", key="gl_remarks_input")
         
         if st.button("🪙 Confirm Appraisal & Disburse Gold Loan", use_container_width=True, type="primary", key="btn_confirm_gl_disb"):
             loan_no = custom_gl_no.strip() if custom_gl_no and custom_gl_no.strip() else f"GL-2026-{cur_gl_cnt:04d}"
             voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{cur_gl_cnt:03d}"
             
-            final_initial_due = float(opening_balance) if float(opening_balance or 0) > 0 else float(tot_repayable)
+            final_initial_due = float(outstanding_due) if float(outstanding_due or 0) > 0 else float(tot_repayable)
             
             if "Cash" in disb_mode:
                 cur_cash = get_cash_balance()
@@ -1866,7 +1870,7 @@ def render_gold_loans():
                 INSERT INTO gold_loans (
                     loan_no, customer_id, sanction_date, gold_rate_per_gram, ornament_details,
                     item_count, gross_weight, stone_deduction, net_weight, purity,
-                    market_value, ltv_percent, principal_amount, interest_rate,
+                    market_value, ltv_percent, principal_amount, opening_balance, interest_rate,
                     interest_rate_monthly, tenure_days, tenure_months, total_interest, total_repayable,
                     installment_amount, monthly_principal_emi, monthly_interest_emi, monthly_interest_due,
                     loan_from_date, loan_to_date, first_emi_due, last_emi_due,
@@ -1876,7 +1880,7 @@ def render_gold_loans():
                 ) VALUES (
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, '22K',
-                    ?, 75.00, ?, ?,
+                    ?, 75.00, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?, ?, ?,
@@ -1887,7 +1891,7 @@ def render_gold_loans():
             """, (
                 loan_no, selected_cust_id, str(sanction_date), gold_rate, ornament_desc,
                 item_count, gross_weight, stone_ded, net_weight,
-                market_val, principal, int_rate,
+                market_val, principal, float(opening_balance), int_rate,
                 round(int_rate / 12.0, 2), tenure_days, tenure_months, tot_interest, tot_repayable,
                 installment, p_emi, i_emi, i_emi,
                 loan_from, loan_to, first_due, last_due,
@@ -2239,7 +2243,7 @@ def render_gold_loans():
              eg_mrate, eg_tdays, eg_tmonths, eg_tot_int, eg_tot_rep, eg_inst, eg_p_emi, eg_i_emi, eg_i_due,
              eg_from, eg_to, eg_fdue, eg_ldue, eg_out_due, eg_pkt, eg_lock, eg_appr, eg_dmode,
              eg_vno, eg_stat, eg_rem, eg_ren_cnt, eg_last_ren, eg_str, eg_city, eg_state,
-             eg_pin, eg_img_file, eg_has_photo) = grow
+             eg_pin, eg_img_file, eg_has_photo, eg_op_bal) = grow
              
             try:
                 eg_sdate_obj = datetime.strptime(str(eg_sdate)[:10], "%Y-%m-%d").date()
@@ -2309,10 +2313,11 @@ def render_gold_loans():
                 col_ev2.success(f"🎯 **Max Eligible Limit (75% LTV):** ₹{ed_max_eligible:,.2f}")
                 
                 st.markdown("### 2️⃣ Dynamic Loan Terms & Repayment")
-                col_ef1, col_ef2, col_ef3 = st.columns(3)
+                col_ef1, col_ef2, col_ef3, col_ef4 = st.columns(4)
                 ed_princ = col_ef1.number_input("Sanctioned Principal Amount (₹) *", min_value=100.0, value=float(eg_princ or 1000.0), step=1000.0, disabled=is_closed_gl, help="Original loan principal amount sanctioned against pledged ornaments", key=f"gl_ed_princ_{sel_egl_id}")
-                ed_int_rate = col_ef2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
-                ed_tenure_days = col_ef3.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(eg_tdays or (eg_tmonths * 30 if eg_tmonths else 365)), step=10, disabled=is_closed_gl, key=f"gl_ed_tday_{sel_egl_id}")
+                ed_op_bal = col_ef2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(eg_op_bal or eg_princ), step=500.0, disabled=is_closed_gl, help="Initial opening ledger balance at loan creation", key=f"gl_ed_opbal_{sel_egl_id}")
+                ed_int_rate = col_ef3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
+                ed_tenure_days = col_ef4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(eg_tdays or (eg_tmonths * 30 if eg_tmonths else 365)), step=10, disabled=is_closed_gl, key=f"gl_ed_tday_{sel_egl_id}")
                 
                 ed_tenure_mo = max(1, int(round(ed_tenure_days / 30.0)))
                 calc_gl_interest = round(ed_princ * (ed_int_rate / 100.0) * (ed_tenure_days / 365.0), 2)
@@ -2355,14 +2360,14 @@ def render_gold_loans():
                 new_gl_dmode = col_adm1.selectbox("Disbursal Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(eg_dmode or "") else 1, disabled=is_closed_gl, key=f"gl_ed_dmode_{sel_egl_id}")
                 new_gl_remarks = col_adm2.text_input("Remarks / Condition Notes", value=str(eg_rem or ""), disabled=is_closed_gl, key=f"gl_ed_rem_{sel_egl_id}")
                 
-                st.markdown("### 5️⃣ Opening Balance / Outstanding Due Balance")
+                st.markdown("### 5️⃣ Current Outstanding Due Balance")
                 col_gldue1, col_gldue2 = st.columns(2)
-                recalc_gl_due = col_gldue1.checkbox(f"🔄 Reset to Full Repayable Amount (₹{calc_gl_repayable:,.2f})", value=(float(eg_out_due or 0) == float(eg_tot_rep or 0)), disabled=is_closed_gl, key=f"gl_recalc_due_{sel_egl_id}")
+                recalc_gl_due = col_gldue1.checkbox(f"🔄 Reset Outstanding Due to Total Repayable (₹{calc_gl_repayable:,.2f})", value=(float(eg_out_due or 0) == float(eg_tot_rep or 0)), disabled=is_closed_gl, key=f"gl_recalc_due_{sel_egl_id}")
                 if recalc_gl_due:
                     new_gl_out_due = calc_gl_repayable
-                    col_gldue2.info(f"Opening Balance / Outstanding Due set to **₹{new_gl_out_due:,.2f}**")
+                    col_gldue2.info(f"Outstanding Due set to **₹{new_gl_out_due:,.2f}**")
                 else:
-                    new_gl_out_due = col_gldue2.number_input("Opening Balance / Outstanding Due Balance (₹) *", min_value=0.0, value=float(eg_out_due or calc_gl_repayable), step=100.0, disabled=is_closed_gl, help="The current outstanding balance brought forward for this gold loan. Differs from Principal Amount if repayments have already been made.", key=f"gl_ed_due_{sel_egl_id}")
+                    new_gl_out_due = col_gldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(eg_out_due or calc_gl_repayable), step=100.0, disabled=is_closed_gl, help="Current unpaid balance owed by the borrower on this gold loan.", key=f"gl_ed_due_{sel_egl_id}")
                     
                 ed_gl_sched = generate_loan_schedule(new_gl_sdate, ed_princ, calc_gl_interest, tenure_months=ed_tenure_mo, loan_type='GOLD')
                 with st.expander(f"📅 View Updated {len(ed_gl_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
@@ -2387,7 +2392,8 @@ def render_gold_loans():
                             new_gl_out_due, new_gl_dmode, ed_gold_rate, ed_orn_desc, ed_item_cnt,
                             ed_gross_wt, ed_stone_ded, new_pkt_no, new_locker_no, new_appr_name,
                             new_gl_status, new_gl_remarks, new_photo_bytes=u_photo_bytes, new_photo_name=u_photo_name,
-                            new_op_bal_date=new_gl_op_str
+                            new_op_bal_date=new_gl_op_str,
+                            new_op_bal=ed_op_bal
                         )
                         clear_db_cache()
                         if success:
@@ -2666,8 +2672,8 @@ def render_sb_accounts():
                 op_date_str = sb_open_date.strftime("%Y-%m-%d")
                 op_bal_date_str = sb_op_bal_date.strftime("%Y-%m-%d")
                 acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
-                run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, ?, ?, ?)", 
-                          (acc_no, cust_id, init_bal, sb_int_rate, op_date_str), fetch=False)
+                run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, opening_balance, interest_rate, created_at) VALUES (?, ?, ?, ?, ?, ?)", 
+                          (acc_no, cust_id, init_bal, init_bal, sb_int_rate, op_date_str), fetch=False)
                 
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
@@ -2950,7 +2956,8 @@ def render_sb_accounts():
     with tab5:
         st.subheader("✏️ Edit & Correct Savings Bank (SB) Account & Opening Balance")
         all_sb_edit = cached_query("""
-            SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, s.customer_id
+            SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, s.customer_id,
+                   COALESCE(s.opening_balance, s.balance) as opening_balance
             FROM sb_accounts s 
             JOIN customers c ON s.customer_id = c.id
             ORDER BY s.account_no DESC
@@ -2959,7 +2966,7 @@ def render_sb_accounts():
             sb_edit_dict = {f"👤 {r[1]} | A/c: {r[0]} (Balance: ₹{r[2]:,.2f} | Opened: {r[4]})": r for r in all_sb_edit}
             selected_sb_label = st.selectbox("Select SB Account to Edit", list(sb_edit_dict.keys()), key="sb_edit_select")
             curr_sb = sb_edit_dict[selected_sb_label]
-            c_acc_no, c_name, c_bal, c_rate, c_created, c_cust_id = curr_sb
+            c_acc_no, c_name, c_bal, c_rate, c_created, c_cust_id, c_op_bal = curr_sb
             
             customers_all = cached_query("""
                 SELECT c.id, c.name, COALESCE(c.account_no, '') 
@@ -2986,7 +2993,8 @@ def render_sb_accounts():
                 edit_sb_acc_no = st.text_input("SB Account Number", value=str(c_acc_no), key=f"edit_sb_acc_{c_acc_no}")
                 edit_sb_cust_label = st.selectbox("Assigned Customer", list(cust_all_dict.keys()), index=cust_idx, key=f"edit_sb_cust_{c_acc_no}")
                 edit_sb_cust_id = cust_all_dict[edit_sb_cust_label]
-                edit_sb_bal = st.number_input("Opening Balance / Current SB Balance (₹)", min_value=0.0, value=float(c_bal or 0.0), step=100.0, key=f"edit_sb_bal_{c_acc_no}", help="Edit the opening deposit / current balance of this SB account.")
+                edit_sb_op_bal = st.number_input("Opening Balance (₹)", min_value=0.0, value=float(c_op_bal or 0.0), step=100.0, key=f"edit_sb_opbal_{c_acc_no}", help="Initial ledger opening balance when the SB account was created.")
+                edit_sb_bal = st.number_input("Current SB Balance (₹)", min_value=0.0, value=float(c_bal or 0.0), step=100.0, key=f"edit_sb_bal_{c_acc_no}", help="Current available balance in this SB account.")
             with col_sb_e2:
                 edit_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=float(c_rate or 3.5), step=0.25, key=f"edit_sb_rate_{c_acc_no}")
                 edit_sb_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_sb_created_{c_acc_no}")
@@ -3018,7 +3026,7 @@ def render_sb_accounts():
                     edit_created_str = edit_sb_created.strftime("%Y-%m-%d")
                     edit_op_bal_str = edit_sb_op_date.strftime("%Y-%m-%d")
                     success, msg = update_sb_account_details(
-                        c_acc_no, edit_sb_acc_no, edit_sb_cust_id, edit_sb_bal, edit_sb_rate, edit_created_str, edit_chosen_asset, new_op_bal_date=edit_op_bal_str
+                        c_acc_no, edit_sb_acc_no, edit_sb_cust_id, edit_sb_bal, edit_sb_rate, edit_created_str, edit_chosen_asset, new_op_bal_date=edit_op_bal_str, new_op_bal=edit_sb_op_bal
                     )
                     clear_db_cache()
                     if success:
@@ -3067,7 +3075,7 @@ def render_fixed_deposits():
             with col_fd1:
                 selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
                 principal = st.number_input("Principal Amount (Contracted) (₹)", min_value=100.0, value=10000.0, step=500.0, key="fd_prin")
-                opening_balance = st.number_input("Opening Balance / Deposited Amount (₹)", min_value=0.0, value=float(principal), step=500.0, key="fd_open_bal", help="Initial deposit funded into the account at opening. Defaults to Principal.")
+                opening_balance = st.number_input("Opening Balance (₹)", min_value=0.0, value=float(principal), step=500.0, key="fd_open_bal", help="Initial opening ledger balance at account creation (defaults to Principal Amount).")
                 
                 tenure_mode = st.radio("Tenure Unit", ["📅 Days", "🗓️ Months"], horizontal=True, key="fd_tenure_mode")
                 if "Days" in tenure_mode:
@@ -3289,7 +3297,7 @@ def render_fixed_deposits():
                 </tr>
                 <tr>
                   <td>{fd_op_bal_dt}</td>
-                  <td>Opening Balance / Principal Deposit</td>
+                  <td>Opening Balance Deposit</td>
                   <td>-</td>
                   <td>₹{principal:,.2f}</td>
                   <td>₹{principal:,.2f}</td>
@@ -3536,7 +3544,7 @@ def render_recurring_deposits():
             with col_rd1:
                 selected_cust = st.selectbox("Select Customer Name for RD", list(cust_dict.keys()), key="rd_cust")
                 monthly_amt = st.number_input("Monthly Installment Amount (Contracted) (₹)", min_value=100.0, value=1000.0, step=100.0, key="rd_monthly_inp")
-                opening_balance = st.number_input("Opening Balance / Total Amount Deposited (₹)", min_value=0.0, value=float(monthly_amt), step=500.0, key="rd_open_bal_inp", help="Total cumulative amount deposited into this RD account at opening. (e.g. ₹1,000 for 1st installment, or ₹10,000 for 10 installments).")
+                opening_balance = st.number_input("Opening Balance (₹)", min_value=0.0, value=float(monthly_amt), step=500.0, key="rd_open_bal_inp", help="Initial opening ledger balance at account creation.")
                 calc_default_inst = max(1, int(round(opening_balance / monthly_amt))) if monthly_amt > 0 else 1
                 opening_paid_inst = st.number_input("Installments Paid at Opening", min_value=1, max_value=10000, value=min(10000, max(1, int(calc_default_inst))), step=1, key="rd_open_paid_inst_inp")
                 tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=365, step=10, key="rd_tenure_days", help="e.g. 100 days, 365 days, 400 days, 730 days")
@@ -3583,10 +3591,10 @@ def render_recurring_deposits():
                 final_rd_no = custom_rd_no.strip() if custom_rd_no and custom_rd_no.strip() else f"RD-{rd_seq:05d}"
                 
                 new_rd_res = run_query("""
-                    INSERT INTO recurring_deposits (customer_id, monthly_amount, tenure_months, tenure_days, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance, scheme_name, rd_no, maturity_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO recurring_deposits (customer_id, monthly_amount, opening_balance, tenure_months, tenure_days, interest_rate, installments_paid, nominee, status, created_at, payment_mode, maturity_amount, collected_balance, scheme_name, rd_no, maturity_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?)
                     RETURNING rd_id
-                """, (cust_dict[selected_cust], monthly_amt, tenure, tenure_days, interest_rate, opening_paid_inst, nominee, 
+                """, (cust_dict[selected_cust], monthly_amt, float(opening_balance), tenure, tenure_days, interest_rate, opening_paid_inst, nominee, 
                       open_date_str, payment_mode, approx_maturity, opening_balance, scheme_name, final_rd_no, mat_date_str))
                 
                 if new_rd_res and new_rd_res[0]:
@@ -4313,7 +4321,7 @@ th {{ background-color: #ebf5fb; }}
                     st.caption("Manually insert a missed installment or missed opening balance for a past date with automatic voucher and chronological ledger generation.")
                     entry_kind = st.radio(
                         "Entry Category",
-                        ["Regular Monthly Installment", "RD Opening Balance / Prior Installments"],
+                        ["Regular Monthly Installment", "Opening Balance Deposit", "Prior Installments"],
                         horizontal=True,
                         key=f"add_entry_kind_{c_rd_id}"
                     )

@@ -1160,7 +1160,7 @@ def render_personal_loans():
             (l_id, l_no, l_cid, l_cname, l_cacc, l_cphone, l_sdate, l_princ, l_rate, l_scheme,
              l_tdays, l_tmonths, l_tot_int, l_tot_rep, l_inst, l_p_emi, l_i_emi, l_from, l_to,
              l_fdue, l_ldue, l_due, l_dmode, l_vno, l_gname, l_gphone, l_grel, l_gaddr,
-             l_purp, l_stat, l_rem, l_ren_cnt, l_last_ren, l_str, l_city, l_state, l_pin) = sel_loan
+             l_purp, l_stat, l_rem, l_ren_cnt, l_last_ren, l_str, l_city, l_state, l_pin, l_op_bal) = sel_loan
             
             l_due = float(l_due) if float(l_due or 0) > 0 else float(l_tot_rep or l_princ or 0.0)
             already_paid = max(0.0, float(l_tot_rep or l_princ) - float(l_due))
@@ -1250,7 +1250,7 @@ def render_personal_loans():
             (cur_pl_id, cur_l_no, cur_cid, cur_cname, cur_cacc, cur_cphone, cur_sdate, cur_princ, cur_irate, cur_itype,
              cur_tdays, cur_tmonths, cur_tot_int, cur_tot_rep, cur_inst, cur_p_emi, cur_i_emi, cur_from, cur_to,
              cur_fdue, cur_ldue, cur_due, cur_dmode, cur_vno, cur_gname, cur_gphone, cur_grel, cur_gaddr,
-             cur_purp, cur_stat, cur_rem, cur_ren_cnt, cur_last_ren, cur_str, cur_city, cur_state, cur_pin) = sel_r_data
+             cur_purp, cur_stat, cur_rem, cur_ren_cnt, cur_last_ren, cur_str, cur_city, cur_state, cur_pin, cur_op_bal) = sel_r_data
              
             cur_due = float(cur_due) if float(cur_due or 0) > 0 else float(cur_tot_rep or cur_princ or 0.0)
             tot_orig_int = float(cur_tot_int or 0.0)
@@ -1580,7 +1580,7 @@ def render_personal_loans():
             (sel_pr_id, p_lno, p_cid, p_cname, p_cacc, p_cphone, p_sdate, p_princ, p_rate, p_scheme,
              p_tdays, p_ten_mo, p_tot_int, p_tot_rep, p_inst, p_p_emi, p_i_emi, p_from, p_to,
              p_fdue, p_ldue, p_out_due, p_dmode, p_vno, p_gname, p_gphone, p_grel, p_gaddr,
-             p_purp, p_stat, p_rem, p_ren_cnt, p_last_ren, p_cstr, p_ccity, p_cstate, p_cpin) = p
+             p_purp, p_stat, p_rem, p_ren_cnt, p_last_ren, p_cstr, p_ccity, p_cstate, p_cpin, p_op_bal) = p
             
             addr_parts = [part for part in [p_cstr, p_ccity, p_cstate, p_cpin] if part and str(part).strip()]
             p_caddr = ", ".join(addr_parts) if addr_parts else "Balaramapuram, Trivandrum"
@@ -1975,7 +1975,7 @@ def render_gold_loans():
              gl_tdays, gl_tmonths, gl_tot_int, gl_tot_rep, gl_inst, gl_p_emi, gl_i_emi, gl_i_due,
              gl_from, gl_to, gl_fdue, gl_ldue, gl_due, gl_pkt, gl_lock, gl_appr, gl_dmode,
              gl_vno, gl_stat, gl_rem, gl_ren_cnt, gl_last_ren, gl_str, gl_city, gl_state,
-             gl_pin, gl_img_file, gl_has_photo) = sel_gl_row
+             gl_pin, gl_img_file, gl_has_photo, gl_op_bal) = sel_gl_row
              
             gl_due = float(gl_due) if float(gl_due or 0) > 0 else float(gl_tot_rep or gl_princ or 0.0)
             already_paid_gl = max(0.0, float(gl_tot_rep or gl_princ) - float(gl_due))
@@ -2069,7 +2069,7 @@ def render_gold_loans():
              c_gl_tdays, c_gl_tmonths, c_gl_tot_int, c_gl_tot_rep, c_gl_inst, c_gl_p_emi, c_gl_i_emi, c_gl_i_due,
              c_gl_from, c_gl_to, c_gl_fdue, c_gl_ldue, c_gl_due, c_gl_pkt, c_gl_lock, c_gl_appr, c_gl_dmode,
              c_gl_vno, c_gl_stat, c_gl_rem, c_gl_ren_cnt, c_gl_last_ren, c_gl_str, c_gl_city, c_gl_state,
-             c_gl_pin, c_gl_img_file, c_gl_has_photo) = sel_gl_data
+             c_gl_pin, c_gl_img_file, c_gl_has_photo, c_gl_op_bal) = sel_gl_data
              
             c_gl_due = float(c_gl_due) if float(c_gl_due or 0) > 0 else float(c_gl_tot_rep or c_gl_princ or 0.0)
             tot_orig_int = float(c_gl_tot_int or 0.0)
@@ -2468,7 +2468,7 @@ def render_gold_loans():
              g_mrate, g_tdays, g_ten_mo, g_tot_int, g_tot_rep, g_inst, g_p_emi, g_i_emi, g_i_due,
              g_from, g_to, g_fdue, g_ldue, g_out_due, g_pkt, g_lock, g_appr, g_dmode,
              g_vno, g_stat, g_rem, g_ren_cnt, g_last_ren, g_str, g_city, g_state,
-             g_pin, g_img_file, g_has_photo) = g
+             g_pin, g_img_file, g_has_photo, g_op_bal) = g
             
             addr_parts = [part for part in [g_str, g_city, g_state, g_pin] if part and str(part).strip()]
             g_caddr = ", ".join(addr_parts) if addr_parts else "Balaramapuram, Trivandrum"

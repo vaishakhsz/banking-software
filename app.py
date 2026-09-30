@@ -1428,7 +1428,7 @@ def render_personal_loans():
                 
                 st.markdown("### 1️⃣ Financial Terms & Repayment Calculation")
                 col_f1, col_f2, col_f3 = st.columns(3)
-                new_princ = col_f1.number_input("Sanctioned Principal / Opening Principal (₹) *", min_value=100.0, value=float(princ), step=1000.0, disabled=is_closed, key=f"pl_ed_p_{sel_pl_id}")
+                new_princ = col_f1.number_input("Sanctioned Principal Amount (₹) *", min_value=100.0, value=float(princ), step=1000.0, disabled=is_closed, help="Original principal amount sanctioned to the borrower", key=f"pl_ed_p_{sel_pl_id}")
                 new_rate = col_f2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate or 12.0), step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
                 new_t_days = col_f3.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days or (t_months * 30 if t_months else 100)), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
                 
@@ -1474,13 +1474,14 @@ def render_personal_loans():
                 new_purp = col_n1.text_input("Loan Purpose", value=str(purp or "Personal / Household Finance"), disabled=is_closed, key=f"pl_ed_purp_{sel_pl_id}")
                 new_rem = col_n2.text_input("Remarks / Notes", value=str(rem or ""), disabled=is_closed, key=f"pl_ed_rem_{sel_pl_id}")
                 
+                st.markdown("### 3️⃣ Opening Balance / Outstanding Due Balance")
                 col_pldue1, col_pldue2 = st.columns(2)
-                recalc_pl_due = col_pldue1.checkbox("🔄 Reset Outstanding Due to New Repayable Amount", value=(float(out_due or 0) == float(t_rep or 0)), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
+                recalc_pl_due = col_pldue1.checkbox(f"🔄 Reset to Full Repayable Amount (₹{calc_tot_repayable:,.2f})", value=(float(out_due or 0) == float(t_rep or 0)), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
                 if recalc_pl_due:
                     new_out_due = calc_tot_repayable
-                    col_pldue2.info(f"Outstanding Due set to **₹{new_out_due:,.2f}**")
+                    col_pldue2.info(f"Opening Balance / Outstanding Due set to **₹{new_out_due:,.2f}**")
                 else:
-                    new_out_due = col_pldue2.number_input("Custom Outstanding Due (₹)", min_value=0.0, value=float(out_due or calc_tot_repayable), step=100.0, disabled=is_closed, key=f"pl_ed_due_{sel_pl_id}")
+                    new_out_due = col_pldue2.number_input("Opening Balance / Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due or calc_tot_repayable), step=100.0, disabled=is_closed, help="The current outstanding balance brought forward for this loan. Differs from Principal Amount if repayments have already been made.", key=f"pl_ed_due_{sel_pl_id}")
                 
                 ed_sched = generate_loan_schedule(new_s_date, new_princ, calc_tot_interest, tenure_months=new_t_months)
                 with st.expander(f"📅 View Updated {len(ed_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
@@ -2309,7 +2310,7 @@ def render_gold_loans():
                 
                 st.markdown("### 2️⃣ Dynamic Loan Terms & Repayment")
                 col_ef1, col_ef2, col_ef3 = st.columns(3)
-                ed_princ = col_ef1.number_input("Sanctioned Loan Principal / Opening Principal (₹) *", min_value=100.0, value=float(eg_princ or 1000.0), step=1000.0, disabled=is_closed_gl, key=f"gl_ed_princ_{sel_egl_id}")
+                ed_princ = col_ef1.number_input("Sanctioned Principal Amount (₹) *", min_value=100.0, value=float(eg_princ or 1000.0), step=1000.0, disabled=is_closed_gl, help="Original loan principal amount sanctioned against pledged ornaments", key=f"gl_ed_princ_{sel_egl_id}")
                 ed_int_rate = col_ef2.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
                 ed_tenure_days = col_ef3.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(eg_tdays or (eg_tmonths * 30 if eg_tmonths else 365)), step=10, disabled=is_closed_gl, key=f"gl_ed_tday_{sel_egl_id}")
                 
@@ -2354,13 +2355,14 @@ def render_gold_loans():
                 new_gl_dmode = col_adm1.selectbox("Disbursal Mode", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(eg_dmode or "") else 1, disabled=is_closed_gl, key=f"gl_ed_dmode_{sel_egl_id}")
                 new_gl_remarks = col_adm2.text_input("Remarks / Condition Notes", value=str(eg_rem or ""), disabled=is_closed_gl, key=f"gl_ed_rem_{sel_egl_id}")
                 
+                st.markdown("### 5️⃣ Opening Balance / Outstanding Due Balance")
                 col_gldue1, col_gldue2 = st.columns(2)
-                recalc_gl_due = col_gldue1.checkbox("🔄 Reset Outstanding Due to New Repayable Amount", value=(float(eg_out_due or 0) == float(eg_tot_rep or 0)), disabled=is_closed_gl, key=f"gl_recalc_due_{sel_egl_id}")
+                recalc_gl_due = col_gldue1.checkbox(f"🔄 Reset to Full Repayable Amount (₹{calc_gl_repayable:,.2f})", value=(float(eg_out_due or 0) == float(eg_tot_rep or 0)), disabled=is_closed_gl, key=f"gl_recalc_due_{sel_egl_id}")
                 if recalc_gl_due:
                     new_gl_out_due = calc_gl_repayable
-                    col_gldue2.info(f"Outstanding Due set to **₹{new_gl_out_due:,.2f}**")
+                    col_gldue2.info(f"Opening Balance / Outstanding Due set to **₹{new_gl_out_due:,.2f}**")
                 else:
-                    new_gl_out_due = col_gldue2.number_input("Custom Outstanding Due (₹)", min_value=0.0, value=float(eg_out_due or calc_gl_repayable), step=100.0, disabled=is_closed_gl, key=f"gl_ed_due_{sel_egl_id}")
+                    new_gl_out_due = col_gldue2.number_input("Opening Balance / Outstanding Due Balance (₹) *", min_value=0.0, value=float(eg_out_due or calc_gl_repayable), step=100.0, disabled=is_closed_gl, help="The current outstanding balance brought forward for this gold loan. Differs from Principal Amount if repayments have already been made.", key=f"gl_ed_due_{sel_egl_id}")
                     
                 ed_gl_sched = generate_loan_schedule(new_gl_sdate, ed_princ, calc_gl_interest, tenure_months=ed_tenure_mo, loan_type='GOLD')
                 with st.expander(f"📅 View Updated {len(ed_gl_sched)}-Month EMI Amortization Schedule Preview", expanded=False):

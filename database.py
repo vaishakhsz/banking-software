@@ -3655,8 +3655,8 @@ def delete_personal_loan_entry(del_id):
         cursor.execute(f"""
             UPDATE accounts 
             SET balance = (SELECT COALESCE(SUM(outstanding_due), 0) FROM personal_loans WHERE customer_id = {placeholder})
-            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_type LIKE '%Personal%')
-        """, (cust_id, cust_id))
+            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_type LIKE {placeholder})
+        """, (cust_id, cust_id, "%Personal%"))
         
         _sync_book_balances(cursor, placeholder)
         conn.commit()
@@ -3738,8 +3738,8 @@ def delete_gold_loan_entry(del_id):
         cursor.execute(f"""
             UPDATE accounts 
             SET balance = (SELECT COALESCE(SUM(outstanding_due), 0) FROM gold_loans WHERE customer_id = {placeholder})
-            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_type LIKE '%Gold%')
-        """, (cust_id, cust_id))
+            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_type LIKE {placeholder})
+        """, (cust_id, cust_id, "%Gold%"))
         
         _sync_book_balances(cursor, placeholder)
         conn.commit()
@@ -4537,8 +4537,8 @@ def update_personal_loan_details(
                 cursor.execute(f"""
                     DELETE FROM bank_book 
                     WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-                      AND (account_code = 'AST-108' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
-                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                      AND (account_code = 'AST-108' OR particulars LIKE {placeholder} OR narration LIKE {placeholder})
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%", "%Loan%", "%Loan%"))
                 
                 cursor.execute(f"""
                     SELECT id FROM cash_book 
@@ -4563,8 +4563,8 @@ def update_personal_loan_details(
                 cursor.execute(f"""
                     DELETE FROM cash_book 
                     WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-                      AND (account_code = 'AST-108' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
-                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                      AND (account_code = 'AST-108' OR particulars LIKE {placeholder} OR narration LIKE {placeholder})
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%", "%Loan%", "%Loan%"))
                 
                 cursor.execute(f"""
                     SELECT id FROM bank_book 
@@ -4593,14 +4593,14 @@ def update_personal_loan_details(
             cursor.execute(f"""
                 DELETE FROM bank_book 
                 WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-                  AND (account_code = 'AST-108' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
-            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%"))
+                  AND (account_code = 'AST-108' OR particulars LIKE {placeholder} OR narration LIKE {placeholder})
+            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%", "%Loan%", "%Loan%"))
             
             cursor.execute(f"""
                 DELETE FROM cash_book 
                 WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-                  AND (account_code = 'AST-108' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
-            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%"))
+                  AND (account_code = 'AST-108' OR particulars LIKE {placeholder} OR narration LIKE {placeholder})
+            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%", "%Loan%", "%Loan%"))
                     
         _sync_book_balances(cursor, placeholder)
         conn.commit()
@@ -4767,8 +4767,8 @@ def update_gold_loan_details(
                 cursor.execute(f"""
                     DELETE FROM bank_book 
                     WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-                      AND (account_code = 'AST-110' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
-                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                      AND (account_code = 'AST-110' OR particulars LIKE {placeholder} OR narration LIKE {placeholder})
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%", "%Loan%", "%Loan%"))
                 
                 cursor.execute(f"""
                     SELECT id FROM cash_book 
@@ -4793,8 +4793,8 @@ def update_gold_loan_details(
                 cursor.execute(f"""
                     DELETE FROM cash_book 
                     WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-                      AND (account_code = 'AST-110' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
-                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%"))
+                      AND (account_code = 'AST-110' OR particulars LIKE {placeholder} OR narration LIKE {placeholder})
+                """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{old_v_no}%", "%Loan%", "%Loan%"))
                 
                 cursor.execute(f"""
                     SELECT id FROM bank_book 
@@ -4823,14 +4823,14 @@ def update_gold_loan_details(
             cursor.execute(f"""
                 DELETE FROM bank_book 
                 WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-                  AND (account_code = 'AST-110' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
-            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%"))
+                  AND (account_code = 'AST-110' OR particulars LIKE {placeholder} OR narration LIKE {placeholder})
+            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%", "%Loan%", "%Loan%"))
             
             cursor.execute(f"""
                 DELETE FROM cash_book 
                 WHERE (particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR particulars LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder} OR narration LIKE {placeholder})
-                  AND (account_code = 'AST-110' OR particulars LIKE '%Loan%' OR narration LIKE '%Loan%')
-            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%"))
+                  AND (account_code = 'AST-110' OR particulars LIKE {placeholder} OR narration LIKE {placeholder})
+            """, (f"%{old_l_no}%", f"%{new_l_no}%", f"%{cust_name}%", f"%{old_l_no}%", f"%{new_l_no}%", f"%{old_v_no}%", "%Loan%", "%Loan%"))
                     
         _sync_book_balances(cursor, placeholder)
         conn.commit()

@@ -671,8 +671,8 @@ def render_customer_management():
             cust_data = run_query("SELECT name, COALESCE(account_no, ''), email, phone, street, city, state, pincode, adhar_file, pan_file, signature_file, created_at, COALESCE(account_type, 'Savings Bank (SB) & Member Account') FROM customers WHERE id=?", (cust_id_edit,))
             if cust_data:
                 c = cust_data[0]
-                # SECTION 1: Personal Profile
-                with st.expander("👤 1. Edit Customer Profile & Contact Details", expanded=True):
+                # SECTION 1: Personal Profile & Opening Balance
+                with st.expander("👤 1. Edit Customer Profile, Account & Opening Balance", expanded=True):
                     with st.form(f"edit_profile_form_{cust_id_edit}"):
                         col_prof_1, col_prof_2 = st.columns(2)
                         with col_prof_1:
@@ -702,16 +702,35 @@ def render_customer_management():
                             col_st_pin1, col_st_pin2 = st.columns(2)
                             new_state = col_st_pin1.text_input("State", value=c[6])
                             new_pincode = col_st_pin2.text_input("Pincode", value=c[7])
+
+                        acc_row = cached_query("SELECT balance, created_at FROM accounts WHERE customer_id = ? ORDER BY id ASC LIMIT 1", (cust_id_edit,))
+                        cust_bal_val = float(acc_row[0][0] or 0.0) if acc_row else 0.0
+                        try:
+                            cust_acc_op_dt = pd.to_datetime(acc_row[0][1]).date() if (acc_row and acc_row[0][1]) else cust_reg_dt
+                        except Exception:
+                            cust_acc_op_dt = cust_reg_dt
+                            
+                        st.markdown("---")
+                        col_prof_b1, col_prof_b2 = st.columns(2)
+                        new_op_bal = col_prof_b1.number_input(
+                            "Account Opening / Ledger Balance (₹)", 
+                            min_value=0.0, 
+                            value=cust_bal_val, 
+                            step=500.0, 
+                            help="Edit the customer's opening / ledger balance. (For specific loan sanctions or fixed/recurring deposit accounts, also check Sections 2-6 below)."
+                        )
+                        new_op_date = col_prof_b2.date_input("A/c Opening / Sanction Date", value=cust_acc_op_dt, format="DD-MM-YYYY")
                         
-                        if st.form_submit_button("💾 Save Profile Details", use_container_width=True):
+                        if st.form_submit_button("💾 Save Profile & Opening Balance Details", use_container_width=True):
                             new_reg_date_str = f"{new_reg_date.strftime('%Y-%m-%d')} 00:00"
+                            new_op_date_str = new_op_date.strftime("%Y-%m-%d")
                             run_query("""
                                 UPDATE customers 
                                 SET name=?, account_no=?, email=?, phone=?, account_type=?, street=?, city=?, state=?, pincode=?, created_at=? 
                                 WHERE id=?
                             """, (new_name, new_acc_no, new_email, new_phone, new_acc_type, new_street, new_city, new_state, new_pincode, new_reg_date_str, cust_id_edit), fetch=False)
                             
-                            # Sync accounts table account_number & account_type
+                            # Sync accounts table account_number, account_type, balance, created_at
                             if 'Gold' in new_acc_type:
                                 db_acc_type = 'Gold Loan'
                             elif 'Personal' in new_acc_type or 'Loan' in new_acc_type:
@@ -723,9 +742,18 @@ def render_customer_management():
                             else:
                                 db_acc_type = 'Savings Account'
                                 
-                            run_query("UPDATE accounts SET account_number=?, account_type=? WHERE customer_id=?", (new_acc_no, db_acc_type, cust_id_edit), fetch=False)
+                            run_query("UPDATE accounts SET account_number=?, account_type=?, balance=?, created_at=? WHERE customer_id=?", (new_acc_no, db_acc_type, new_op_bal, new_op_date_str, cust_id_edit), fetch=False)
+                            
+                            # If Savings Bank, also sync sb_accounts
+                            if 'Savings' in new_acc_type or 'SB' in new_acc_type:
+                                sb_exists = run_query("SELECT account_no FROM sb_accounts WHERE customer_id = ?", (cust_id_edit,))
+                                if sb_exists:
+                                    update_sb_account_details(sb_exists[0][0], new_acc_no, cust_id_edit, new_op_bal, 3.5, new_op_date_str, "AST-102", new_op_bal_date=new_op_date_str)
+                                else:
+                                    run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, ?, 3.5, ?)", (new_acc_no, cust_id_edit, new_op_bal, new_op_date_str), fetch=False)
+                                    
                             clear_db_cache()
-                            flash_success("Profile details updated successfully!")
+                            flash_success(f"Profile and Opening Balance of ₹{new_op_bal:,.2f} updated successfully!")
                             st.rerun()
 
                 # SECTION 2: Gold Loans Opening Balances & Sanctions
@@ -3616,7 +3644,7 @@ def render_sb_accounts():
             st.info("No active SB accounts found.")
 
     with tab5:
-        st.subheader("✏️ Edit & Correct Savings Bank (SB) Account")
+        st.subheader("✏️ Edit & Correct Savings Bank (SB) Account & Opening Balance")
         all_sb_edit = cached_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, s.customer_id
             FROM sb_accounts s 
@@ -3657,7 +3685,7 @@ def render_sb_accounts():
                 edit_sb_acc_no = st.text_input("SB Account Number", value=str(c_acc_no), key=f"edit_sb_acc_{c_acc_no}")
                 edit_sb_cust_label = st.selectbox("Assigned Customer", list(cust_all_dict.keys()), index=cust_idx, key=f"edit_sb_cust_{c_acc_no}")
                 edit_sb_cust_id = cust_all_dict[edit_sb_cust_label]
-                edit_sb_bal = st.number_input("Current SB Balance (₹)", min_value=0.0, value=float(c_bal or 0.0), step=100.0, key=f"edit_sb_bal_{c_acc_no}")
+                edit_sb_bal = st.number_input("Opening Balance / Current SB Balance (₹)", min_value=0.0, value=float(c_bal or 0.0), step=100.0, key=f"edit_sb_bal_{c_acc_no}", help="Edit the opening deposit / current balance of this SB account.")
             with col_sb_e2:
                 edit_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=float(c_rate or 3.5), step=0.25, key=f"edit_sb_rate_{c_acc_no}")
                 edit_sb_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_sb_created_{c_acc_no}")

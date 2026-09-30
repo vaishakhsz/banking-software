@@ -969,13 +969,10 @@ def render_personal_loans():
         cust_raw = cached_query("""
             SELECT c.id, c.name, COALESCE(c.account_no, 'N/A'), c.phone, c.street, c.city, c.state, c.pincode 
             FROM customers c 
-            WHERE c.account_type IN ('Personal / Micro Loan Account', 'Personal Loan', 'Loan Account') 
-               OR c.id IN (SELECT customer_id FROM accounts WHERE account_type LIKE '%Personal Loan%' OR account_type = 'Loan Account' OR account_type LIKE '%Micro Loan%') 
-               OR c.id IN (SELECT customer_id FROM personal_loans) 
-            ORDER BY c.id DESC
+            ORDER BY c.name ASC, c.id ASC
         """) or []
         if not cust_raw:
-            st.warning("Please register a customer with Personal Loan account type first.")
+            st.warning("Please register a customer first.")
             return
             
         cust_list = []
@@ -1748,10 +1745,7 @@ def render_gold_loans():
         cust_raw = cached_query("""
             SELECT c.id, c.name, COALESCE(c.account_no, 'N/A'), c.phone, c.street, c.city, c.state, c.pincode 
             FROM customers c 
-            WHERE c.account_type IN ('Gold Loan Account (Jewel / Pawn Loan)', 'Gold Loan', 'Loan Account') 
-               OR c.id IN (SELECT customer_id FROM accounts WHERE account_type LIKE '%Gold Loan%' OR account_type = 'Loan Account') 
-               OR c.id IN (SELECT customer_id FROM gold_loans) 
-            ORDER BY c.id DESC
+            ORDER BY c.name ASC, c.id ASC
         """) or []
         if not cust_raw:
             st.warning("Please register a customer with Gold Loan account type first.")
@@ -2637,10 +2631,7 @@ def render_sb_accounts():
         customers = cached_query("""
             SELECT c.id, c.name, COALESCE(c.account_no, '') 
             FROM customers c 
-            WHERE c.account_type IN ('Savings Bank (SB) & Member Account', 'Savings Account', 'Savings Bank', 'SB') 
-               OR c.id IN (SELECT customer_id FROM accounts WHERE account_type IN ('Savings Account', 'Savings Bank', 'SB')) 
-               OR c.id IN (SELECT customer_id FROM sb_accounts WHERE balance > 0) 
-            ORDER BY c.name ASC
+            ORDER BY c.name ASC, c.id ASC
         """)
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
@@ -2971,10 +2962,7 @@ def render_sb_accounts():
             customers_all = cached_query("""
                 SELECT c.id, c.name, COALESCE(c.account_no, '') 
                 FROM customers c 
-                WHERE c.account_type IN ('Savings Bank (SB) & Member Account', 'Savings Account', 'Savings Bank', 'SB') 
-                   OR c.id IN (SELECT customer_id FROM accounts WHERE account_type IN ('Savings Account', 'Savings Bank', 'SB')) 
-                   OR c.id IN (SELECT customer_id FROM sb_accounts WHERE balance > 0) 
-                ORDER BY c.name ASC
+                ORDER BY c.name ASC, c.id ASC
             """)
             cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0
@@ -3060,10 +3048,7 @@ def render_fixed_deposits():
         customers = cached_query("""
             SELECT c.id, c.name, c.street, c.city, c.state, c.pincode 
             FROM customers c 
-            WHERE c.account_type IN ('Fixed Deposit (FD) Account', 'Fixed Deposit', 'FD') 
-               OR c.id IN (SELECT customer_id FROM accounts WHERE account_type IN ('Fixed Deposit', 'FD')) 
-               OR c.id IN (SELECT customer_id FROM fixed_deposits) 
-            ORDER BY c.name ASC
+            ORDER BY c.name ASC, c.id ASC
         """)
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
@@ -3414,10 +3399,7 @@ def render_fixed_deposits():
             customers_all = cached_query("""
                 SELECT c.id, c.name, COALESCE(c.account_no, '') 
                 FROM customers c 
-                WHERE c.account_type IN ('Fixed Deposit (FD) Account', 'Fixed Deposit', 'FD') 
-                   OR c.id IN (SELECT customer_id FROM accounts WHERE account_type IN ('Fixed Deposit', 'FD')) 
-                   OR c.id IN (SELECT customer_id FROM fixed_deposits) 
-                ORDER BY c.name ASC
+                ORDER BY c.name ASC, c.id ASC
             """)
             cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0
@@ -3544,10 +3526,7 @@ def render_recurring_deposits():
         customers = cached_query("""
             SELECT c.id, c.name, c.street, c.city, c.state, c.pincode 
             FROM customers c 
-            WHERE c.account_type IN ('Recurring Deposit (RD) Account', 'Recurring Deposit', 'RD') 
-               OR c.id IN (SELECT customer_id FROM accounts WHERE account_type IN ('Recurring Deposit', 'RD')) 
-               OR c.id IN (SELECT customer_id FROM recurring_deposits) 
-            ORDER BY c.name ASC
+            ORDER BY c.name ASC, c.id ASC
         """)
         if customers:
             cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
@@ -4052,10 +4031,7 @@ th {{ background-color: #ebf5fb; }}
             customers_all = cached_query("""
                 SELECT c.id, c.name, COALESCE(c.account_no, '') 
                 FROM customers c 
-                WHERE c.account_type IN ('Recurring Deposit (RD) Account', 'Recurring Deposit', 'RD') 
-                   OR c.id IN (SELECT customer_id FROM accounts WHERE account_type IN ('Recurring Deposit', 'RD')) 
-                   OR c.id IN (SELECT customer_id FROM recurring_deposits) 
-                ORDER BY c.name ASC
+                ORDER BY c.name ASC, c.id ASC
             """)
             cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0

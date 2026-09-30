@@ -391,15 +391,15 @@ def render_dashboard():
 
 def render_customer_management():
     st.title("👥 Customer Management Module")
-    tab1, tab2, tab3 = st.tabs(["Register Customer", "View / Manage Customers", "✏️ Edit / Delete Customer"])
+    tab1, tab2, tab3 = st.tabs(["📝 Register Customer & Opening Balance", "📋 View / Manage Customers", "✏️ Edit / Delete Customer & Accounts (360°)"])
     
     with tab1:
-        st.subheader("New Customer Registration")
-        st.info("ℹ️ All mandatory fields (*), unique Phone and PAN, valid DOB (1900 to present), and mandatory file uploads are required.")
+        st.subheader("📝 New Customer Registration & Opening Balance")
+        st.info("ℹ️ Register a new customer and optionally enter their initial opening deposit or loan balance. All vouchers, ledger entries, and schedules will be created automatically.")
         with st.form("reg_form"):
             col1, col2 = st.columns(2)
             name = col1.text_input("Full Name *")
-            acc_no = col2.text_input("Account Number *")
+            acc_no = col2.text_input("Account Number (Optional - leave blank for auto-generated)")
             dob = col1.date_input("Date of Birth", value=date(1995, 1, 1), min_value=date(1900, 1, 1), max_value=date.today(), format="DD-MM-YYYY")
             gender = col2.selectbox("Gender", ["Male", "Female", "Other"])
             email = col1.text_input("Email Address")
@@ -416,7 +416,33 @@ def render_customer_management():
                     "Recurring Deposit (RD) Account"
                 ]
             )
-            reg_date = col_b2.date_input("Customer Registration / Joining Date *", value=date.today(), format="DD-MM-YYYY", key="cust_reg_date_input")
+            initial_balance = col_b2.number_input(
+                "Opening Balance / Loan Due Balance (₹)", 
+                min_value=0.0, 
+                value=0.0, 
+                step=500.0,
+                help="Initial opening deposit amount (for SB/FD/RD) or opening loan balance / sanctioned due (for Personal/Gold Loans)."
+            )
+            
+            col_d1, col_d2, col_d3 = st.columns(3)
+            reg_date = col_d1.date_input("Customer Registration Date *", value=date.today(), format="DD-MM-YYYY", key="cust_reg_date_input")
+            opening_date = col_d2.date_input("A/c Opening / Sanction Date *", value=date.today(), format="DD-MM-YYYY", key="cust_op_date_input")
+            op_bal_date = col_d3.date_input("Opening Balance Date *", value=date.today(), format="DD-MM-YYYY", key="cust_op_bal_date_input")
+            
+            asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset' AND account_code IN ('AST-101', 'AST-102', 'AST-103')")
+            if not asset_accounts:
+                asset_accounts = cached_query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_type = 'Asset'")
+            asset_dict = {f"{a[0]} - {a[1]}": a[0] for a in asset_accounts} if asset_accounts else {}
+            
+            col_f1, col_f2 = st.columns(2)
+            if asset_dict:
+                selected_asset_label = col_f1.selectbox("Funding / Disbursal Mode (Drill-down: Chart of Accounts)", list(asset_dict.keys()), key="cust_reg_asset_mode")
+                chosen_asset_code = asset_dict[selected_asset_label]
+                pay_mode = selected_asset_label.split(" - ")[1]
+            else:
+                chosen_asset_code = "AST-102"
+                pay_mode = "Union Bank of India"
+            col_f2.caption("📌 Selected funding account will be credited/debited with automated double-entry Journal Vouchers and Cash/Bank Book records upon opening.")
             
             street = col1.text_input("Street Address")
             city = col2.text_input("City")
@@ -429,7 +455,7 @@ def render_customer_management():
             pan_upload = st.file_uploader("Upload PAN Card Document", type=["pdf", "png", "jpg", "jpeg"], key="reg_pan")
             sig_upload = st.file_uploader("Upload Signature", type=["png", "jpg", "jpeg"], key="reg_sig")
             
-            submitted = st.form_submit_button("🚀 Register Customer Profile", use_container_width=True, type="primary")
+            submitted = st.form_submit_button("🚀 Register Customer & Create Account", use_container_width=True, type="primary")
             if submitted:
                 if not name or not name.strip():
                     st.error("❌ Please enter the customer's Full Name.")
@@ -452,6 +478,8 @@ def render_customer_management():
                             sig_param = psycopg2.Binary(sig_bytes) if (USING_SUPABASE and sig_bytes) else sig_bytes
                             
                             today_str = reg_date.strftime("%Y-%m-%d")
+                            op_date_str = opening_date.strftime("%Y-%m-%d")
+                            op_bal_date_str = op_bal_date.strftime("%Y-%m-%d")
                             now_str = f"{today_str} {datetime.now(IST).strftime('%H:%M')}"
                             
                             # 1. Insert into customers
@@ -482,16 +510,52 @@ def render_customer_management():
 
                                 run_query("""
                                     INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)
-                                    VALUES (?, ?, ?, 0.0, ?)
-                                """, (final_acc_no, db_acc_type, new_c_id, today_str), fetch=False)
+                                    VALUES (?, ?, ?, ?, ?)
+                                """, (final_acc_no, db_acc_type, new_c_id, float(initial_balance or 0.0), op_date_str), fetch=False)
                                 
-                                # 4. Insert into sb_accounts ONLY if customer is registering for Savings Bank
-                                if 'Savings' in acc_type or 'SB' in acc_type:
-                                    run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, 0.0, 3.5, ?)", 
-                                              (final_acc_no, new_c_id, today_str), fetch=False)
+                                # 4. Handle Opening Balance creation for specific product
+                                if 'Gold' in acc_type:
+                                    if initial_balance > 0:
+                                        create_or_link_gold_loan_opening(
+                                            new_c_id, initial_balance, op_date_str,
+                                            disbursal_mode=pay_mode, op_bal_date=op_bal_date_str
+                                        )
+                                elif 'Personal' in acc_type or 'Loan' in acc_type:
+                                    if initial_balance > 0:
+                                        create_or_link_personal_loan_opening(
+                                            new_c_id, initial_balance, op_date_str,
+                                            disbursal_mode=pay_mode, op_bal_date=op_bal_date_str
+                                        )
+                                elif 'Fixed' in acc_type or 'FD' in acc_type:
+                                    if initial_balance > 0:
+                                        create_or_link_fd_opening(
+                                            new_c_id, initial_balance, op_date_str,
+                                            tenure_months=12, interest_rate=6.5,
+                                            nominee="Family Nominee", payment_mode=pay_mode,
+                                            chosen_asset_code=chosen_asset_code, op_bal_date=op_bal_date_str
+                                        )
+                                elif 'Recurring' in acc_type or 'RD' in acc_type:
+                                    if initial_balance > 0:
+                                        create_or_link_rd_opening(
+                                            new_c_id, initial_balance, op_date_str,
+                                            tenure_months=12, interest_rate=6.0,
+                                            nominee="Family Nominee", payment_mode=pay_mode,
+                                            chosen_asset_code=chosen_asset_code, op_bal_date=op_bal_date_str
+                                        )
+                                else:
+                                    # Savings Bank
+                                    if initial_balance > 0:
+                                        create_or_link_sb_opening(
+                                            new_c_id, initial_balance, op_date_str,
+                                            interest_rate=3.5, chosen_asset_code=chosen_asset_code,
+                                            op_bal_date=op_bal_date_str
+                                        )
+                                    else:
+                                        run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, interest_rate, created_at) VALUES (?, ?, 0.0, 3.5, ?)", 
+                                                  (final_acc_no, new_c_id, op_date_str), fetch=False)
                                 
                                 clear_db_cache()
-                                flash_success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: #{new_c_id}) registered successfully for **{acc_type}**! Opening balance and account operations can now be managed directly in the **{acc_type}** module.")
+                                flash_success(f"🎉 Customer **{name}** (Acc: `{final_acc_no}`, ID: #{new_c_id}) registered successfully with **₹{initial_balance:,.2f}** Opening Balance for **{acc_type}**!")
                                 st.rerun()
                             else:
                                 st.error("❌ Failed to create customer record. Please check inputs or database connectivity.")
@@ -1538,10 +1602,10 @@ def render_personal_loans():
     all_pl_data, pl_sched_map, pl_rep_map = get_all_personal_loans_bundle()
     
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📝 New Loan & 1-Click Disbursal", 
+        "📝 Sanction & Opening Balance Loan", 
         "💳 Collect Repayment / Installment", 
         "🔄 Loan Renewal & Interest Rollover",
-        "✏️ Edit / Delete Loan Sanction",
+        "✏️ Edit / Delete Personal Loan & Opening Balance",
         "📋 Active Loan Register & Legal Tracker", 
         "🖨️ Loan Statement & Passbook"
     ])
@@ -2317,10 +2381,10 @@ def render_gold_loans():
     all_gl_data, gl_sched_map, gl_rep_map = get_all_gold_loans_bundle()
     
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "🪙 Jewel Appraisal & 1-Click Disbursal", 
+        "🪙 Appraisal, Sanction & Opening Balance", 
         "💳 Collect Repayment / Installment", 
         "🔄 Jewel Loan Renewal & Pledge Rollover",
-        "✏️ Edit / Delete Gold Loan",
+        "✏️ Edit / Delete Gold Loan & Opening Balance",
         "🏷️ Gold Vault Register & Safe Custody", 
         "🖨️ Loan Statement & Passbook"
     ])
@@ -3213,7 +3277,7 @@ def render_gold_loans():
 
 def render_sb_accounts():
     st.title("💰 Savings Bank (SB) Management")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open SB Account", "Transact", "📖 SB Account Passbook", "View Accounts", "✏️ Edit / Update SB Account"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["➕ Open SB Account & Opening Balance", "💳 Transact", "📖 SB Account Passbook", "📋 View Accounts", "✏️ Edit / Delete SB Account & Opening Balance"])
     
     with tab1:
         customers = cached_query("""

@@ -80,7 +80,7 @@ from database import (
     calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment,
     ensure_rd_installments_populated, update_rd_installment, delete_rd_installment, add_custom_rd_installment, recalculate_rd_installments_balances,
     resequence_rd_installments, pay_rd_installment, record_personal_loan_repayment, record_gold_loan_repayment,
-    init_db
+    init_db, generate_loan_schedule
 )
 
 try:
@@ -984,7 +984,7 @@ def render_personal_loans():
         col1, col2, col3, col4, col5 = st.columns(5)
         sanction_date = col1.date_input("Sanction Date", value=date.today(), format="DD-MM-YYYY", key="pl_sanc_date")
         op_bal_date = col2.date_input("Opening / Disbursal Date", value=sanction_date, format="DD-MM-YYYY", key="pl_op_bal_date")
-        principal = col3.number_input("Sanctioned Principal Amount (₹)", min_value=1000.0, value=50000.0, step=1000.0, help="The original principal amount sanctioned to the borrower", key="pl_princ_inp")
+        principal = col3.number_input("Sanctioned Principal Amount (₹)", min_value=0.0, value=50000.0, step=1000.0, help="The original principal amount sanctioned to the borrower", key="pl_princ_inp")
         int_rate = col4.number_input("Interest Rate (% p.a.)", min_value=0.0, value=12.0, step=0.5, help="Annual flat interest rate percentage (default 12%)", key="pl_rate_inp")
         tenure_days = col5.number_input("Tenure (Days)", min_value=1, value=100, step=5, help="Total loan tenure in days (e.g., 100 days micro loan, 180 days, 365 days)", key="pl_ten_days")
         
@@ -1042,7 +1042,7 @@ def render_personal_loans():
             loan_no = custom_loan_no.strip() if custom_loan_no and custom_loan_no.strip() else f"PL-2026-{cur_count:04d}"
             voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{cur_count:03d}"
             
-            final_initial_due = float(outstanding_due) if float(outstanding_due or 0) > 0 else float(tot_repayable)
+            final_initial_due = float(outstanding_due) if float(outstanding_due or 0) > 0 else (float(opening_balance) if float(opening_balance or 0) > 0 else float(tot_repayable))
             
             if "Cash" in disb_mode:
                 cur_cash = get_cash_balance()
@@ -1090,33 +1090,34 @@ def render_personal_loans():
                 
             part_text = f"Personal Loan Disbursal: {selected_cust_name} (Acc: {selected_cust_acc}) [{loan_no}]"
         
-            bank_or_cash_code = 'AST-102' if "Union Bank" in disb_mode else 'AST-101'
-            if "Union Bank" in disb_mode:
-                last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
-                prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
-                new_b = prev_b - principal
-                run_query("""
-                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                    VALUES (?, ?, ?, 0, ?, ?, 'Union Bank of India', ?, 'AST-108')
-                """, (str(op_bal_date), voucher_no, part_text, principal, new_b, remarks), fetch=False)
-            else:
-                last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
-                prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
-                new_c = prev_c - principal
-                run_query("""
-                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                    VALUES (?, ?, ?, 0, ?, ?, ?, 'AST-108')
-                """, (str(op_bal_date), voucher_no, part_text, principal, new_c, remarks), fetch=False)
-            
-            cr_entries = [(bank_or_cash_code, principal)]
-            if tot_interest > 0:
-                cr_entries.append(('LIA-104', tot_interest))
-            post_compound_jv(
-                f"Loan Disbursal [{voucher_no}]: {part_text} (Principal: ₹{principal:,.2f} + Planned Interest: ₹{tot_interest:,.2f} = Total Due: ₹{tot_repayable:,.2f})",
-                [('AST-108', tot_repayable)],
-                cr_entries,
-                voucher_date=str(op_bal_date)
-            )
+            if principal > 0:
+                bank_or_cash_code = 'AST-102' if "Union Bank" in disb_mode else 'AST-101'
+                if "Union Bank" in disb_mode:
+                    last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+                    prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
+                    new_b = prev_b - principal
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, ?, 'Union Bank of India', ?, 'AST-108')
+                    """, (str(op_bal_date), voucher_no, part_text, principal, new_b, remarks), fetch=False)
+                else:
+                    last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+                    prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
+                    new_c = prev_c - principal
+                    run_query("""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, ?, ?, 'AST-108')
+                    """, (str(op_bal_date), voucher_no, part_text, principal, new_c, remarks), fetch=False)
+                
+                cr_entries = [(bank_or_cash_code, principal)]
+                if tot_interest > 0:
+                    cr_entries.append(('LIA-104', tot_interest))
+                post_compound_jv(
+                    f"Loan Disbursal [{voucher_no}]: {part_text} (Principal: ₹{principal:,.2f} + Planned Interest: ₹{tot_interest:,.2f} = Total Due: ₹{tot_repayable:,.2f})",
+                    [('AST-108', tot_repayable)],
+                    cr_entries,
+                    voucher_date=str(op_bal_date)
+                )
                 
             acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
             if acc_row:
@@ -1139,13 +1140,13 @@ def render_personal_loans():
         st.subheader("💳 Record Loan Repayment / Collect Installment")
         active_loans = [
             r for r in all_pl_data 
-            if r[29] not in ('CLOSED', 'SETTLED') and (float(r[21] or 0) > 0 or float(r[13] or r[7] or 0) > 0)
+            if r[29] not in ('CLOSED', 'SETTLED') and (float(r[21] or 0) > 0 or float(r[37] or 0) > 0 or float(r[13] or r[7] or 0) > 0)
         ]
         if active_loans:
             loan_dict = {}
             for r in active_loans:
                 inst_str = f"₹{float(r[14]):,.2f}/inst" if float(r[14] or 0) > 0 else "Flexible"
-                eff_due = float(r[21]) if float(r[21] or 0) > 0 else float(r[13] or r[7] or 0.0)
+                eff_due = float(r[21]) if float(r[21] or 0) > 0 else (float(r[37]) if float(r[37] or 0) > 0 else float(r[13] or r[7] or 0.0))
                 label = f"#{r[1]} - {r[3]} (Acc: {r[4]} | Due: ₹{eff_due:,.2f} | Plan: {inst_str})"
                 loan_dict[label] = r
                 
@@ -1156,14 +1157,15 @@ def render_personal_loans():
              l_fdue, l_ldue, l_due, l_dmode, l_vno, l_gname, l_gphone, l_grel, l_gaddr,
              l_purp, l_stat, l_rem, l_ren_cnt, l_last_ren, l_str, l_city, l_state, l_pin, l_op_bal) = sel_loan
             
-            l_due = float(l_due) if float(l_due or 0) > 0 else float(l_tot_rep or l_princ or 0.0)
-            already_paid = max(0.0, float(l_tot_rep or l_princ) - float(l_due))
+            l_due = float(l_due) if float(l_due or 0) > 0 else float(l_op_bal or l_tot_rep or l_princ or 0.0)
+            total_base = float(l_tot_rep) if float(l_tot_rep or 0) > 0 else (float(l_op_bal) if float(l_op_bal or 0) > 0 else float(l_princ or 0.0))
+            already_paid = max(0.0, total_base - float(l_due))
             
             with st.container(border=True):
                 st.markdown(f"#### 👤 Borrower: **{l_cname}** (Loan: `{l_no}`, Acc: `{l_cacc}`)")
                 sc1, sc2, sc3, sc4 = st.columns(4)
                 sc1.metric("💵 Principal", f"₹{float(l_princ):,.2f}")
-                sc2.metric("💳 Total Repayable", f"₹{float(l_tot_rep or l_princ):,.2f}")
+                sc2.metric("💳 Total Repayable", f"₹{total_base:,.2f}")
                 sc3.metric("🟢 Repaid So Far", f"₹{already_paid:,.2f}")
                 sc4.metric("🔴 Outstanding Due", f"₹{float(l_due):,.2f}")
                 st.caption(f"📌 **Loan Term:** {l_scheme} | **Monthly Installment:** {'₹{:,.2f}'.format(float(l_inst or 0)) if float(l_inst or 0) > 0 else '₹0.00'}")
@@ -1423,8 +1425,8 @@ def render_personal_loans():
                 
                 st.markdown("### 1️⃣ Financial Terms & Repayment Calculation")
                 col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                new_princ = col_f1.number_input("Sanctioned Principal Amount (₹) *", min_value=100.0, value=float(princ), step=1000.0, disabled=is_closed, help="Original principal amount sanctioned to the borrower", key=f"pl_ed_p_{sel_pl_id}")
-                new_op_bal = col_f2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(op_bal_val or princ), step=500.0, disabled=is_closed, help="Initial opening ledger balance at loan creation", key=f"pl_ed_opbal_{sel_pl_id}")
+                new_princ = col_f1.number_input("Sanctioned Principal Amount (₹) *", min_value=0.0, value=float(princ or 0.0), step=1000.0, disabled=is_closed, help="Original principal amount sanctioned to the borrower", key=f"pl_ed_p_{sel_pl_id}")
+                new_op_bal = col_f2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(op_bal_val or princ or 0.0), step=500.0, disabled=is_closed, help="Initial opening ledger balance at loan creation", key=f"pl_ed_opbal_{sel_pl_id}")
                 new_rate = col_f3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate or 12.0), step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
                 new_t_days = col_f4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days or (t_months * 30 if t_months else 100)), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
                 
@@ -1472,12 +1474,12 @@ def render_personal_loans():
                 
                 st.markdown("### 3️⃣ Current Outstanding Due Balance")
                 col_pldue1, col_pldue2 = st.columns(2)
-                recalc_pl_due = col_pldue1.checkbox(f"🔄 Reset Outstanding Due to Total Repayable (₹{calc_tot_repayable:,.2f})", value=(float(out_due or 0) == float(t_rep or 0)), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
+                recalc_pl_due = col_pldue1.checkbox(f"🔄 Reset Outstanding Due to Total Repayable (₹{calc_tot_repayable:,.2f})", value=(float(out_due or 0) == float(t_rep or 0) and float(t_rep or 0) > 0), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
                 if recalc_pl_due:
                     new_out_due = calc_tot_repayable
                     col_pldue2.info(f"Outstanding Due set to **₹{new_out_due:,.2f}**")
                 else:
-                    new_out_due = col_pldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due or calc_tot_repayable), step=100.0, disabled=is_closed, help="Current unpaid balance owed by the borrower on this loan.", key=f"pl_ed_due_{sel_pl_id}")
+                    new_out_due = col_pldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due or op_bal_val or calc_tot_repayable), step=100.0, disabled=is_closed, help="Current unpaid balance owed by the borrower on this loan.", key=f"pl_ed_due_{sel_pl_id}")
                 
                 ed_sched = generate_loan_schedule(new_s_date, new_princ, calc_tot_interest, tenure_months=new_t_months)
                 with st.expander(f"📅 View Updated {len(ed_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
@@ -1799,7 +1801,7 @@ def render_gold_loans():
         st.markdown("### 3️⃣ Loan Financial Terms & Amortization")
         col_p1, col_p2, col_p3 = st.columns(3)
         default_gl_p = float(min(max_eligible, 50000.0)) if max_eligible >= 100.0 else float(max_eligible)
-        principal = col_p1.number_input("Sanctioned Principal Amount (₹)", min_value=100.0, value=default_gl_p, step=1000.0, help="Original principal amount sanctioned / disbursed", key="gl_princ_inp")
+        principal = col_p1.number_input("Sanctioned Principal Amount (₹)", min_value=0.0, value=default_gl_p, step=1000.0, help="Original principal amount sanctioned / disbursed", key="gl_princ_inp")
         int_rate = col_p2.number_input("Annual Interest Rate (%)", min_value=0.0, value=12.0, step=0.5, key="gl_int_rate")
         tenure_days = col_p3.number_input("Loan Period / Tenure (Days)", min_value=1, value=365, step=10, help="Loan tenure in days (e.g., 90, 180, 365 days)", key="gl_tenure_days")
         
@@ -1842,7 +1844,7 @@ def render_gold_loans():
             loan_no = custom_gl_no.strip() if custom_gl_no and custom_gl_no.strip() else f"GL-2026-{cur_gl_cnt:04d}"
             voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{cur_gl_cnt:03d}"
             
-            final_initial_due = float(outstanding_due) if float(outstanding_due or 0) > 0 else float(tot_repayable)
+            final_initial_due = float(outstanding_due) if float(outstanding_due or 0) > 0 else (float(opening_balance) if float(opening_balance or 0) > 0 else float(tot_repayable))
             
             if "Cash" in disb_mode:
                 cur_cash = get_cash_balance()
@@ -1908,33 +1910,34 @@ def render_gold_loans():
                 
             part_text = f"Gold Loan Disbursal: {selected_cust_name} (Acc: {selected_cust_acc}) [{loan_no} | {packet_no}]"
         
-            bank_or_cash_code = 'AST-102' if "Union Bank" in disb_mode else 'AST-101'
-            if "Union Bank" in disb_mode:
-                last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
-                prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
-                new_b = prev_b - principal
-                run_query("""
-                    INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
-                    VALUES (?, ?, ?, 0, ?, ?, 'Union Bank of India', ?, 'AST-110')
-                """, (str(op_bal_date), voucher_no, part_text, principal, new_b, remarks), fetch=False)
-            else:
-                last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
-                prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
-                new_c = prev_c - principal
-                run_query("""
-                    INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
-                    VALUES (?, ?, ?, 0, ?, ?, ?, 'AST-110')
-                """, (str(op_bal_date), voucher_no, part_text, principal, new_c, remarks), fetch=False)
-            
-            cr_entries = [(bank_or_cash_code, principal)]
-            if tot_interest > 0:
-                cr_entries.append(('LIA-104', tot_interest))
-            post_compound_jv(
-                f"Gold Loan Disbursal [{voucher_no}]: {part_text} (Principal: ₹{principal:,.2f} + Planned Interest: ₹{tot_interest:,.2f} = Total Due: ₹{tot_repayable:,.2f})",
-                [('AST-110', tot_repayable)],
-                cr_entries,
-                voucher_date=str(op_bal_date)
-            )
+            if principal > 0:
+                bank_or_cash_code = 'AST-102' if "Union Bank" in disb_mode else 'AST-101'
+                if "Union Bank" in disb_mode:
+                    last_bb = run_query("SELECT balance FROM bank_book WHERE bank_name = 'Union Bank of India' ORDER BY id DESC LIMIT 1")
+                    prev_b = float(last_bb[0][0]) if (last_bb and last_bb[0][0] is not None) else 0.0
+                    new_b = prev_b - principal
+                    run_query("""
+                        INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, ?, 'Union Bank of India', ?, 'AST-110')
+                    """, (str(op_bal_date), voucher_no, part_text, principal, new_b, remarks), fetch=False)
+                else:
+                    last_cb = run_query("SELECT balance FROM cash_book ORDER BY id DESC LIMIT 1")
+                    prev_c = float(last_cb[0][0]) if (last_cb and last_cb[0][0] is not None) else 0.0
+                    new_c = prev_c - principal
+                    run_query("""
+                        INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                        VALUES (?, ?, ?, 0, ?, ?, ?, 'AST-110')
+                    """, (str(op_bal_date), voucher_no, part_text, principal, new_c, remarks), fetch=False)
+                
+                cr_entries = [(bank_or_cash_code, principal)]
+                if tot_interest > 0:
+                    cr_entries.append(('LIA-104', tot_interest))
+                post_compound_jv(
+                    f"Gold Loan Disbursal [{voucher_no}]: {part_text} (Principal: ₹{principal:,.2f} + Planned Interest: ₹{tot_interest:,.2f} = Total Due: ₹{tot_repayable:,.2f})",
+                    [('AST-110', tot_repayable)],
+                    cr_entries,
+                    voucher_date=str(op_bal_date)
+                )
                 
             acc_row = run_query("SELECT id, balance FROM accounts WHERE customer_id = ?", (selected_cust_id,))
             if acc_row:
@@ -1953,13 +1956,13 @@ def render_gold_loans():
         st.subheader("💳 Collect Gold Loan Installment / Repayment")
         active_gl_loans = [
             r for r in all_gl_data 
-            if r[37] not in ('CLOSED', 'CLOSED_RELEASED') and (float(r[31] or 0) > 0 or float(r[22] or r[16] or 0) > 0)
+            if r[37] not in ('CLOSED', 'CLOSED_RELEASED') and (float(r[31] or 0) > 0 or float(r[47] or 0) > 0 or float(r[22] or r[16] or 0) > 0)
         ]
         
         if active_gl_loans:
             gl_loan_dict = {}
             for r in active_gl_loans:
-                eff_due = float(r[31]) if float(r[31] or 0) > 0 else float(r[22] or r[16] or 0.0)
+                eff_due = float(r[31]) if float(r[31] or 0) > 0 else (float(r[47]) if float(r[47] or 0) > 0 else float(r[22] or r[16] or 0.0))
                 label = f"#{r[1]} - {r[3]} (Packet: {r[32]} | Due: ₹{eff_due:,.2f} | Gold: {float(r[12]):.3f}g)"
                 gl_loan_dict[label] = r
             sel_gl_label = st.selectbox("1️⃣ Select Active Gold Loan Account", list(gl_loan_dict.keys()), key="gl_rep_sel")
@@ -1971,14 +1974,15 @@ def render_gold_loans():
              gl_vno, gl_stat, gl_rem, gl_ren_cnt, gl_last_ren, gl_str, gl_city, gl_state,
              gl_pin, gl_img_file, gl_has_photo, gl_op_bal) = sel_gl_row
              
-            gl_due = float(gl_due) if float(gl_due or 0) > 0 else float(gl_tot_rep or gl_princ or 0.0)
-            already_paid_gl = max(0.0, float(gl_tot_rep or gl_princ) - float(gl_due))
+            gl_due = float(gl_due) if float(gl_due or 0) > 0 else float(gl_op_bal or gl_tot_rep or gl_princ or 0.0)
+            total_base_gl = float(gl_tot_rep) if float(gl_tot_rep or 0) > 0 else (float(gl_op_bal) if float(gl_op_bal or 0) > 0 else float(gl_princ or 0.0))
+            already_paid_gl = max(0.0, total_base_gl - float(gl_due))
             
             with st.container(border=True):
                 st.markdown(f"#### 🪙 Borrower: **{gl_cname}** (Loan: `{gl_no}`, Packet: `{gl_pkt}`, Locker: `{gl_lock}`)")
                 sc1, sc2, sc3, sc4 = st.columns(4)
                 sc1.metric("💵 Principal Loan", f"₹{float(gl_princ):,.2f}")
-                sc2.metric("💳 Total Repayable", f"₹{float(gl_tot_rep or gl_princ):,.2f}")
+                sc2.metric("💳 Total Repayable", f"₹{total_base_gl:,.2f}")
                 sc3.metric("🟢 Repaid So Far", f"₹{already_paid_gl:,.2f}")
                 sc4.metric("🔴 Outstanding Due", f"₹{float(gl_due):,.2f}")
                 st.caption(f"📌 **Pledged Jewels:** {gl_orn} ({float(gl_net):.3f}g net) | **Monthly EMI:** {'₹{:,.2f}'.format(float(gl_inst or 0)) if float(gl_inst or 0) > 0 else '₹0.00'}")
@@ -2308,8 +2312,8 @@ def render_gold_loans():
                 
                 st.markdown("### 2️⃣ Dynamic Loan Terms & Repayment")
                 col_ef1, col_ef2, col_ef3, col_ef4 = st.columns(4)
-                ed_princ = col_ef1.number_input("Sanctioned Principal Amount (₹) *", min_value=100.0, value=float(eg_princ or 1000.0), step=1000.0, disabled=is_closed_gl, help="Original loan principal amount sanctioned against pledged ornaments", key=f"gl_ed_princ_{sel_egl_id}")
-                ed_op_bal = col_ef2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(eg_op_bal or eg_princ), step=500.0, disabled=is_closed_gl, help="Initial opening ledger balance at loan creation", key=f"gl_ed_opbal_{sel_egl_id}")
+                ed_princ = col_ef1.number_input("Sanctioned Principal Amount (₹) *", min_value=0.0, value=float(eg_princ or 0.0), step=1000.0, disabled=is_closed_gl, help="Original loan principal amount sanctioned against pledged ornaments", key=f"gl_ed_princ_{sel_egl_id}")
+                ed_op_bal = col_ef2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(eg_op_bal or eg_princ or 0.0), step=500.0, disabled=is_closed_gl, help="Initial opening ledger balance at loan creation", key=f"gl_ed_opbal_{sel_egl_id}")
                 ed_int_rate = col_ef3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(eg_rate or 12.0), step=0.5, disabled=is_closed_gl, key=f"gl_ed_rate_{sel_egl_id}")
                 ed_tenure_days = col_ef4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(eg_tdays or (eg_tmonths * 30 if eg_tmonths else 365)), step=10, disabled=is_closed_gl, key=f"gl_ed_tday_{sel_egl_id}")
                 
@@ -2356,12 +2360,12 @@ def render_gold_loans():
                 
                 st.markdown("### 5️⃣ Current Outstanding Due Balance")
                 col_gldue1, col_gldue2 = st.columns(2)
-                recalc_gl_due = col_gldue1.checkbox(f"🔄 Reset Outstanding Due to Total Repayable (₹{calc_gl_repayable:,.2f})", value=(float(eg_out_due or 0) == float(eg_tot_rep or 0)), disabled=is_closed_gl, key=f"gl_recalc_due_{sel_egl_id}")
+                recalc_gl_due = col_gldue1.checkbox(f"🔄 Reset Outstanding Due to Total Repayable (₹{calc_gl_repayable:,.2f})", value=(float(eg_out_due or 0) == float(eg_tot_rep or 0) and float(eg_tot_rep or 0) > 0), disabled=is_closed_gl, key=f"gl_recalc_due_{sel_egl_id}")
                 if recalc_gl_due:
                     new_gl_out_due = calc_gl_repayable
                     col_gldue2.info(f"Outstanding Due set to **₹{new_gl_out_due:,.2f}**")
                 else:
-                    new_gl_out_due = col_gldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(eg_out_due or calc_gl_repayable), step=100.0, disabled=is_closed_gl, help="Current unpaid balance owed by the borrower on this gold loan.", key=f"gl_ed_due_{sel_egl_id}")
+                    new_gl_out_due = col_gldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(eg_out_due or eg_op_bal or calc_gl_repayable), step=100.0, disabled=is_closed_gl, help="Current unpaid balance owed by the borrower on this gold loan.", key=f"gl_ed_due_{sel_egl_id}")
                     
                 ed_gl_sched = generate_loan_schedule(new_gl_sdate, ed_princ, calc_gl_interest, tenure_months=ed_tenure_mo, loan_type='GOLD')
                 with st.expander(f"📅 View Updated {len(ed_gl_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
@@ -3067,7 +3071,7 @@ def render_fixed_deposits():
             col_fd1, col_fd2 = st.columns(2)
             with col_fd1:
                 selected_cust = st.selectbox("Select Customer Name for FD", list(cust_dict.keys()), key="fd_cust")
-                principal = st.number_input("Principal Amount (Contracted) (₹)", min_value=100.0, value=10000.0, step=500.0, key="fd_prin")
+                principal = st.number_input("Principal Amount (Contracted) (₹)", min_value=0.0, value=10000.0, step=500.0, key="fd_prin")
                 opening_balance = st.number_input("Opening Balance (₹)", min_value=0.0, value=float(principal), step=500.0, key="fd_open_bal", help="Initial opening ledger balance at account creation (defaults to Principal Amount).")
                 
                 tenure_mode = st.radio("Tenure Unit", ["📅 Days", "🗓️ Months"], horizontal=True, key="fd_tenure_mode")
@@ -3434,7 +3438,7 @@ def render_fixed_deposits():
             with col_fe1:
                 edit_fd_cust_label = st.selectbox("Assigned Customer", list(cust_all_dict.keys()), index=cust_idx, key=f"edit_fd_cust_{c_fd_id}")
                 edit_fd_cust_id = cust_all_dict[edit_fd_cust_label]
-                edit_fd_principal = st.number_input("Principal Amount (₹)", min_value=100.0, value=float(c_principal or 10000.0), step=500.0, key=f"edit_fd_prin_{c_fd_id}")
+                edit_fd_principal = st.number_input("Principal Amount (₹)", min_value=0.0, value=float(c_principal or 0.0), step=500.0, key=f"edit_fd_prin_{c_fd_id}")
                 
                 edit_fd_tenure_days = st.number_input("Tenure (Days)", min_value=1, max_value=3650, value=int(c_tenure_days or (c_tenure * 30 if c_tenure else 365)), step=10, key=f"edit_fd_tenure_days_{c_fd_id}", help="Enter tenure in days")
                 edit_fd_tenure = max(1, int(round(edit_fd_tenure_days / 30.0)))

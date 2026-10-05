@@ -6508,7 +6508,7 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown(f"""
-<div class="user-info">
+<div class="user-info" style="margin-bottom: 12px;">
     👤 Logged in as: <b style="color:white;">{st.session_state.get('username', 'Admin')}</b>
 </div>
 """, unsafe_allow_html=True)
@@ -6526,6 +6526,7 @@ with st.sidebar:
         overflow: hidden;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         user-select: none;
+        padding-top: 8px;
       }
       @keyframes pulse-dot {
         0%, 100% { opacity: 1; transform: scale(1); }
@@ -6618,7 +6619,7 @@ with st.sidebar:
       </script>
     </body>
     </html>
-    """, height=106)
+    """, height=118)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
 
 menu_options = [

@@ -1099,21 +1099,18 @@ def run_query(query, params=(), fetch=True, max_retries=3):
                 cursor.execute(query, params)
             else:
                 cursor.execute(query)
+                
             res = cursor.fetchall() if fetch else None
             conn.commit()
-            release_connection(conn)
+            
             if not fetch:
                 clear_db_cache()
+                
             if res is not None:
                 sanitized = []
                 for row in res:
                     if isinstance(row, (tuple, list)):
-                        new_row = []
-                        for c in row:
-                            if isinstance(c, (memoryview, bytearray)):
-                                new_row.append(bytes(c))
-                            else:
-                                new_row.append(c)
+                        new_row = [bytes(c) if isinstance(c, (memoryview, bytearray)) else c for c in row]
                         sanitized.append(tuple(new_row))
                     else:
                         sanitized.append(row)
@@ -1127,16 +1124,18 @@ def run_query(query, params=(), fetch=True, max_retries=3):
                     conn.rollback()
                 except Exception:
                     pass
-            release_connection(conn, is_broken=True)
             
             # If SSL drop, connection lost, or operational error, reset pool and retry!
             err_msg = str(e).lower()
             if any(s in err_msg for s in ["ssl", "closed unexpectedly", "terminat", "broken", "connection", "operationalerror", "eof"]):
                 reset_pg_pool()
-                time.sleep(0.2 * (attempt + 1))
+                time.sleep(0.1 * (attempt + 1))
                 continue
             else:
                 break
+        finally:
+            if conn is not None:
+                release_connection(conn, is_broken=is_broken)
                 
     try:
         import streamlit as st

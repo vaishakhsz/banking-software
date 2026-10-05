@@ -98,7 +98,7 @@ def parse_postgres_conn_info(raw_url):
                 "password": password,
                 "dbname": dbname,
                 "sslmode": "require",
-                "connect_timeout": 15,
+                "connect_timeout": 5,
                 "keepalives": 1,
                 "keepalives_idle": 10,
                 "keepalives_interval": 5,
@@ -126,6 +126,8 @@ if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url:
 # ----------------------------------------------------
 DB_INITIALIZED = False
 DB_INIT_ERROR = None
+_last_init_attempt = 0
+_INIT_COOLDOWN = 15
 _pg_pool = None
 _pool_lock = threading.Lock()
 
@@ -156,7 +158,7 @@ def get_pg_pool():
             )
         return _pg_pool
 
-def get_connection(retries=3):
+def get_connection(retries=2):
     """
     Get database connection with guaranteed non-blocking fast path and instant fallback.
     Never blocks or hangs.
@@ -179,18 +181,12 @@ def get_connection(retries=3):
                 return conn
             except Exception:
                 reset_pg_pool()
-                time.sleep(0.05 * (attempt + 1))
+                time.sleep(0.05)
                 
-        # Direct guaranteed fallback (never blocks)
+        # Direct guaranteed fallback (max 5s timeout)
         import psycopg2
-        if SUPABASE_URL:
-            try:
-                direct_conn = psycopg2.connect(SUPABASE_URL, connect_timeout=10)
-                direct_conn.autocommit = False
-                return direct_conn
-            except Exception:
-                pass
         params = dict(SUPABASE_CONN_PARAMS)
+        params["connect_timeout"] = 5
         direct_conn = psycopg2.connect(**params)
         direct_conn.autocommit = False
         return direct_conn
@@ -198,7 +194,7 @@ def get_connection(retries=3):
         db_dir = os.path.dirname(DB_NAME)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
-        return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
+        return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=5)
 
 def release_connection(conn, is_broken=False):
     """Safely return connection back to pool for instant reuse or close if broken"""
@@ -447,9 +443,14 @@ SCHEMA_VERSION = 4
 
 def init_db(force=False):
     """Initialize database tables lazily on first query execution with sub-millisecond fast-path check"""
-    global DB_INITIALIZED, DB_INIT_ERROR
+    global DB_INITIALIZED, DB_INIT_ERROR, _last_init_attempt
     if DB_INITIALIZED and not force:
         return True
+    
+    now = time.time()
+    if not force and (now - _last_init_attempt < _INIT_COOLDOWN):
+        return False
+    _last_init_attempt = now
     
     conn = None
     try:
@@ -1071,7 +1072,7 @@ def clear_db_cache():
     except Exception:
         pass
 
-def run_query(query, params=(), fetch=True, max_retries=3):
+def run_query(query, params=(), fetch=True, max_retries=2):
     """Execute a database query with auto-initialization, automatic retry on SSL/connection drops, and connection cleanup"""
     if not DB_INITIALIZED:
         init_db()
@@ -1129,7 +1130,7 @@ def run_query(query, params=(), fetch=True, max_retries=3):
             err_msg = str(e).lower()
             if any(s in err_msg for s in ["ssl", "closed unexpectedly", "terminat", "broken", "connection", "operationalerror", "eof"]):
                 reset_pg_pool()
-                time.sleep(0.1 * (attempt + 1))
+                time.sleep(0.05 * (attempt + 1))
                 continue
             else:
                 break
@@ -1140,7 +1141,9 @@ def run_query(query, params=(), fetch=True, max_retries=3):
     try:
         import streamlit as st
         if hasattr(st, "runtime") and st.runtime.exists():
-            st.error(f"Database error: {str(last_err)}")
+            if not getattr(st.session_state, "_db_warned", False):
+                st.warning("⚡ Database is taking a moment to respond or waking up from sleep. Please refresh if metrics are loading.")
+                st.session_state["_db_warned"] = True
         else:
             print(f"Database error: {str(last_err)}")
     except Exception:

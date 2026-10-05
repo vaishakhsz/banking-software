@@ -2629,11 +2629,16 @@ def render_sb_accounts():
             ORDER BY c.name ASC, c.id ASC
         """)
         if customers:
-            cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
+            cust_dict = {
+                (f"👤 {c[1]} (A/c: {c[2]})" if c[2] else f"👤 {c[1]}"): (c[0], c[2]) 
+                for c in customers
+            }
             col_sb1, col_sb2 = st.columns(2)
             with col_sb1:
-                selected_cust = st.selectbox("Select Customer Name", list(cust_dict.keys()), key="sb_open_cust")
-                cust_id = cust_dict[selected_cust]
+                selected_cust = st.selectbox("Select Customer", list(cust_dict.keys()), key="sb_open_cust")
+                cust_id, reg_acc_no = cust_dict[selected_cust]
+                default_sb_no = str(reg_acc_no).strip() if reg_acc_no and str(reg_acc_no).strip() else f"SB{cust_id:05d}"
+                sb_acc_no_val = st.text_input("SB Account Number", value=default_sb_no, key=f"sb_open_acc_no_{cust_id}", help="Account number for this SB account. Defaults to the registered Customer Account Number.")
                 init_bal = st.number_input("Opening Balance (₹)", min_value=0.0, value=500.0, step=100.0, key="sb_open_bal")
                 sb_int_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=100.0, value=3.5, step=0.01, format="%.2f", key="sb_open_rate")
             with col_sb2:
@@ -2658,9 +2663,19 @@ def render_sb_accounts():
             if st.button("Create SB Account", use_container_width=True, type="primary"):
                 op_date_str = sb_open_date.strftime("%Y-%m-%d")
                 op_bal_date_str = sb_op_bal_date.strftime("%Y-%m-%d")
-                acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
+                acc_no = sb_acc_no_val.strip() if sb_acc_no_val and sb_acc_no_val.strip() else (str(reg_acc_no).strip() if reg_acc_no else f"SB{cust_id:05d}")
+                
+                existing_sb = run_query("SELECT account_no FROM sb_accounts WHERE account_no = ?", (acc_no,))
+                if existing_sb:
+                    st.error(f"❌ SB Account number `{acc_no}` already exists! Please enter a unique SB Account Number.")
+                    st.stop()
+                    
                 run_query("INSERT INTO sb_accounts (account_no, customer_id, balance, opening_balance, interest_rate, created_at) VALUES (?, ?, ?, ?, ?, ?)", 
                           (acc_no, cust_id, init_bal, init_bal, sb_int_rate, op_date_str), fetch=False)
+                
+                # Keep accounts table synced
+                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Savings Account', ?, ?, ?)",
+                          (acc_no, cust_id, init_bal, op_date_str), fetch=False)
                 
                 if init_bal > 0:
                     run_query("INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date) VALUES (?, ?, 'CREDIT', ?, ?, 'Opening Balance Deposit', ?)",
@@ -2991,7 +3006,7 @@ def render_sb_accounts():
                 FROM customers c 
                 ORDER BY c.name ASC, c.id ASC
             """)
-            cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
+            cust_all_dict = {f"👤 {c[1]} (A/c: {c[2]})" if c[2] else f"👤 {c[1]}": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0
             
             try:
@@ -3186,12 +3201,15 @@ def render_fixed_deposits():
     
     with tab1:
         customers = cached_query("""
-            SELECT c.id, c.name, c.street, c.city, c.state, c.pincode 
+            SELECT c.id, c.name, c.street, c.city, c.state, c.pincode, COALESCE(c.account_no, '') 
             FROM customers c 
             ORDER BY c.name ASC, c.id ASC
         """)
         if customers:
-            cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
+            cust_dict = {
+                (f"👤 {c[1]} (A/c: {c[6]})" if len(c) > 6 and c[6] else f"👤 {c[1]}"): c[0]
+                for c in customers
+            }
             next_fd_res = cached_query("SELECT COALESCE(MAX(fd_id), 0) + 1 FROM fixed_deposits")
             next_fd_id = next_fd_res[0][0] if next_fd_res and next_fd_res[0] else 1
 
@@ -3541,7 +3559,7 @@ def render_fixed_deposits():
                 FROM customers c 
                 ORDER BY c.name ASC, c.id ASC
             """)
-            cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
+            cust_all_dict = {f"👤 {c[1]} (A/c: {c[2]})" if c[2] else f"👤 {c[1]}": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0
             
             try:
@@ -3664,12 +3682,15 @@ def render_recurring_deposits():
     
     with tab1:
         customers = cached_query("""
-            SELECT c.id, c.name, c.street, c.city, c.state, c.pincode 
+            SELECT c.id, c.name, c.street, c.city, c.state, c.pincode, COALESCE(c.account_no, '') 
             FROM customers c 
             ORDER BY c.name ASC, c.id ASC
         """)
         if customers:
-            cust_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers}
+            cust_dict = {
+                (f"👤 {c[1]} (A/c: {c[6]})" if len(c) > 6 and c[6] else f"👤 {c[1]}"): c[0]
+                for c in customers
+            }
             col_rd1, col_rd2 = st.columns(2)
             with col_rd1:
                 selected_cust = st.selectbox("Select Customer Name for RD", list(cust_dict.keys()), key="rd_cust")
@@ -4173,7 +4194,7 @@ th {{ background-color: #ebf5fb; }}
                 FROM customers c 
                 ORDER BY c.name ASC, c.id ASC
             """)
-            cust_all_dict = {f"{c[1]} (ID: {c[0]})": c[0] for c in customers_all}
+            cust_all_dict = {f"👤 {c[1]} (A/c: {c[2]})" if c[2] else f"👤 {c[1]}": c[0] for c in customers_all}
             cust_idx = list(cust_all_dict.values()).index(c_cust_id) if c_cust_id in cust_all_dict.values() else 0
             
             try:

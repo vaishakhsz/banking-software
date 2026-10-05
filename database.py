@@ -4608,7 +4608,7 @@ def add_custom_sb_transaction(account_no, tx_date, tx_type, amount, mode, narrat
         release_connection(conn)
 
 
-def create_or_link_sb_opening(cust_id, initial_balance, open_date, interest_rate=3.5, chosen_asset_code="AST-102", op_bal_date=None):
+def create_or_link_sb_opening(cust_id, initial_balance, open_date, interest_rate=3.5, chosen_asset_code="AST-102", op_bal_date=None, custom_acc_no=None):
     """
     Creates a new Savings Bank (SB) account with opening balance for an existing customer,
     generates opening JV (Dr Asset, Cr LIA-101), posts into Cash/Bank book, and transactions table.
@@ -4628,7 +4628,7 @@ def create_or_link_sb_opening(cust_id, initial_balance, open_date, interest_rate
         initial_balance = float(initial_balance or 0.0)
         open_date_str = str(open_date)[:10]
         op_bal_date_str = str(op_bal_date)[:10] if op_bal_date else open_date_str
-        sb_acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
+        sb_acc_no = str(custom_acc_no).strip() if custom_acc_no and str(custom_acc_no).strip() else (str(cust_acc).strip() if cust_acc and str(cust_acc).strip() else f"SB{cust_id:05d}")
 
         rate_val = float(interest_rate if interest_rate is not None else 0.0)
         cursor.execute(f"""

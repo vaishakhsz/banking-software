@@ -965,6 +965,17 @@ def init_db(force=False):
                         JOIN accounts a ON c.id = a.customer_id
                         WHERE a.account_type IN ('Recurring Deposit', 'Fixed Deposit')
                     ) AND balance = 0 AND account_no NOT IN (SELECT DISTINCT account_no FROM transactions WHERE account_no IS NOT NULL);
+                    
+                    UPDATE sb_accounts 
+                    SET opening_balance = 0.0, balance = 500.0, created_at = '2022-10-14'
+                    WHERE account_no = '1111032';
+                    
+                    DELETE FROM transactions 
+                    WHERE account_no = '1111032' AND date = '2022-10-14';
+                    
+                    UPDATE transactions 
+                    SET type = 'CREDIT', amount = 500.0, mode = 'CASH', narration = 'SB Deposit (Daily Collection)', date = '2023-04-05'
+                    WHERE account_no = '1111032' AND (date = '2023-04-05' OR id = 212);
                 """)
             except Exception:
                 pass
@@ -4388,6 +4399,210 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
                 conn.rollback()
             except Exception:
                 pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def update_sb_transaction(tx_id_or_id, new_date, new_type, new_amount, new_mode, new_narration):
+    """
+    Updates an existing transaction in the transactions table,
+    recalculates running balances for the affected SB account,
+    and updates sb_accounts.balance and any linked Cash/Bank Book voucher.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # Find transaction
+        try:
+            int_id = int(tx_id_or_id)
+            cursor.execute(f"SELECT id, tx_id, account_no, type, amount, mode, narration, date FROM transactions WHERE id = {placeholder} OR tx_id = {placeholder}", (int_id, str(tx_id_or_id)))
+        except Exception:
+            cursor.execute(f"SELECT id, tx_id, account_no, type, amount, mode, narration, date FROM transactions WHERE tx_id = {placeholder}", (str(tx_id_or_id),))
+            
+        row = cursor.fetchone()
+        if not row:
+            return False, f"Transaction '{tx_id_or_id}' not found."
+            
+        t_id, t_tx_id, acc_no, old_type, old_amt, old_mode, old_narr, old_date = row
+        new_amt_val = float(new_amount or 0.0)
+        new_date_str = str(new_date)[:10]
+        new_type_clean = "CREDIT" if str(new_type).upper() in ["CREDIT", "DEPOSIT"] else "DEBIT"
+        
+        # Update transaction row
+        cursor.execute(f"""
+            UPDATE transactions 
+            SET date = {placeholder}, type = {placeholder}, amount = {placeholder}, mode = {placeholder}, narration = {placeholder}
+            WHERE id = {placeholder}
+        """, (new_date_str, new_type_clean, new_amt_val, new_mode, new_narration, t_id))
+        
+        # Fetch all transactions for this SB account in chronological order
+        cursor.execute(f"""
+            SELECT id, type, amount FROM transactions 
+            WHERE account_no = {placeholder} 
+            ORDER BY date ASC, id ASC
+        """, (acc_no,))
+        all_txs = cursor.fetchall()
+        
+        # Fetch opening balance from sb_accounts
+        cursor.execute(f"SELECT COALESCE(opening_balance, 0.0) FROM sb_accounts WHERE account_no = {placeholder}", (acc_no,))
+        op_row = cursor.fetchone()
+        op_bal = float(op_row[0] or 0.0) if op_row else 0.0
+        
+        running_bal = op_bal
+        for tx in all_txs:
+            cur_id, cur_type, cur_amt = tx
+            cur_amt_val = float(cur_amt or 0.0)
+            if str(cur_type).upper() in ["CREDIT", "DEPOSIT"]:
+                running_bal += cur_amt_val
+            else:
+                running_bal -= cur_amt_val
+            cursor.execute(f"UPDATE transactions SET balance_after = {placeholder} WHERE id = {placeholder}", (running_bal, cur_id))
+            
+        # Update sb_accounts.balance
+        cursor.execute(f"UPDATE sb_accounts SET balance = {placeholder} WHERE account_no = {placeholder}", (running_bal, acc_no))
+        cursor.execute(f"UPDATE accounts SET balance = {placeholder} WHERE account_number = {placeholder}", (running_bal, acc_no))
+        
+        # Update linked Cash Book / Bank Book if voucher exists
+        if t_tx_id:
+            cursor.execute(f"UPDATE cash_book SET date = {placeholder}, narration = {placeholder} WHERE voucher_no = {placeholder} OR narration LIKE {placeholder}", 
+                           (new_date_str, new_narration, t_tx_id, f"%{t_tx_id}%"))
+            cursor.execute(f"UPDATE bank_book SET date = {placeholder}, narration = {placeholder} WHERE voucher_no = {placeholder} OR narration LIKE {placeholder}", 
+                           (new_date_str, new_narration, t_tx_id, f"%{t_tx_id}%"))
+                           
+        conn.commit()
+        clear_db_cache()
+        return True, f"Transaction updated successfully! New SB Balance for Account `{acc_no}` is ₹{running_bal:,.2f}."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try: conn.rollback()
+            except Exception: pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def delete_sb_transaction_entry(tx_id_or_id):
+    """
+    Deletes a transaction from transactions table,
+    recalculates running balances for the affected SB account,
+    and updates sb_accounts.balance.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # Find transaction
+        try:
+            int_id = int(tx_id_or_id)
+            cursor.execute(f"SELECT id, tx_id, account_no FROM transactions WHERE id = {placeholder} OR tx_id = {placeholder}", (int_id, str(tx_id_or_id)))
+        except Exception:
+            cursor.execute(f"SELECT id, tx_id, account_no FROM transactions WHERE tx_id = {placeholder}", (str(tx_id_or_id),))
+            
+        row = cursor.fetchone()
+        if not row:
+            return False, f"Transaction '{tx_id_or_id}' not found."
+            
+        t_id, t_tx_id, acc_no = row
+        
+        # Delete transaction row
+        cursor.execute(f"DELETE FROM transactions WHERE id = {placeholder}", (t_id,))
+        
+        # Fetch remaining transactions for this SB account
+        cursor.execute(f"""
+            SELECT id, type, amount FROM transactions 
+            WHERE account_no = {placeholder} 
+            ORDER BY date ASC, id ASC
+        """, (acc_no,))
+        all_txs = cursor.fetchall()
+        
+        cursor.execute(f"SELECT COALESCE(opening_balance, 0.0) FROM sb_accounts WHERE account_no = {placeholder}", (acc_no,))
+        op_row = cursor.fetchone()
+        op_bal = float(op_row[0] or 0.0) if op_row else 0.0
+        
+        running_bal = op_bal
+        for tx in all_txs:
+            cur_id, cur_type, cur_amt = tx
+            cur_amt_val = float(cur_amt or 0.0)
+            if str(cur_type).upper() in ["CREDIT", "DEPOSIT"]:
+                running_bal += cur_amt_val
+            else:
+                running_bal -= cur_amt_val
+            cursor.execute(f"UPDATE transactions SET balance_after = {placeholder} WHERE id = {placeholder}", (running_bal, cur_id))
+            
+        cursor.execute(f"UPDATE sb_accounts SET balance = {placeholder} WHERE account_no = {placeholder}", (running_bal, acc_no))
+        cursor.execute(f"UPDATE accounts SET balance = {placeholder} WHERE account_number = {placeholder}", (running_bal, acc_no))
+        
+        conn.commit()
+        clear_db_cache()
+        return True, f"Transaction deleted successfully! Recalculated SB Balance for Account `{acc_no}` is ₹{running_bal:,.2f}."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try: conn.rollback()
+            except Exception: pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
+def add_custom_sb_transaction(account_no, tx_date, tx_type, amount, mode, narration, custom_tx_id=None):
+    """
+    Manually inserts a custom or historical transaction for an SB account
+    and recalculates all progressive running balances.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        tx_date_str = str(tx_date)[:10]
+        amt_val = float(amount or 0.0)
+        type_clean = "CREDIT" if str(tx_type).upper() in ["CREDIT", "DEPOSIT"] else "DEBIT"
+        actual_tx_id = custom_tx_id or f"TX{datetime.now(IST).strftime('%Y%m%d%H%M%S%f')[:18]}"
+        
+        cursor.execute(f"""
+            INSERT INTO transactions (tx_id, account_no, type, amount, mode, narration, date)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (actual_tx_id, account_no, type_clean, amt_val, mode, narration, tx_date_str))
+        
+        # Recalculate
+        cursor.execute(f"""
+            SELECT id, type, amount FROM transactions 
+            WHERE account_no = {placeholder} 
+            ORDER BY date ASC, id ASC
+        """, (account_no,))
+        all_txs = cursor.fetchall()
+        
+        cursor.execute(f"SELECT COALESCE(opening_balance, 0.0) FROM sb_accounts WHERE account_no = {placeholder}", (account_no,))
+        op_row = cursor.fetchone()
+        op_bal = float(op_row[0] or 0.0) if op_row else 0.0
+        
+        running_bal = op_bal
+        for tx in all_txs:
+            cur_id, cur_type, cur_amt = tx
+            cur_amt_val = float(cur_amt or 0.0)
+            if str(cur_type).upper() in ["CREDIT", "DEPOSIT"]:
+                running_bal += cur_amt_val
+            else:
+                running_bal -= cur_amt_val
+            cursor.execute(f"UPDATE transactions SET balance_after = {placeholder} WHERE id = {placeholder}", (running_bal, cur_id))
+            
+        cursor.execute(f"UPDATE sb_accounts SET balance = {placeholder} WHERE account_no = {placeholder}", (running_bal, account_no))
+        cursor.execute(f"UPDATE accounts SET balance = {placeholder} WHERE account_number = {placeholder}", (running_bal, account_no))
+        
+        conn.commit()
+        clear_db_cache()
+        return True, f"Transaction added successfully! New SB Balance for Account `{account_no}` is ₹{running_bal:,.2f}."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try: conn.rollback()
+            except Exception: pass
         return False, str(e)
     finally:
         release_connection(conn)

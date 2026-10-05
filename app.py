@@ -77,6 +77,7 @@ try:
         update_fd_account_details, create_or_link_fd_opening,
         update_rd_account_details, create_or_link_rd_opening,
         get_document_data, delete_document, record_sb_transaction,
+        update_sb_transaction, delete_sb_transaction_entry, add_custom_sb_transaction,
         resequence_all_accounts, reconcile_books, get_all_balances,
         record_cash_book_transaction, update_cash_book_transaction, record_bank_book_transaction,
         calculate_rd_maturity, calculate_rd_accrued_value, get_rd_ledger_rows, record_rd_installment,
@@ -2612,7 +2613,14 @@ def render_gold_loans():
 
 def render_sb_accounts():
     st.title("💰 Savings Bank (SB) Management")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["➕ Open SB Account & Opening Balance", "💳 Transact", "📖 SB Account Passbook", "📋 View Accounts", "✏️ Edit / Delete SB Account & Opening Balance"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "➕ Open SB Account & Opening Balance", 
+        "💳 Transact", 
+        "📖 SB Account Passbook", 
+        "📋 View Accounts", 
+        "✏️ Edit / Delete SB Account & Opening Balance",
+        "✏️ Edit / Correct Passbook Entries"
+    ])
     
     with tab1:
         customers = cached_query("""
@@ -3059,6 +3067,118 @@ def render_sb_accounts():
                             st.error(f"❌ Failed to delete SB Account: {msg}")
         else:
             st.info("No SB accounts available to edit.")
+
+    with tab6:
+        st.subheader("✏️ Edit, Correct & Delete Passbook Entries")
+        st.caption("Select an SB account to view its passbook statement, modify transaction dates, change amounts, edit narrations, or delete erroneous entries with automatic balance recalculation.")
+        
+        all_sb_tx_accs = cached_query("""
+            SELECT s.account_no, c.name, s.balance, s.created_at, COALESCE(s.opening_balance, 0.0) as op_bal
+            FROM sb_accounts s 
+            JOIN customers c ON s.customer_id = c.id
+            ORDER BY c.name ASC, s.account_no ASC
+        """)
+        if all_sb_tx_accs:
+            sb_tx_acc_dict = {f"👤 {r[1]} | A/c: {r[0]} (Bal: ₹{r[2]:,.2f})": r for r in all_sb_tx_accs}
+            sel_tx_label = st.selectbox("Select Customer & SB Account", list(sb_tx_acc_dict.keys()), key="sb_tx_edit_acc_sel")
+            sel_tx_sb = sb_tx_acc_dict[sel_tx_label]
+            acc_edit_no, acc_cust_name, acc_curr_bal, acc_created, acc_op_bal = sel_tx_sb
+            
+            st.info(f"👤 **Customer:** **{acc_cust_name}** &nbsp;|&nbsp; 💳 **SB A/c:** `{acc_edit_no}` &nbsp;|&nbsp; 📅 **A/c Opened:** `{acc_created}` &nbsp;|&nbsp; 💰 **Current Balance:** **₹{acc_curr_bal:,.2f}**")
+            
+            # Fetch all transactions for this account
+            tx_rows = run_query("""
+                SELECT id, date, tx_id, type, amount, mode, narration, balance_after
+                FROM transactions
+                WHERE account_no = ?
+                ORDER BY date ASC, id ASC
+            """, (acc_edit_no,))
+            
+            if tx_rows:
+                df_tx_display = pd.DataFrame(tx_rows, columns=["ID", "Date", "Tx Voucher", "Type", "Amount (₹)", "Mode", "Narration / Particulars", "Balance After (₹)"])
+                st.markdown("##### 📜 Passbook Transaction Ledger")
+                st.dataframe(format_df_dates(df_tx_display), use_container_width=True)
+                
+                st.markdown("---")
+                st.markdown("##### ✏️ Modify or Delete an Existing Entry")
+                
+                # Transaction picker
+                tx_dict = {f"ID #{t[0]} | Date: {t[1]} | {t[3]} ₹{float(t[4] or 0):,.2f} | {t[6]}": t for t in tx_rows}
+                selected_tx_key = st.selectbox("Select Transaction to Edit / Delete", list(tx_dict.keys()), key=f"sel_tx_edit_{acc_edit_no}")
+                chosen_tx = tx_dict[selected_tx_key]
+                t_id, t_date, t_vno, t_type, t_amt, t_mode, t_narr, t_bal_after = chosen_tx
+                
+                try:
+                    t_date_dt = pd.to_datetime(t_date).date() if t_date else date.today()
+                except Exception:
+                    t_date_dt = date.today()
+                    
+                col_e1, col_e2 = st.columns(2)
+                with col_e1:
+                    edit_tx_date = st.date_input("Transaction Date", value=t_date_dt, format="DD-MM-YYYY", key=f"edit_tx_date_{t_id}")
+                    type_idx = 0 if str(t_type).upper() in ["CREDIT", "DEPOSIT"] else 1
+                    edit_tx_type = st.selectbox("Transaction Type", ["DEPOSIT (CREDIT)", "WITHDRAWAL (DEBIT)"], index=type_idx, key=f"edit_tx_type_{t_id}")
+                    edit_tx_amt = st.number_input("Amount (₹)", min_value=0.01, value=float(t_amt or 0.0), step=100.0, key=f"edit_tx_amt_{t_id}")
+                with col_e2:
+                    mode_options = ["Cash in Hand", "Union Bank of India", "State Bank of India", "Online / UPI", "Cheque", "Transfer"]
+                    mode_idx = mode_options.index(t_mode) if t_mode in mode_options else 0
+                    edit_tx_mode = st.selectbox("Payment Mode", mode_options, index=mode_idx, key=f"edit_tx_mode_{t_id}")
+                    edit_tx_narr = st.text_input("Particulars / Narration", value=str(t_narr or ""), key=f"edit_tx_narr_{t_id}")
+                    st.caption(f"Voucher Reference: `{t_vno or 'N/A'}`")
+                
+                col_btn1, col_btn2 = st.columns([3, 1])
+                with col_btn1:
+                    if st.button("💾 Save & Update Transaction", key=f"btn_save_tx_{t_id}", type="primary", use_container_width=True):
+                        clean_type = "CREDIT" if "DEPOSIT" in edit_tx_type else "DEBIT"
+                        success, msg = update_sb_transaction(
+                            t_id, edit_tx_date.strftime("%Y-%m-%d"), clean_type, edit_tx_amt, edit_tx_mode, edit_tx_narr
+                        )
+                        clear_db_cache()
+                        if success:
+                            flash_success(f"✅ {msg}")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Error updating transaction: {msg}")
+                with col_btn2:
+                    with st.popover("🗑️ Delete Entry"):
+                        st.error(f"⚠️ Delete transaction ID #{t_id} ({t_type} ₹{t_amt:,.2f})?")
+                        st.caption("The SB Account balance and passbook statement will be automatically recalculated.")
+                        if st.button("Confirm Delete", key=f"btn_del_tx_{t_id}", type="primary", use_container_width=True):
+                            success, msg = delete_sb_transaction_entry(t_id)
+                            clear_db_cache()
+                            if success:
+                                flash_success(f"✅ {msg}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Error deleting transaction: {msg}")
+            else:
+                st.warning(f"No transactions found for Account `{acc_edit_no}` yet.")
+                
+            st.markdown("---")
+            with st.expander("➕ Add Past / Historical Passbook Entry (Manual Insertion)"):
+                st.caption("Insert a missing deposit or withdrawal entry with a custom historical date.")
+                col_add1, col_add2 = st.columns(2)
+                with col_add1:
+                    add_tx_date = st.date_input("Entry Date", value=date.today(), format="DD-MM-YYYY", key=f"add_tx_date_{acc_edit_no}")
+                    add_tx_type = st.selectbox("Entry Type", ["DEPOSIT (CREDIT)", "WITHDRAWAL (DEBIT)"], key=f"add_tx_type_{acc_edit_no}")
+                    add_tx_amt = st.number_input("Amount (₹)", min_value=0.01, value=500.0, step=100.0, key=f"add_tx_amt_{acc_edit_no}")
+                with col_add2:
+                    add_tx_mode = st.selectbox("Payment Mode", ["Cash in Hand", "Union Bank of India", "State Bank of India", "Online / UPI", "Cheque", "Transfer"], key=f"add_tx_mode_{acc_edit_no}")
+                    add_tx_narr = st.text_input("Narration / Description", value="SB Deposit (Daily Collection)", key=f"add_tx_narr_{acc_edit_no}")
+                    
+                if st.button("➕ Insert Passbook Entry", key=f"btn_add_tx_{acc_edit_no}", type="primary", use_container_width=True):
+                    clean_add_type = "CREDIT" if "DEPOSIT" in add_tx_type else "DEBIT"
+                    success, msg = add_custom_sb_transaction(
+                        acc_edit_no, add_tx_date.strftime("%Y-%m-%d"), clean_add_type, add_tx_amt, add_tx_mode, add_tx_narr
+                    )
+                    clear_db_cache()
+                    if success:
+                        flash_success(f"✅ {msg}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Error adding transaction: {msg}")
+        else:
+            st.info("No SB accounts found.")
 
 def render_fixed_deposits():
     st.title("📈 Fixed Deposits Management")

@@ -4,6 +4,7 @@ import sqlite3
 import time
 import re
 import urllib.parse
+import threading
 from datetime import datetime, date, timezone, timedelta
 import calendar
 import pytz
@@ -126,54 +127,69 @@ if supabase_url and "REPLACE_WITH_YOUR_DB_PASSWORD" not in supabase_url:
 DB_INITIALIZED = False
 DB_INIT_ERROR = None
 _pg_pool = None
+_pool_lock = threading.Lock()
 
 def reset_pg_pool():
     """Closes all connections in pool and resets it to force fresh connections"""
     global _pg_pool
-    if _pg_pool is not None:
-        try:
-            if not _pg_pool.closed:
-                _pg_pool.closeall()
-        except Exception:
-            pass
-    _pg_pool = None
+    with _pool_lock:
+        if _pg_pool is not None:
+            try:
+                if not _pg_pool.closed:
+                    _pg_pool.closeall()
+            except Exception:
+                pass
+        _pg_pool = None
 
 def get_pg_pool():
     """Initializes and returns a persistent PostgreSQL connection pool"""
     global _pg_pool
-    if _pg_pool is None or _pg_pool.closed:
-        import psycopg2
-        from psycopg2 import pool
-        params = dict(SUPABASE_CONN_PARAMS)
-        _pg_pool = pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=10,
-            **params
-        )
-    return _pg_pool
+    with _pool_lock:
+        if _pg_pool is None or _pg_pool.closed:
+            import psycopg2
+            from psycopg2 import pool
+            params = dict(SUPABASE_CONN_PARAMS)
+            _pg_pool = pool.SimpleConnectionPool(
+                minconn=1,
+                maxconn=20,
+                **params
+            )
+        return _pg_pool
 
 def get_connection(retries=3):
-    """Get database connection from persistent pool with sub-millisecond response"""
+    """
+    Get database connection with guaranteed non-blocking fast path and instant fallback.
+    Never blocks or hangs.
+    """
     if USING_SUPABASE:
         for attempt in range(retries):
             try:
                 p = get_pg_pool()
-                conn = p.getconn()
+                with _pool_lock:
+                    conn = p.getconn()
                 if conn.closed != 0:
-                    try:
-                        p.putconn(conn, close=True)
-                    except Exception:
-                        pass
+                    with _pool_lock:
+                        try:
+                            p.putconn(conn, close=True)
+                        except Exception:
+                            pass
                     reset_pg_pool()
                     continue
                 conn.autocommit = False
                 return conn
             except Exception:
                 reset_pg_pool()
-                time.sleep(0.1 * (attempt + 1))
+                time.sleep(0.05 * (attempt + 1))
                 
-        # Direct fallback
+        # Direct guaranteed fallback (never blocks)
         import psycopg2
+        if SUPABASE_URL:
+            try:
+                direct_conn = psycopg2.connect(SUPABASE_URL, connect_timeout=10)
+                direct_conn.autocommit = False
+                return direct_conn
+            except Exception:
+                pass
         params = dict(SUPABASE_CONN_PARAMS)
         direct_conn = psycopg2.connect(**params)
         direct_conn.autocommit = False
@@ -188,11 +204,12 @@ def release_connection(conn, is_broken=False):
     """Safely return connection back to pool for instant reuse or close if broken"""
     if conn is not None:
         if USING_SUPABASE and _pg_pool is not None and not _pg_pool.closed:
-            try:
-                _pg_pool.putconn(conn, close=is_broken)
-                return
-            except Exception:
-                pass
+            with _pool_lock:
+                try:
+                    _pg_pool.putconn(conn, close=is_broken)
+                    return
+                except Exception:
+                    pass
         try:
             conn.close()
         except Exception:

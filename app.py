@@ -2771,7 +2771,7 @@ def render_sb_accounts():
         st.subheader("📖 Savings Bank (SB) Account Passbook & Statement")
         all_sb_pb = cached_query("""
             SELECT s.account_no, c.name, s.balance, s.interest_rate, s.created_at, c.phone, 
-                   c.street, c.city, c.state, c.pincode, c.id as cust_id
+                   c.street, c.city, c.state, c.pincode, c.id as cust_id, COALESCE(s.opening_balance, 0.0) as op_bal
             FROM sb_accounts s 
             JOIN customers c ON s.customer_id = c.id
             ORDER BY c.name ASC, s.account_no ASC
@@ -2780,7 +2780,7 @@ def render_sb_accounts():
             sb_pb_dict = {f"👤 {r[1]} | A/c: {r[0]} (Bal: ₹{r[2]:,.2f})": r for r in all_sb_pb}
             sel_pb_label = st.selectbox("Select Customer & SB Account", list(sb_pb_dict.keys()), key="sb_pb_select_acc")
             sel_sb = sb_pb_dict[sel_pb_label]
-            pb_acc_no, pb_cust_name, pb_balance, pb_rate, pb_created, pb_phone, pb_street, pb_city, pb_state, pb_pincode, pb_cust_id = sel_sb
+            pb_acc_no, pb_cust_name, pb_balance, pb_rate, pb_created, pb_phone, pb_street, pb_city, pb_state, pb_pincode, pb_cust_id, pb_op_bal = sel_sb
 
             pb_addr_parts = [p.strip() for p in [pb_street, pb_city, pb_state] if p and str(p).strip()]
             pb_address = ", ".join(pb_addr_parts)
@@ -2799,10 +2799,27 @@ def render_sb_accounts():
 
             # Build ledger & calculate running balances
             ledger_rows = []
-            running_bal = 0.0
+            op_balance = float(pb_op_bal or 0.0)
+            running_bal = op_balance
             tot_deposits = 0.0
             tot_withdrawals = 0.0
-            op_balance = 0.0
+            open_date_str = str(pb_created or date.today())
+
+            has_explicit_opening = False
+            if tx_data:
+                has_explicit_opening = any("opening" in str(tx[2] or "").lower() for tx in tx_data)
+
+            if not has_explicit_opening:
+                # Always include the Account Opened / Initial Balance row at the top of the passbook
+                ledger_rows.append({
+                    "Date": open_date_str,
+                    "Tx ID": "A/C-OPEN",
+                    "Particulars": f"A/c Opened (Opening Balance: ₹{op_balance:,.2f})" if op_balance > 0 else "A/c Opened (Nil Opening Balance)",
+                    "Mode": "CASH",
+                    "Debit (₹)": 0.0,
+                    "Credit (₹)": op_balance,
+                    "Balance (₹)": op_balance
+                })
 
             if tx_data:
                 for tx in tx_data:
@@ -2811,42 +2828,39 @@ def render_sb_accounts():
                     t_type_str = str(t_type or "").upper()
                     is_opening = "opening" in str(t_narr or "").lower()
 
-                    if t_type_str in ["CREDIT", "DEPOSIT"]:
-                        dr = 0.0
-                        cr = t_amt
-                        running_bal = round(running_bal + t_amt, 2)
-                        if is_opening:
-                            op_balance = t_amt
-                        else:
+                    if is_opening and has_explicit_opening:
+                        op_balance = t_amt
+                        running_bal = t_amt
+                        ledger_rows.append({
+                            "Date": str(t_date),
+                            "Tx ID": str(t_id or "A/C-OPEN"),
+                            "Particulars": str(t_narr or "Opening Balance Deposit"),
+                            "Mode": str(t_mode or "CASH"),
+                            "Debit (₹)": 0.0,
+                            "Credit (₹)": t_amt,
+                            "Balance (₹)": running_bal
+                        })
+                    else:
+                        if t_type_str in ["CREDIT", "DEPOSIT"]:
+                            dr = 0.0
+                            cr = t_amt
+                            running_bal = round(running_bal + t_amt, 2)
                             tot_deposits = round(tot_deposits + t_amt, 2)
-                    else: # DEBIT / WITHDRAWAL
-                        dr = t_amt
-                        cr = 0.0
-                        running_bal = round(running_bal - t_amt, 2)
-                        tot_withdrawals = round(tot_withdrawals + t_amt, 2)
+                        else: # DEBIT / WITHDRAWAL
+                            dr = t_amt
+                            cr = 0.0
+                            running_bal = round(running_bal - t_amt, 2)
+                            tot_withdrawals = round(tot_withdrawals + t_amt, 2)
 
-                    ledger_rows.append({
-                        "Date": str(t_date),
-                        "Tx ID": str(t_id or "-"),
-                        "Particulars": str(t_narr or "-"),
-                        "Mode": str(t_mode or "CASH"),
-                        "Debit (₹)": dr,
-                        "Credit (₹)": cr,
-                        "Balance (₹)": running_bal
-                    })
-            else:
-                # If no transactions in DB, show opening balance row
-                op_balance = float(pb_balance or 0.0)
-                running_bal = op_balance
-                ledger_rows.append({
-                    "Date": str(pb_created or date.today()),
-                    "Tx ID": "OP-BAL",
-                    "Particulars": "Opening Balance Deposit",
-                    "Mode": "CASH",
-                    "Debit (₹)": 0.0,
-                    "Credit (₹)": op_balance,
-                    "Balance (₹)": op_balance
-                })
+                        ledger_rows.append({
+                            "Date": str(t_date),
+                            "Tx ID": str(t_id or "-"),
+                            "Particulars": str(t_narr or "-"),
+                            "Mode": str(t_mode or "CASH"),
+                            "Debit (₹)": dr,
+                            "Credit (₹)": cr,
+                            "Balance (₹)": running_bal
+                        })
 
             df_tx_ledger = pd.DataFrame(ledger_rows)
 

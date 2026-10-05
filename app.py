@@ -6358,19 +6358,113 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+with st.sidebar:
+    components.html("""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        background: transparent;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        user-select: none;
+      }
+      @keyframes pulse-dot {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.4; transform: scale(0.85); }
+      }
+      .clock-card {
+        text-align: center;
+        background: linear-gradient(135deg, rgba(8, 24, 48, 0.88) 0%, rgba(15, 38, 70, 0.78) 100%);
+        padding: 12px 10px 10px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+        width: 100%;
+      }
+      .clock-title {
+        color: #cbd5e1;
+        font-size: 10.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1.4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        margin-bottom: 7px;
+      }
+      .live-dot {
+        width: 7px;
+        height: 7px;
+        background: #38bdf8;
+        border-radius: 50%;
+        display: inline-block;
+        animation: pulse-dot 1.5s infinite ease-in-out;
+      }
+      .clock-time {
+        color: #ffffff;
+        font-size: 21px;
+        font-weight: 800;
+        font-family: 'Consolas', 'Courier New', monospace;
+        letter-spacing: 1.2px;
+        margin: 0 0 6px 0;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        line-height: 1.2;
+      }
+      .clock-date {
+        color: #94a3b8;
+        font-size: 11.5px;
+        font-weight: 500;
+        opacity: 0.95;
+        letter-spacing: 0.3px;
+        line-height: 1.2;
+      }
+    </style>
+    </head>
+    <body>
+      <div class="clock-card">
+        <div class="clock-title">
+          <span class="live-dot"></span>
+          IST Live Clock
+        </div>
+        <div id="ist-time" class="clock-time">--:--:-- --</div>
+        <div id="ist-date" class="clock-date">-- --- ----</div>
+      </div>
+
+      <script>
+        function updateClock() {
+          try {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: true
+            });
+            const dateStr = now.toLocaleDateString('en-GB', {
+              timeZone: 'Asia/Kolkata',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric'
+            });
+            const timeEl = document.getElementById('ist-time');
+            const dateEl = document.getElementById('ist-date');
+            if (timeEl) timeEl.innerText = timeStr;
+            if (dateEl) dateEl.innerText = dateStr;
+          } catch (e) {}
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+      </script>
+    </body>
+    </html>
+    """, height=106)
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
-now_ist = datetime.now(IST)
-st.sidebar.markdown(f"""
-<div style="text-align: center; background: linear-gradient(135deg, rgba(8, 24, 48, 0.88) 0%, rgba(15, 38, 70, 0.78) 100%); padding: 12px 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.16); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28); margin-bottom: 8px;">
-    <div style="color: #cbd5e1; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.4px; display: flex; align-items: center; justify-content: center; gap: 7px; margin-bottom: 5px;">
-        <span style="width: 7px; height: 7px; background: #38bdf8; border-radius: 50%; display: inline-block;"></span>
-        IST Time
-    </div>
-    <div style="color: #ffffff; font-size: 19px; font-weight: 800; font-family: 'Consolas', 'Courier New', monospace; letter-spacing: 1.2px; margin: 0 0 4px 0;">{now_ist.strftime('%I:%M %p')}</div>
-    <div style="color: #94a3b8; font-size: 11.5px; font-weight: 500;">{now_ist.strftime('%d %b %Y')}</div>
-</div>
-<hr class='sidebar-divider'>
-""", unsafe_allow_html=True)
 
 menu_options = [
     "📊 Dashboard",

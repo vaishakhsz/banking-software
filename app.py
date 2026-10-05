@@ -2627,7 +2627,7 @@ def render_sb_accounts():
                 selected_cust = st.selectbox("Select Customer Name", list(cust_dict.keys()), key="sb_open_cust")
                 cust_id = cust_dict[selected_cust]
                 init_bal = st.number_input("Opening Balance (₹)", min_value=0.0, value=500.0, step=100.0, key="sb_open_bal")
-                sb_int_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=3.5, step=0.25, key="sb_open_rate")
+                sb_int_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=100.0, value=3.5, step=0.01, format="%.2f", key="sb_open_rate")
             with col_sb2:
                 sb_open_date = st.date_input("A/c Opening Date", value=date.today(), format="DD-MM-YYYY", key="sb_open_date_input")
                 sb_op_bal_date = st.date_input("Opening Balance Date", value=date.today(), format="DD-MM-YYYY", key="sb_op_bal_date_input")
@@ -2833,7 +2833,7 @@ def render_sb_accounts():
                 "cust_name": pb_cust_name,
                 "phone": pb_phone or "N/A",
                 "created_at": str(pb_created or date.today()),
-                "rate": float(pb_rate or 3.5),
+                "rate": float(pb_rate if pb_rate is not None else 0.0),
                 "balance": float(pb_balance or running_bal),
                 "opening_balance": op_balance,
                 "total_deposits": tot_deposits,
@@ -2853,7 +2853,7 @@ def render_sb_accounts():
                     <span style="background-color: #e0f2fe; color: #0369a1; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;">Savings Bank (SB)</span>
                 </div>
                 <div style="color: #64748b; font-size: 13px;">
-                    📞 <b>Contact:</b> {pb_phone or 'N/A'} &nbsp;|&nbsp; 📅 <b>Opened:</b> {pb_created} &nbsp;|&nbsp; 📈 <b>Interest Rate:</b> {pb_rate}% p.a. &nbsp;|&nbsp; 🏠 <b>Address:</b> {pb_address}
+                    📞 <b>Contact:</b> {pb_phone or 'N/A'} &nbsp;|&nbsp; 📅 <b>Opened:</b> {pb_created} &nbsp;|&nbsp; 📈 <b>Interest Rate:</b> {float(pb_rate if pb_rate is not None else 0.0):.2f}% p.a. &nbsp;|&nbsp; 🏠 <b>Address:</b> {pb_address}
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -2903,6 +2903,38 @@ def render_sb_accounts():
                     use_container_width=True,
                     key=f"sb_tab_csv_dl_{pb_acc_no}"
                 )
+
+            st.markdown("---")
+            with st.expander("🗑️ **Delete / Correct Passbook Transaction Entry**", expanded=False):
+                st.caption("Select any individual transaction entry from this passbook to delete. The SB account balance, passbook metrics, and general ledger will be automatically recalculated.")
+                tx_raw_list = run_query("""
+                    SELECT id, date, tx_id, type, amount, narration, mode
+                    FROM transactions
+                    WHERE account_no = ?
+                    ORDER BY date DESC, id DESC
+                """, (pb_acc_no,))
+                
+                if tx_raw_list:
+                    tx_map = {
+                        f"📅 {r[1]} | Tx #{r[0]} ({r[2] or '-'}) | {r[3]} ₹{float(r[4] or 0.0):,.2f} | {r[5] or '-'} [{r[6] or 'CASH'}]": r[0]
+                        for r in tx_raw_list
+                    }
+                    del_tx_sel = st.selectbox("Select Transaction Entry to Delete", list(tx_map.keys()), key=f"sel_del_tx_{pb_acc_no}")
+                    selected_tx_id = tx_map[del_tx_sel]
+                    
+                    with st.popover("🗑️ Delete Selected Transaction"):
+                        st.error(f"⚠️ Are you sure you want to delete Transaction Entry #{selected_tx_id} for **{pb_cust_name}** (A/c: `{pb_acc_no}`)?")
+                        st.caption("This action is permanent and will automatically recalculate the account balance and ledger.")
+                        if st.button("Confirm Delete Transaction", key=f"btn_confirm_del_tx_{selected_tx_id}", type="primary", use_container_width=True):
+                            success, msg = delete_transaction_entry(selected_tx_id)
+                            clear_db_cache()
+                            if success:
+                                flash_success(f"✅ {msg}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to delete transaction: {msg}")
+                else:
+                    st.info("No transaction entries found to delete for this account.")
         else:
             st.info("No active SB accounts found to generate passbook.")
 
@@ -2974,7 +3006,7 @@ def render_sb_accounts():
                 edit_sb_op_bal = st.number_input("Opening Balance (₹)", min_value=0.0, value=float(c_op_bal or 0.0), step=100.0, key=f"edit_sb_opbal_{c_acc_no}", help="Initial ledger opening balance when the SB account was created.")
                 edit_sb_bal = st.number_input("Current SB Balance (₹)", min_value=0.0, value=float(c_bal or 0.0), step=100.0, key=f"edit_sb_bal_{c_acc_no}", help="Current available balance in this SB account.")
             with col_sb_e2:
-                edit_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=20.0, value=float(c_rate or 3.5), step=0.25, key=f"edit_sb_rate_{c_acc_no}")
+                edit_sb_rate = st.number_input("Interest Rate (% p.a.)", min_value=0.0, max_value=100.0, value=float(c_rate if c_rate is not None else 0.0), step=0.01, format="%.2f", key=f"edit_sb_rate_{c_acc_no}")
                 edit_sb_created = st.date_input("A/c Opening Date", value=c_created_dt, format="DD-MM-YYYY", key=f"edit_sb_created_{c_acc_no}")
                 edit_sb_op_date = st.date_input("Opening Balance Date", value=sb_op_bal_dt, format="DD-MM-YYYY", key=f"edit_sb_op_date_{c_acc_no}")
                 
@@ -6094,25 +6126,19 @@ def verify_auth_token(token: str):
 
 def get_login_status():
     if st.session_state.get('logged_in'):
-        if "auth" not in st.query_params:
-            auth_token = generate_auth_token(st.session_state.get('username', 'admin'))
-            if auth_token:
-                st.query_params["auth"] = auth_token
         return True
     
     # Check URL query params for persistent session across browser refresh
-    token = st.query_params.get("auth")
-    if token:
-        valid_user = verify_auth_token(token)
-        if valid_user:
-            st.session_state.logged_in = True
-            st.session_state.username = valid_user
-            return True
-        else:
-            try:
-                del st.query_params["auth"]
-            except Exception:
-                pass
+    try:
+        token = st.query_params.get("auth")
+        if token:
+            valid_user = verify_auth_token(token)
+            if valid_user:
+                st.session_state.logged_in = True
+                st.session_state.username = valid_user
+                return True
+    except Exception:
+        pass
 
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -6333,126 +6359,18 @@ st.sidebar.markdown(f"""
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
-with st.sidebar:
-    components.html("""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        background: transparent;
-        overflow: hidden;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        user-select: none;
-      }
-      .clock-card {
-        text-align: center;
-        background: linear-gradient(135deg, rgba(8, 24, 48, 0.88) 0%, rgba(15, 38, 70, 0.78) 100%);
-        padding: 14px 12px 13px 12px;
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.1);
-        width: 100%;
-      }
-      @keyframes pulse-dot {
-        0% {
-          opacity: 1;
-          transform: scale(1);
-          box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7);
-        }
-        50% {
-          opacity: 0.3;
-          transform: scale(0.85);
-          box-shadow: 0 0 8px 3px rgba(56, 189, 248, 0.9);
-        }
-        100% {
-          opacity: 1;
-          transform: scale(1);
-          box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7);
-        }
-      }
-      .clock-title {
-        color: #cbd5e1;
-        font-size: 10.5px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 1.4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 7px;
-        margin-bottom: 7px;
-      }
-      .live-dot {
-        width: 7px;
-        height: 7px;
-        background: #38bdf8;
-        border-radius: 50%;
-        display: inline-block;
-        animation: pulse-dot 1.5s infinite ease-in-out;
-      }
-      .clock-time {
-        color: #ffffff;
-        font-size: 21px;
-        font-weight: 800;
-        font-family: 'Consolas', 'Courier New', monospace;
-        letter-spacing: 1.2px;
-        margin: 0 0 6px 0;
-        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
-        line-height: 1.2;
-      }
-      .clock-date {
-        color: #94a3b8;
-        font-size: 11.5px;
-        font-weight: 500;
-        opacity: 0.95;
-        letter-spacing: 0.3px;
-        line-height: 1.2;
-      }
-    </style>
-    </head>
-    <body>
-      <div class="clock-card">
-        <div class="clock-title">
-          <span class="live-dot"></span>
-          IST Live Clock
-        </div>
-        <div id="ist-time" class="clock-time">--:--:-- --</div>
-        <div id="ist-date" class="clock-date">-- --- ----</div>
-      </div>
-
-      <script>
-        function updateClock() {
-          try {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('en-US', {
-              timeZone: 'Asia/Kolkata',
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-              hour12: true
-            });
-            const dateStr = now.toLocaleDateString('en-GB', {
-              timeZone: 'Asia/Kolkata',
-              day: '2-digit',
-              month: 'short',
-              year: 'numeric'
-            });
-            const timeEl = document.getElementById('ist-time');
-            const dateEl = document.getElementById('ist-date');
-            if (timeEl) timeEl.innerText = timeStr;
-            if (dateEl) dateEl.innerText = dateStr;
-          } catch (e) {}
-        }
-        updateClock();
-        setInterval(updateClock, 1000);
-      </script>
-    </body>
-    </html>
-    """, height=106)
-st.sidebar.markdown("<hr class='sidebar-divider'>", unsafe_allow_html=True)
+now_ist = datetime.now(IST)
+st.sidebar.markdown(f"""
+<div style="text-align: center; background: linear-gradient(135deg, rgba(8, 24, 48, 0.88) 0%, rgba(15, 38, 70, 0.78) 100%); padding: 12px 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.16); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28); margin-bottom: 8px;">
+    <div style="color: #cbd5e1; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.4px; display: flex; align-items: center; justify-content: center; gap: 7px; margin-bottom: 5px;">
+        <span style="width: 7px; height: 7px; background: #38bdf8; border-radius: 50%; display: inline-block;"></span>
+        IST Time
+    </div>
+    <div style="color: #ffffff; font-size: 19px; font-weight: 800; font-family: 'Consolas', 'Courier New', monospace; letter-spacing: 1.2px; margin: 0 0 4px 0;">{now_ist.strftime('%I:%M %p')}</div>
+    <div style="color: #94a3b8; font-size: 11.5px; font-weight: 500;">{now_ist.strftime('%d %b %Y')}</div>
+</div>
+<hr class='sidebar-divider'>
+""", unsafe_allow_html=True)
 
 menu_options = [
     "📊 Dashboard",

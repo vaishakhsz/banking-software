@@ -3952,21 +3952,60 @@ def delete_jv_entry(del_jv_id):
 
 def delete_transaction_entry(del_id):
     """
-    Deletes a savings account transaction and resequences transactions.id (1..N).
+    Deletes a savings account transaction, recalculates the SB account balance and accounts table balance,
+    cleans up linked Book/JV entries if any, resequences transactions.id (1..N), and syncs running balances.
     """
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch transaction details before deletion
+        cursor.execute(f"SELECT account_no, type, amount, tx_id, narration, date FROM transactions WHERE id = {placeholder}", (del_id,))
+        tx_row = cursor.fetchone()
+        if not tx_row:
+            return False, f"Transaction #{del_id} not found."
+            
+        acc_no, tx_type, amount, tx_id, narration, tx_date = tx_row
+        
+        # 2. Delete transaction row
+        cursor.execute(f"DELETE FROM transactions WHERE id = {placeholder}", (del_id,))
+        
+        # 3. Clean up linked Book / JV entries if tx_id is present
+        if tx_id:
+            cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{tx_id}%",))
+            cursor.execute(f"DELETE FROM bank_book WHERE narration LIKE {placeholder} OR particulars LIKE {placeholder}", (f"%{tx_id}%", f"%{tx_id}%"))
+            cursor.execute(f"DELETE FROM cash_book WHERE narration LIKE {placeholder} OR particulars LIKE {placeholder}", (f"%{tx_id}%", f"%{tx_id}%"))
+            
+        # 4. Recalculate SB Account balance
+        new_bal = 0.0
+        if acc_no:
+            cursor.execute(f"""
+                SELECT COALESCE(SUM(CASE WHEN UPPER(type) IN ('CREDIT', 'DEPOSIT') THEN amount ELSE -amount END), 0)
+                FROM transactions
+                WHERE account_no = {placeholder}
+            """, (acc_no,))
+            bal_row = cursor.fetchone()
+            new_bal = float(bal_row[0] or 0.0) if bal_row else 0.0
+            
+            cursor.execute(f"UPDATE sb_accounts SET balance = {placeholder} WHERE account_no = {placeholder}", (new_bal, acc_no))
+            cursor.execute(f"UPDATE accounts SET balance = {placeholder} WHERE account_number = {placeholder}", (new_bal, acc_no))
+            
+        # 5. Resequence transactions (1..N)
         if USING_SUPABASE:
-            cursor.execute("DELETE FROM transactions WHERE id = %s", (del_id,))
-            cursor.execute("UPDATE transactions SET id = -id WHERE id > %s", (del_id,))
-            cursor.execute("UPDATE transactions SET id = (-id) - 1 WHERE id < 0")
             cursor.execute("""
                 DO $$
                 DECLARE
+                    rec RECORD;
+                    new_id INT := 1;
                     max_id BIGINT;
                 BEGIN
+                    UPDATE transactions SET id = -id;
+                    FOR rec IN SELECT id FROM transactions ORDER BY -id ASC LOOP
+                        UPDATE transactions SET id = new_id WHERE id = rec.id;
+                        new_id := new_id + 1;
+                    END LOOP;
                     SELECT COALESCE(MAX(id), 0) INTO max_id FROM transactions;
                     IF max_id = 0 THEN
                         EXECUTE 'ALTER SEQUENCE transactions_id_seq RESTART WITH 1';
@@ -3976,12 +4015,18 @@ def delete_transaction_entry(del_id):
                 END $$;
             """)
         else:
-            cursor.execute("DELETE FROM transactions WHERE id = ?", (del_id,))
-            cursor.execute("UPDATE transactions SET id = -id WHERE id > ?", (del_id,))
-            cursor.execute("UPDATE transactions SET id = (-id) - 1 WHERE id < 0")
+            cursor.execute("SELECT id FROM transactions ORDER BY id ASC")
+            rows = cursor.fetchall()
+            cursor.execute("UPDATE transactions SET id = -id")
+            for new_id, (old_neg_id,) in enumerate(rows, 1):
+                cursor.execute("UPDATE transactions SET id = ? WHERE id = ?", (new_id, -old_neg_id))
+                
+        # 6. Sync running balances for cash book and bank book
+        _sync_book_balances(cursor, placeholder)
+        
         conn.commit()
         clear_db_cache()
-        return True, f"Transaction #{del_id} deleted and resequenced successfully."
+        return True, f"Transaction #{del_id} deleted successfully. Updated account balance: ₹{new_bal:,.2f}"
     except Exception as e:
         if conn and USING_SUPABASE:
             try:
@@ -4020,7 +4065,7 @@ def delete_sb_account_entry(account_no):
         
         # 4. Delete SB account and customer account
         cursor.execute(f"DELETE FROM sb_accounts WHERE account_no = {placeholder}", (account_no,))
-        cursor.execute(f"DELETE FROM accounts WHERE account_number = {placeholder} OR (customer_id = {placeholder} AND account_type IN ('Savings Account', 'Savings Bank', 'SB'))", (account_no, cust_id))
+        cursor.execute(f"DELETE FROM accounts WHERE account_number = {placeholder}", (account_no,))
         
         # 5. Resequence transactions
         if USING_SUPABASE:
@@ -4148,13 +4193,14 @@ def update_sb_account_details(old_acc_no, new_acc_no, new_cust_id, new_balance, 
         op_bal_dt_str = str(new_op_bal_date)[:10] if new_op_bal_date else created_dt_str
         today_time = f"{op_bal_dt_str} 12:00"
         actual_op_bal = float(new_op_bal) if new_op_bal is not None else float(new_balance or 0.0)
+        rate_val = float(new_rate if new_rate is not None else 0.0)
         
         # 2. Update sb_accounts (stores A/c Opening Date & Opening Balance)
         cursor.execute(f"""
             UPDATE sb_accounts 
             SET account_no = {placeholder}, customer_id = {placeholder}, balance = {placeholder}, opening_balance = {placeholder}, interest_rate = {placeholder}, created_at = {placeholder}
             WHERE account_no = {placeholder}
-        """, (new_acc_no, new_cust_id, new_balance, actual_op_bal, new_rate, created_dt_str, old_acc_no))
+        """, (new_acc_no, new_cust_id, new_balance, actual_op_bal, rate_val, created_dt_str, old_acc_no))
         
         # 3. Update accounts table
         cursor.execute(f"""
@@ -4350,10 +4396,11 @@ def create_or_link_sb_opening(cust_id, initial_balance, open_date, interest_rate
         op_bal_date_str = str(op_bal_date)[:10] if op_bal_date else open_date_str
         sb_acc_no = f"SB{datetime.now(IST).strftime('%Y%m%d%H%M%S')}"
 
+        rate_val = float(interest_rate if interest_rate is not None else 0.0)
         cursor.execute(f"""
             INSERT INTO sb_accounts (account_no, customer_id, balance, opening_balance, interest_rate, created_at)
             VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
-        """, (sb_acc_no, cust_id, initial_balance, initial_balance, float(interest_rate or 3.5), open_date_str))
+        """, (sb_acc_no, cust_id, initial_balance, initial_balance, rate_val, open_date_str))
 
         cursor.execute(f"""
             INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at)

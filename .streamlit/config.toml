@@ -11,11 +11,8 @@ font = "sans serif"
 
 [server]
 headless = true
-fileWatcherType = "auto"
-runOnSave = true
-enableCORS = false
-enableXsrfProtection = false
 maxUploadSize = 50
 
 [browser]
 gatherUsageStats = false
+

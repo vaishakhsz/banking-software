@@ -59,7 +59,12 @@ def get_vsquare_favicon_b64():
 
 # Import database layer
 try:
+    import importlib
     import database
+    try:
+        importlib.reload(database)
+    except Exception:
+        pass
     from database import (
         IST, DB_NAME, USING_SUPABASE, run_query, cached_query, clear_db_cache, save_uploaded_file, 
         get_account_balance_from_jv, get_cash_balance, get_bank_balance,
@@ -67,7 +72,7 @@ try:
         post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
         get_connection, release_connection, sync_db_sequences,
         get_all_gold_loans_bundle, get_all_personal_loans_bundle,
-        delete_customer_cascade, delete_personal_loan_entry, delete_personal_loan_repayment_entry, delete_gold_loan_entry,
+        delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
         delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
         delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
         resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
@@ -85,6 +90,7 @@ try:
         resequence_rd_installments, pay_rd_installment, record_personal_loan_repayment, record_gold_loan_repayment,
         init_db, generate_loan_schedule
     )
+    delete_personal_loan_repayment_entry = getattr(database, 'delete_personal_loan_repayment_entry', None)
 except Exception as e:
     import traceback
     st.error(f"⚠️ Critical Database Import Error: {e}")
@@ -1676,7 +1682,11 @@ def render_personal_loans():
                         col_del1, col_del2 = st.columns([1, 3])
                         with col_del1:
                             if st.button("🗑️ Confirm Delete Repayment", type="primary", key=f"btn_del_rep_{r_id}_{sel_pr_id}"):
-                                ok, msg = delete_personal_loan_repayment_entry(r_id)
+                                del_fn = getattr(database, 'delete_personal_loan_repayment_entry', delete_personal_loan_repayment_entry)
+                                if del_fn:
+                                    ok, msg = del_fn(r_id)
+                                else:
+                                    ok, msg = False, "delete_personal_loan_repayment_entry function is currently reloading."
                                 if ok:
                                     st.success(f"✅ {msg}")
                                     time.sleep(1)

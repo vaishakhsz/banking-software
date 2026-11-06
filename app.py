@@ -67,7 +67,7 @@ try:
         post_compound_jv, get_account_name, fetch_cb_voucher, fetch_bb_voucher, fetch_jv_voucher,
         get_connection, release_connection, sync_db_sequences,
         get_all_gold_loans_bundle, get_all_personal_loans_bundle,
-        delete_customer_cascade, delete_personal_loan_entry, delete_gold_loan_entry,
+        delete_customer_cascade, delete_personal_loan_entry, delete_personal_loan_repayment_entry, delete_gold_loan_entry,
         delete_fd_entry, delete_rd_entry, delete_jv_entry, delete_transaction_entry,
         delete_sb_account_entry, delete_cash_book_entry, delete_bank_book_entry,
         resequence_customers, resequence_cash_book, resequence_bank_book, resequence_entire_database,
@@ -1102,11 +1102,19 @@ def render_personal_loans():
             st.rerun()
 
     with tab2:
-        st.subheader("💳 Record Loan Repayment / Collect Installment")
-        active_loans = [
-            r for r in all_pl_data 
-            if r[29] not in ('CLOSED', 'SETTLED') and (float(r[21] or 0) > 0 or float(r[37] or 0) > 0 or float(r[13] or r[7] or 0) > 0)
-        ]
+        col_t2_head, col_t2_chk = st.columns([3, 1])
+        with col_t2_head:
+            st.subheader("💳 Record Loan Repayment / Collect Installment")
+        with col_t2_chk:
+            show_all_pl = st.checkbox("Show All / Closed Loans", value=False, key="pl_rep_show_all")
+            
+        if show_all_pl:
+            active_loans = all_pl_data
+        else:
+            active_loans = [
+                r for r in all_pl_data 
+                if r[29] not in ('CLOSED', 'SETTLED') and (float(r[21] or 0) > 0 or float(r[37] or 0) > 0 or float(r[13] or r[7] or 0) > 0)
+            ]
         if active_loans:
             loan_dict = {}
             for r in active_loans:
@@ -1630,7 +1638,7 @@ def render_personal_loans():
             })
             if rep_txs:
                 for rx in rep_txs:
-                    p_date, v_no, amt, mode, narr = rx
+                    p_date, v_no, amt, mode, narr = rx[:5]
                     c_amt = float(amt or 0)
                     running_bal = round(running_bal - c_amt, 2)
                     ledger_rows.append({
@@ -1646,6 +1654,35 @@ def render_personal_loans():
 
             st.markdown("#### 📜 **CUSTOMER REPAYMENT LEDGER & STATEMENT (DEBIT / CREDIT)**")
             st.dataframe(format_df_dates(df_rep_ledger), use_container_width=True, hide_index=True, height=260)
+
+            if rep_txs:
+                with st.expander("🗑️ Delete / Correct Repayment Transaction", expanded=False):
+                    st.caption("If a repayment transaction was accidentally entered (e.g., duplicate entry on a date), select it below to safely delete it. The loan's outstanding balance, account ledger, and EMI schedule will automatically recalculate.")
+                    rep_opts = {}
+                    for rx in rep_txs:
+                        r_date, r_vno, r_amt, r_mode, r_narr = rx[:5]
+                        r_id = rx[5] if len(rx) > 5 else None
+                        if r_id:
+                            label = f"Repayment #{r_id} | Date: {r_date} | Amount: ₹{float(r_amt):,.2f} | Voucher: {r_vno or 'N/A'} | {r_narr or ''}"
+                            rep_opts[label] = (r_id, r_date, float(r_amt), r_vno, r_narr)
+                    
+                    if rep_opts:
+                        del_rep_label = st.selectbox("Select Repayment Entry to Delete", list(rep_opts.keys()), key=f"del_rep_sel_{sel_pr_id}")
+                        sel_rep_data = rep_opts[del_rep_label]
+                        r_id, r_date, r_amt, r_vno, r_narr = sel_rep_data
+                        
+                        st.warning(f"⚠️ You are about to permanently delete Repayment **#{r_id}** of **₹{r_amt:,.2f}** recorded on **{r_date}** (Voucher: `{r_vno}`). Deleting this will reverse the linked Cash/Bank Book entry and restore **₹{r_amt:,.2f}** to the loan's outstanding balance.")
+                        
+                        col_del1, col_del2 = st.columns([1, 3])
+                        with col_del1:
+                            if st.button("🗑️ Confirm Delete Repayment", type="primary", key=f"btn_del_rep_{r_id}_{sel_pr_id}"):
+                                ok, msg = delete_personal_loan_repayment_entry(r_id)
+                                if ok:
+                                    st.success(f"✅ {msg}")
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Failed to delete repayment: {msg}")
 
             st.markdown("#### 📅 **12-MONTH EMI AMORTIZATION TABLE**")
             st.dataframe(format_df_dates(df_sched), use_container_width=True, hide_index=True, height=260)

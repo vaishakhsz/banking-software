@@ -1181,7 +1181,14 @@ try:
         in 1 unified cacheable bundle for 0.0ms instant tab rendering.
         """
         all_gl_data = run_query("""
-            SELECT gl.id, gl.loan_no, gl.customer_id, c.name, COALESCE(c.account_no, 'N/A'), c.phone,
+            SELECT gl.id, gl.loan_no, gl.customer_id, c.name,
+                   COALESCE(
+                       CASE WHEN TRIM(COALESCE(c.account_no, '')) IN ('', 'N/A', 'None', 'null') THEN NULL ELSE TRIM(c.account_no) END,
+                       NULLIF(TRIM((SELECT a.account_number FROM accounts a WHERE a.customer_id = c.id AND a.account_number IS NOT NULL AND TRIM(a.account_number) NOT IN ('', 'N/A', 'None', 'null') ORDER BY a.id ASC LIMIT 1)), ''),
+                       NULLIF(TRIM((SELECT sb.account_no FROM sb_accounts sb WHERE sb.customer_id = c.id AND sb.account_no IS NOT NULL AND TRIM(sb.account_no) NOT IN ('', 'N/A', 'None', 'null') LIMIT 1)), ''),
+                       'N/A'
+                   ) AS account_no,
+                   c.phone,
                    gl.sanction_date, gl.gold_rate_per_gram, gl.ornament_details, gl.item_count,
                    gl.gross_weight, gl.stone_deduction, gl.net_weight, gl.purity, gl.market_value,
                    gl.ltv_percent, gl.principal_amount, gl.interest_rate, gl.interest_rate_monthly,
@@ -1230,7 +1237,14 @@ try:
         in 1 unified cacheable bundle for 0.0ms instant tab rendering.
         """
         all_pl_data = run_query("""
-            SELECT pl.id, pl.loan_no, pl.customer_id, c.name, COALESCE(c.account_no, 'N/A'), c.phone,
+            SELECT pl.id, pl.loan_no, pl.customer_id, c.name,
+                   COALESCE(
+                       CASE WHEN TRIM(COALESCE(c.account_no, '')) IN ('', 'N/A', 'None', 'null') THEN NULL ELSE TRIM(c.account_no) END,
+                       NULLIF(TRIM((SELECT a.account_number FROM accounts a WHERE a.customer_id = c.id AND a.account_number IS NOT NULL AND TRIM(a.account_number) NOT IN ('', 'N/A', 'None', 'null') ORDER BY a.id ASC LIMIT 1)), ''),
+                       NULLIF(TRIM((SELECT sb.account_no FROM sb_accounts sb WHERE sb.customer_id = c.id AND sb.account_no IS NOT NULL AND TRIM(sb.account_no) NOT IN ('', 'N/A', 'None', 'null') LIMIT 1)), ''),
+                       'N/A'
+                   ) AS account_no,
+                   c.phone,
                    pl.sanction_date, pl.principal_amount, pl.interest_rate, pl.interest_type,
                    pl.tenure_days, pl.tenure_months, pl.total_interest, pl.total_repayable,
                    pl.installment_amount, pl.monthly_principal_emi, pl.monthly_interest_emi,
@@ -3835,6 +3849,138 @@ def delete_personal_loan_repayment_entry(rep_id):
         release_connection(conn)
 
 
+def delete_gold_loan_repayment_entry(rep_id):
+    """
+    Deletes an individual gold loan repayment transaction.
+    1. Removes the repayment row from loan_repayments.
+    2. Deletes linked Bank/Cash book entry and Journal Voucher.
+    3. Recalculates gold_loans.outstanding_due and status.
+    4. Recalculates and updates loan_emi_schedules allocation.
+    5. Updates borrower's accounts balance.
+    6. Re-syncs book balances.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch repayment details
+        cursor.execute(f"""
+            SELECT loan_id, customer_id, amount_paid, voucher_no, payment_mode, loan_type 
+            FROM loan_repayments 
+            WHERE id = {placeholder}
+        """, (rep_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, f"Repayment ID #{rep_id} not found."
+            
+        gl_id, c_id, amt_paid, v_no, pay_mode, l_type = row
+        amt_paid = float(amt_paid or 0.0)
+        
+        # 2. Delete linked voucher from cash_book, bank_book, and journal_vouchers
+        if v_no:
+            cursor.execute(f"DELETE FROM bank_book WHERE voucher_no = {placeholder}", (v_no,))
+            cursor.execute(f"DELETE FROM cash_book WHERE voucher_no = {placeholder}", (v_no,))
+            cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{v_no}%",))
+            
+        # 3. Delete the repayment record
+        cursor.execute(f"DELETE FROM loan_repayments WHERE id = {placeholder}", (rep_id,))
+        
+        # 4. Fetch gold loan information
+        cursor.execute(f"SELECT total_repayable, principal_amount, opening_balance FROM gold_loans WHERE id = {placeholder}", (gl_id,))
+        gl_row = cursor.fetchone()
+        if gl_row:
+            tot_repayable = float(gl_row[0] or gl_row[2] or gl_row[1] or 0.0)
+            
+            # Sum remaining repayments
+            cursor.execute(f"""
+                SELECT COALESCE(SUM(amount_paid), 0) 
+                FROM loan_repayments 
+                WHERE loan_id = {placeholder} AND loan_type = 'GOLD'
+            """, (gl_id,))
+            sum_row = cursor.fetchone()
+            tot_repaid = float(sum_row[0] if sum_row else 0.0)
+            
+            new_due = max(0.0, round(tot_repayable - tot_repaid, 2))
+            new_status = 'CLOSED_RELEASED' if new_due <= 0.0 else 'ACTIVE'
+            
+            cursor.execute(f"""
+                UPDATE gold_loans 
+                SET outstanding_due = {placeholder}, status = {placeholder} 
+                WHERE id = {placeholder}
+            """, (new_due, new_status, gl_id))
+            
+            # 5. Replay and reallocate EMI schedules
+            cursor.execute(f"""
+                UPDATE loan_emi_schedules 
+                SET paid_amount = 0.0, paid_date = NULL, status = 'PENDING' 
+                WHERE loan_id = {placeholder} AND loan_type = 'GOLD'
+            """, (gl_id,))
+            
+            # Fetch schedules ordered by emi_number
+            cursor.execute(f"""
+                SELECT id, emi_amount 
+                FROM loan_emi_schedules 
+                WHERE loan_id = {placeholder} AND loan_type = 'GOLD' 
+                ORDER BY emi_number ASC
+            """, (gl_id,))
+            schedules = cursor.fetchall()
+            
+            # Fetch remaining repayments ordered by payment_date, id
+            cursor.execute(f"""
+                SELECT payment_date, amount_paid 
+                FROM loan_repayments 
+                WHERE loan_id = {placeholder} AND loan_type = 'GOLD' 
+                ORDER BY payment_date ASC, id ASC
+            """, (gl_id,))
+            rem_reps = cursor.fetchall()
+            
+            if schedules and rem_reps:
+                sched_list = [{"id": s[0], "amt": float(s[1] or 0.0), "paid": 0.0, "pdate": None} for s in schedules]
+                for r_date, r_amt in rem_reps:
+                    pay_left = float(r_amt or 0.0)
+                    for sc in sched_list:
+                        if pay_left <= 0:
+                            break
+                        needed = max(0.0, sc["amt"] - sc["paid"])
+                        if needed > 0:
+                            alloc = min(pay_left, needed)
+                            sc["paid"] += alloc
+                            sc["pdate"] = str(r_date)[:10]
+                            pay_left -= alloc
+                for sc in sched_list:
+                    stat = 'PAID' if sc["paid"] >= sc["amt"] else ('PARTIAL' if sc["paid"] > 0 else 'PENDING')
+                    cursor.execute(f"""
+                        UPDATE loan_emi_schedules 
+                        SET paid_amount = {placeholder}, paid_date = {placeholder}, status = {placeholder} 
+                        WHERE id = {placeholder}
+                    """, (sc["paid"], sc["pdate"], stat, sc["id"]))
+                    
+        # 6. Update customer account balance
+        cursor.execute(f"""
+            UPDATE accounts 
+            SET balance = (SELECT COALESCE(SUM(outstanding_due), 0) FROM gold_loans WHERE customer_id = {placeholder})
+            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_type LIKE {placeholder})
+        """, (c_id, c_id, "%Gold%"))
+        
+        # 7. Resync book balances
+        _sync_book_balances(cursor, placeholder)
+        
+        conn.commit()
+        clear_db_cache()
+        return True, f"Repayment transaction #{rep_id} ({v_no or ''}) deleted and gold loan balance recalculated successfully."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
 def delete_gold_loan_entry(del_id):
     """
     Deletes a gold loan, cascades linked schedules and repayments,
@@ -5049,7 +5195,14 @@ def update_gold_loan_details(
         
         # 1. Fetch current loan details & borrower name
         cursor.execute(f"""
-            SELECT g.loan_no, g.customer_id, c.name, COALESCE(c.account_no, ''), g.voucher_no, g.principal_amount, g.disbursal_mode
+            SELECT g.loan_no, g.customer_id, c.name,
+                   COALESCE(
+                       CASE WHEN TRIM(COALESCE(c.account_no, '')) IN ('', 'N/A', 'None', 'null') THEN NULL ELSE TRIM(c.account_no) END,
+                       NULLIF(TRIM((SELECT a.account_number FROM accounts a WHERE a.customer_id = c.id AND a.account_number IS NOT NULL AND TRIM(a.account_number) NOT IN ('', 'N/A', 'None', 'null') ORDER BY a.id ASC LIMIT 1)), ''),
+                       NULLIF(TRIM((SELECT sb.account_no FROM sb_accounts sb WHERE sb.customer_id = c.id AND sb.account_no IS NOT NULL AND TRIM(sb.account_no) NOT IN ('', 'N/A', 'None', 'null') LIMIT 1)), ''),
+                       ''
+                   ) AS account_no,
+                   g.voucher_no, g.principal_amount, g.disbursal_mode
             FROM gold_loans g
             JOIN customers c ON g.customer_id = c.id
             WHERE g.id = {placeholder}

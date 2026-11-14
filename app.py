@@ -91,6 +91,7 @@ try:
         init_db, generate_loan_schedule
     )
     delete_personal_loan_repayment_entry = getattr(database, 'delete_personal_loan_repayment_entry', None)
+    delete_gold_loan_repayment_entry = getattr(database, 'delete_gold_loan_repayment_entry', None)
 except Exception as e:
     import traceback
     st.error(f"⚠️ Critical Database Import Error: {e}")
@@ -1764,7 +1765,14 @@ def render_gold_loans():
     with tab1:
         st.subheader("🪙 Gold Appraisal, Jewel Loan Sanction & Opening Balance")
         cust_raw = cached_query("""
-            SELECT c.id, c.name, COALESCE(c.account_no, 'N/A'), c.phone, c.street, c.city, c.state, c.pincode 
+            SELECT c.id, c.name, 
+                   COALESCE(
+                       CASE WHEN TRIM(COALESCE(c.account_no, '')) IN ('', 'N/A', 'None', 'null') THEN NULL ELSE TRIM(c.account_no) END,
+                       NULLIF(TRIM((SELECT a.account_number FROM accounts a WHERE a.customer_id = c.id AND a.account_number IS NOT NULL AND TRIM(a.account_number) NOT IN ('', 'N/A', 'None', 'null') ORDER BY a.id ASC LIMIT 1)), ''),
+                       NULLIF(TRIM((SELECT sb.account_no FROM sb_accounts sb WHERE sb.customer_id = c.id AND sb.account_no IS NOT NULL AND TRIM(sb.account_no) NOT IN ('', 'N/A', 'None', 'null') LIMIT 1)), ''),
+                       'N/A'
+                   ) AS account_no,
+                   c.phone, c.street, c.city, c.state, c.pincode 
             FROM customers c 
             ORDER BY c.name ASC, c.id ASC
         """) or []
@@ -1784,6 +1792,8 @@ def render_gold_loans():
         selected_cust_label = st.selectbox("1️⃣ Select Customer / Borrower", list(cust_dict.keys()), key="gl_cust_sel")
         selected_cust = cust_dict[selected_cust_label]
         selected_cust_id, selected_cust_name, selected_cust_acc, selected_cust_phone, selected_cust_addr = selected_cust
+        
+        st.info(f"👤 **Selected Borrower:** **{selected_cust_name}** | 💳 **Account No:** `{selected_cust_acc}` | 📞 **Phone:** {selected_cust_phone} | 📍 **Address:** {selected_cust_addr}")
         
         st.markdown("### 2️⃣ Jewel Appraisal & Safe Custody Details")
         col_a1, col_a2, col_a3 = st.columns(3)
@@ -1967,24 +1977,37 @@ def render_gold_loans():
                 run_query("UPDATE accounts SET balance = ? WHERE id = ?", (new_bal, acc_id), fetch=False)
                 run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"GOLD LOAN DISBURSAL [{loan_no}] (DEBIT)", final_initial_due, new_bal, str(sanction_date)), fetch=False)
             else:
-                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Loan Account', ?, ?, ?)", (f"GL-{selected_cust_id}", selected_cust_id, final_initial_due, str(sanction_date)), fetch=False)
+                target_gl_acc = selected_cust_acc if (selected_cust_acc and selected_cust_acc != 'N/A') else f"GL-{selected_cust_id}"
+                run_query("INSERT INTO accounts (account_number, account_type, customer_id, balance, created_at) VALUES (?, 'Gold Loan', ?, ?, ?)", (target_gl_acc, selected_cust_id, final_initial_due, str(sanction_date)), fetch=False)
+                acc_lookup = run_query("SELECT id FROM accounts WHERE customer_id = ?", (selected_cust_id,))
+                acc_id = acc_lookup[0][0] if acc_lookup and acc_lookup[0] else None
+                if acc_id:
+                    run_query("INSERT INTO transactions (account_id, type, amount, balance_after, date) VALUES (?, ?, ?, ?, ?)", (acc_id, f"GOLD LOAN DISBURSAL [{loan_no}] (DEBIT)", final_initial_due, final_initial_due, str(sanction_date)), fetch=False)
                 
             clear_db_cache()
             flash_success(f"🎉 Gold Loan **{loan_no}** sanctioned & disbursed for **{selected_cust_name}**! Voucher: `{voucher_no}` | Total Repayable: **₹{tot_repayable:,.2f}** | Outstanding Opening Balance: **₹{final_initial_due:,.2f}**.")
             st.rerun()
 
     with tab2:
-        st.subheader("💳 Collect Gold Loan Installment / Repayment")
-        active_gl_loans = [
-            r for r in all_gl_data 
-            if r[37] not in ('CLOSED', 'CLOSED_RELEASED') and (float(r[31] or 0) > 0 or float(r[47] or 0) > 0 or float(r[22] or r[16] or 0) > 0)
-        ]
+        col_t2_head, col_t2_chk = st.columns([3, 1])
+        with col_t2_head:
+            st.subheader("💳 Collect Gold Loan Installment / Repayment")
+        with col_t2_chk:
+            show_all_gl = st.checkbox("Show All / Closed Loans", value=False, key="gl_rep_show_all")
+
+        if show_all_gl:
+            active_gl_loans = all_gl_data
+        else:
+            active_gl_loans = [
+                r for r in all_gl_data 
+                if r[37] not in ('CLOSED', 'CLOSED_RELEASED') and (float(r[31] or 0) > 0 or float(r[47] or 0) > 0 or float(r[22] or r[16] or 0) > 0)
+            ]
         
         if active_gl_loans:
             gl_loan_dict = {}
             for r in active_gl_loans:
                 eff_due = float(r[31]) if float(r[31] or 0) > 0 else (float(r[47]) if float(r[47] or 0) > 0 else float(r[22] or r[16] or 0.0))
-                label = f"#{r[1]} - {r[3]} (Packet: {r[32]} | Due: ₹{eff_due:,.2f} | Gold: {float(r[12]):.3f}g)"
+                label = f"#{r[1]} - {r[3]} (Acc: {r[4]} | Packet: {r[32]} | Due: ₹{eff_due:,.2f} | Gold: {float(r[12]):.3f}g)"
                 gl_loan_dict[label] = r
             sel_gl_label = st.selectbox("1️⃣ Select Active Gold Loan Account", list(gl_loan_dict.keys()), key="gl_rep_sel")
             sel_gl_row = gl_loan_dict[sel_gl_label]
@@ -2000,13 +2023,13 @@ def render_gold_loans():
             already_paid_gl = max(0.0, total_base_gl - float(gl_due))
             
             with st.container(border=True):
-                st.markdown(f"#### 🪙 Borrower: **{gl_cname}** (Loan: `{gl_no}`, Packet: `{gl_pkt}`, Locker: `{gl_lock}`)")
+                st.markdown(f"#### 🪙 Borrower: **{gl_cname}** (Acc: `{gl_cacc}`, Loan: `{gl_no}`, Packet: `{gl_pkt}`, Locker: `{gl_lock}`)")
                 sc1, sc2, sc3, sc4 = st.columns(4)
                 sc1.metric("💵 Principal Loan", f"₹{float(gl_princ):,.2f}")
                 sc2.metric("💳 Total Repayable", f"₹{total_base_gl:,.2f}")
                 sc3.metric("🟢 Repaid So Far", f"₹{already_paid_gl:,.2f}")
                 sc4.metric("🔴 Outstanding Due", f"₹{float(gl_due):,.2f}")
-                st.caption(f"📌 **Pledged Jewels:** {gl_orn} ({float(gl_net):.3f}g net) | **Monthly EMI:** {'₹{:,.2f}'.format(float(gl_inst or 0)) if float(gl_inst or 0) > 0 else '₹0.00'}")
+                st.caption(f"📌 **Account No:** `{gl_cacc}` | **Pledged Jewels:** {gl_orn} ({float(gl_net):.3f}g net) | **Monthly EMI:** {'₹{:,.2f}'.format(float(gl_inst or 0)) if float(gl_inst or 0) > 0 else '₹0.00'}")
 
             sched_status_rows = gl_sched_map.get(gl_id, [])
             if sched_status_rows:
@@ -2024,7 +2047,7 @@ def render_gold_loans():
                     col_r2.caption(f"⚠️ *Amount exceeds outstanding balance (₹{float(gl_due):,.2f})*")
                 pay_mode = col_r3.selectbox("Payment Mode", ["Cash in Hand (Office Drawer)", "Union Bank of India (UPI / NEFT)"], key=f"gl_rep_mode_{gl_id}")
                 
-                rep_narration = st.text_input("Narration / Remarks / UTR", value=f"Gold Loan Repayment {gl_cname} ({gl_no} - {gl_pkt})", key=f"gl_rep_narr_{gl_id}")
+                rep_narration = st.text_input("Narration / Remarks / UTR", value=f"Gold Loan Repayment {gl_cname} (Acc: {gl_cacc} | {gl_no} - {gl_pkt})", key=f"gl_rep_narr_{gl_id}")
                 
                 st.info(f"ℹ️ **Payment Preview:** Paying **₹{amt_paid:,.2f}** will reduce remaining due from **₹{float(gl_due):,.2f}** ➔ **₹{max(0.0, float(gl_due) - amt_paid):,.2f}**.")
                 
@@ -2078,7 +2101,7 @@ def render_gold_loans():
             for g in all_renewable_gl:
                 ren_tag = f" [Cycle #{g[39]}]" if int(g[39] or 0) > 0 else ""
                 eff_due = float(g[31]) if float(g[31] or 0) > 0 else float(g[22] or g[16] or 0.0)
-                label = f"#{g[1]} - {g[3]} (Packet: {g[32]} | Due: ₹{eff_due:,.2f} | Gold: {float(g[12]):.3f}g{ren_tag})"
+                label = f"#{g[1]} - {g[3]} (Acc: {g[4]} | Packet: {g[32]} | Due: ₹{eff_due:,.2f} | Gold: {float(g[12]):.3f}g{ren_tag})"
                 gl_ren_dict[label] = g
                 
             sel_gl_ren_key = st.selectbox("1️⃣ Select Active Gold Loan to Renew / Rollover", list(gl_ren_dict.keys()), key="gl_ren_sel")
@@ -2107,13 +2130,13 @@ def render_gold_loans():
                 net_princ_rem = cur_due_val
             
             with st.container(border=True):
-                st.markdown(f"#### 🪙 Borrower: **{c_gl_cname}** (Loan: `{c_gl_no}`, Packet: `{c_gl_pkt}`, Locker: `{c_gl_lock}`)")
+                st.markdown(f"#### 🪙 Borrower: **{c_gl_cname}** (Acc: `{c_gl_cacc}`, Loan: `{c_gl_no}`, Packet: `{c_gl_pkt}`, Locker: `{c_gl_lock}`)")
                 gc1, gc2, gc3, gc4 = st.columns(4)
                 gc1.metric("💵 Carried-Forward Principal", f"₹{net_princ_rem:,.2f}")
                 gc2.metric("💳 Current Outstanding Due", f"₹{cur_due_val:,.2f}")
                 gc3.metric("🔒 Pledged Net Gold", f"{float(c_gl_net):.3f} g")
                 gc4.metric("🔄 Renewal History", f"Cycle #{c_gl_ren_cnt + 1}" if c_gl_ren_cnt > 0 else "Cycle #1 (Initial)")
-                st.caption(f"📌 **Ornaments:** {c_gl_orn} | **Sanction Date:** {c_gl_sdate} | **Last Renewed:** {c_gl_last_ren or 'Original Appraisal'}")
+                st.caption(f"📌 **Account No:** `{c_gl_cacc}` | **Ornaments:** {c_gl_orn} | **Sanction Date:** {c_gl_sdate} | **Last Renewed:** {c_gl_last_ren or 'Original Appraisal'}")
 
             st.markdown("### 2️⃣ Jewel Re-Appraisal & Today's Market Rate")
             col_gr1, col_gr2, col_gr3 = st.columns(3)
@@ -2254,7 +2277,7 @@ def render_gold_loans():
         st.subheader("✏️ Edit / Delete Gold Loan & Opening Balance")
         all_edit_gl = all_gl_data
         if all_edit_gl:
-            egl_opts = {f"#{r[1]} - {r[3]} (Pkt: {r[32]} | Due: ₹{float(r[31]):,.2f} | Gold: {float(r[12]):.3f}g | Stat: {r[37]})": r for r in all_edit_gl}
+            egl_opts = {f"#{r[1]} - {r[3]} (Acc: {r[4]} | Pkt: {r[32]} | Due: ₹{float(r[31]):,.2f} | Gold: {float(r[12]):.3f}g | Stat: {r[37]})": r for r in all_edit_gl}
             egl_keys = list(egl_opts.keys())
             
             cur_sel_gl_id = st.session_state.get("selected_edit_gl_id")
@@ -2285,7 +2308,7 @@ def render_gold_loans():
             is_closed_gl = (eg_stat in ["CLOSED", "CLOSED_RELEASED"])
                 
             with st.container(border=True):
-                st.markdown(f"#### 🪙 Borrower: **{eg_cname}** (Acc: `{eg_cacc}` | Packet: `{eg_pkt}` | Renewals: `Cycle #{eg_ren_cnt}`)")
+                st.markdown(f"#### 🪙 Borrower: **{eg_cname}** (Acc: `{eg_cacc}` | Loan: `#{eg_lno}` | Packet: `{eg_pkt}` | Renewals: `Cycle #{eg_ren_cnt}`)")
                 
                 if is_closed_gl:
                     st.warning(f"🔒 **Gold Loan #{eg_lno} is currently CLOSED.** All appraisal details and financial fields are locked from editing to protect finalized loan records.")
@@ -2370,7 +2393,8 @@ def render_gold_loans():
                 new_locker_no = col_vc2.text_input("Locker Number *", value=str(eg_lock or "LOCKER-01"), disabled=is_closed_gl, key=f"gl_ed_lock_{sel_egl_id}")
                 new_appr_name = col_vc3.text_input("Certified Appraiser Name", value=str(eg_appr or "Approved Nidhi Appraiser"), disabled=is_closed_gl, key=f"gl_ed_appr_{sel_egl_id}")
                 
-                col_ad1, col_ad2, col_ad3, col_ad4 = st.columns(4)
+                col_ad0, col_ad1, col_ad2, col_ad3, col_ad4 = st.columns([1.2, 1, 1, 1, 1])
+                col_ad0.text_input("Borrower Account No", value=str(eg_cacc), disabled=True, key=f"gl_ed_acc_{sel_egl_id}")
                 new_gl_lno = col_ad1.text_input("Loan Number *", value=str(eg_lno), disabled=is_closed_gl, key=f"gl_ed_lno_{sel_egl_id}")
                 new_gl_sdate = col_ad2.date_input("Sanction Date", value=eg_sdate_obj, format="DD-MM-YYYY", disabled=is_closed_gl, key=f"gl_ed_sdate_{sel_egl_id}")
                 new_gl_op_date = col_ad3.date_input("Opening / Disbursal Date (Opening Balance Date)", value=gl_op_bal_dt, format="DD-MM-YYYY", disabled=is_closed_gl, key=f"gl_ed_op_date_{sel_egl_id}")
@@ -2431,7 +2455,7 @@ def render_gold_loans():
 
             st.write("---")
             with st.expander(f"🚨 Danger Zone: Delete Gold Loan #{eg_lno}", expanded=False):
-                st.error(f"⚠️ **Warning:** Permanently deleting Gold Loan **#{eg_lno}** (Packet: `{eg_pkt}`) for **{eg_cname}** will remove this loan sanction, its repayment transactions, schedule rows, and custody record from the database.")
+                st.error(f"⚠️ **Warning:** Permanently deleting Gold Loan **#{eg_lno}** (Acc: `{eg_cacc}` | Packet: `{eg_pkt}`) for **{eg_cname}** will remove this loan sanction, its repayment transactions, schedule rows, and custody record from the database.")
                 conf_del_gl = st.checkbox(f"Yes, I confirm I want to permanently delete Gold Loan #{eg_lno} (Borrower: {eg_cname})", key=f"conf_del_gl_{sel_egl_id}")
                 if conf_del_gl:
                     if st.button(f"🗑️ Permanently Delete Gold Loan #{eg_lno}", type="primary", use_container_width=True, key=f"btn_del_gl_{sel_egl_id}"):
@@ -2452,11 +2476,11 @@ def render_gold_loans():
     with tab5:
         st.subheader("🏷️ Gold Safe Vault & Packet Register")
         gl_rows = [
-            (r[0], r[1], r[32], r[33], r[3], r[8], float(r[12] or 0), float(r[14] or 0), float(r[16] or 0), float(r[31] or 0), int(r[39] or 0), r[37])
+            (r[0], r[1], r[4], r[3], r[32], r[33], r[8], float(r[12] or 0), float(r[14] or 0), float(r[16] or 0), float(r[31] or 0), int(r[39] or 0), r[37])
             for r in reversed(all_gl_data)
         ]
         if gl_rows:
-            df_gl = pd.DataFrame(gl_rows, columns=["ID", "Loan No", "Packet No", "Locker", "Customer Name", "Ornaments", "Net Wt (g)", "Market Value (₹)", "Principal (₹)", "Outstanding Due (₹)", "Renewal Cycle", "Status"])
+            df_gl = pd.DataFrame(gl_rows, columns=["ID", "Loan No", "Account No", "Customer Name", "Packet No", "Locker", "Ornaments", "Net Wt (g)", "Market Value (₹)", "Principal (₹)", "Outstanding Due (₹)", "Renewal Cycle", "Status"])
             
             tot_wt = df_gl[df_gl["Status"] == "ACTIVE"]["Net Wt (g)"].sum()
             tot_gl_due = df_gl[df_gl["Status"] == "ACTIVE"]["Outstanding Due (₹)"].sum()
@@ -2487,7 +2511,7 @@ def render_gold_loans():
     with tab6:
         st.subheader("🖨️ Gold Loan Statement & Passbook (Matching VAISAKH.xlsx)")
         if all_gl_data:
-            gl_opts = {f"#{r[1]} - {r[3]} (Packet: {r[32]} | Acc: {r[4]})": r for r in all_gl_data}
+            gl_opts = {f"#{r[1]} - {r[3]} (Acc: {r[4]} | Packet: {r[32]})": r for r in all_gl_data}
             sel_gl_pr_label = st.selectbox("Select Gold Loan to View Passbook & Export Statement", list(gl_opts.keys()), key="gl_pawn_sel")
             g = gl_opts[sel_gl_pr_label]
             (sel_gl_pr_id, g_lno, g_cid, g_cname, g_cacc, g_cphone, g_sdate, g_grate, g_orn,
@@ -2654,6 +2678,29 @@ def render_gold_loans():
                         use_container_width=True,
                         key=f"gl_tab5_agree_{sel_gl_pr_id}"
                     )
+
+            # Option to delete individual repayment entry if mistakenly entered
+            rep_ids_for_loan = run_query("SELECT id, payment_date, voucher_no, amount_paid, payment_mode, narration FROM loan_repayments WHERE loan_id = ? AND loan_type = 'GOLD' ORDER BY payment_date DESC, id DESC", (sel_gl_pr_id,))
+            if rep_ids_for_loan:
+                with st.expander("🗑️ Delete Individual Repayment Entry (If accidentally entered / duplicate)", expanded=False):
+                    st.caption("Select a repayment entry to delete it and restore the gold loan balance, cash/bank book, and accounting journals.")
+                    del_rep_opts = {f"ID #{rx[0]} | Date: {rx[1]} | Voucher: {rx[2]} | Amount: ₹{float(rx[3] or 0):,.2f} | Mode: {rx[4]} | {rx[5]}": rx[0] for rx in rep_ids_for_loan}
+                    sel_rep_to_del_label = st.selectbox("Select Repayment Entry to Delete", list(del_rep_opts.keys()), key=f"del_gl_rep_sel_{sel_gl_pr_id}")
+                    sel_rep_id = del_rep_opts[sel_rep_to_del_label]
+                    conf_del_rep = st.checkbox(f"Yes, I confirm I want to permanently delete gold loan repayment entry #{sel_rep_id}", key=f"chk_del_gl_rep_{sel_gl_pr_id}_{sel_rep_id}")
+                    if conf_del_rep:
+                        if st.button("🗑️ Permanently Delete Selected Repayment", type="primary", key=f"btn_confirm_del_gl_rep_{sel_gl_pr_id}_{sel_rep_id}"):
+                            del_func = delete_gold_loan_repayment_entry or getattr(database, 'delete_gold_loan_repayment_entry', None)
+                            if del_func:
+                                ok_del, msg_del = del_func(sel_rep_id)
+                                if ok_del:
+                                    clear_db_cache()
+                                    flash_success(f"✅ {msg_del}")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {msg_del}")
+                            else:
+                                st.error("❌ Deletion function not available.")
         else:
             st.info("No gold loan records found to view statement or passbook.")
 

@@ -1137,7 +1137,10 @@ def render_personal_loans():
              l_fdue, l_ldue, l_due, l_dmode, l_vno, l_gname, l_gphone, l_grel, l_gaddr,
              l_purp, l_stat, l_rem, l_ren_cnt, l_last_ren, l_str, l_city, l_state, l_pin, l_op_bal) = sel_loan
             
-            l_due = float(l_due) if float(l_due or 0) > 0 else float(l_op_bal or l_tot_rep or l_princ or 0.0)
+            if l_stat in ('CLOSED', 'SETTLED'):
+                l_due = 0.0
+            else:
+                l_due = float(l_due) if (l_due is not None and float(l_due) > 0) else float(l_op_bal or l_tot_rep or l_princ or 0.0)
             total_base = float(l_tot_rep) if float(l_tot_rep or 0) > 0 else (float(l_op_bal) if float(l_op_bal or 0) > 0 else float(l_princ or 0.0))
             already_paid = max(0.0, total_base - float(l_due))
             
@@ -1160,17 +1163,44 @@ def render_personal_loans():
                 st.markdown("### 2️⃣ Payment Details")
                 col_r1, col_r2, col_r3 = st.columns(3)
                 pay_date = col_r1.date_input("Payment Date", value=date.today(), format="DD-MM-YYYY", key=f"pl_rep_pdate_{l_id}")
-                default_amt = float(l_inst) if float(l_inst or 0) > 0 else (min(float(l_due), 1000.0) if float(l_due) > 0 else 500.0)
-                amt_paid = col_r2.number_input("Amount Collected (₹)", min_value=1.0, max_value=float(l_due), value=min(default_amt, float(l_due)), step=100.0, help="Enter any amount paid by the borrower today", key=f"pl_rep_amt_{l_id}")
+                
+                cur_l_due = max(0.0, float(l_due or 0.0))
+                if cur_l_due >= 1.0:
+                    default_amt = float(l_inst) if float(l_inst or 0) >= 1.0 else (min(cur_l_due, 1000.0) if cur_l_due >= 1.0 else cur_l_due)
+                    safe_init_val = max(1.0, min(float(default_amt), cur_l_due))
+                    amt_paid = col_r2.number_input(
+                        "Amount Collected (₹)",
+                        min_value=1.0,
+                        value=safe_init_val,
+                        step=100.0,
+                        help="Enter any amount paid by the borrower today",
+                        key=f"pl_rep_amt_{l_id}"
+                    )
+                    if amt_paid > cur_l_due:
+                        col_r2.caption(f"⚠️ *Amount exceeds outstanding balance (₹{cur_l_due:,.2f})*")
+                else:
+                    amt_paid = col_r2.number_input(
+                        "Amount Collected (₹)",
+                        min_value=0.0,
+                        value=0.0,
+                        step=100.0,
+                        help="Loan is already settled. Enter amount only if extra payment is being recorded.",
+                        key=f"pl_rep_amt_{l_id}"
+                    )
+                    col_r2.caption("ℹ️ *This loan is already fully settled (₹0.00 outstanding due).*")
+                
                 pay_mode = col_r3.selectbox("Payment Mode", ["Cash in Hand (Office Drawer)", "Union Bank of India (UPI / NEFT)"], key=f"pl_rep_mode_{l_id}")
                 
                 rep_narration = st.text_input("Narration / Remarks / UTR", value=f"Repayment {l_cname} ({l_no})", key=f"pl_rep_narr_{l_id}")
                 
-                st.info(f"ℹ️ **Payment Preview:** Paying **₹{amt_paid:,.2f}** will reduce the borrower's remaining due from **₹{float(l_due):,.2f}** ➔ **₹{max(0.0, float(l_due) - amt_paid):,.2f}**.")
+                st.info(f"ℹ️ **Payment Preview:** Paying **₹{amt_paid:,.2f}** will reduce the borrower's remaining due from **₹{cur_l_due:,.2f}** ➔ **₹{max(0.0, cur_l_due - amt_paid):,.2f}**.")
                 
                 if st.form_submit_button("💾 Confirm & Post Repayment Receipt", use_container_width=True, type="primary"):
+                    if amt_paid <= 0:
+                        st.warning("⚠️ Please enter a repayment amount greater than ₹0.00 to post a repayment.")
+                        st.stop()
                     rep_voucher = f"RPL{pay_date.strftime('%Y%m%d')}{l_id:03d}"
-                    new_due = max(0.0, round(float(l_due) - float(amt_paid), 2))
+                    new_due = max(0.0, round(cur_l_due - float(amt_paid), 2))
                     new_status = 'CLOSED' if new_due <= 0 else 'ACTIVE'
                     
                     tot_loan_int = max(0.0, round(float(l_tot_rep or l_princ) - float(l_princ), 2))
@@ -2018,7 +2048,10 @@ def render_gold_loans():
              gl_vno, gl_stat, gl_rem, gl_ren_cnt, gl_last_ren, gl_str, gl_city, gl_state,
              gl_pin, gl_img_file, gl_has_photo, gl_op_bal) = sel_gl_row
              
-            gl_due = float(gl_due) if float(gl_due or 0) > 0 else float(gl_op_bal or gl_tot_rep or gl_princ or 0.0)
+            if gl_stat in ('CLOSED', 'CLOSED_RELEASED'):
+                gl_due = 0.0
+            else:
+                gl_due = float(gl_due) if (gl_due is not None and float(gl_due) > 0) else float(gl_op_bal or gl_tot_rep or gl_princ or 0.0)
             total_base_gl = float(gl_tot_rep) if float(gl_tot_rep or 0) > 0 else (float(gl_op_bal) if float(gl_op_bal or 0) > 0 else float(gl_princ or 0.0))
             already_paid_gl = max(0.0, total_base_gl - float(gl_due))
             
@@ -2041,17 +2074,41 @@ def render_gold_loans():
                 st.markdown("### 2️⃣ Payment Collection Details")
                 col_r1, col_r2, col_r3 = st.columns(3)
                 pay_date = col_r1.date_input("Payment Date", value=date.today(), format="DD-MM-YYYY", key=f"gl_rep_pdate_{gl_id}")
-                default_amt = float(gl_inst) if float(gl_inst or 0) > 0 else (min(float(gl_due), 1000.0) if float(gl_due) > 0 else 500.0)
-                amt_paid = col_r2.number_input("Amount Collected (₹)", min_value=1.0, value=min(default_amt, float(gl_due)), step=100.0, key=f"gl_rep_amt_{gl_id}")
-                if amt_paid > float(gl_due):
-                    col_r2.caption(f"⚠️ *Amount exceeds outstanding balance (₹{float(gl_due):,.2f})*")
+                
+                cur_gl_due = max(0.0, float(gl_due or 0.0))
+                if cur_gl_due >= 1.0:
+                    default_amt = float(gl_inst) if float(gl_inst or 0) >= 1.0 else (min(cur_gl_due, 1000.0) if cur_gl_due >= 1.0 else cur_gl_due)
+                    safe_init_val = max(1.0, min(float(default_amt), cur_gl_due))
+                    amt_paid = col_r2.number_input(
+                        "Amount Collected (₹)",
+                        min_value=1.0,
+                        value=safe_init_val,
+                        step=100.0,
+                        key=f"gl_rep_amt_{gl_id}"
+                    )
+                    if amt_paid > cur_gl_due:
+                        col_r2.caption(f"⚠️ *Amount exceeds outstanding balance (₹{cur_gl_due:,.2f})*")
+                else:
+                    amt_paid = col_r2.number_input(
+                        "Amount Collected (₹)",
+                        min_value=0.0,
+                        value=0.0,
+                        step=100.0,
+                        help="Loan is already settled. Enter amount only if extra payment is being recorded.",
+                        key=f"gl_rep_amt_{gl_id}"
+                    )
+                    col_r2.caption("ℹ️ *This gold loan is already fully settled (₹0.00 outstanding due).*")
+                
                 pay_mode = col_r3.selectbox("Payment Mode", ["Cash in Hand (Office Drawer)", "Union Bank of India (UPI / NEFT)"], key=f"gl_rep_mode_{gl_id}")
                 
                 rep_narration = st.text_input("Narration / Remarks / UTR", value=f"Gold Loan Repayment {gl_cname} (Acc: {gl_cacc} | {gl_no} - {gl_pkt})", key=f"gl_rep_narr_{gl_id}")
                 
-                st.info(f"ℹ️ **Payment Preview:** Paying **₹{amt_paid:,.2f}** will reduce remaining due from **₹{float(gl_due):,.2f}** ➔ **₹{max(0.0, float(gl_due) - amt_paid):,.2f}**.")
+                st.info(f"ℹ️ **Payment Preview:** Paying **₹{amt_paid:,.2f}** will reduce remaining due from **₹{cur_gl_due:,.2f}** ➔ **₹{max(0.0, cur_gl_due - amt_paid):,.2f}**.")
                 
                 if st.form_submit_button("💾 Confirm & Post Gold Loan Repayment", use_container_width=True, type="primary"):
+                    if amt_paid <= 0:
+                        st.warning("⚠️ Please enter a repayment amount greater than ₹0.00 to post a repayment.")
+                        st.stop()
                     rep_voucher = f"RGL{pay_date.strftime('%Y%m%d')}{gl_id:03d}"
                     new_due = max(0.0, round(float(gl_due) - float(amt_paid), 2))
                     new_status = 'CLOSED_RELEASED' if new_due <= 0 else 'ACTIVE'

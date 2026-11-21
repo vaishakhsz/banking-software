@@ -92,11 +92,66 @@ try:
     )
     delete_personal_loan_repayment_entry = getattr(database, 'delete_personal_loan_repayment_entry', None)
     delete_gold_loan_repayment_entry = getattr(database, 'delete_gold_loan_repayment_entry', None)
+    get_next_loan_number = getattr(database, 'get_next_loan_number', None)
+    get_next_gold_packet_no = getattr(database, 'get_next_gold_packet_no', None)
 except Exception as e:
     import traceback
     st.error(f"⚠️ Critical Database Import Error: {e}")
     st.code(traceback.format_exc())
     st.stop()
+
+if get_next_loan_number is None:
+    def get_next_loan_number(loan_type='PERSONAL', year=None):
+        table = 'personal_loans' if str(loan_type).upper() == 'PERSONAL' else 'gold_loans'
+        prefix = 'PL' if str(loan_type).upper() == 'PERSONAL' else 'GL'
+        rows = run_query(f"SELECT loan_no FROM {table}") or []
+        max_num = 0
+        existing_nos = set()
+        for (l_no,) in rows:
+            if not l_no:
+                continue
+            l_str = str(l_no).strip().upper()
+            existing_nos.add(l_str)
+            m = re.search(r'(\d+)$', l_str)
+            if m:
+                try:
+                    num = int(m.group(1))
+                    if num > max_num:
+                        max_num = num
+                except ValueError:
+                    pass
+        candidate_num = max(max_num + 1, len(rows) + 1, 1)
+        y = year or datetime.now().year
+        while True:
+            candidate_no = f"{prefix}-{y}-{candidate_num:04d}"
+            if candidate_no not in existing_nos:
+                return candidate_no, candidate_num
+            candidate_num += 1
+
+if get_next_gold_packet_no is None:
+    def get_next_gold_packet_no():
+        rows = run_query("SELECT vault_packet_no FROM gold_loans") or []
+        max_num = 0
+        existing_pkts = set()
+        for (p_no,) in rows:
+            if not p_no:
+                continue
+            p_str = str(p_no).strip().upper()
+            existing_pkts.add(p_str)
+            m = re.search(r'(\d+)$', p_str)
+            if m:
+                try:
+                    num = int(m.group(1))
+                    if num > max_num:
+                        max_num = num
+                except ValueError:
+                    pass
+        candidate_num = max(max_num + 1, len(rows) + 1, 1)
+        while True:
+            candidate_pkt = f"PKT-{candidate_num:03d}"
+            if candidate_pkt not in existing_pkts:
+                return candidate_pkt
+            candidate_num += 1
 
 import pdf_generator
 
@@ -988,19 +1043,20 @@ def render_personal_loans():
             st.dataframe(format_df_dates(df_prev_display), use_container_width=True)
 
         st.markdown("### 3️⃣ Disbursal Account, Opening Balance & Guarantor Details")
+        next_pl_no, next_pl_cnt = get_next_loan_number('PERSONAL')
         col_d1, col_d2, col_d3, col_d4 = st.columns(4)
         disb_mode = col_d1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], key="pl_disb_mode")
         opening_balance = col_d2.number_input("Opening Balance (₹)", min_value=0.0, value=float(principal), step=500.0, key="pl_op_bal_amt", help="Starting opening ledger balance at account creation (defaults to Principal Amount).")
         outstanding_due = col_d3.number_input("Initial Outstanding Due (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="pl_init_due_amt", help="Initial unpaid amount due to be repaid by borrower (defaults to Total Repayable).")
-        custom_loan_no = col_d4.text_input("Custom Loan Number (Optional)", key="pl_cust_lno")
+        custom_loan_no = col_d4.text_input("Custom Loan Number (Optional)", placeholder=f"Auto: {next_pl_no}", help=f"Leave blank to auto-generate unique loan number ({next_pl_no})", key="pl_cust_lno")
         
         g_col1, g_col2 = st.columns(2)
-        guarantor_name = g_col1.text_input("Guarantor / Surety Member Name", value="SARITHA", key="pl_g_name")
-        guarantor_relation = g_col2.text_input("Guarantor Relationship with Borrower", value="Wife", key="pl_g_rel")
+        guarantor_name = g_col1.text_input("Guarantor / Surety Member Name", value="", placeholder="Enter Guarantor Name (Optional)", key="pl_g_name")
+        guarantor_relation = g_col2.text_input("Guarantor Relationship with Borrower", value="", placeholder="e.g. Spouse / Brother / Father", key="pl_g_rel")
         
         g_col3, g_col4 = st.columns(2)
-        guarantor_phone = g_col3.text_input("Guarantor Mobile Number", value="999888444", key="pl_g_ph")
-        guarantor_address = g_col4.text_input("Guarantor Residential Address", value="Balaramapuram, Trivandrum", key="pl_g_addr")
+        guarantor_phone = g_col3.text_input("Guarantor Mobile Number", value="", placeholder="10-digit mobile number", key="pl_g_ph")
+        guarantor_address = g_col4.text_input("Guarantor Residential Address", value="", placeholder="Guarantor residential address", key="pl_g_addr")
         
         col_p1, col_p2 = st.columns(2)
         purpose = col_p1.text_input("Loan Purpose", value="Business Working Capital / Personal", key="pl_purp")
@@ -1010,9 +1066,21 @@ def render_personal_loans():
             selected_cust = cust_dict[selected_cust_label]
             selected_cust_id, selected_cust_name, selected_cust_acc, selected_cust_phone, selected_cust_addr = selected_cust
             
-            cur_count = len(all_pl_data) + 1
-            loan_no = custom_loan_no.strip() if custom_loan_no and custom_loan_no.strip() else f"PL-2026-{cur_count:04d}"
-            voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{cur_count:03d}"
+            live_pl_no, live_pl_cnt = get_next_loan_number('PERSONAL')
+            loan_no = custom_loan_no.strip() if custom_loan_no and custom_loan_no.strip() else live_pl_no
+            
+            dup_pl = run_query("SELECT id FROM personal_loans WHERE loan_no = ?", (loan_no,))
+            if dup_pl and dup_pl[0]:
+                st.error(f"❌ Personal Loan number **{loan_no}** already exists in the system. Please specify a unique loan number.")
+                st.stop()
+                
+            voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{live_pl_cnt:03d}"
+            v_exist = run_query("SELECT id FROM personal_loans WHERE voucher_no = ?", (voucher_no,))
+            v_cand = live_pl_cnt
+            while v_exist and v_exist[0]:
+                v_cand += 1
+                voucher_no = f"PLV{sanction_date.strftime('%Y%m%d')}{v_cand:03d}"
+                v_exist = run_query("SELECT id FROM personal_loans WHERE voucher_no = ?", (voucher_no,))
             
             final_initial_due = float(outstanding_due) if float(outstanding_due or 0) > 0 else (float(opening_balance) if float(opening_balance or 0) > 0 else float(tot_repayable))
             
@@ -1051,12 +1119,8 @@ def render_personal_loans():
             if new_pl_row and new_pl_row[0]:
                 new_pl_id = new_pl_row[0][0]
             else:
-                pl_lookup = run_query("SELECT id FROM personal_loans WHERE loan_no = ?", (loan_no,))
-                if pl_lookup and pl_lookup[0]:
-                    new_pl_id = pl_lookup[0][0]
-                else:
-                    st.error(f"❌ Failed to disburse Personal Loan **{loan_no}**.")
-                    st.stop()
+                st.error(f"❌ Failed to disburse Personal Loan **{loan_no}**. Database insertion error. No entries were posted.")
+                st.stop()
             
             batch_insert_loan_schedules('PERSONAL', new_pl_id, loan_no, preview_schedule, sanction_date)
                 
@@ -1849,8 +1913,9 @@ def render_gold_loans():
         col_v2.success(f"🎯 **Max Eligible Loan (75% LTV):** ₹{max_eligible:,.2f}")
         
         col_s1, col_s2, col_s3 = st.columns(3)
-        cur_gl_cnt = len(all_gl_data) + 1
-        packet_no = col_s1.text_input("Safe Vault Packet No", value=f"PKT-{cur_gl_cnt:03d}", key="gl_pkt_no")
+        next_gl_no, next_gl_cnt = get_next_loan_number('GOLD')
+        next_pkt_no = get_next_gold_packet_no()
+        packet_no = col_s1.text_input("Safe Vault Packet No", value=next_pkt_no, key="gl_pkt_no")
         locker_no = col_s2.text_input("Locker Number", value="LOCKER-01", key="gl_locker_no")
         appraiser_name = col_s3.text_input("Certified Appraiser Name", value="Approved Nidhi Appraiser", key="gl_appr_name")
         
@@ -1898,12 +1963,25 @@ def render_gold_loans():
         disb_mode = col_dm1.selectbox("Disburse Funds From:", ["Union Bank of India (NEFT / UPI)", "Cash in Hand (Office Drawer)"], index=0, key="gl_disb_mode")
         opening_balance = col_dm2.number_input("Opening Balance (₹)", min_value=0.0, value=float(principal), step=500.0, key="gl_op_bal_amt", help="Starting opening ledger balance at account creation (defaults to Principal Amount).")
         outstanding_due = col_dm3.number_input("Initial Outstanding Due (₹)", min_value=0.0, value=float(tot_repayable), step=500.0, key="gl_init_due_amt", help="Initial unpaid amount due to be repaid by borrower (defaults to Total Repayable).")
-        custom_gl_no = col_dm4.text_input("Custom Gold Loan Number (Optional - leave blank to auto-generate)", key="gl_cust_lno")
+        custom_gl_no = col_dm4.text_input("Custom Gold Loan Number (Optional - leave blank to auto-generate)", placeholder=f"Auto: {next_gl_no}", help=f"Leave blank to auto-generate unique loan number ({next_gl_no})", key="gl_cust_lno")
         remarks = st.text_input("Remarks / Condition Notes", value="Gold Pledged in Safe Vault", key="gl_remarks_input")
         
         if st.button("🪙 Confirm Appraisal & Disburse Gold Loan", use_container_width=True, type="primary", key="btn_confirm_gl_disb"):
-            loan_no = custom_gl_no.strip() if custom_gl_no and custom_gl_no.strip() else f"GL-2026-{cur_gl_cnt:04d}"
-            voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{cur_gl_cnt:03d}"
+            live_gl_no, live_gl_cnt = get_next_loan_number('GOLD')
+            loan_no = custom_gl_no.strip() if custom_gl_no and custom_gl_no.strip() else live_gl_no
+            
+            dup_gl = run_query("SELECT id FROM gold_loans WHERE loan_no = ?", (loan_no,))
+            if dup_gl and dup_gl[0]:
+                st.error(f"❌ Gold Loan number **{loan_no}** already exists in the system. Please specify a unique loan number.")
+                st.stop()
+                
+            voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{live_gl_cnt:03d}"
+            v_exist = run_query("SELECT id FROM gold_loans WHERE voucher_no = ?", (voucher_no,))
+            v_cand = live_gl_cnt
+            while v_exist and v_exist[0]:
+                v_cand += 1
+                voucher_no = f"GLV{sanction_date.strftime('%Y%m%d')}{v_cand:03d}"
+                v_exist = run_query("SELECT id FROM gold_loans WHERE voucher_no = ?", (voucher_no,))
             
             final_initial_due = float(outstanding_due) if float(outstanding_due or 0) > 0 else (float(opening_balance) if float(opening_balance or 0) > 0 else float(tot_repayable))
             
@@ -1960,12 +2038,8 @@ def render_gold_loans():
             if new_gl_row and new_gl_row[0]:
                 new_gl_id = new_gl_row[0][0]
             else:
-                gl_lookup = run_query("SELECT id FROM gold_loans WHERE loan_no = ?", (loan_no,))
-                if gl_lookup and gl_lookup[0]:
-                    new_gl_id = gl_lookup[0][0]
-                else:
-                    st.error(f"❌ Failed to disburse Gold Loan **{loan_no}**. Please check database connection.")
-                    st.stop()
+                st.error(f"❌ Failed to disburse Gold Loan **{loan_no}**. Database insertion error. No entries were posted.")
+                st.stop()
             
             batch_insert_loan_schedules('GOLD', new_gl_id, loan_no, gl_schedule, sanction_date)
                 

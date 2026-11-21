@@ -6482,6 +6482,69 @@ def create_or_link_rd_opening(
         release_connection(conn)
 
 
+def get_next_loan_number(loan_type='PERSONAL', year=None):
+    """
+    Computes a guaranteed unique, collision-free loan number by finding the highest
+    existing numeric suffix across all loans in the database and checking for uniqueness.
+    """
+    table = 'personal_loans' if str(loan_type).upper() == 'PERSONAL' else 'gold_loans'
+    prefix = 'PL' if str(loan_type).upper() == 'PERSONAL' else 'GL'
+    rows = run_query(f"SELECT loan_no FROM {table}") or []
+    max_num = 0
+    existing_nos = set()
+    for (l_no,) in rows:
+        if not l_no:
+            continue
+        l_str = str(l_no).strip().upper()
+        existing_nos.add(l_str)
+        m = re.search(r'(\d+)$', l_str)
+        if m:
+            try:
+                num = int(m.group(1))
+                if num > max_num:
+                    max_num = num
+            except ValueError:
+                pass
+
+    candidate_num = max(max_num + 1, len(rows) + 1, 1)
+    y = year or datetime.now().year
+    while True:
+        candidate_no = f"{prefix}-{y}-{candidate_num:04d}"
+        if candidate_no not in existing_nos:
+            return candidate_no, candidate_num
+        candidate_num += 1
+
+
+def get_next_gold_packet_no():
+    """
+    Computes a guaranteed unique safe vault packet number (e.g. PKT-063).
+    """
+    rows = run_query("SELECT vault_packet_no FROM gold_loans") or []
+    max_num = 0
+    existing_pkts = set()
+    for (p_no,) in rows:
+        if not p_no:
+            continue
+        p_str = str(p_no).strip().upper()
+        existing_pkts.add(p_str)
+        m = re.search(r'(\d+)$', p_str)
+        if m:
+            try:
+                num = int(m.group(1))
+                if num > max_num:
+                    max_num = num
+            except ValueError:
+                pass
+
+    candidate_num = max(max_num + 1, len(rows) + 1, 1)
+    while True:
+        candidate_pkt = f"PKT-{candidate_num:03d}"
+        if candidate_pkt not in existing_pkts:
+            return candidate_pkt
+        candidate_num += 1
+
+
+
 
 
 

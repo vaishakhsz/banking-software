@@ -1173,42 +1173,31 @@ def render_personal_loans():
             st.rerun()
 
     with tab2:
-        col_t2_head, col_t2_filter = st.columns([2, 2])
-        with col_t2_head:
-            st.subheader("💳 Record Loan Repayment / Collect Installment")
-        with col_t2_filter:
-            rep_filter = st.radio(
-                "Filter Loan List:",
-                ["🟢 Active Loans with Dues", "📂 Show All Loans (Including Settled / Closed)"],
-                horizontal=True,
-                key="pl_rep_filter_radio"
-            )
-        show_all_pl = ("Show All" in rep_filter)
+        st.subheader("💳 Record Loan Repayment / Collect Installment")
             
-        if show_all_pl:
-            active_loans = all_pl_data
-        else:
-            active_loans = [
-                r for r in all_pl_data 
-                if r[29] not in ('CLOSED', 'SETTLED') and (float(r[21] or 0) > 0 or float(r[37] or 0) > 0 or float(r[13] or r[7] or 0) > 0)
-            ]
-        if active_loans:
+        # Sort so active loans with pending dues appear first, followed by settled/closed loans
+        sorted_loans = sorted(
+            all_pl_data,
+            key=lambda r: (
+                1 if (r[29] in ('CLOSED', 'SETTLED') or (float(r[21] or 0) <= 0.0 and float(r[37] or 0) <= 0.0)) else 0,
+                -r[0]
+            )
+        )
+        if sorted_loans:
             loan_dict = {}
-            for r in active_loans:
+            for r in sorted_loans:
                 inst_str = f"₹{float(r[14]):,.2f}/inst" if float(r[14] or 0) > 0 else "Flexible"
-                is_closed = (r[29] in ('CLOSED', 'SETTLED'))
+                is_closed = (r[29] in ('CLOSED', 'SETTLED')) or (float(r[21] or 0) <= 0.0 and float(r[37] or 0) <= 0.0)
                 if is_closed:
                     eff_due = 0.0
-                    status_tag = " | 🔒 SETTLED (₹0 Due)"
+                    status_tag = " | 🔒 CLOSED"
                 else:
                     eff_due = float(r[21]) if (r[21] is not None and float(r[21]) > 0) else (float(r[37]) if (r[37] is not None and float(r[37]) > 0) else float(r[13] or r[7] or 0.0))
                     status_tag = f" | Plan: {inst_str}"
                 label = f"#{r[1]} - {r[3]} (Acc: {r[4]} | Due: ₹{eff_due:,.2f}{status_tag})"
                 loan_dict[label] = r
                 
-            sel_l_key = st.selectbox("1️⃣ Select Active Loan to Record Payment", list(loan_dict.keys()), key="rep_loan_sel")
-            if not show_all_pl:
-                st.caption("💡 **Tip:** Settled/closed loans (₹0 due) are filtered out. Select **'📂 Show All Loans'** above if you need to record payments or view settled loans (e.g. Rajendran).")
+            sel_l_key = st.selectbox("1️⃣ Select Loan Account to Record Payment", list(loan_dict.keys()), key="rep_loan_sel")
             sel_loan = loan_dict[sel_l_key]
             (l_id, l_no, l_cid, l_cname, l_cacc, l_cphone, l_sdate, l_princ, l_rate, l_scheme,
              l_tdays, l_tmonths, l_tot_int, l_tot_rep, l_inst, l_p_emi, l_i_emi, l_from, l_to,
@@ -2107,41 +2096,29 @@ def render_gold_loans():
             st.rerun()
 
     with tab2:
-        col_t2_head, col_t2_filter = st.columns([2, 2])
-        with col_t2_head:
-            st.subheader("💳 Collect Gold Loan Installment / Repayment")
-        with col_t2_filter:
-            gl_rep_filter = st.radio(
-                "Filter Gold Loan List:",
-                ["🟢 Active Loans with Dues", "📂 Show All Loans (Including Closed / Released)"],
-                horizontal=True,
-                key="gl_rep_filter_radio"
-            )
-        show_all_gl = ("Show All" in gl_rep_filter)
+        st.subheader("💳 Collect Gold Loan Installment / Repayment")
 
-        if show_all_gl:
-            active_gl_loans = all_gl_data
-        else:
-            active_gl_loans = [
-                r for r in all_gl_data 
-                if r[37] not in ('CLOSED', 'CLOSED_RELEASED') and (float(r[31] or 0) > 0 or float(r[47] or 0) > 0 or float(r[22] or r[16] or 0) > 0)
-            ]
-        
-        if active_gl_loans:
+        # Sort so active loans with pending dues appear first, followed by closed/released loans
+        sorted_gl_loans = sorted(
+            all_gl_data,
+            key=lambda r: (
+                1 if (r[37] in ('CLOSED', 'CLOSED_RELEASED') or (float(r[31] or 0) <= 0.0 and float(r[47] or 0) <= 0.0)) else 0,
+                -r[0]
+            )
+        )
+        if sorted_gl_loans:
             gl_loan_dict = {}
-            for r in active_gl_loans:
-                is_closed = (r[37] in ('CLOSED', 'CLOSED_RELEASED'))
+            for r in sorted_gl_loans:
+                is_closed = (r[37] in ('CLOSED', 'CLOSED_RELEASED')) or (float(r[31] or 0) <= 0.0 and float(r[47] or 0) <= 0.0)
                 if is_closed:
                     eff_due = 0.0
-                    status_tag = " | 🔒 SETTLED / CLOSED (₹0 Due)"
+                    status_tag = " | 🔒 CLOSED"
                 else:
                     eff_due = float(r[31]) if (r[31] is not None and float(r[31]) > 0) else (float(r[47]) if (r[47] is not None and float(r[47]) > 0) else float(r[22] or r[16] or 0.0))
                     status_tag = f" | Gold: {float(r[12]):.3f}g"
                 label = f"#{r[1]} - {r[3]} (Acc: {r[4]} | Packet: {r[32]} | Due: ₹{eff_due:,.2f}{status_tag})"
                 gl_loan_dict[label] = r
-            sel_gl_label = st.selectbox("1️⃣ Select Active Gold Loan Account", list(gl_loan_dict.keys()), key="gl_rep_sel")
-            if not show_all_gl:
-                st.caption("💡 **Tip:** Settled/released loans (₹0 due) are filtered out. Select **'📂 Show All Loans'** above if you need to record payments or view settled loans.")
+            sel_gl_label = st.selectbox("1️⃣ Select Gold Loan Account to Record Payment", list(gl_loan_dict.keys()), key="gl_rep_sel")
             sel_gl_row = gl_loan_dict[sel_gl_label]
             (gl_id, gl_no, gl_cid, gl_cname, gl_cacc, gl_cphone, gl_sdate, gl_grate, gl_orn, gl_cnt,
              gl_gross, gl_stone, gl_net, gl_pur, gl_mval, gl_ltv, gl_princ, gl_rate, gl_mrate,

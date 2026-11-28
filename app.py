@@ -91,6 +91,7 @@ try:
         init_db, generate_loan_schedule
     )
     delete_personal_loan_repayment_entry = getattr(database, 'delete_personal_loan_repayment_entry', None)
+    update_personal_loan_repayment_entry = getattr(database, 'update_personal_loan_repayment_entry', None)
     delete_gold_loan_repayment_entry = getattr(database, 'delete_gold_loan_repayment_entry', None)
     get_next_loan_number = getattr(database, 'get_next_loan_number', None)
     get_next_gold_packet_no = getattr(database, 'get_next_gold_packet_no', None)
@@ -1495,123 +1496,231 @@ def render_personal_loans():
             pl_op_bal_dt = s_date_obj
             
             is_closed = (stat in ["CLOSED"])
+
+            subtab_pl_loan, subtab_pl_rep = st.tabs([
+                "⚙️ Edit / Delete Loan Master Details",
+                "💳 Edit / Delete Repayment Transactions"
+            ])
             
-            with st.container(border=True):
-                st.markdown(f"#### 👤 Borrower: **{c_name}** (Acc: `{c_acc}` | ID: `#{c_id}` | Renewals: `Cycle #{ren_cnt}`)")
-                
-                if is_closed:
-                    st.warning(f"🔒 **Personal Loan #{l_no} is currently CLOSED.** All fields are locked from editing to protect finalized loan records.")
-                    col_reopen, _ = st.columns([1, 2])
-                    if col_reopen.button(f"🔓 Reopen / Reactivate Personal Loan #{l_no}", key=f"reopen_pl_{sel_pl_id}", type="secondary"):
-                        run_query("UPDATE personal_loans SET status = 'ACTIVE' WHERE id = ?", (sel_pl_id,), fetch=False)
-                        clear_db_cache()
-                        flash_success(f"✅ Personal Loan #{l_no} has been reopened to ACTIVE status. Editing fields are now unlocked.")
-                        st.rerun()
-                
-                st.markdown("### 1️⃣ Financial Terms & Repayment Calculation")
-                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                new_princ = col_f1.number_input("Sanctioned Principal Amount (₹) *", min_value=0.0, value=float(princ) if princ is not None else 0.0, step=1000.0, disabled=is_closed, help="Original principal amount sanctioned to the borrower", key=f"pl_ed_p_{sel_pl_id}")
-                new_op_bal = col_f2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(op_bal_val) if op_bal_val is not None else (float(princ) if princ is not None else 0.0), step=500.0, disabled=is_closed, help="Initial opening ledger balance at loan creation", key=f"pl_ed_opbal_{sel_pl_id}")
-                new_rate = col_f3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate) if rate is not None else 12.0, step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
-                new_t_days = col_f4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days) if t_days else (int(t_months * 30) if t_months else 100), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
-                
-                new_t_months = max(1, int(round(new_t_days / 30.0)))
-                calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_t_days / 365.0), 2)
-                calc_tot_repayable = round(new_princ + calc_tot_interest, 2)
-                calc_p_emi = round(new_princ / float(new_t_months), 2)
-                calc_i_emi = round(calc_tot_interest / float(new_t_months), 2)
-                calc_installment = round(calc_tot_repayable / float(new_t_months), 2)
-                
+            with subtab_pl_loan:
                 with st.container(border=True):
-                    st.markdown("#### 📊 Live Updated Loan Breakdown")
-                    pem1, pem2, pem3, pem4 = st.columns(4)
-                    pem1.metric("💵 Principal", f"₹{new_princ:,.2f}")
-                    pem2.metric(f"📈 Total Interest ({new_rate}%)", f"₹{calc_tot_interest:,.2f}")
-                    pem3.metric("💳 Total Repayable", f"₹{calc_tot_repayable:,.2f}")
-                    pem4.metric("📅 Monthly EMI", f"₹{calc_installment:,.2f}")
-                    st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{calc_p_emi:,.2f}** + Interest EMI: **₹{calc_i_emi:,.2f}** = Total EMI: **₹{calc_installment:,.2f}** per month for {new_t_days} days ({new_t_months} months).")
-
-                st.markdown("### 2️⃣ Loan Administrative & Legal Details")
-                col_a1, col_a2, col_a3, col_a4 = st.columns(4)
-                new_l_no = col_a1.text_input("Loan Number *", value=str(l_no), disabled=is_closed, key=f"pl_ed_lno_{sel_pl_id}")
-                new_s_date = col_a2.date_input("Sanction Date", value=s_date_obj, format="DD-MM-YYYY", disabled=is_closed, key=f"pl_ed_sdate_{sel_pl_id}")
-                new_op_bal_date = col_a3.date_input("Opening / Disbursal Date (Opening Balance Date)", value=pl_op_bal_dt, format="DD-MM-YYYY", disabled=is_closed, key=f"pl_ed_op_date_{sel_pl_id}")
-                new_status = col_a4.selectbox(
-                    "Loan Status",
-                    ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"],
-                    index=["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"].index(stat) if stat in ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"] else 0,
-                    disabled=is_closed,
-                    key=f"pl_ed_stat_{sel_pl_id}"
-                )
-                
-                col_g1, col_g2, col_g3 = st.columns(3)
-                new_g_name = col_g1.text_input("Guarantor / Surety Name", value=str(g_name or ""), disabled=is_closed, key=f"pl_ed_gname_{sel_pl_id}")
-                new_g_phone = col_g2.text_input("Guarantor Phone", value=str(g_phone or ""), disabled=is_closed, key=f"pl_ed_gphone_{sel_pl_id}")
-                new_g_rel = col_g3.text_input("Guarantor Relationship", value=str(g_rel or "Surety"), disabled=is_closed, key=f"pl_ed_grel_{sel_pl_id}")
-                
-                col_g4, col_g5 = st.columns(2)
-                new_g_addr = col_g4.text_input("Guarantor Address", value=str(g_addr or ""), disabled=is_closed, key=f"pl_ed_gaddr_{sel_pl_id}")
-                new_d_mode = col_g5.selectbox("Disbursal Mode", ["Union Bank of India", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(d_mode or "") else 1, disabled=is_closed, key=f"pl_ed_dmode_{sel_pl_id}")
-                
-                col_n1, col_n2 = st.columns(2)
-                new_purp = col_n1.text_input("Loan Purpose", value=str(purp or "Personal / Household Finance"), disabled=is_closed, key=f"pl_ed_purp_{sel_pl_id}")
-                new_rem = col_n2.text_input("Remarks / Notes", value=str(rem or ""), disabled=is_closed, key=f"pl_ed_rem_{sel_pl_id}")
-                
-                st.markdown("### 3️⃣ Current Outstanding Due Balance")
-                col_pldue1, col_pldue2 = st.columns(2)
-                recalc_pl_due = col_pldue1.checkbox(f"🔄 Reset Outstanding Due to Total Repayable (₹{calc_tot_repayable:,.2f})", value=(float(out_due or 0) == float(t_rep or 0) and float(t_rep or 0) > 0), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
-                if recalc_pl_due:
-                    new_out_due = calc_tot_repayable
-                    col_pldue2.info(f"Outstanding Due set to **₹{new_out_due:,.2f}**")
-                else:
-                    new_out_due = col_pldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due) if out_due is not None else (float(op_bal_val) if op_bal_val is not None else float(calc_tot_repayable)), step=100.0, disabled=is_closed, help="Current unpaid balance owed by the borrower on this loan.", key=f"pl_ed_due_{sel_pl_id}")
-                
-                ed_sched = generate_loan_schedule(new_s_date, new_princ, calc_tot_interest, tenure_months=new_t_months)
-                with st.expander(f"📅 View Updated {len(ed_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
-                    df_ed_pl_prev = pd.DataFrame(ed_sched).rename(columns={
-                        "emi_number": "EMI NOS", "from_date": "FROM DATE", "to_date": "TO DATE",
-                        "due_date": "DUE DATE", "principal_component": "PRINCIPAL (₹)",
-                        "interest_component": "INTEREST (₹)", "emi_amount": "EMI AMOUNT (₹)"
-                    })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
-                    st.dataframe(format_df_dates(df_ed_pl_prev), use_container_width=True, hide_index=True, height=220)
-
-                if is_closed:
-                    st.info("ℹ️ *This loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Personal Loan'** button above.*")
-                else:
-                    if st.button("💾 Save & Apply Updated Loan Terms", type="primary", use_container_width=True, key=f"btn_save_pl_{sel_pl_id}"):
-                        new_op_str = new_op_bal_date.strftime("%Y-%m-%d")
-                        st.session_state["selected_edit_pl_id"] = sel_pl_id
-                        success, msg = update_personal_loan_details(
-                            sel_pl_id, new_l_no, new_s_date, new_princ, new_rate, new_t_days,
-                            new_out_due, new_d_mode, new_g_name, new_g_phone, new_g_rel,
-                            new_g_addr, new_purp, new_status, new_rem,
-                            new_op_bal_date=new_op_str,
-                            new_op_bal=new_op_bal
-                        )
-                        clear_db_cache()
-                        if success:
-                            flash_success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
+                    st.markdown(f"#### 👤 Borrower: **{c_name}** (Acc: `{c_acc}` | ID: `#{c_id}` | Renewals: `Cycle #{ren_cnt}`)")
+                    
+                    if is_closed:
+                        st.warning(f"🔒 **Personal Loan #{l_no} is currently CLOSED.** All fields are locked from editing to protect finalized loan records.")
+                        col_reopen, _ = st.columns([1, 2])
+                        if col_reopen.button(f"🔓 Reopen / Reactivate Personal Loan #{l_no}", key=f"reopen_pl_{sel_pl_id}", type="secondary"):
+                            run_query("UPDATE personal_loans SET status = 'ACTIVE' WHERE id = ?", (sel_pl_id,), fetch=False)
+                            clear_db_cache()
+                            flash_success(f"✅ Personal Loan #{l_no} has been reopened to ACTIVE status. Editing fields are now unlocked.")
                             st.rerun()
-                        else:
-                            st.error(f"❌ Failed to update loan: {msg}")
+                    
+                    st.markdown("### 1️⃣ Financial Terms & Repayment Calculation")
+                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                    new_princ = col_f1.number_input("Sanctioned Principal Amount (₹) *", min_value=0.0, value=float(princ) if princ is not None else 0.0, step=1000.0, disabled=is_closed, help="Original principal amount sanctioned to the borrower", key=f"pl_ed_p_{sel_pl_id}")
+                    new_op_bal = col_f2.number_input("Opening Balance (₹) *", min_value=0.0, value=float(op_bal_val) if op_bal_val is not None else (float(princ) if princ is not None else 0.0), step=500.0, disabled=is_closed, help="Initial opening ledger balance at loan creation", key=f"pl_ed_opbal_{sel_pl_id}")
+                    new_rate = col_f3.number_input("Annual Interest Rate (%) *", min_value=0.0, value=float(rate) if rate is not None else 12.0, step=0.5, disabled=is_closed, key=f"pl_ed_r_{sel_pl_id}")
+                    new_t_days = col_f4.number_input("Loan Period / Tenure (Days) *", min_value=1, value=int(t_days) if t_days else (int(t_months * 30) if t_months else 100), step=5, disabled=is_closed, key=f"pl_ed_d_{sel_pl_id}")
+                    
+                    new_t_months = max(1, int(round(new_t_days / 30.0)))
+                    calc_tot_interest = round(new_princ * (new_rate / 100.0) * (new_t_days / 365.0), 2)
+                    calc_tot_repayable = round(new_princ + calc_tot_interest, 2)
+                    calc_p_emi = round(new_princ / float(new_t_months), 2)
+                    calc_i_emi = round(calc_tot_interest / float(new_t_months), 2)
+                    calc_installment = round(calc_tot_repayable / float(new_t_months), 2)
+                    
+                    with st.container(border=True):
+                        st.markdown("#### 📊 Live Updated Loan Breakdown")
+                        pem1, pem2, pem3, pem4 = st.columns(4)
+                        pem1.metric("💵 Principal", f"₹{new_princ:,.2f}")
+                        pem2.metric(f"📈 Total Interest ({new_rate}%)", f"₹{calc_tot_interest:,.2f}")
+                        pem3.metric("💳 Total Repayable", f"₹{calc_tot_repayable:,.2f}")
+                        pem4.metric("📅 Monthly EMI", f"₹{calc_installment:,.2f}")
+                        st.caption(f"📌 **Monthly Breakdown:** Principal EMI: **₹{calc_p_emi:,.2f}** + Interest EMI: **₹{calc_i_emi:,.2f}** = Total EMI: **₹{calc_installment:,.2f}** per month for {new_t_days} days ({new_t_months} months).")
 
-            st.write("---")
-            with st.expander(f"🚨 Danger Zone: Delete Loan #{l_no}", expanded=False):
-                st.error(f"⚠️ **Warning:** Permanently deleting Loan **#{l_no}** for **{c_name}** will remove this loan sanction record, its repayment transactions, and its schedule rows from the database.")
-                conf_del = st.checkbox(f"Yes, I confirm I want to permanently delete Loan #{l_no} (Borrower: {c_name})", key=f"conf_del_pl_{sel_pl_id}")
-                if conf_del:
-                    if st.button(f"🗑️ Permanently Delete Loan #{l_no}", type="primary", use_container_width=True, key=f"btn_del_pl_{sel_pl_id}"):
-                        success, msg = delete_personal_loan_entry(sel_pl_id)
-                        rem_loans = run_query("SELECT SUM(outstanding_due) FROM personal_loans WHERE customer_id = ?", (c_id,))
-                        new_acc_bal = float(rem_loans[0][0]) if rem_loans and rem_loans[0][0] is not None else 0.0
-                        run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_acc_bal, c_id), fetch=False)
-                        
-                        clear_db_cache()
-                        if success:
-                            flash_success(f"✅ {msg}")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ Failed to delete loan: {msg}")
+                    st.markdown("### 2️⃣ Loan Administrative & Legal Details")
+                    col_a1, col_a2, col_a3, col_a4 = st.columns(4)
+                    new_l_no = col_a1.text_input("Loan Number *", value=str(l_no), disabled=is_closed, key=f"pl_ed_lno_{sel_pl_id}")
+                    new_s_date = col_a2.date_input("Sanction Date", value=s_date_obj, format="DD-MM-YYYY", disabled=is_closed, key=f"pl_ed_sdate_{sel_pl_id}")
+                    new_op_bal_date = col_a3.date_input("Opening / Disbursal Date (Opening Balance Date)", value=pl_op_bal_dt, format="DD-MM-YYYY", disabled=is_closed, key=f"pl_ed_op_date_{sel_pl_id}")
+                    new_status = col_a4.selectbox(
+                        "Loan Status",
+                        ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"],
+                        index=["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"].index(stat) if stat in ["ACTIVE", "CLOSED", "COURT_CASE", "POLICE_COMPLAINT", "NOT_REMITTING"] else 0,
+                        disabled=is_closed,
+                        key=f"pl_ed_stat_{sel_pl_id}"
+                    )
+                    
+                    col_g1, col_g2, col_g3 = st.columns(3)
+                    new_g_name = col_g1.text_input("Guarantor / Surety Name", value=str(g_name or ""), disabled=is_closed, key=f"pl_ed_gname_{sel_pl_id}")
+                    new_g_phone = col_g2.text_input("Guarantor Phone", value=str(g_phone or ""), disabled=is_closed, key=f"pl_ed_gphone_{sel_pl_id}")
+                    new_g_rel = col_g3.text_input("Guarantor Relationship", value=str(g_rel or "Surety"), disabled=is_closed, key=f"pl_ed_grel_{sel_pl_id}")
+                    
+                    col_g4, col_g5 = st.columns(2)
+                    new_g_addr = col_g4.text_input("Guarantor Address", value=str(g_addr or ""), disabled=is_closed, key=f"pl_ed_gaddr_{sel_pl_id}")
+                    new_d_mode = col_g5.selectbox("Disbursal Mode", ["Union Bank of India", "Cash in Hand (Office Drawer)"], index=0 if "Union Bank" in str(d_mode or "") else 1, disabled=is_closed, key=f"pl_ed_dmode_{sel_pl_id}")
+                    
+                    col_n1, col_n2 = st.columns(2)
+                    new_purp = col_n1.text_input("Loan Purpose", value=str(purp or "Personal / Household Finance"), disabled=is_closed, key=f"pl_ed_purp_{sel_pl_id}")
+                    new_rem = col_n2.text_input("Remarks / Notes", value=str(rem or ""), disabled=is_closed, key=f"pl_ed_rem_{sel_pl_id}")
+                    
+                    st.markdown("### 3️⃣ Current Outstanding Due Balance")
+                    col_pldue1, col_pldue2 = st.columns(2)
+                    recalc_pl_due = col_pldue1.checkbox(f"🔄 Reset Outstanding Due to Total Repayable (₹{calc_tot_repayable:,.2f})", value=(float(out_due or 0) == float(t_rep or 0) and float(t_rep or 0) > 0), disabled=is_closed, key=f"pl_recalc_due_{sel_pl_id}")
+                    if recalc_pl_due:
+                        new_out_due = calc_tot_repayable
+                        col_pldue2.info(f"Outstanding Due set to **₹{new_out_due:,.2f}**")
+                    else:
+                        new_out_due = col_pldue2.number_input("Outstanding Due Balance (₹) *", min_value=0.0, value=float(out_due) if out_due is not None else (float(op_bal_val) if op_bal_val is not None else float(calc_tot_repayable)), step=100.0, disabled=is_closed, help="Current unpaid balance owed by the borrower on this loan.", key=f"pl_ed_due_{sel_pl_id}")
+                    
+                    ed_sched = generate_loan_schedule(new_s_date, new_princ, calc_tot_interest, tenure_months=new_t_months)
+                    with st.expander(f"📅 View Updated {len(ed_sched)}-Month EMI Amortization Schedule Preview", expanded=False):
+                        df_ed_pl_prev = pd.DataFrame(ed_sched).rename(columns={
+                            "emi_number": "EMI NOS", "from_date": "FROM DATE", "to_date": "TO DATE",
+                            "due_date": "DUE DATE", "principal_component": "PRINCIPAL (₹)",
+                            "interest_component": "INTEREST (₹)", "emi_amount": "EMI AMOUNT (₹)"
+                        })[["EMI NOS", "FROM DATE", "TO DATE", "DUE DATE", "PRINCIPAL (₹)", "INTEREST (₹)", "EMI AMOUNT (₹)"]]
+                        st.dataframe(format_df_dates(df_ed_pl_prev), use_container_width=True, hide_index=True, height=220)
+
+                    if is_closed:
+                        st.info("ℹ️ *This loan is **CLOSED**. To modify terms and save updates, click the **'🔓 Reopen / Reactivate Personal Loan'** button above.*")
+                    else:
+                        if st.button("💾 Save & Apply Updated Loan Terms", type="primary", use_container_width=True, key=f"btn_save_pl_{sel_pl_id}"):
+                            new_op_str = new_op_bal_date.strftime("%Y-%m-%d")
+                            st.session_state["selected_edit_pl_id"] = sel_pl_id
+                            success, msg = update_personal_loan_details(
+                                sel_pl_id, new_l_no, new_s_date, new_princ, new_rate, new_t_days,
+                                new_out_due, new_d_mode, new_g_name, new_g_phone, new_g_rel,
+                                new_g_addr, new_purp, new_status, new_rem,
+                                new_op_bal_date=new_op_str,
+                                new_op_bal=new_op_bal
+                            )
+                            clear_db_cache()
+                            if success:
+                                flash_success(f"🎉 Loan **#{new_l_no}** updated successfully! New Total Repayable: **₹{calc_tot_repayable:,.2f}** | Monthly EMI: **₹{calc_installment:,.2f}/mo**")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to update loan: {msg}")
+
+                st.write("---")
+                with st.expander(f"🚨 Danger Zone: Delete Loan #{l_no}", expanded=False):
+                    st.error(f"⚠️ **Warning:** Permanently deleting Loan **#{l_no}** for **{c_name}** will remove this loan sanction record, its repayment transactions, and its schedule rows from the database.")
+                    conf_del = st.checkbox(f"Yes, I confirm I want to permanently delete Loan #{l_no} (Borrower: {c_name})", key=f"conf_del_pl_{sel_pl_id}")
+                    if conf_del:
+                        if st.button(f"🗑️ Permanently Delete Loan #{l_no}", type="primary", use_container_width=True, key=f"btn_del_pl_{sel_pl_id}"):
+                            success, msg = delete_personal_loan_entry(sel_pl_id)
+                            rem_loans = run_query("SELECT SUM(outstanding_due) FROM personal_loans WHERE customer_id = ?", (c_id,))
+                            new_acc_bal = float(rem_loans[0][0]) if rem_loans and rem_loans[0][0] is not None else 0.0
+                            run_query("UPDATE accounts SET balance = ? WHERE customer_id = ?", (new_acc_bal, c_id), fetch=False)
+                            
+                            clear_db_cache()
+                            if success:
+                                flash_success(f"✅ {msg}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to delete loan: {msg}")
+
+            with subtab_pl_rep:
+                st.markdown(f"### 💳 Repayment Ledger & Corrections for {c_name} (`{l_no}`)")
+                st.caption("Select any repayment transaction to correct its payment date, adjust amount, change payment mode, edit narration, or permanently delete the entry. Loan dues, Cash/Bank books, and EMI schedules will automatically recalculate.")
+
+                rep_rows = run_query("""
+                    SELECT id, payment_date, amount_paid, payment_mode, voucher_no, narration, principal_component, interest_component
+                    FROM loan_repayments
+                    WHERE loan_id = ? AND loan_type = 'PERSONAL'
+                    ORDER BY payment_date DESC, id DESC
+                """, (sel_pl_id,)) or []
+
+                tot_repaid = sum(float(rx[2] or 0.0) for rx in rep_rows)
+                tot_base = float(t_rep) if float(t_rep or 0) > 0 else (float(op_bal_val) if float(op_bal_val or 0) > 0 else float(princ or 0.0))
+                curr_due = max(0.0, float(out_due or 0.0))
+
+                c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+                c_m1.metric("💵 Total Repayable", f"₹{tot_base:,.2f}")
+                c_m2.metric("🟢 Total Repaid", f"₹{tot_repaid:,.2f}")
+                c_m3.metric("🔴 Outstanding Due", f"₹{curr_due:,.2f}")
+                c_m4.metric("🧾 Repayment Count", f"{len(rep_rows)} payments")
+
+                if rep_rows:
+                    df_rep_table = pd.DataFrame([
+                        (rx[0], rx[1], rx[4] or 'N/A', float(rx[2] or 0.0), rx[3], rx[5] or '')
+                        for rx in rep_rows
+                    ], columns=["ID", "Payment Date", "Voucher No", "Amount Paid (₹)", "Payment Mode", "Narration / Remarks"])
+
+                    st.markdown("##### 📜 Recorded Repayment Transactions")
+                    st.dataframe(format_df_dates(df_rep_table), use_container_width=True, hide_index=True, height=220)
+
+                    st.markdown("---")
+                    st.markdown("##### ✏️ Modify or Delete an Existing Repayment Entry")
+
+                    rep_opts = {}
+                    for rx in rep_rows:
+                        r_id, r_date, r_amt, r_mode, r_vno, r_narr = rx[:6]
+                        label = f"ID #{r_id} | Date: {r_date} | Amount: ₹{float(r_amt):,.2f} | Voucher: {r_vno or 'N/A'} | {r_narr or ''}"
+                        rep_opts[label] = rx
+
+                    sel_rep_label = st.selectbox(
+                        "Select Repayment Entry to Edit or Delete",
+                        list(rep_opts.keys()),
+                        key=f"pl_rep_edit_sel_{sel_pl_id}"
+                    )
+                    selected_rx = rep_opts[sel_rep_label]
+                    e_id, e_date, e_amt, e_mode, e_vno, e_narr = selected_rx[:6]
+
+                    try:
+                        e_date_dt = pd.to_datetime(e_date).date() if e_date else date.today()
+                    except Exception:
+                        e_date_dt = date.today()
+
+                    with st.container(border=True):
+                        st.markdown(f"#### ✏️ Edit Repayment Entry **#{e_id}**")
+                        st.caption(f"Current Voucher: `{e_vno or 'N/A'}` &nbsp;|&nbsp; Current Recorded Date: `{e_date}`")
+
+                        with st.form(f"form_edit_pl_rep_{e_id}"):
+                            col_ed1, col_ed2 = st.columns(2)
+                            with col_ed1:
+                                new_ed_date = st.date_input("Correct Payment Date *", value=e_date_dt, format="DD-MM-YYYY", key=f"inp_pl_rep_date_{e_id}")
+                                new_ed_amt = st.number_input("Repayment Amount (₹) *", min_value=1.0, value=float(e_amt or 0.0), step=100.0, key=f"inp_pl_rep_amt_{e_id}")
+                            with col_ed2:
+                                mode_options = ["Cash in Hand (Office Drawer)", "Union Bank of India (UPI / NEFT)"]
+                                mode_idx = 0
+                                for m_idx, m_opt in enumerate(mode_options):
+                                    if ("Union Bank" in str(e_mode) and "Union Bank" in m_opt) or ("Cash" in str(e_mode) and "Cash" in m_opt):
+                                        mode_idx = m_idx
+                                        break
+                                new_ed_mode = st.selectbox("Payment Mode", mode_options, index=mode_idx, key=f"inp_pl_rep_mode_{e_id}")
+                                new_ed_narr = st.text_input("Narration / Remarks", value=str(e_narr or f"Repayment {c_name} ({l_no})"), key=f"inp_pl_rep_narr_{e_id}")
+
+                            if st.form_submit_button("💾 Save & Update Repayment", type="primary", use_container_width=True):
+                                upd_fn = getattr(database, 'update_personal_loan_repayment_entry', update_personal_loan_repayment_entry)
+                                if upd_fn:
+                                    ok_upd, msg_upd = upd_fn(e_id, new_ed_date, new_ed_amt, new_ed_mode, new_ed_narr)
+                                else:
+                                    ok_upd, msg_upd = False, "update_personal_loan_repayment_entry function is currently reloading."
+                                if ok_upd:
+                                    flash_success(f"✅ {msg_upd}")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Failed to update repayment: {msg_upd}")
+
+                        st.write("---")
+                        with st.expander(f"🗑️ Delete Repayment Entry #{e_id}", expanded=False):
+                            st.warning(f"⚠️ You are about to permanently delete Repayment **#{e_id}** of **₹{float(e_amt):,.2f}** recorded on **{e_date}** (Voucher: `{e_vno}`). Deleting this will reverse the linked Cash/Bank Book entry and restore **₹{float(e_amt):,.2f}** to the loan's outstanding balance.")
+                            conf_del_rep = st.checkbox(f"Yes, I confirm I want to permanently delete Repayment #{e_id}", key=f"conf_del_pl_rep_{e_id}")
+                            if conf_del_rep:
+                                if st.button("🗑️ Permanently Delete Repayment Entry", type="primary", key=f"btn_confirm_del_pl_rep_{e_id}"):
+                                    del_fn = getattr(database, 'delete_personal_loan_repayment_entry', delete_personal_loan_repayment_entry)
+                                    if del_fn:
+                                        ok_del, msg_del = del_fn(e_id)
+                                    else:
+                                        ok_del, msg_del = False, "delete_personal_loan_repayment_entry function is currently reloading."
+                                    if ok_del:
+                                        flash_success(f"✅ {msg_del}")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed to delete repayment: {msg_del}")
+                else:
+                    st.info(f"ℹ️ No repayment transactions recorded for Loan #{l_no} ({c_name}) yet.")
         else:
             st.info("No personal loan records found to edit or manage.")
 
@@ -1758,39 +1867,6 @@ def render_personal_loans():
 
             st.markdown("#### 📜 **CUSTOMER REPAYMENT LEDGER & STATEMENT (DEBIT / CREDIT)**")
             st.dataframe(format_df_dates(df_rep_ledger), use_container_width=True, hide_index=True, height=260)
-
-            if rep_txs:
-                with st.expander("🗑️ Delete / Correct Repayment Transaction", expanded=False):
-                    st.caption("If a repayment transaction was accidentally entered (e.g., duplicate entry on a date), select it below to safely delete it. The loan's outstanding balance, account ledger, and EMI schedule will automatically recalculate.")
-                    rep_opts = {}
-                    for rx in rep_txs:
-                        r_date, r_vno, r_amt, r_mode, r_narr = rx[:5]
-                        r_id = rx[5] if len(rx) > 5 else None
-                        if r_id:
-                            label = f"Repayment #{r_id} | Date: {r_date} | Amount: ₹{float(r_amt):,.2f} | Voucher: {r_vno or 'N/A'} | {r_narr or ''}"
-                            rep_opts[label] = (r_id, r_date, float(r_amt), r_vno, r_narr)
-                    
-                    if rep_opts:
-                        del_rep_label = st.selectbox("Select Repayment Entry to Delete", list(rep_opts.keys()), key=f"del_rep_sel_{sel_pr_id}")
-                        sel_rep_data = rep_opts[del_rep_label]
-                        r_id, r_date, r_amt, r_vno, r_narr = sel_rep_data
-                        
-                        st.warning(f"⚠️ You are about to permanently delete Repayment **#{r_id}** of **₹{r_amt:,.2f}** recorded on **{r_date}** (Voucher: `{r_vno}`). Deleting this will reverse the linked Cash/Bank Book entry and restore **₹{r_amt:,.2f}** to the loan's outstanding balance.")
-                        
-                        col_del1, col_del2 = st.columns([1, 3])
-                        with col_del1:
-                            if st.button("🗑️ Confirm Delete Repayment", type="primary", key=f"btn_del_rep_{r_id}_{sel_pr_id}"):
-                                del_fn = getattr(database, 'delete_personal_loan_repayment_entry', delete_personal_loan_repayment_entry)
-                                if del_fn:
-                                    ok, msg = del_fn(r_id)
-                                else:
-                                    ok, msg = False, "delete_personal_loan_repayment_entry function is currently reloading."
-                                if ok:
-                                    st.success(f"✅ {msg}")
-                                    time.sleep(1)
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ Failed to delete repayment: {msg}")
 
             st.markdown("#### 📅 **12-MONTH EMI AMORTIZATION TABLE**")
             st.dataframe(format_df_dates(df_sched), use_container_width=True, hide_index=True, height=260)

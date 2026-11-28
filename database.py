@@ -3849,6 +3849,181 @@ def delete_personal_loan_repayment_entry(rep_id):
         release_connection(conn)
 
 
+def update_personal_loan_repayment_entry(rep_id, new_date, new_amount, new_mode, new_narration):
+    """
+    Updates an existing personal loan repayment entry.
+    1. Updates loan_repayments (payment_date, amount_paid, principal/interest split, payment_mode, narration, voucher_no).
+    2. Updates linked Cash/Bank Book voucher (removes old entry and posts new entry with new date/mode/amount).
+    3. Recalculates personal_loans.outstanding_due and status.
+    4. Re-sequences and re-allocates loan_emi_schedules in chronological order.
+    5. Updates borrower's accounts balance.
+    6. Re-syncs book balances.
+    7. Clears cache.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if USING_SUPABASE else "?"
+        
+        # 1. Fetch repayment details & linked loan / customer info
+        cursor.execute(f"""
+            SELECT lr.loan_id, lr.customer_id, lr.amount_paid, lr.voucher_no, lr.payment_mode, lr.payment_date,
+                   pl.loan_no, pl.total_repayable, pl.principal_amount, c.name,
+                   COALESCE(c.account_no, '') as account_no
+            FROM loan_repayments lr
+            JOIN personal_loans pl ON lr.loan_id = pl.id
+            JOIN customers c ON lr.customer_id = c.id
+            WHERE lr.id = {placeholder}
+        """, (rep_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, f"Repayment ID #{rep_id} not found."
+            
+        (l_id, c_id, old_amt, old_vno, old_mode, old_pdate,
+         l_no, tot_rep, princ, c_name, c_acc) = row
+        
+        new_amt = float(new_amount or 0.0)
+        if new_amt <= 0:
+            return False, "Repayment amount must be greater than ₹0.00."
+            
+        new_date_str = str(new_date)[:10]
+        try:
+            p_dt = datetime.strptime(new_date_str, "%Y-%m-%d").date()
+            new_vno = f"RPL{p_dt.strftime('%Y%m%d')}{int(l_id):03d}"
+        except Exception:
+            new_vno = str(old_vno) if old_vno else f"RPL{new_date_str.replace('-', '')}{int(l_id):03d}"
+            
+        tot_rep_val = float(tot_rep or princ or 0.0)
+        princ_val = float(princ or 0.0)
+        tot_loan_int = max(0.0, round(tot_rep_val - princ_val, 2))
+        
+        if tot_rep_val > 0 and tot_loan_int > 0:
+            prop_int = round(new_amt * (tot_loan_int / tot_rep_val), 2)
+            int_portion = prop_int
+            princ_portion = round(new_amt - int_portion, 2)
+        else:
+            int_portion = 0.0
+            princ_portion = new_amt
+            
+        # 2. Update loan_repayments row
+        cursor.execute(f"""
+            UPDATE loan_repayments
+            SET payment_date = {placeholder}, amount_paid = {placeholder},
+                principal_component = {placeholder}, interest_component = {placeholder},
+                payment_mode = {placeholder}, narration = {placeholder}, voucher_no = {placeholder}
+            WHERE id = {placeholder}
+        """, (new_date_str, new_amt, princ_portion, int_portion, new_mode, new_narration, new_vno, rep_id))
+        
+        # 3. Update Cash Book / Bank Book
+        if old_vno:
+            cursor.execute(f"DELETE FROM bank_book WHERE voucher_no = {placeholder}", (old_vno,))
+            cursor.execute(f"DELETE FROM cash_book WHERE voucher_no = {placeholder}", (old_vno,))
+            cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{old_vno}%",))
+            
+        if new_vno != old_vno:
+            cursor.execute(f"DELETE FROM bank_book WHERE voucher_no = {placeholder}", (new_vno,))
+            cursor.execute(f"DELETE FROM cash_book WHERE voucher_no = {placeholder}", (new_vno,))
+            cursor.execute(f"DELETE FROM journal_vouchers WHERE narration LIKE {placeholder}", (f"%{new_vno}%",))
+            
+        part_rep = f"Loan Repayment: {c_name} (Acc: {c_acc}) [{l_no}]"
+        if "Union Bank" in new_mode:
+            cursor.execute(f"""
+                INSERT INTO bank_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, bank_name, narration, account_code)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, 'Union Bank of India', {placeholder}, 'AST-108')
+            """, (new_date_str, new_vno, part_rep, new_amt, new_narration))
+        else:
+            cursor.execute(f"""
+                INSERT INTO cash_book (date, voucher_no, particulars, debit_amount, credit_amount, balance, narration, account_code)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, 0, {placeholder}, 'AST-108')
+            """, (new_date_str, new_vno, part_rep, new_amt, new_narration))
+            
+        # 4. Recalculate personal_loans total repaid, outstanding due, and status
+        cursor.execute(f"""
+            SELECT COALESCE(SUM(amount_paid), 0)
+            FROM loan_repayments
+            WHERE loan_id = {placeholder} AND loan_type = 'PERSONAL'
+        """, (l_id,))
+        sum_row = cursor.fetchone()
+        tot_repaid = float(sum_row[0] if sum_row else 0.0)
+        
+        new_due = max(0.0, round(tot_rep_val - tot_repaid, 2))
+        new_status = 'CLOSED' if new_due <= 0.0 else 'ACTIVE'
+        
+        cursor.execute(f"""
+            UPDATE personal_loans
+            SET outstanding_due = {placeholder}, status = {placeholder}
+            WHERE id = {placeholder}
+        """, (new_due, new_status, l_id))
+        
+        # 5. Replay and reallocate EMI schedules in chronological order
+        cursor.execute(f"""
+            UPDATE loan_emi_schedules
+            SET paid_amount = 0.0, paid_date = NULL, status = 'PENDING'
+            WHERE loan_id = {placeholder} AND loan_type = 'PERSONAL'
+        """, (l_id,))
+        
+        cursor.execute(f"""
+            SELECT id, emi_amount
+            FROM loan_emi_schedules
+            WHERE loan_id = {placeholder} AND loan_type = 'PERSONAL'
+            ORDER BY emi_number ASC
+        """, (l_id,))
+        schedules = cursor.fetchall()
+        
+        cursor.execute(f"""
+            SELECT payment_date, amount_paid
+            FROM loan_repayments
+            WHERE loan_id = {placeholder} AND loan_type = 'PERSONAL'
+            ORDER BY payment_date ASC, id ASC
+        """, (l_id,))
+        all_reps = cursor.fetchall()
+        
+        if schedules and all_reps:
+            sched_list = [{"id": s[0], "amt": float(s[1] or 0.0), "paid": 0.0, "pdate": None} for s in schedules]
+            for r_date, r_amt in all_reps:
+                pay_left = float(r_amt or 0.0)
+                for sc in sched_list:
+                    if pay_left <= 0:
+                        break
+                    needed = max(0.0, sc["amt"] - sc["paid"])
+                    if needed > 0:
+                        alloc = min(pay_left, needed)
+                        sc["paid"] += alloc
+                        sc["pdate"] = str(r_date)[:10]
+                        pay_left -= alloc
+            for sc in sched_list:
+                stat = 'PAID' if sc["paid"] >= sc["amt"] else ('PARTIAL' if sc["paid"] > 0 else 'PENDING')
+                cursor.execute(f"""
+                    UPDATE loan_emi_schedules
+                    SET paid_amount = {placeholder}, paid_date = {placeholder}, status = {placeholder}
+                    WHERE id = {placeholder}
+                """, (sc["paid"], sc["pdate"], stat, sc["id"]))
+                
+        # 6. Update accounts balance
+        cursor.execute(f"""
+            UPDATE accounts
+            SET balance = (SELECT COALESCE(SUM(outstanding_due), 0) FROM personal_loans WHERE customer_id = {placeholder})
+            WHERE customer_id = {placeholder} AND (account_type = 'Loan Account' OR account_type LIKE {placeholder})
+        """, (c_id, c_id, "%Personal%"))
+        
+        # 7. Resync cash book and bank book running balances
+        _sync_book_balances(cursor, placeholder)
+        
+        conn.commit()
+        clear_db_cache()
+        return True, f"Repayment #{rep_id} updated successfully! Date: {new_date_str}, Amount: ₹{new_amt:,.2f}, Due remaining: ₹{new_due:,.2f}."
+    except Exception as e:
+        if conn and USING_SUPABASE:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        release_connection(conn)
+
+
 def delete_gold_loan_repayment_entry(rep_id):
     """
     Deletes an individual gold loan repayment transaction.
